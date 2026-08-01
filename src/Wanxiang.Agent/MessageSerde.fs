@@ -22,11 +22,59 @@ module MessageSerde =
         with _ ->
             None
 
-    let fromJsonNode (node: JsonNode) : ChatMessage option =
+    /// 宽松回退：客户端手写 JSON（无 $type 鉴别器的 {role, contents:[{text}]}）→ ChatMessage。
+    let private parseLoose (node: JsonNode) : ChatMessage option =
         try
-            Some(node.Deserialize<ChatMessage>(options))
-        with _ ->
-            None
+            match node with
+            | :? JsonObject as o ->
+                let getStr (k: string) =
+                    let mutable n: JsonNode = null
+                    if o.TryGetPropertyValue(k, &n) && not (isNull n) && n.GetValueKind() = JsonValueKind.String then Some(n.GetValue<string>()) else None
+                let msg = ChatMessage()
+                msg.Role <-
+                    match getStr "role" with
+                    | Some "assistant" -> ChatRole.Assistant
+                    | Some "system" -> ChatRole.System
+                    | Some "tool" -> ChatRole.Tool
+                    | _ -> ChatRole.User
+                let mutable contentsNode: JsonNode = null
+                if o.TryGetPropertyValue("contents", &contentsNode) && not (isNull contentsNode) && contentsNode.GetValueKind() = JsonValueKind.Array then
+                    for item in contentsNode.AsArray() do
+                        match item with
+                        | :? JsonObject as c ->
+                            let mutable t: JsonNode = null
+                            if c.TryGetPropertyValue("text", &t) && not (isNull t) && t.GetValueKind() = JsonValueKind.String then
+                                msg.Contents.Add(TextContent(t.GetValue<string>()))
+                        | _ -> ()
+                if msg.Contents.Count = 0 then None else Some msg
+            | _ -> None
+        with _ -> None
+
+    /// 检测未带 $type 鉴别器的 contents（客户端手写 JSON）：需要走宽松回退。
+    let private needsLoose (node: JsonNode) : bool =
+        match node with
+        | :? JsonObject as o ->
+            let mutable c: JsonNode = null
+            if o.TryGetPropertyValue("contents", &c) && not (isNull c) && c.GetValueKind() = JsonValueKind.Array then
+                c.AsArray()
+                |> Seq.exists (fun item ->
+                    match item with
+                    | :? JsonObject as io ->
+                        let mutable t: JsonNode = null
+                        not (io.TryGetPropertyValue("$type", &t))
+                    | _ -> false)
+            else false
+        | _ -> false
+
+    let fromJsonNode (node: JsonNode) : ChatMessage option =
+        if needsLoose node then
+            parseLoose node
+        else
+            try
+                let msg = node.Deserialize<ChatMessage>(options)
+                if isNull msg then parseLoose node else Some msg
+            with _ ->
+                parseLoose node
 
     /// 从消息内容中提取文本（用于会话摘要等展示用途）。
     let textOf (msg: ChatMessage) : string =

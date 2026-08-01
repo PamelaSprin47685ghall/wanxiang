@@ -134,6 +134,9 @@ type ConversationView = {
     mutable lastCommitId: CommitId
     mutable runtimeState: string
     mutable messages: JsonArray
+    /// 快照携带的最早 commitId 与是否还有更早历史（Q127 分页）
+    mutable pageEarliest: CommitId
+    mutable pageHasMore: bool
 }
 
 /// 客户端状态机：维护观察视图 + 游标。
@@ -172,16 +175,55 @@ type ClientState() =
                     v.lastCommitId <- d.lastCommitId
                     v.runtimeState <- d.runtimeState
                     v.messages <- d.messages
+                    v.pageEarliest <- d.snapshotEarliestCommitId
+                    v.pageHasMore <- d.snapshotHasMore
                     v
                 | None ->
                     { conversationId = d.conversationId
                       title = d.title
                       lastCommitId = d.lastCommitId
                       runtimeState = d.runtimeState
-                      messages = d.messages }
+                      messages = d.messages
+                      pageEarliest = d.snapshotEarliestCommitId
+                      pageHasMore = d.snapshotHasMore }
             conversations <- conversations.Add(d.conversationId, view)
             latestCommitId <- max latestCommitId d.lastCommitId
             convChanged.Trigger d.conversationId
+        | HistoryPage d ->
+            // Q127 分页：把更早历史按 commitId 升序前置拼接（去重）
+            match conversations.TryFind d.conversationId with
+            | Some v ->
+                let existing = System.Collections.Generic.HashSet<CommitId>()
+                for m in v.messages do
+                    if m <> null && m.GetValueKind() = System.Text.Json.JsonValueKind.Object then
+                        let o = m.AsObject()
+                        let mutable c: System.Text.Json.Nodes.JsonNode = null
+                        if o.TryGetPropertyValue("commitId", &c) && c <> null then
+                            existing.Add(c.GetValue<uint64>()) |> ignore
+                let prev = JsonArray()
+                for m in d.items do
+                    let commitId =
+                        match m with
+                        | :? System.Text.Json.Nodes.JsonObject as o ->
+                            let mutable c: System.Text.Json.Nodes.JsonNode = null
+                            if o.TryGetPropertyValue("commitId", &c) && c <> null then c.GetValue<uint64>() else 0UL
+                        | _ -> 0UL
+                    if commitId > 0UL && not (existing.Contains commitId) then
+                        prev.Add (m.DeepClone())
+                let combined = JsonArray()
+                for m in prev do combined.Add m
+                for m in v.messages do combined.Add (m.DeepClone())
+                v.messages <- combined
+                if prev.Count > 0 then
+                    match prev[0] with
+                    | :? System.Text.Json.Nodes.JsonObject as o ->
+                        let mutable c: System.Text.Json.Nodes.JsonNode = null
+                        if o.TryGetPropertyValue("commitId", &c) && c <> null then
+                            v.pageEarliest <- c.GetValue<uint64>()
+                    | _ -> ()
+                v.pageHasMore <- d.hasMore
+                convChanged.Trigger d.conversationId
+            | None -> ()
         | MessageCommitted d ->
             match conversations.TryFind d.conversationId with
             | Some v ->

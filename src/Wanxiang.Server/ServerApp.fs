@@ -110,7 +110,18 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             Stderr.write "execute-command-error" [ "message", e.ToString() ]
             CommandExecutionResult.CommandFailed(Poisoned e.Message)
 
-    let toolRegistry = ToolRegistry((fun () -> (currentConfig ()).mcpServers), logInfo)
+    // P3-2：MCP 子进程 stderr 转发前对已知密钥值做精确替换（Q164）。
+    let redactSecrets (msg: string) : string =
+        let mutable s = msg
+        for p in (currentConfig ()).providers do
+            match p.Value.apiKey with
+            | Some k when not (String.IsNullOrEmpty k) && s.Contains k -> s <- s.Replace(k, "***")
+            | _ -> ()
+        s
+
+    let mcpLog (msg: string) = logInfo (redactSecrets msg)
+
+    let toolRegistry = ToolRegistry((fun () -> (currentConfig ()).mcpServers), mcpLog)
 
     /// 启动服务器（server 开关）。
     member this.Start(servePwa: bool) : unit =
@@ -133,7 +144,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             | None -> ()
         orchestrator <-
             Some(ChatOrchestrator(coordinator.Value, currentProjection, broadcastToConversation, toolRegistry, currentConfig, logInfo))
-        let attachmentStore = AttachmentStore(dataDir, (currentConfig ()).maxAttachmentBytes)
+        let attachmentStore = AttachmentStore(dataDir, (currentConfig ()).maxAttachmentBytes, (currentConfig ()).chunkSizeBytes)
         let builder = WebApplication.CreateBuilder()
         builder.WebHost.UseUrls(sprintf "http://%s" (currentConfig ()).listen)
         let app = builder.Build()

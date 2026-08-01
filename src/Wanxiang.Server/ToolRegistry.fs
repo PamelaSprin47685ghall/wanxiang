@@ -98,17 +98,23 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
                         psi.RedirectStandardOutput <- true
                         psi.RedirectStandardError <- true
                         psi.UseShellExecute <- false
+                        // Q165：环境变量白名单化（必要基础项 + TOML 显式配置），不继承完整父环境
+                        psi.Environment.Clear()
+                        for key in [ "PATH"; "HOME"; "LANG"; "TMPDIR"; "TZ" ] do
+                            match Environment.GetEnvironmentVariable key with
+                            | v when not (String.IsNullOrEmpty v) -> psi.Environment[key] <- v
+                            | _ -> ()
                         for kv in config.env do psi.Environment[kv.Key] <- kv.Value
                         let p = Process.Start psi
                         process <- p
                         stdin <- p.StandardInput
-                        // 日志转发（决策 164：附加 id/pid/时间）
+                        // 日志转发（决策 164：附加 id/pid/时间；密钥脱敏由上层 onLog 处理）
                         p.ErrorDataReceived.Add(fun e ->
                             if not (isNull e.Data) then onLog(sprintf "[mcp:%s pid=%d] %s" config.id p.Id e.Data))
                         p.BeginErrorReadLine()
                         readerTask <- Task.Run<Task>(Func<Task>(fun () -> readLoop p))
-                        // 初始化握手
-                        this.RequestRaw("initialize", JsonObject()) |> Async.AwaitTask |> Async.RunSynchronously |> ignore
+                        // 初始化握手（P3-5：带超时，MCP 子进程挂起不会无限阻塞会话生成）
+                        this.RequestRaw("initialize", JsonObject(), 15000) |> Async.AwaitTask |> Async.RunSynchronously |> ignore
                         let notif = JsonObject()
                         notif["jsonrpc"] <- "2.0"
                         notif["method"] <- "notifications/initialized"
@@ -119,7 +125,7 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
 
     member _.Id = config.id
 
-    member private this.RequestRaw(method: string, paramsObj: JsonObject) : Task<JsonNode> =
+    member private this.RequestRaw(method: string, paramsObj: JsonObject, ?timeoutMs: int) : Task<JsonNode> =
         task {
             let id = Interlocked.Increment(&nextId)
             let idNode = JsonNode.op_Implicit id
@@ -129,33 +135,56 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
             req["method"] <- method
             if paramsObj.Count > 0 then req["params"] <- paramsObj
             let tcs = TaskCompletionSource<JsonNode>(TaskCreationOptions.RunContinuationsAsynchronously)
-            pending[idNode.ToJsonString()] <- tcs
+            let key = idNode.ToJsonString()
+            pending[key] <- tcs
             try
                 writeLine req
             with e ->
-                pending.TryRemove(idNode.ToJsonString()) |> ignore
+                pending.TryRemove key |> ignore
                 tcs.TrySetException e |> ignore
-            return! tcs.Task
+            let timeout =
+                timeoutMs |> Option.map (float >> TimeSpan.FromMilliseconds) |> Option.defaultValue Timeout.InfiniteTimeSpan
+            try
+                return! tcs.Task.WaitAsync(timeout)
+            with
+            | :? TimeoutException ->
+                pending.TryRemove key |> ignore
+                tcs.TrySetCanceled() |> ignore
+                return JsonNode.Parse("""{"error":"mcp request timeout"}""")
         }
 
-    /// 发送 JSON-RPC 请求并等待响应（按配置限流并发）。
-    member this.Request(method: string, paramsObj: JsonObject) : Task<JsonNode> =
+    /// 发送 JSON-RPC 请求并等待响应（按配置限流并发；P3-3：取消感知，排队中未启动的调用可直接取消）。
+    member this.Request(method: string, paramsObj: JsonObject, ct: CancellationToken) : Task<JsonNode> =
         task {
             match ensureStarted () with
             | Error e ->
                 return JsonNode.Parse(sprintf """{"error":"%s"}""" (e.Replace("\"", "'")))
             | Ok () ->
-                let acquired: bool = semaphore.WaitAsync(Timeout.Infinite).GetAwaiter().GetResult()
+                let mutable acquired = false
                 try
-                    return! this.RequestRaw(method, paramsObj)
-                finally
+                    let! a = semaphore.WaitAsync(Timeout.Infinite, ct)
+                    acquired <- a
+                    let! resp = this.RequestRaw(method, paramsObj)
+                    if acquired then semaphore.Release() |> ignore
+                    return resp
+                with
+                | :? OperationCanceledException ->
                     if acquired then
-                        semaphore.Release() |> ignore
+                        try semaphore.Release() |> ignore with _ -> ()
+                    return JsonNode.Parse("""{"error":"cancelled"}""")
+                | :? ObjectDisposedException ->
+                    if acquired then
+                        try semaphore.Release() |> ignore with _ -> ()
+                    return JsonNode.Parse("""{"error":"mcp server stopped"}""")
+                | e ->
+                    if acquired then
+                        try semaphore.Release() |> ignore with _ -> ()
+                    return JsonNode.Parse(sprintf """{"error":"%s"}""" (e.Message.Replace("\"", "'")))
         }
 
     member this.ListTools() : Task<(string * string) list> =
         task {
-            let! resp = this.Request("tools/list", JsonObject())
+            let! resp = this.Request("tools/list", JsonObject(), CancellationToken.None)
             let results = System.Collections.Generic.List<string * string>()
             match resp with
             | :? JsonObject as o ->
@@ -175,7 +204,8 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
         }
 
     /// 调用 MCP 工具。返回完整 result（JSON 文本）。
-    member this.Call(toolName: string, argsJson: string) : Task<string> =
+    /// P3-3：ct 透传，取消生成时排队中未启动的调用直接取消（Q167），不启动子进程。
+    member this.Call(toolName: string, argsJson: string, ct: CancellationToken) : Task<string> =
         task {
             let paramsObj = JsonObject()
             paramsObj["name"] <- toolName
@@ -183,7 +213,7 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
                 try JsonNode.Parse argsJson
                 with _ -> JsonObject()
             paramsObj["arguments"] <- args
-            let! resp = this.Request("tools/call", paramsObj)
+            let! resp = this.Request("tools/call", paramsObj, ct)
             match resp with
             | :? JsonObject as o ->
                 let mutable r: JsonNode = null
@@ -204,17 +234,58 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
                 try process.Kill(entireProcessTree = true) with _ -> ()
                 process.Dispose()
                 process <- null)
+        // 在途调用立即失败（决策 98 排空：无法自然排空时失败而不是挂起）；排队调用由 disposed 信号量拒绝
+        for kv in pending do
+            kv.Value.TrySetResult(JsonNode.Parse("""{"error":"mcp server stopped"}""")) |> ignore
+        pending.Clear()
+        try semaphore.Dispose() with _ -> ()
 
 /// 工具注册表：内置工具 + MCP 工具（决策 95-100）。
 /// 会话配置只保存稳定标识（builtin:... / mcp:<server-id>/<tool-name>）。
 type ToolRegistry(getMcpServers: unit -> Map<string, McpServerConfig>, onLog: string -> unit) =
 
     let mcpClients = ConcurrentDictionary<string, McpClient>()
+    /// 已缓存客户端对应的配置指纹（P2-1：配置热更新后旧客户端排空关闭，新建客户端）。
+    let mcpFingerprints = ConcurrentDictionary<string, string>()
+    let registryLock = obj()
+
+    let fingerprint (cfg: McpServerConfig) : string =
+        sprintf "%s|%A|%A|%s|%A"
+            (cfg.command |> Option.defaultValue "")
+            cfg.args
+            cfg.env
+            (cfg.url |> Option.defaultValue "")
+            cfg.maxConcurrency
 
     member _.GetMcpClient(id: string) : McpClient option =
-        match getMcpServers () |> Map.tryFind id with
-        | None -> None
-        | Some cfg -> mcpClients.GetOrAdd(id, fun _ -> McpClient(cfg, onLog)) |> Some
+        lock registryLock (fun () ->
+            match getMcpServers () |> Map.tryFind id with
+            | None ->
+                // 配置已删除：排空关闭旧客户端（决策 98）
+                match mcpClients.TryRemove id with
+                | true, old -> old.Stop()
+                | _ -> ()
+                None
+            | Some cfg ->
+                let fp = fingerprint cfg
+                match mcpClients.TryGetValue id with
+                | true, client ->
+                    match mcpFingerprints.TryGetValue id with
+                    | true, fp when fp = fingerprint cfg -> Some client
+                    | _ ->
+                        // 配置变化：旧客户端排空关闭，新建（决策 98：新调用立即使用新配置）
+                        match mcpClients.TryRemove id with
+                        | true, old -> old.Stop()
+                        | _ -> ()
+                        let client = McpClient(cfg, onLog)
+                        mcpClients[id] <- client
+                        mcpFingerprints[id] <- fingerprint cfg
+                        Some client
+                | _ ->
+                    let client = McpClient(cfg, onLog)
+                    mcpClients[id] <- client
+                    mcpFingerprints[id] <- fingerprint cfg
+                    Some client)
 
     /// 构建会话启用的 AITool 列表。
     member this.BuildTools(config: SessionConfig) : AITool list =
@@ -237,7 +308,7 @@ type ToolRegistry(getMcpServers: unit -> Map<string, McpServerConfig>, onLog: st
                 let fn =
                     AIFunctionFactory.Create(
                         Func<string, CancellationToken, Task<string>>(fun args ct ->
-                            client.Call(toolName, args) |> Async.AwaitTask |> Async.StartAsTask),
+                            client.Call(toolName, args, ct)),
                         name = sprintf "mcp_%s_%s" serverId toolName,
                         description = sprintf "MCP tool %s/%s" serverId toolName)
                 tools <- tools @ [ fn ]

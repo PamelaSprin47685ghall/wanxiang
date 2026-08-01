@@ -32,8 +32,10 @@ type AttachmentCommittedRef = {
 /// - SHA-256 作为永久文件标识，路径按哈希分片（attachments/ab/cd/<hash>）；
 /// - 上传完成前只存在于临时文件，complete 后校验长度与哈希；
 /// - 断线删除未完成上传；首版不做 GC（未来压缩时处理）。
-type AttachmentStore(dataDir: string, maxBytes: int64) =
+/// 元数据（声明 mediaType/fileName + 嗅探结果）随 blob 落盘 <hash>.meta，供下载回传（Q176/P2-7）。
+type AttachmentStore(dataDir: string, maxBytes: int64, ?chunkSizeBytes: int) =
 
+    let maxChunkBytes = chunkSizeBytes |> Option.defaultValue (256 * 1024)
     let attachmentsDir = Wanxiang.Store.DataPaths.attachmentsDir dataDir
     let tempDir = Path.Combine(attachmentsDir, ".tmp")
 
@@ -41,7 +43,33 @@ type AttachmentStore(dataDir: string, maxBytes: int64) =
         Directory.CreateDirectory attachmentsDir |> ignore
         Directory.CreateDirectory tempDir |> ignore
 
-    let uploads = System.Collections.Concurrent.ConcurrentDictionary<Guid, AttachmentUpload>()
+    /// 文件名清理（Q175：长度截断 + 不可打印字符清除；绝不用于存储路径）。
+    let sanitizeFileName (name: string) : string =
+        let cleaned =
+            name
+            |> Seq.filter (fun c -> c >= ' ')
+            |> Seq.truncate 255
+            |> Seq.map string
+            |> String.concat ""
+        cleaned.Trim()
+
+    /// 轻量 MIME 嗅探（Q176：前 512 字节魔数；只在前 512 字节内判断）。
+    let sniffMediaType (head: byte[]) : string option =
+        let hasMagic (bytes: byte[]) = head.Length >= bytes.Length && Array.forall2 (=) bytes head[0 .. bytes.Length - 1]
+        if hasMagic [| 0x89uy; 0x50uy; 0x4Euy; 0x47uy |] then Some "image/png"
+        elif hasMagic [| 0xFFuy; 0xD8uy; 0xFFuy |] then Some "image/jpeg"
+        elif hasMagic (Text.Encoding.ASCII.GetBytes "GIF8") then Some "image/gif"
+        elif hasMagic (Text.Encoding.ASCII.GetBytes "%PDF") then Some "application/pdf"
+        elif hasMagic [| 0x50uy; 0x4Buy; 0x03uy; 0x04uy |] then Some "application/zip"
+        else
+            // 文本启发式：全部可见/空白/UTF-8 多字节 → text/plain
+            let mutable textLike = true
+            let mutable i = 0
+            while textLike && i < head.Length do
+                let b = head[i]
+                if b < 0x09uy || (b > 0x0Duy && b < 0x20uy) then textLike <- false
+                i <- i + 1
+            if textLike then Some "text/plain" else None
 
     let isSha256 (value: string) =
         not (String.IsNullOrWhiteSpace value)
@@ -55,8 +83,26 @@ type AttachmentStore(dataDir: string, maxBytes: int64) =
             let dir = Path.Combine(attachmentsDir, normalized.Substring(0, 2), normalized.Substring(2, 2))
             Some(Path.Combine(dir, normalized))
 
+    let metaPath (sha256: string) = attachmentPath sha256 |> Option.map (fun p -> p + ".meta")
+
+    let writeMeta (sha256: string) (declared: string) (sniffed: string option) (resolved: string) (fileName: string) (size: int64) =
+        match metaPath sha256 with
+        | None -> ()
+        | Some path ->
+            try
+                let o = JsonObject()
+                o["mediaType"] <- resolved
+                o["declaredMediaType"] <- declared
+                match sniffed with Some s -> o["sniffedMediaType"] <- s | None -> ()
+                o["fileName"] <- fileName
+                o["size"] <- size
+                File.WriteAllText(path, o.ToJsonString())
+            with _ -> ()
+
+    let uploads = System.Collections.Concurrent.ConcurrentDictionary<Guid, AttachmentUpload>()
 
     member _.Begin(attachmentId: Guid, totalBytes: int64, sha256: string, mediaType: string, fileName: string) : Result<unit, WanxiangError> =
+        let cleanName = sanitizeFileName fileName
         if totalBytes < 0L then
             Error(ValidationError "attachment size must not be negative")
         elif not (isSha256 sha256) then
@@ -77,7 +123,7 @@ type AttachmentStore(dataDir: string, maxBytes: int64) =
                           expectedSha256 = sha256
                           expectedBytes = totalBytes
                           mediaType = mediaType
-                          fileName = fileName
+                          fileName = cleanName
                           receivedBytes = 0L
                           stream = stream
                           sha = sha }
@@ -96,7 +142,9 @@ type AttachmentStore(dataDir: string, maxBytes: int64) =
         | true, s ->
             try
                 let bytes = Convert.FromBase64String dataBase64
-                if s.receivedBytes + int64 bytes.Length > s.expectedBytes then
+                if bytes.Length > maxChunkBytes then
+                    Error(ValidationError(sprintf "attachment chunk exceeds %d bytes limit" maxChunkBytes))
+                elif s.receivedBytes + int64 bytes.Length > s.expectedBytes then
                     Error(ValidationError "attachment chunk exceeds declared size")
                 else
                     s.stream.Write(bytes, 0, bytes.Length)
@@ -132,11 +180,25 @@ type AttachmentStore(dataDir: string, maxBytes: int64) =
                         File.Move(s.tempPath, finalPath)
                     else
                         File.Delete s.tempPath
+                    // Q176：轻量嗅探（前 512 字节）；声明值为空/octet-stream 时采用嗅探结果
+                    let sniffed =
+                        try
+                            use fs = new FileStream(finalPath, FileMode.Open, FileAccess.Read, FileShare.Read)
+                            let headLen = min 512 (int fs.Length)
+                            let head = Array.zeroCreate<byte> headLen
+                            if fs.Read(head, 0, headLen) > 0 then sniffMediaType head else None
+                        with _ -> None
+                    let declared = s.mediaType
+                    let resolved =
+                        if String.IsNullOrWhiteSpace declared || declared = "application/octet-stream" then
+                            sniffed |> Option.defaultValue (if String.IsNullOrWhiteSpace declared then "application/octet-stream" else declared)
+                        else declared
+                    writeMeta actualHash declared sniffed resolved s.fileName s.receivedBytes
                     uploads.TryRemove attachmentId |> ignore
                     Ok
                         { sha256 = actualHash
                           size = s.receivedBytes
-                          mediaType = s.mediaType
+                          mediaType = resolved
                           fileName = s.fileName }
             with e ->
                 Error(Poisoned(sprintf "attachment complete failed: %s" e.Message))
@@ -171,6 +233,30 @@ type AttachmentStore(dataDir: string, maxBytes: int64) =
         o["mediaType"] <- mediaType
         o["fileName"] <- fileName
         o
+
+    /// 按 sha256 读取已落盘元数据（下载回传声明值，Q176/P2-7）。
+    member _.Metadata(sha256: string) : (string * string * int64) option =
+        match metaPath sha256 with
+        | None -> None
+        | Some path when File.Exists path ->
+            try
+                let o = JsonNode.Parse(File.ReadAllText path).AsObject()
+                let getStr k =
+                    let mutable n: JsonNode = null
+                    if o.TryGetPropertyValue(k, &n) && n <> null && n.GetValueKind() = System.Text.Json.JsonValueKind.String then
+                        n.GetValue<string>()
+                    else ""
+                let getInt k =
+                    let mutable n: JsonNode = null
+                    if o.TryGetPropertyValue(k, &n) && n <> null && n.GetValueKind() = System.Text.Json.JsonValueKind.Number then
+                        match n with
+                        | :? JsonValue as v ->
+                            match v.TryGetValue<int64>() with true, i -> i | _ -> 0L
+                        | _ -> 0L
+                    else 0L
+                Some(getStr "mediaType", getStr "fileName", getInt "size")
+            with _ -> None
+        | Some _ -> None
 
     member _.Dispose() =
         for kv in uploads do

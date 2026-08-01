@@ -59,12 +59,22 @@ type AgentRuntime(provider: ProviderConfig, instructions: string option, tools: 
                     if hasNext then
                         let update = enumerator.Current
                         if update.Role.HasValue && update.Role.Value = ChatRole.Assistant then
-                            let text = update.Text
-                            if not (String.IsNullOrEmpty text) then
+                            // 正文与思维链都转发（TextReasoningContent；决策 18 透明映射）
+                            let pieces =
+                                update.Contents
+                                |> Seq.choose (fun c ->
+                                    match c with
+                                    | :? TextContent as t when not (String.IsNullOrEmpty t.Text) ->
+                                        Some(TextContent(t.Text) :> AIContent)
+                                    | :? TextReasoningContent as r when not (String.IsNullOrEmpty r.Text) ->
+                                        Some(TextReasoningContent(r.Text) :> AIContent)
+                                    | _ -> None)
+                                |> List.ofSeq
+                            if not pieces.IsEmpty then
                                 if isNull deltaMsg then
                                     deltaMsg <- ChatMessage()
                                     deltaMsg.Role <- ChatRole.Assistant
-                                deltaMsg.Contents.Add(TextContent(text))
+                                for p in pieces do deltaMsg.Contents.Add p
                                 onDelta deltaMsg
                     else
                         running <- false

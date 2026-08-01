@@ -15,6 +15,7 @@
     <Compile Include="ServerE2eTests.fs" />
     <Compile Include="ConfigTests.fs" />
     <Compile Include="AttachmentTests.fs" />
+    <Compile Include="BugfixTests.fs" />
     <Compile Include="CodecTests.fs" />
   </ItemGroup>
 

@@ -24,9 +24,12 @@ type WireEvent =
     | ConversationListSnapshot of {| items: JsonArray; lastCommitId: CommitId |}
     | ObserveConversation of {| conversationId: Guid |}
     | UnobserveConversation of {| conversationId: Guid |}
-    | ConversationSnapshot of {| conversationId: Guid; title: string; lastCommitId: CommitId; runtimeState: string; messages: JsonArray |}
+    | ConversationSnapshot of {| conversationId: Guid; title: string; lastCommitId: CommitId; runtimeState: string; messages: JsonArray; snapshotEarliestCommitId: CommitId; snapshotHasMore: bool |}
     | ConversationUpdated of {| conversationId: Guid; commitId: CommitId; change: JsonObject |}
     | MessageCommitted of {| conversationId: Guid; commitId: CommitId; payload: JsonNode |}
+    // ---- 历史分页（Q127：按 commitID 反向分页，稳定 ID 作页边界）----
+    | HistoryRequest of {| conversationId: Guid; beforeCommitId: CommitId; limit: int |}
+    | HistoryPage of {| conversationId: Guid; beforeCommitId: CommitId; items: JsonArray; hasMore: bool |}
     // ---- 命令（C→S）与确认 ----
     | Command of ClientCommand
     | CommandAccepted of {| invocationId: Guid |}
@@ -75,6 +78,8 @@ module WireEvent =
         | ObserveConversation _ -> "conversation.observe"
         | UnobserveConversation _ -> "conversation.unobserve"
         | ConversationSnapshot _ -> "conversation.snapshot"
+        | HistoryRequest _ -> "history.request"
+        | HistoryPage _ -> "history.page"
         | ConversationUpdated _ -> "conversation.updated"
         | MessageCommitted _ -> "conversation.message-committed"
         | Command c -> ClientCommand.commandType c

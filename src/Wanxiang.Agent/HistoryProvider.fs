@@ -25,6 +25,8 @@ type WanxiangHistoryProvider(loadHistory: Guid -> ChatMessage list, onResponse: 
             None
 
     override _.InvokingCoreAsync(context: ChatHistoryProvider.InvokingContext, ct: CancellationToken) : ValueTask<Collections.Generic.IEnumerable<ChatMessage>> =
+        // 返回值是本次调用的完整消息列表（AF 语义）：历史 + 调用方消息。
+        // 万象由编排层显式构造上下文（决策 20），loadHistory 为空时也必须透传 RequestMessages。
         let history =
             match context.Session with
             | null -> []
@@ -32,7 +34,8 @@ type WanxiangHistoryProvider(loadHistory: Guid -> ChatMessage list, onResponse: 
                 match WanxiangHistoryProvider.ConversationIdOf session with
                 | Some cid -> loadHistory cid
                 | None -> []
-        ValueTask<Collections.Generic.IEnumerable<ChatMessage>>(history :> Collections.Generic.IEnumerable<ChatMessage>)
+        let all = Seq.append history context.RequestMessages
+        ValueTask<Collections.Generic.IEnumerable<ChatMessage>>(all)
 
     override _.InvokedCoreAsync(context: ChatHistoryProvider.InvokedContext, ct: CancellationToken) : ValueTask =
         match context.Session with

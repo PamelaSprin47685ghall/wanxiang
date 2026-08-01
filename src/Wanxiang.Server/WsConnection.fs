@@ -13,6 +13,8 @@ open Wanxiang.Core
 open Wanxiang.Protocol
 open Wanxiang.Store
 
+/// 临时诊断输出（定位后删除）。
+
 /// 命令执行结果（由 ServerApp 注入的 executeCommand 产生）。
 type CommandExecutionResult =
     /// SendUserMessage：已入队（等待插入点提交）
@@ -51,6 +53,8 @@ type WsConnection(
     let mutable tokenHash: string option = None
     let mutable observedList = false
     let mutable observedConversations: Set<Guid> = Set.empty
+    /// 游标/快照状态跨线程读写保护（P3-1：recvTask 与 catch-up Task 并发）。
+    let cursorLock = obj()
     let mutable appliedCursor: CommitId = 0UL
     let mutable advertisedCursor: CommitId = 0UL
     let mutable awaitingCursor: CommitId option = None
@@ -60,15 +64,19 @@ type WsConnection(
     /// catch-up 进行中标记（Interlocked，防多入口并发发送重复批次）。
     let mutable catchUpRunning = 0
 
+    /// 快照携带的最大消息数（Q127/P1-2：长会话只带尾部，更早历史走 history.request 分页）。
+    let snapshotMessageLimit = 200
+
     member _.TrySend(ev: WireEvent) : bool =
-        sendChannel.Writer.TryWrite ev
+        let ok = sendChannel.Writer.TryWrite ev
+        ok
 
     member _.IsAuthenticated = authenticated
     member _.TokenHash = tokenHash
     member _.Observes(convId: Guid) : bool = observedConversations.Contains convId
     member _.ObservesList = observedList
-    member _.AppliedCursor = appliedCursor
-    member _.IsInSnapshotMode = snapshotMode
+    member _.AppliedCursor = lock cursorLock (fun () -> appliedCursor)
+    member _.IsInSnapshotMode = lock cursorLock (fun () -> snapshotMode)
 
     /// 强制关闭（令牌吊销时调用，决策 58）。
     member _.ForceClose() : unit =
@@ -80,7 +88,7 @@ type WsConnection(
 
     /// 是否应接收某会话的权威增量（快照模式下跳过）。
     member _.ShouldReceiveAuthority(convId: Guid) : bool =
-        not snapshotMode && (observedList || observedConversations.Contains convId)
+        lock cursorLock (fun () -> not snapshotMode && (observedList || observedConversations.Contains convId))
 
     /// 慢客户端处理（决策 32-34）：不因发送慢而断开。
     /// 发送队列积压时切换为只读追赶（catch-up）模式：暂停实时权威增量推送，
@@ -88,13 +96,18 @@ type WsConnection(
     /// 注意：本方法可能在 coordinator mailbox 线程内被调用（PushAuthority <- BroadcastCommit <- onCommitted），
     /// 因此 catch-up 必须调度到独立 Task，绝不能在此线程同步执行（否则 getCommitsAfter 的 PostAndReply 会自锁）。
     member private this.EnterSnapshotMode() =
-        if not snapshotMode then
-            snapshotMode <- true
+        let shouldStart =
+            lock cursorLock (fun () ->
+                if snapshotMode then false
+                else
+                    snapshotMode <- true
+                    true)
+        if shouldStart then
             logInfo(sprintf "connection %s entering catch-up mode (slow client)" remoteAddress)
             Task.Run(fun () ->
                 if not closed then
                     // 以已确认游标与等待确认游标的较大者为起点，避免重发已发送批次
-                    let start = max appliedCursor (match awaitingCursor with Some c -> c | None -> appliedCursor)
+                    let start = lock cursorLock (fun () -> max appliedCursor (match awaitingCursor with Some c -> c | None -> appliedCursor))
                     this.SendCatchUp start)
             |> ignore
 
@@ -119,8 +132,9 @@ type WsConnection(
                             let commits = getCommitsAfter cursor
                             let batch = commits |> List.truncate 64
                             if List.isEmpty batch then
-                                snapshotMode <- false
-                                awaitingCursor <- None
+                                lock cursorLock (fun () ->
+                                    snapshotMode <- false
+                                    awaitingCursor <- None)
                                 continueCatchUp <- false
                                 doneCatchUp <- true
                             else
@@ -145,9 +159,10 @@ type WsConnection(
                                 if items.Count > 0 then
                                     let catchUp: WireEvent = AuthorityCatchUp {| fromCursor = cursor; toCommitId = (batch |> List.last).id; items = items |}
                                     if this.TrySend catchUp then
-                                        // awaitingCursor = 最后一条实际发送的 item id（客户端确认的游标是它）
-                                        advertisedCursor <- lastItemId
-                                        awaitingCursor <- Some advertisedCursor
+                                        lock cursorLock (fun () ->
+                                            // awaitingCursor = 最后一条实际发送的 item id（客户端确认的游标是它）
+                                            advertisedCursor <- lastItemId
+                                            awaitingCursor <- Some advertisedCursor)
                                         // 等待客户端 cursor.advanced 后再发下一批
                                         continueCatchUp <- false
                                         doneCatchUp <- true
@@ -159,11 +174,11 @@ type WsConnection(
                                 else
                                     // 本批无观察范围内事件：推进游标并继续下一批（循环而非递归，避免深栈）
                                     cursor <- (batch |> List.last).id
-                                    appliedCursor <- cursor
-                    with _ ->
+                                    lock cursorLock (fun () -> appliedCursor <- cursor)
+                    with e ->
                         // 异常：若首批未发出（awaitingCursor 为空），短暂延迟后重试；
                         // 否则等待客户端 cursor.advanced 驱动（CursorAdvanced 分支会再次 SendCatchUp）
-                        match awaitingCursor with
+                        match lock cursorLock (fun () -> awaitingCursor) with
                         | None ->
                             Thread.Sleep 100
                             doneCatchUp <- false
@@ -173,12 +188,14 @@ type WsConnection(
 
     /// 发送会话快照（当前投影）。快照携带全局 lastCommitId；
     /// 客户端完整应用后发送 cursor.advanced 推进游标（决策 33/135）。
+    /// 长会话只携带尾部消息（P1-2/Q127），更早历史由客户端通过 history.request 分页。
     member this.SendConversationSnapshot(convId: Guid) : bool =
         let proj = getProjection ()
         match Projection.tryConversation proj convId with
         | None -> false
         | Some conv ->
             let state = orchestrator.RuntimeStateOf convId
+            let messages, earliest, hasMore = ServerModel.conversationMessagesTail proj conv snapshotMessageLimit
             let sent =
                 this.TrySend
                     (ConversationSnapshot
@@ -186,9 +203,11 @@ type WsConnection(
                            title = conv.title
                            lastCommitId = proj.latestCommitId
                            runtimeState = state
-                           messages = ServerModel.conversationMessages proj conv |})
+                           messages = messages
+                           snapshotEarliestCommitId = earliest
+                           snapshotHasMore = hasMore |})
             if sent then
-                awaitingCursor <- Some proj.latestCommitId
+                lock cursorLock (fun () -> awaitingCursor <- Some proj.latestCommitId)
             sent
 
     /// 单写者发送循环（决策 31）。
@@ -210,7 +229,7 @@ type WsConnection(
                                 try
                                     if ws.State = WebSocketState.Open then
                                         do! ws.SendAsync(ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, ct)
-                                with _ ->
+                                with e ->
                                     closed <- true
                             else
                                 more <- false
@@ -226,7 +245,7 @@ type WsConnection(
 
     /// 推送临时事件（delta 等）；慢客户端直接丢弃（决策 34）。
     member this.PushTransient(ev: WireEvent) : unit =
-        if not snapshotMode then
+        if not (lock cursorLock (fun () -> snapshotMode)) then
             this.TrySend ev |> ignore
 
     member private this.CloseWith(status: WebSocketCloseStatus, reason: string) : Task =
@@ -319,7 +338,7 @@ type WsConnection(
                     observedList <- true
                     let proj = getProjection ()
                     if this.TrySend(ConversationListSnapshot {| items = ServerModel.conversationListItems proj orchestrator.RuntimeStateOf; lastCommitId = proj.latestCommitId |}) then
-                        awaitingCursor <- Some proj.latestCommitId
+                        lock cursorLock (fun () -> awaitingCursor <- Some proj.latestCommitId)
             | UnobserveConversationList ->
                 observedList <- false
             | ObserveConversation d ->
@@ -332,17 +351,23 @@ type WsConnection(
                 // 决策 33/35：游标表示客户端已成功应用的最后全局提交 id；
                 // 快照应用完成或 catch-up 批次应用完成后客户端发送 cursor.advanced。
                 // 幂等：只向前推进；允许客户端确认的 id 大于我们等待的（快照/批之间可能有新提交）。
-                if d.id > appliedCursor then
-                    appliedCursor <- d.id
-                match awaitingCursor with
-                | Some expected when d.id >= expected ->
-                    awaitingCursor <- None
-                    this.SendCatchUp appliedCursor
-                | _ -> ()
+                let (advanced, expected) =
+                    lock cursorLock (fun () ->
+                        let prev = appliedCursor
+                        if d.id > appliedCursor then
+                            appliedCursor <- d.id
+                        (d.id > prev, awaitingCursor))
+                if advanced then
+                    match expected with
+                    | Some exp when d.id >= exp ->
+                        lock cursorLock (fun () -> awaitingCursor <- None)
+                        this.SendCatchUp (lock cursorLock (fun () -> appliedCursor))
+                    | _ -> ()
             | Command cmd ->
                 if authenticated then
                     let invId = ClientCommand.invocationId cmd
-                    match executeCommand appliedCursor cmd with
+                    let cursor = lock cursorLock (fun () -> appliedCursor)
+                    match executeCommand cursor cmd with
                     | CommandQueued ->
                         this.TrySend(WireEvent.CommandAccepted {| invocationId = invId |}) |> ignore
                     | CommandCommitted commitId ->
@@ -384,7 +409,10 @@ type WsConnection(
                     | None ->
                         this.TrySend(ServerError {| message = sprintf "attachment %s not found" d.sha256 |}) |> ignore
                     | Some (stream, size) ->
-                        this.TrySend(AttachmentDownloadBegin {| sha256 = d.sha256.ToLowerInvariant(); size = size; mediaType = "application/octet-stream"; fileName = d.sha256 |}) |> ignore
+                        // Q176/P2-7：下载回传声明/嗅探元数据（.meta 由 AttachmentStore 在 complete 时落盘）
+                        let metaType, metaName, _ = attachmentStore.Metadata d.sha256 |> Option.defaultValue ("application/octet-stream", d.sha256, size)
+                        let displayName = if String.IsNullOrWhiteSpace metaName then d.sha256 else metaName
+                        this.TrySend(AttachmentDownloadBegin {| sha256 = d.sha256.ToLowerInvariant(); size = size; mediaType = metaType; fileName = displayName |}) |> ignore
                         task {
                             use stream = stream
                             let mutable index = 0
@@ -407,6 +435,15 @@ type WsConnection(
                             if failed then
                                 this.TrySend(ServerError {| message = "attachment download interrupted" |}) |> ignore
                         } |> ignore
+            | HistoryRequest d ->
+                // Q127/P1-2：按全局 commitID 反向分页；页边界用稳定 commitID（不用 offset）。
+                if authenticated then
+                    let proj = getProjection ()
+                    match Projection.tryConversation proj d.conversationId with
+                    | None -> ()
+                    | Some conv ->
+                        let items, hasMore = ServerModel.historyPageItems proj conv d.beforeCommitId d.limit
+                        this.TrySend(HistoryPage {| conversationId = d.conversationId; beforeCommitId = d.beforeCommitId; items = items; hasMore = hasMore |}) |> ignore
             | _ -> ()
         }
 
@@ -517,7 +554,19 @@ type ConnectionRegistry() =
                 | _ -> ()
 
     /// 广播临时事件（generation.delta 等）给观察某会话的连接。
+    /// P2-6：generation 状态变化同步推送轻量列表更新（会话摘要含 runtimeState，Q125）。
     member this.BroadcastTransient(convId: Guid, ev: WireEvent) : unit =
         for conn in this.All() do
             if conn.Observes convId then
                 conn.PushTransient ev
+            match ev with
+            | GenerationStarted _ | GenerationFinished _ ->
+                // 列表观察者：推送轻量 conversation.updated，客户端重新 observe 列表摘要
+                if conn.ObservesList && conn.ShouldReceiveAuthority convId then
+                    let change = JsonObject()
+                    change["runtimeState"] <-
+                        match ev with
+                        | GenerationStarted _ -> "generating"
+                        | _ -> "idle"
+                    conn.PushAuthority(ConversationUpdated {| conversationId = convId; commitId = 0UL; change = change |})
+            | _ -> ()

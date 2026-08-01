@@ -6,6 +6,7 @@ open Avalonia.Controls
 open Avalonia.Controls.ApplicationLifetimes
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Styling
 open Avalonia.Threading
 open Avalonia.Themes.Fluent
 
@@ -15,6 +16,19 @@ type App() =
 
     override this.Initialize() =
         this.Styles.Add(FluentTheme())
+        // 固定浅色（与 Theme.fs 的浅色板一致；深色由 PWA 端提供）
+        this.RequestedThemeVariant <- ThemeVariant.Light
+        // 会话列表：靛蓝选择态 + 圆角条目（覆盖 Fluent 高亮资源，作用域仅本应用）
+        this.Resources["ListBoxItemPadding"] <- Thickness(12.0, 10.0)
+        this.Resources["SystemControlHighlightListAccentLowBrush"] <- Theme.primaryContainer
+        this.Resources["SystemControlHighlightListAccentMediumBrush"] <- Theme.selectedHover
+        this.Resources["SystemControlHighlightListAccentHighBrush"] <- Theme.selectedPressed
+        this.Resources["SystemControlHighlightListLowBrush"] <- Theme.hover
+        this.Resources["SystemControlHighlightListMediumBrush"] <- Theme.pressed
+        let itemStyle = Style(Selector = Selectors.Is<ListBoxItem>(null))
+        itemStyle.Setters.Add(Setter(Control.MarginProperty, Thickness(10.0, 2.0)))
+        itemStyle.Setters.Add(Setter(ContentControl.CornerRadiusProperty, CornerRadius(12.0)))
+        this.Styles.Add(itemStyle)
 
     override this.OnFrameworkInitializationCompleted() =
         match this.ApplicationLifetime with

@@ -81,6 +81,8 @@ module Doctor =
         mutable replayError: string
         mutable portOk: bool
         mutable portError: string
+        mutable attachmentsOk: bool
+        mutable attachmentsMissing: string list
     }
 
     let private portInUse (listen: string) : bool =
@@ -108,7 +110,9 @@ module Doctor =
               replayOk = false
               replayError = ""
               portOk = true
-              portError = "" }
+              portError = ""
+              attachmentsOk = true
+              attachmentsMissing = [] }
         // 配置
         if File.Exists configPath then
             match TomlCodec.tryParse (File.ReadAllText configPath) with
@@ -127,7 +131,23 @@ module Doctor =
         | Error e -> d.lockError <- e
         // replay（只读，不修复）
         match Replay.replay dataDir false with
-        | Ok _ -> d.replayOk <- true
+        | Ok outcome ->
+            d.replayOk <- true
+            // Q179：附件引用可达性检查（只读报告，不修复）
+            try
+                let store = new Wanxiang.Server.AttachmentStore(dataDir, 1024L)
+                try
+                    let missing = System.Collections.Generic.HashSet<string>()
+                    for conv in Projection.conversationList outcome.projection do
+                        for m in Projection.effectiveMessages outcome.projection conv do
+                            for (sha, _, _, _) in Wanxiang.Server.ServerModel.attachmentRefsOf m.payloadJson do
+                                if not (store.Exists sha) then
+                                    missing.Add(sha) |> ignore
+                    d.attachmentsMissing <- missing |> Seq.toList
+                    d.attachmentsOk <- List.isEmpty d.attachmentsMissing
+                finally
+                    store.Dispose()
+            with _ -> ()
         | Error e -> d.replayError <- e
         d
 
@@ -143,6 +163,7 @@ module Doctor =
         report "data-lock" d.lockOk d.lockError
         report "log-replay" d.replayOk d.replayError
         report "listen-port" d.portOk d.portError
+        report "attachments" d.attachmentsOk (sprintf "%d referenced blob(s) missing" (List.length d.attachmentsMissing))
         eprintfn "overall: %s" (if ok then "PASS" else "FAIL")
         if not ok then exit 1
 
@@ -213,35 +234,81 @@ module Program =
                     eprintfn "log damaged: %s (run with --fix to repair)" e
                     exit 1
 
-            // 自动配对（决策 64）：server+client 同进程时，本机桌面 Client 自动获得令牌
+            // 自动配对（决策 64 + Q190）：server+client 同进程时，本机桌面 Client 自动获得永久令牌。
+            // - 服务端 TOML 只存哈希；客户端令牌原文保存到本机 client.toml（决策 54）；
+            // - 任一侧丢失（哈希不在服务端 / 客户端令牌文件丢失）时创建新 token；
+            // - 写 TOML 走 ConfigStore.Rewrite 原子路径（临时文件 + rename + reload，决策 42/43）。
             if switches.server && switches.client then
-                let result =
+                let clientConfigPath = Path.Combine(Path.GetDirectoryName configPath, "client.toml")
+                let writeClientConfig (token: string) =
                     try
-                        let cfg = TomlCodec.tryParse (File.ReadAllText configPath)
-                        match cfg with
-                        | Ok cfg ->
-                            let token = Wanxiang.Config.Auth.generateToken ()
-                            let hash = Wanxiang.Config.Auth.hashToken token
-                            let hasLocal =
-                                cfg.authClients |> List.exists (fun c -> c.name = "wanxiang-desktop")
-                            if hasLocal then
-                                Ok()
-                            else
-                                let newCfg =
-                                    { cfg with
-                                        authClients =
-                                            { tokenHash = hash
-                                              name = "wanxiang-desktop"
-                                              createdAtUtc = DateTimeOffset.UtcNow
-                                              lastSeenUtc = None
-                                              revoked = false }
-                                            :: cfg.authClients }
-                                // 写回 TOML（自动配对）
-                                File.WriteAllText(configPath, TomlCodec.serialize newCfg)
-                                Ok()
-                        | Error e -> Error(String.concat "; " e)
+                        let text =
+                            sprintf "[client]\nurl = \"ws://%s/ws\"\ntoken = \"%s\"\n" (TomlCodec.tryParse (File.ReadAllText configPath) |> function Ok c -> c.listen | Error _ -> "127.0.0.1:8765") token
+                        let dir = Path.GetDirectoryName clientConfigPath
+                        let tmp = Path.Combine(dir, sprintf ".client.toml.tmp.%d" Environment.ProcessId)
+                        use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
+                        let bytes = Text.Encoding.UTF8.GetBytes text
+                        fs.Write(bytes, 0, bytes.Length)
+                        fs.Flush()
+                        File.Move(tmp, clientConfigPath, true)
+                        Ok()
                     with e ->
                         Error e.Message
+                let readClientToken () =
+                    if not (File.Exists clientConfigPath) then None
+                    else
+                        try
+                            File.ReadAllLines clientConfigPath
+                            |> Array.tryPick (fun line ->
+                                let t = line.Trim()
+                                if t.StartsWith "token" then
+                                    let v = t.Substring(t.IndexOf '=' + 1).Trim().Trim('"')
+                                    if String.IsNullOrWhiteSpace v then None else Some v
+                                else None)
+                        with _ -> None
+                let result =
+                    // 首次启动 TOML 不存在：先生成完整默认 TOML（决策 182，原子路径）
+                    let ensureConfig () =
+                        if File.Exists configPath then Ok()
+                        else
+                            match Wanxiang.Config.ConfigStore.Open(configPath, ignore, ignore) with
+                            | Ok cs ->
+                                (cs :> IDisposable).Dispose()
+                                Ok()
+                            | Error e -> Error e
+                    match ensureConfig () with
+                    | Error e -> Error e
+                    | Ok () ->
+                        match Wanxiang.Config.ConfigStore.Open(configPath, ignore, ignore) with
+                        | Error e -> Error e
+                        | Ok cs ->
+                            let cfg = cs.Current
+                            let existingToken = readClientToken ()
+                            let tokenValid =
+                                existingToken
+                                |> Option.exists (fun tok ->
+                                    cfg.authClients
+                                    |> List.exists (fun c -> c.tokenHash = Wanxiang.Config.Auth.hashToken tok && not c.revoked))
+                            let outcome =
+                                if tokenValid then
+                                    Ok()
+                                else
+                                    let token = Wanxiang.Config.Auth.generateToken ()
+                                    let hash = Wanxiang.Config.Auth.hashToken token
+                                    let newCfg =
+                                        { cfg with
+                                            authClients =
+                                                { tokenHash = hash
+                                                  name = "wanxiang-desktop"
+                                                  createdAtUtc = DateTimeOffset.UtcNow
+                                                  lastSeenUtc = None
+                                                  revoked = false }
+                                                :: cfg.authClients }
+                                    match cs.Rewrite newCfg with
+                                    | Ok () -> writeClientConfig token
+                                    | Error e -> Error e
+                            (cs :> IDisposable).Dispose()
+                            outcome
                 match result with
                 | Ok () -> ()
                 | Error e -> logInfo(sprintf "desktop auto-pairing skipped: %s" e)

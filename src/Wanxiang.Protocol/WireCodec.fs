@@ -94,6 +94,8 @@ module WireCodec =
             p["lastCommitId"] <- d.lastCommitId
             p["runtimeState"] <- d.runtimeState
             p["messages"] <- d.messages.DeepClone()
+            p["snapshotEarliestCommitId"] <- d.snapshotEarliestCommitId
+            p["snapshotHasMore"] <- d.snapshotHasMore
         | ConversationUpdated d ->
             putGuid p "conversationId" d.conversationId
             p["commitId"] <- d.commitId
@@ -102,6 +104,15 @@ module WireCodec =
             putGuid p "conversationId" d.conversationId
             p["commitId"] <- d.commitId
             p["payload"] <- d.payload.DeepClone()
+        | HistoryRequest d ->
+            putGuid p "conversationId" d.conversationId
+            p["beforeCommitId"] <- d.beforeCommitId
+            p["limit"] <- d.limit
+        | HistoryPage d ->
+            putGuid p "conversationId" d.conversationId
+            p["beforeCommitId"] <- d.beforeCommitId
+            p["items"] <- d.items.DeepClone()
+            p["hasMore"] <- d.hasMore
         | Command _ -> failwith "Command 事件使用 encodeCommand"
         | CommandAccepted d -> putGuid p "invocationId" d.invocationId
         | CommandCommitted d ->
@@ -334,7 +345,11 @@ module WireCodec =
                     match tryGuid p "conversationId" with
                     | Some cid ->
                         let msgs = match tryGet p "messages" with Some (:? JsonArray as a) -> a | _ -> JsonArray()
-                        Ok(ConversationSnapshot {| conversationId = cid; title = tryString p "title" |> Option.defaultValue ""; lastCommitId = tryUInt64 p "lastCommitId" |> Option.defaultValue 0UL; runtimeState = tryString p "runtimeState" |> Option.defaultValue "idle"; messages = msgs |})
+                        let hasMore =
+                            match tryGet p "snapshotHasMore" with
+                            | Some v when v.GetValueKind() = JsonValueKind.True -> true
+                            | _ -> false
+                        Ok(ConversationSnapshot {| conversationId = cid; title = tryString p "title" |> Option.defaultValue ""; lastCommitId = tryUInt64 p "lastCommitId" |> Option.defaultValue 0UL; runtimeState = tryString p "runtimeState" |> Option.defaultValue "idle"; messages = msgs; snapshotEarliestCommitId = tryUInt64 p "snapshotEarliestCommitId" |> Option.defaultValue 0UL; snapshotHasMore = hasMore |})
                     | None -> Error "conversation.snapshot: missing conversationId"
                 | Some "conversation.updated" ->
                     match tryGuid p "conversationId" with
@@ -349,6 +364,21 @@ module WireCodec =
                         | Some payload -> Ok(MessageCommitted {| conversationId = cid; commitId = tryUInt64 p "commitId" |> Option.defaultValue 0UL; payload = payload |})
                         | None -> Error "conversation.message-committed: missing payload"
                     | None -> Error "conversation.message-committed: missing conversationId"
+                | Some "history.request" ->
+                    match tryGuid p "conversationId" with
+                    | Some cid ->
+                        Ok(HistoryRequest {| conversationId = cid; beforeCommitId = tryUInt64 p "beforeCommitId" |> Option.defaultValue 0UL; limit = tryInt p "limit" |> Option.defaultValue 100 |})
+                    | None -> Error "history.request: missing conversationId"
+                | Some "history.page" ->
+                    match tryGuid p "conversationId" with
+                    | Some cid ->
+                        let items = match tryGet p "items" with Some (:? JsonArray as a) -> a | _ -> JsonArray()
+                        let hasMore =
+                            match tryGet p "hasMore" with
+                            | Some v when v.GetValueKind() = JsonValueKind.True -> true
+                            | _ -> false
+                        Ok(HistoryPage {| conversationId = cid; beforeCommitId = tryUInt64 p "beforeCommitId" |> Option.defaultValue 0UL; items = items; hasMore = hasMore |})
+                    | None -> Error "history.page: missing conversationId"
                 | Some "command.accepted" ->
                     match tryGuid p "invocationId" with Some inv -> Ok(CommandAccepted {| invocationId = inv |}) | None -> Error "command.accepted: missing invocationId"
                 | Some "command.committed" ->

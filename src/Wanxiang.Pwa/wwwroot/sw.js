@@ -1,12 +1,15 @@
 // Service Worker：只缓存版本化静态资源（决策 192），不缓存任何业务数据。
-const CACHE = "wanxiang-v1";
+// Q193/P1-3：不自动 skipWaiting；收到 SKIP_WAITING 消息（用户确认刷新）后才激活新版本。
+const CACHE = "wanxiang-v4";
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/", "/app.js", "/manifest.webmanifest"])));
-  self.skipWaiting();
 });
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))));
   self.clients.claim();
+});
+self.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);

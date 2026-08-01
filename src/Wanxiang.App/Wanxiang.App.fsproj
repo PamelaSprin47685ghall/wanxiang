@@ -11,6 +11,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="..\..\logo.png" Link="logo.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\Wanxiang.Pwa\wwwroot\**" Link="pwa\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
