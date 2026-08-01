@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="DataPaths.fs" />
+    <Compile Include="DataLock.fs" />
+    <Compile Include="NdjsonWriter.fs" />
+    <Compile Include="Replay.fs" />
+    <Compile Include="CommitCoordinator.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
+  </ItemGroup>
+
+</Project>

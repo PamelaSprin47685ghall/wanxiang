@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>万象 · wanxiang</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <style>
+    :root {
+      --bg: #f7f7f8; --panel: #ffffff; --border: #e4e4e7; --text: #18181b; --muted: #71717a;
+      --accent: #6d5df6; --accent-soft: #ece9fe; --user-bubble: #6d5df6; --user-text: #ffffff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #18181b; --panel: #27272a; --border: #3f3f46; --text: #fafafa; --muted: #a1a1aa; --accent-soft: #2e2a4a; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; }
+    #login { display: none; margin: auto; width: 380px; max-width: 94vw; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; flex-direction: column; gap: 12px; }
+    #login.visible { display: flex; }
+    #main { display: none; flex: 1; min-width: 0; }
+    #main.visible { display: flex; }
+    input, button { font: inherit; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+    button { cursor: pointer; background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.secondary { background: transparent; color: var(--text); }
+    h1 { font-size: 18px; margin: 0; }
+    .muted { color: var(--muted); font-size: 13px; }
+    #sidebar { width: 260px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--panel); }
+    #sidebar header { padding: 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    #conv-list { flex: 1; overflow-y: auto; }
+    .conv-item { padding: 10px 14px; cursor: pointer; border-bottom: 1px solid var(--border); }
+    .conv-item:hover { background: var(--accent-soft); }
+    .conv-item.active { background: var(--accent-soft); }
+    .conv-item .title { font-weight: 500; }
+    .conv-item .meta { font-size: 12px; color: var(--muted); }
+    #chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    #chat header { padding: 12px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; background: var(--panel); }
+    #messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+    .msg { max-width: 78%; padding: 10px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; }
+    .msg.user { align-self: flex-end; background: var(--user-bubble); color: var(--user-text); border: none; }
+    .msg.tool { align-self: center; font-size: 12px; color: var(--muted); background: var(--accent-soft); border: none; max-width: 90%; }
+    .msg .role { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .msg.user .role { color: rgba(255,255,255,0.8); }
+    .msg.streaming { border-style: dashed; }
+    #input-bar { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: var(--panel); }
+    #input { flex: 1; }
+    #status { font-size: 12px; color: var(--muted); }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .dot.on { background: #22c55e; }
+    .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #3f3f46; color: #fff; padding: 10px 16px; border-radius: 8px; z-index: 10; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="login">
+    <h1>万象</h1>
+    <label class="muted">服务器地址（wss://host/ws 或 ws://127.0.0.1:8765/ws）</label>
+    <input id="server-url" placeholder="ws://127.0.0.1:8765/ws" />
+    <label class="muted">访问令牌（首次使用可留空并请求配对）</label>
+    <input id="server-token" placeholder="wanxiang_client_..." type="password" />
+    <button id="btn-connect">连接</button>
+    <button id="btn-pair" class="secondary">首次使用：请求配对码</button>
+    <div id="pair-box" style="display:none; flex-direction:column; gap:8px;">
+      <label class="muted">在服务器终端（stderr）查看 6 位配对码</label>
+      <input id="pair-code" placeholder="000000" maxlength="6" />
+      <button id="btn-pair-submit">提交配对码</button>
+    </div>
+    <div id="login-status" class="muted"></div>
+  </div>
+
+  <div id="main">
+    <aside id="sidebar">
+      <header><h1>万象</h1><button id="btn-new" title="新建会话">＋</button></header>
+      <div id="conv-list"></div>
+      <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;">
+        <span class="dot" id="conn-dot"></span><span id="status" class="muted">未连接</span>
+      </div>
+    </aside>
+    <section id="chat">
+      <header>
+        <span id="conv-title" style="font-weight:600;">选择一个会话</span>
+        <span id="gen-status" class="muted"></span>
+        <button id="btn-cancel" class="secondary">取消生成</button>
+        <button id="btn-fork" class="secondary">编辑并 fork</button>
+      </header>
+      <div id="messages"></div>
+      <div id="input-bar">
+        <input id="input" placeholder="输入消息…" disabled />
+        <button id="btn-send" disabled>发送</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

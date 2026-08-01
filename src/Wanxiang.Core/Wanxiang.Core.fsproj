@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="CanonicalJson.fs" />
+    <Compile Include="CommandId.fs" />
+    <Compile Include="SessionConfig.fs" />
+    <Compile Include="Events.fs" />
+    <Compile Include="CommitCodec.fs" />
+    <Compile Include="Projection.fs" />
+    <Compile Include="WireCommands.fs" />
+    <Compile Include="CommandEngine.fs" />
+  </ItemGroup>
+
+</Project>

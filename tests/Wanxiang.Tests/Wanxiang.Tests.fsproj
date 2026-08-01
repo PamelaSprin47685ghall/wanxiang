@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Helpers.fs" />
+    <Compile Include="ReplayTests.fs" />
+    <Compile Include="CoordinatorTests.fs" />
+    <Compile Include="CatchUpSafetyTests.fs" />
+    <Compile Include="ForkTests.fs" />
+    <Compile Include="SessionAndForkTests.fs" />
+    <Compile Include="ServerE2eTests.fs" />
+    <Compile Include="ConfigTests.fs" />
+    <Compile Include="AttachmentTests.fs" />
+    <Compile Include="CodecTests.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Wanxiang.Core\Wanxiang.Core.fsproj" />
+    <ProjectReference Include="..\..\src\Wanxiang.Store\Wanxiang.Store.fsproj" />
+    <ProjectReference Include="..\..\src\Wanxiang.Config\Wanxiang.Config.fsproj" />
+    <ProjectReference Include="..\..\src\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
+    <ProjectReference Include="..\..\src\Wanxiang.Server\Wanxiang.Server.fsproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,9 @@
+{
+  "name": "万象 wanxiang",
+  "short_name": "万象",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f7f8",
+  "theme_color": "#6d5df6",
+  "icons": []
+}

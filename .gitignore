@@ -1,0 +1,76 @@
+# Local reference repositories (not part of the clean-room implementation)
+/Avalonia/
+/agent-framework/
+/kelivo/
+
+# Local .NET and NuGet state
+/.dotnet-home/
+/.nuget/
+
+# Scratch and temporary files
+/.scratch/
+/tmp/
+/temp/
+*.tmp
+*.bak
+*.swp
+*~
+
+# .NET build, test, package, and publish output
+**/bin/
+**/obj/
+**/TestResults/
+**/BenchmarkDotNet.Artifacts/
+/artifacts/
+/publish/
+/coverage/
+coverage.*
+*.coverage
+*.coveragexml
+*.nupkg
+*.snupkg
+
+# IDE and editor state
+/.vs/
+/.idea/
+/.vscode/
+*.suo
+*.user
+*.userosscache
+*.userprefs
+*.sln.docstates
+*.DotSettings.user
+_ReSharper*/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.local
+*.local.*
+/secrets/
+*.secrets.*
+appsettings.Local.json
+appsettings.*.local.json
+wanxiang.toml
+wanxiang.local.toml
+config.local.toml
+
+# Keys and certificates
+*.pem
+*.key
+*.pfx
+*.p12
+*.jks
+*.keystore
+
+# Runtime data (may contain user content)
+/data/
+/logs/
+/attachments/
+/snapshots/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

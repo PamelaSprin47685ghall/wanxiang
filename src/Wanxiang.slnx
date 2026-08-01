@@ -1,0 +1,11 @@
+<Solution>
+  <Project Path="../tests/Wanxiang.Tests/Wanxiang.Tests.fsproj" />
+  <Project Path="Wanxiang.Agent/Wanxiang.Agent.fsproj" />
+  <Project Path="Wanxiang.App/Wanxiang.App.fsproj" />
+  <Project Path="Wanxiang.Client/Wanxiang.Client.fsproj" />
+  <Project Path="Wanxiang.Config/Wanxiang.Config.fsproj" />
+  <Project Path="Wanxiang.Core/Wanxiang.Core.fsproj" />
+  <Project Path="Wanxiang.Protocol/Wanxiang.Protocol.fsproj" />
+  <Project Path="Wanxiang.Server/Wanxiang.Server.fsproj" />
+  <Project Path="Wanxiang.Store/Wanxiang.Store.fsproj" />
+</Solution>

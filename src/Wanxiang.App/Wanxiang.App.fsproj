@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>wanxiang</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\Wanxiang.Pwa\wwwroot\**" Link="pwa\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Store\Wanxiang.Store.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Config\Wanxiang.Config.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Server\Wanxiang.Server.fsproj" />
+    <ProjectReference Include="..\Wanxiang.UI\Wanxiang.UI.fsproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Stderr.fs" />
+    <Compile Include="ServerModel.fs" />
+    <Compile Include="AttachmentStore.fs" />
+    <Compile Include="ToolRegistry.fs" />
+    <Compile Include="ChatOrchestrator.fs" />
+    <Compile Include="WsConnection.fs" />
+    <Compile Include="ServerApp.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Store\Wanxiang.Store.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Config\Wanxiang.Config.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
+  </ItemGroup>
+
+</Project>

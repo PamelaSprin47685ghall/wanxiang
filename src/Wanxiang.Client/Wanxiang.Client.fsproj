@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="WsClient.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
+  </ItemGroup>
+
+</Project>
