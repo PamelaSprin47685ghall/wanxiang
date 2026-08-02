@@ -1,11 +1,65 @@
+/* ============================================================
+ * wanxiang PWA · 设计语言：Material You 靛蓝，clean-room 独立实现
+ * 配色已固定（在 Theme.fs），这里只做排版/动效/滚动条/焦点态打磨
+ * ============================================================ */
+
+:root {
+    /* 字体栈：桌面端优先系统字体，PWA 端走 Sarasa Term SC（已在 .fsproj 内嵌）。
+       渲染中文时统一使用 PingFang / Microsoft YaHei 的 fallback，保证两端字形一致。 */
+    --wx-font:
+        "Sarasa Term SC", "PingFang SC", "Microsoft YaHei",
+        -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --wx-mono:
+        ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+    /* 节奏：4 的倍数 */
+    --wx-r-sm: 6px;
+    --wx-r-md: 10px;
+    --wx-r-lg: 16px;
+    --wx-r-pill: 999px;
+
+    /* 极细描边（在 #FFFFFF 浅面板上比 1px 实线更柔和） */
+    --wx-hairline: 1px solid rgba(227, 227, 236, 0.7);
+}
+
 html, body {
     margin: 0;
     padding: 0;
     height: 100%;
     overflow: hidden;
-    background: #f6f6f9;
+    background: #F6F6F9;
+    color: #1A1B21;
+    font-family: var(--wx-font);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
 }
 
+/* 在 WASM 启动前隐藏刚出现的滚动条带来的闪烁 */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.22);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* ============================================================
+ * 启动画面：径向渐变 + 慢呼吸 + 进度条，与右上角的"加载中"读数同步
+ * ============================================================ */
 .splash {
     position: fixed;
     inset: 0;
@@ -13,37 +67,102 @@ html, body {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 14px;
-    background: #f6f6f9;
+    gap: 18px;
+    background:
+        radial-gradient(60% 50% at 50% 38%, #FFFFFF 0%, #F6F6F9 70%),
+        #F6F6F9;
+    animation: splashFade 720ms ease-out both;
+}
+
+@keyframes splashFade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
 }
 
 .splash-logo {
-    width: 72px;
-    height: 72px;
-    border-radius: 20px;
+    width: 76px;
+    height: 76px;
+    border-radius: 22px;
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.9) inset,
+        0 12px 32px -8px rgba(77, 92, 146, 0.28),
+        0 2px 6px rgba(0, 0, 0, 0.04);
+    animation: splashBob 2400ms ease-in-out infinite;
+}
+
+@keyframes splashBob {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-3px); }
 }
 
 .splash-title {
-    font-size: 17px;
+    font-size: 18px;
     font-weight: 600;
-    color: #1c1b1f;
+    color: #1A1B21;
+    letter-spacing: 0.2px;
 }
 
 .splash-sub {
-    font-size: 13px;
-    color: #8b8a90;
+    font-size: 12.5px;
+    color: #8B8C98;
+    margin-top: 2px;
 }
 
+/* 启动画面底部进度条：单方向扫光的细线，表达"WASM 正在加载"的真实状态 */
+.splash-bar {
+    margin-top: 14px;
+    width: 168px;
+    height: 3px;
+    border-radius: 999px;
+    background: rgba(77, 92, 146, 0.12);
+    overflow: hidden;
+    position: relative;
+}
+.splash-bar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 40%;
+    background: linear-gradient(90deg, transparent, #4D5C92, transparent);
+    border-radius: 999px;
+    animation: splashSweep 1200ms ease-in-out infinite;
+}
+@keyframes splashSweep {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+}
+
+/* ============================================================
+ * Toast（服务工作者更新提示）：浅色变体 + 进度环
+ * ============================================================ */
 .toast {
     position: fixed;
     right: 16px;
     bottom: 16px;
     z-index: 9999;
     padding: 10px 16px;
-    border-radius: 10px;
-    background: #4d5c92;
-    color: #fff;
+    border-radius: 12px;
+    background: #4D5C92;
+    color: #FFFFFF;
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.15) inset,
+        0 8px 24px -6px rgba(77, 92, 146, 0.45),
+        0 2px 4px rgba(0, 0, 0, 0.08);
+    transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.toast:hover {
+    transform: translateY(-1px);
+}
+.toast:active {
+    transform: translateY(0);
+}
+
+/* PWA 端通用 focus 环（兼容键盘 / 鼠标 —— 鼠标点击后立即移除） */
+*:focus-visible {
+    outline: 2px solid #4D5C92;
+    outline-offset: 2px;
+    border-radius: 4px;
 }

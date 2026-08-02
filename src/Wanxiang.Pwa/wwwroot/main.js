@@ -94,10 +94,16 @@ const dotnetRuntime = await dotnet
 dotnetRuntime.setModuleImports("wanxiang", { credList, credPut, credDelete, pageUrl });
 
 const config = dotnetRuntime.getConfig();
-// Avalonia 向 #out 追加 canvas 而不清空既有内容：首个 canvas 出现后移除启动画面
+// Avalonia 向 #out 追加 canvas 而不清空既有内容：首个 canvas 出现后给启动画面一层淡出再移除
 new MutationObserver((_, obs) => {
     if (document.querySelector("#out canvas")) {
-        document.querySelector(".splash")?.remove();
+        const splash = document.querySelector(".splash");
+        if (splash) {
+            splash.style.transition = "opacity 220ms ease, transform 220ms ease";
+            splash.style.opacity = "0";
+            splash.style.transform = "scale(0.98)";
+            setTimeout(() => splash.remove(), 240);
+        }
         obs.disconnect();
     }
 }).observe(document.getElementById("out"), { childList: true });
