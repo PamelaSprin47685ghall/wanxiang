@@ -97,4 +97,6 @@ module Auth =
                     false)
 
         member _.Clear(address: string) : unit =
-            lock lockObj (fun () -> failures.Remove address |> ignore)
+            lock lockObj (fun () ->
+                failures.Remove address |> ignore
+                frozenUntil.Remove address |> ignore)

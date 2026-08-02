@@ -119,13 +119,60 @@ let ``command id idempotency and conversation id collision`` () =
         // 同 invocationId + 同载荷 → 幂等命中（网络重试，决策 13/37）
         let cmd3 = CreateConversation {| invocationId = invId; conversationId = convId; title = "A"; config = testConfig () |}
         match CommandEngine.plan coord.Projection 1UL cmd3 with
-        | IdempotentReplay cid -> Assert.Equal(1UL, cid)
+        | PlanResult.IdempotentReplay cid -> Assert.Equal(1UL, cid)
         | r -> failwithf "expected idempotent replay, got %A" r
         // 不同 invocationId + 同 conversationId → 正常拒绝（id 已占用）
         let cmd2 = CreateConversation {| invocationId = Guid.NewGuid(); conversationId = convId; title = "B"; config = testConfig () |}
         match CommandEngine.plan coord.Projection 1UL cmd2 with
         | Rejected (ConversationIdTaken _) -> ()
         | r -> failwithf "expected conversation id taken, got %A" r
+        coord.Shutdown()
+    finally
+        cleanup dir
+
+/// 决策 81：fork 配置由父会话投影继承，客户端可发空 config（不再校验 isValid）；
+/// 且 config 不参与 canonical/commandId（同内容重试幂等，config 变化不影响）。
+[<Fact>]
+let ``fork with empty config succeeds and is idempotent`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        let convId = newConversationId ()
+        let emptyCfg = { provider = ""; model = ""; instructions = None; tools = []; temperature = None; maxTokens = None; extraJson = None }
+        // 父会话 + 一条消息
+        coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "P"; config = testConfig () } ] |> ignore
+        coord.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m1" } ] |> ignore
+        let forkId = newConversationId ()
+        let invId = Guid.NewGuid()
+        // 空 config 的 fork 应能 plan（不再被 isValid 拒绝）
+        let forkCmd =
+            ForkConversation {| invocationId = invId; conversationId = forkId; parentConversationId = convId; forkAfterId = Some 2UL; config = emptyCfg; editedMessageJson = userMessageJson "编辑" |}
+        match CommandEngine.plan coord.Projection 2UL forkCmd with
+        | Planned p ->
+            let submit = { events = p.events; commandId = Some p.commandId; commandType = Some p.commandType; commandHash = Some p.canonicalHash; nowUtc = None }
+            match coord.Submit submit with
+            | Committed _ -> ()
+            | r -> failwithf "fork with empty config should commit, got %A" r
+        | r -> failwithf "fork with empty config should plan, got %A" r
+        // 重试（同 invocationId + 同内容，config 空）→ 幂等
+        match CommandEngine.plan coord.Projection 3UL forkCmd with
+        | PlanResult.IdempotentReplay _ -> ()
+        | r -> failwithf "fork retry should be idempotent, got %A" r
+        // config 不参与 fork 的 commandId：同 invocationId 但 config 不同 → 仍幂等（非冲突）
+        let forkCmdDiffCfg =
+            ForkConversation {| invocationId = invId; conversationId = forkId; parentConversationId = convId; forkAfterId = Some 2UL; config = { emptyCfg with provider = "other" }; editedMessageJson = userMessageJson "编辑" |}
+        match CommandEngine.plan coord.Projection 3UL forkCmdDiffCfg with
+        | PlanResult.IdempotentReplay _ -> ()
+        | r -> failwithf "fork retry with different config should still be idempotent, got %A" r
+        // fork 投影继承了父会话 config（testConfig：provider=openai, model=test-model）
+        let proj = coord.Projection
+        match Projection.tryConversation proj forkId with
+        | Some fc ->
+            Assert.Equal("openai", fc.config.provider)
+            Assert.Equal("test-model", fc.config.model)
+        | None -> failwith "fork conversation missing"
         coord.Shutdown()
     finally
         cleanup dir

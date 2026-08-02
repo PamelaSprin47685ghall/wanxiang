@@ -76,9 +76,9 @@ module CommandEngine =
                 | r -> r
 
         | ForkConversation d ->
-            if not (SessionConfig.isValid d.config) then
-                Rejected(ValidationError "invalid session config")
-            elif Projection.tryConversation proj d.conversationId |> Option.isSome then
+            // fork 继承父会话配置（决策 81 第二问：投影用 parent.config），
+            // 客户端无需提供有效 config——移除 isValid 校验（空/过时 config 不影响 fork）
+            if Projection.tryConversation proj d.conversationId |> Option.isSome then
                 Rejected(ConversationIdTaken d.conversationId)
             else
                 match convOrErr proj d.parentConversationId with

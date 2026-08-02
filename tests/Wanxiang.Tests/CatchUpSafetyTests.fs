@@ -70,3 +70,32 @@ let ``concurrent submits keep ids strictly contiguous`` () =
         coord.Shutdown()
     finally
         cleanup dir
+
+/// CommitsAfter 二分定位：游标后提交必须按 id 升序完整返回（性能优化后正确性回归）。
+[<Fact>]
+let ``CommitsAfter returns commits after cursor in ascending order`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        let convId = newConversationId ()
+        coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
+        for i in 1..5 do
+            coord.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson (sprintf "m%d" i) } ] |> ignore
+        // 全部 6 条提交（id 1..6）
+        Assert.Equal(6UL, coord.Projection.latestCommitId)
+        // 游标 0 → 全部
+        let all = coord.CommitsAfter 0UL
+        Assert.Equal(6, all.Length)
+        Assert.Equal<CommitId>([ 1UL; 2UL; 3UL; 4UL; 5UL; 6UL ], all |> List.map (fun c -> c.id))
+        // 游标 2 → 3..6
+        let after2 = coord.CommitsAfter 2UL
+        Assert.Equal<CommitId>([ 3UL; 4UL; 5UL; 6UL ], after2 |> List.map (fun c -> c.id))
+        // 游标 6 → 空
+        Assert.Empty(coord.CommitsAfter 6UL)
+        // 游标 100（超过最新）→ 空
+        Assert.Empty(coord.CommitsAfter 100UL)
+        coord.Shutdown()
+    finally
+        cleanup dir

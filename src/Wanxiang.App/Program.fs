@@ -4,6 +4,7 @@ open System
 open System.IO
 open System.Net
 open System.Net.Sockets
+open System.Runtime.InteropServices
 open System.Threading
 open System.Threading.Tasks
 open Wanxiang.Config
@@ -169,13 +170,8 @@ module Doctor =
 
 module Program =
 
-    let logInfo (msg: string) =
-        let o = System.Text.Json.Nodes.JsonObject()
-        o["level"] <- "info"
-        o["event"] <- "info"
-        o["utc"] <- DateTimeOffset.UtcNow.ToString("o")
-        o["message"] <- msg
-        eprintfn "%s" (o.ToJsonString())
+    /// info 日志统一走 Wanxiang.Server.Stderr（结构化 JSON Lines + 已知密钥脱敏，决策 41/198）。
+    let logInfo (msg: string) = Wanxiang.Server.Stderr.info msg
 
     [<EntryPoint; STAThread>]
     let main argv =
@@ -207,32 +203,62 @@ module Program =
                 // 0000：只读 doctor；0001：doctor + 修复（决策 51）
                 if switches.fix then
                     logInfo "doctor --fix: repairing log"
-                    match Replay.replay dataDir true with
-                    | Ok outcome ->
-                        for f in outcome.truncatedFiles do
-                            logInfo(sprintf "truncated %s" f)
+                    // 决策 105/Q110：任何可能修改 NDJSON 的修复必须在持锁后进行（与运行期写入互斥）
+                    match DataLock.Acquire dataDir with
                     | Error e ->
-                        eprintfn "fix failed: %s" e
+                        eprintfn "data directory locked: %s" e
                         exit 1
+                    | Ok lockHandle ->
+                        let result =
+                            match Replay.replay dataDir true with
+                            | Ok outcome ->
+                                for f in outcome.truncatedFiles do
+                                    logInfo(sprintf "truncated %s" f)
+                                Ok()
+                            | Error e -> Error e
+                        (lockHandle :> IDisposable).Dispose()
+                        match result with
+                        | Ok () -> ()
+                        | Error e ->
+                            eprintfn "fix failed: %s" e
+                            exit 1
                 let d = Doctor.run (configPath, dataDir)
                 Doctor.print d
                 exit 0
 
-            // 启动前先执行 doctor/fix（决策 51 第二问：先检查修复，再启动组件）
-            if switches.fix then
-                match Replay.replay dataDir true with
-                | Ok outcome ->
-                    for f in outcome.truncatedFiles do
-                        logInfo(sprintf "startup fix truncated %s" f)
-                | Error e ->
-                    eprintfn "fix failed: %s" e
-                    exit 1
-            else
-                match Replay.replay dataDir false with
-                | Ok _ -> ()
-                | Error e ->
-                    eprintfn "log damaged: %s (run with --fix to repair)" e
-                    exit 1
+            // 启动前先执行 doctor/fix（决策 51 第二问：先检查修复，再启动组件）。
+            // Q107：纯客户端（无 S）不检查本地数据目录状态，不被数据问题阻塞启动。
+            // 数据锁（决策 105/Q110）：任何可能修改 NDJSON 的修复必须在持锁后进行。
+            let startupReplayOutcome =
+                if not switches.server then
+                    None
+                else
+                    let lockHandle =
+                        match DataLock.Acquire dataDir with
+                        | Ok l -> Some l
+                        | Error e ->
+                            eprintfn "data directory locked: %s" e
+                            exit 1
+                    let outcome =
+                        if switches.fix then
+                            match Replay.replay dataDir true with
+                            | Ok o ->
+                                for f in o.truncatedFiles do
+                                    logInfo(sprintf "startup fix truncated %s" f)
+                                Some o
+                            | Error e ->
+                                eprintfn "fix failed: %s" e
+                                exit 1
+                        else
+                            match Replay.replay dataDir false with
+                            | Ok o -> Some o
+                            | Error e ->
+                                eprintfn "log damaged: %s (run with --fix to repair)" e
+                                exit 1
+                    match lockHandle with
+                    | Some l -> (l :> IDisposable).Dispose()
+                    | None -> ()
+                    outcome
 
             // 自动配对（决策 64 + Q190）：server+client 同进程时，本机桌面 Client 自动获得永久令牌。
             // - 服务端 TOML 只存哈希；客户端令牌原文保存到本机 client.toml（决策 54）；
@@ -247,6 +273,7 @@ module Program =
                         let dir = Path.GetDirectoryName clientConfigPath
                         let tmp = Path.Combine(dir, sprintf ".client.toml.tmp.%d" Environment.ProcessId)
                         use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
+                        try File.SetUnixFileMode(tmp, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
                         let bytes = Text.Encoding.UTF8.GetBytes text
                         fs.Write(bytes, 0, bytes.Length)
                         fs.Flush()
@@ -326,7 +353,7 @@ module Program =
                                 if Directory.Exists(Path.GetFullPath dev) then Some(Path.GetFullPath dev)
                                 else None
                         else None
-                    let app = Wanxiang.Server.ServerApp(dataDir, configPath, false, pwaDir, logInfo)
+                    let app = Wanxiang.Server.ServerApp(dataDir, configPath, false, pwaDir, logInfo, ?startupOutcome = startupReplayOutcome)
                     app.Start(switches.pwa)
                     Some app
                 else
@@ -345,25 +372,38 @@ module Program =
                 stopServer ()
                 code
             else
-                // 无 UI：服务器等待信号优雅关闭（决策 101/102）
+                // 无 UI：服务器等待信号优雅关闭（决策 101/102）。
+                // SIGTERM（kill 默认）与 SIGINT（Ctrl+C）都触发优雅关闭：第一次排空退出，第二次立即退出。
                 use cts = new CancellationTokenSource()
+                let signalLock = obj()
                 let mutable sigCount = 0
-                let handler = ConsoleCancelEventHandler(fun _ e ->
-                    sigCount <- sigCount + 1
-                    if sigCount >= 2 then
-                        e.Cancel <- false
-                        Environment.Exit 130
-                    else
-                        e.Cancel <- true
-                        logInfo "shutting down gracefully (send signal again to force)"
-                        stopServer ()
-                        cts.Cancel())
-                Console.CancelKeyPress.AddHandler handler
+                let shutdownOnce () =
+                    // 信号回调可能并发（SIGINT+SIGTERM 同时到达），锁内幂等计数
+                    lock signalLock (fun () ->
+                        sigCount <- sigCount + 1
+                        if sigCount >= 2 then
+                            Environment.Exit 130
+                        else
+                            logInfo "shutting down gracefully (send signal again to force)"
+                            stopServer ()
+                            cts.Cancel())
+                let ctrlHandler = ConsoleCancelEventHandler(fun _ e ->
+                    e.Cancel <- true
+                    shutdownOnce ())
+                Console.CancelKeyPress.AddHandler ctrlHandler
+                let sigterm =
+                    try
+                        Some(PosixSignalRegistration.Create(PosixSignal.SIGTERM, Action<PosixSignalContext>(fun ctx ->
+                            ctx.Cancel <- true
+                            shutdownOnce ())))
+                    with _ -> None
                 try
                     Task.Delay(Timeout.Infinite, cts.Token).Wait()
-                with :? AggregateException ->
-                    ()
+                with
+                | :? AggregateException -> ()
+                | :? OperationCanceledException -> ()
                 stopServer ()
+                match sigterm with Some r -> r.Dispose() | None -> ()
                 0
         with e ->
             eprintfn "wanxiang: %s" e.Message

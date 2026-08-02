@@ -24,11 +24,20 @@ module private E2e =
         let configPath = Path.Combine(dir, "config.toml")
         let mutable server: Wanxiang.Server.ServerApp option = None
         do
-            let instanceId = Guid.NewGuid()
+            let instanceId = Guid.CreateVersion7()
             let hash = Auth.hashToken token
             let cfg =
                 { AppConfig.defaults instanceId with
                     listen = sprintf "127.0.0.1:%d" port
+                    providers =
+                        Map.ofList
+                            [ "test-provider",
+                              { id = "test-provider"
+                                kind = "openai"
+                                baseUrl = "http://127.0.0.1:1/v1"
+                                apiKey = None
+                                model = "test-model"
+                                extraJson = None } ]
                     authClients =
                         [ { tokenHash = hash
                             name = "e2e-test"
@@ -216,6 +225,7 @@ let ``e2e observe advance cursor then enqueue gets response and push`` () =
     finally
         cleanup dir
 
+[<Fact>]
 let ``e2e history paging slices by commit id`` () =
     let port = pickPort ()
     let token = Auth.generateToken ()
@@ -411,5 +421,76 @@ let ``e2e stale client write command is rejected`` () =
         Assert.Equal("stale-projection", code)
         ws.Dispose()
         ws2.Dispose()
+    finally
+        handle.Dispose()
+
+/// 默认会话配置注入：客户端发空 config 创建会话，服务端用 TOML 第一个 provider 填充（不硬编码）。
+[<Fact>]
+let ``e2e empty session config is filled from toml default provider`` () =
+    let port = pickPort ()
+    let token = Auth.generateToken ()
+    let handle = E2e.ServerHandle(port, token)
+    try
+        use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
+        let ws = E2e.conn port token cts.Token
+        E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
+        // 推进游标（快照后）
+        let obs = JsonObject()
+        obs["type"] <- "conversation-list.observe"
+        E2e.send ws obs cts.Token
+        let listSnap = E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "conversation-list.snapshot")
+        let listPayload = listSnap["payload"].AsObject()
+        let lastCommit = listPayload["lastCommitId"].GetValue<uint64>()
+        let adv = JsonObject()
+        adv["type"] <- "cursor.advanced"
+        let ap = JsonObject()
+        ap["id"] <- lastCommit
+        adv["payload"] <- ap
+        E2e.send ws adv cts.Token
+        // 发空 config 创建会话
+        let convId = Guid.NewGuid()
+        let create = JsonObject()
+        create["type"] <- "conversation.create"
+        let cp = JsonObject()
+        cp["invocationId"] <- Guid.NewGuid().ToString("D")
+        cp["conversationId"] <- convId.ToString("D")
+        cp["title"] <- "默认配置"
+        cp["config"] <- JsonNode.Parse("""{"provider":"","model":""}""")
+        create["payload"] <- cp
+        E2e.send ws create cts.Token
+        let resp = E2e.waitFor ws cts.Token (fun o ->
+            let t = o["type"].GetValue<string>()
+            t = "command.committed" || t = "command.rejected")
+        Assert.Equal("command.committed", resp["type"].GetValue<string>())
+        // observe 该会话并验证 config 已被服务端填充为 test-provider/test-model
+        let ob = JsonObject()
+        ob["type"] <- "conversation.observe"
+        let op = JsonObject()
+        op["conversationId"] <- convId.ToString("D")
+        ob["payload"] <- op
+        E2e.send ws ob cts.Token
+        let snap = E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "conversation.snapshot")
+        // 会话列表摘要带 config（ServerModel.conversationListItems）
+        let listObs = JsonObject()
+        listObs["type"] <- "conversation-list.observe"
+        E2e.send ws listObs cts.Token
+        let snap2 = E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "conversation-list.snapshot")
+        let snapPayload2 = snap2["payload"].AsObject()
+        let itemsNode = snapPayload2["items"]
+        let items = itemsNode.AsArray()
+        let found =
+            items
+            |> Seq.tryFind (fun i ->
+                let io = i.AsObject()
+                let cidNode = io["conversationId"]
+                cidNode.GetValue<string>() = convId.ToString("D"))
+        match found with
+        | Some item ->
+            let io = item.AsObject()
+            let cfg = io["config"].AsObject()
+            Assert.Equal("test-provider", cfg["provider"].GetValue<string>())
+            Assert.Equal("test-model", cfg["model"].GetValue<string>())
+        | None -> failwith "created conversation not in list"
+        ws.Dispose()
     finally
         handle.Dispose()

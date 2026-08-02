@@ -13,8 +13,6 @@ open Wanxiang.Core
 open Wanxiang.Protocol
 open Wanxiang.Store
 
-/// 临时诊断输出（定位后删除）。
-
 /// 命令执行结果（由 ServerApp 注入的 executeCommand 产生）。
 type CommandExecutionResult =
     /// SendUserMessage：已入队（等待插入点提交）
@@ -25,6 +23,13 @@ type CommandExecutionResult =
     | CommandIdempotent of commitId: CommitId
     | CommandFailed of WanxiangError
 
+/// 握手状态机（决策 55/69/70）：握手先于认证；认证前只接受认证/配对事件。
+/// 未收到 Hello 或认证完成前收到业务事件 → 视为协议违规关闭。
+type HandshakeState =
+    | NotStarted
+    | HelloSeen
+    | Authenticated
+
 /// 连接状态与处理循环。
 /// 遵循：
 /// - fire-and-forget 对称事件协议（决策 25）；
@@ -33,6 +38,7 @@ type CommandExecutionResult =
 /// - 写权限由命令涉及投影水位判断（决策 35/38）；
 /// - 观察关系绑定连接，断线自动释放（决策 28）。
 type WsConnection(
+    connectionId: int,
     ws: WebSocket,
     remoteAddress: string,
     getProjection: unit -> Projection,
@@ -49,14 +55,13 @@ type WsConnection(
 
     let channelOptions = BoundedChannelOptions(2048, FullMode = BoundedChannelFullMode.Wait)
     let sendChannel = Channel.CreateBounded<WireEvent>(channelOptions)
-    let mutable authenticated = false
+    let mutable handshakeState: HandshakeState = NotStarted
     let mutable tokenHash: string option = None
     let mutable observedList = false
     let mutable observedConversations: Set<Guid> = Set.empty
     /// 游标/快照状态跨线程读写保护（P3-1：recvTask 与 catch-up Task 并发）。
     let cursorLock = obj()
     let mutable appliedCursor: CommitId = 0UL
-    let mutable advertisedCursor: CommitId = 0UL
     let mutable awaitingCursor: CommitId option = None
     let mutable snapshotMode = false
     let mutable closed = false
@@ -71,19 +76,28 @@ type WsConnection(
         let ok = sendChannel.Writer.TryWrite ev
         ok
 
-    member _.IsAuthenticated = authenticated
-    member _.TokenHash = tokenHash
-    member _.Observes(convId: Guid) : bool = observedConversations.Contains convId
-    member _.ObservesList = observedList
+    member _.IsAuthenticated =
+        match lock cursorLock (fun () -> handshakeState) with
+        | Authenticated -> true
+        | _ -> false
+    member _.TokenHash = lock cursorLock (fun () -> tokenHash)
+    member _.Observes(convId: Guid) : bool = lock cursorLock (fun () -> observedConversations.Contains convId)
+    member _.ObservesList = lock cursorLock (fun () -> observedList)
     member _.AppliedCursor = lock cursorLock (fun () -> appliedCursor)
     member _.IsInSnapshotMode = lock cursorLock (fun () -> snapshotMode)
 
     /// 强制关闭（令牌吊销时调用，决策 58）。
     member _.ForceClose() : unit =
-        closed <- true
+        lock cursorLock (fun () -> closed <- true)
         try
             if ws.State = WebSocketState.Open then
-                ws.CloseAsync(WebSocketCloseStatus.PolicyViolation, "token revoked", CancellationToken.None).GetAwaiter().GetResult()
+                // 异步关闭不阻塞调用线程（令牌吊销路径在 config reload 线程，避免同步阻塞/线程池饥饿）；
+                // ContinueWith 观察异常，避免 unobserved task exception
+                ws.CloseAsync(WebSocketCloseStatus.PolicyViolation, "token revoked", CancellationToken.None)
+                    .ContinueWith((fun (t: System.Threading.Tasks.Task) -> t.Exception |> ignore), System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted)
+                    |> ignore
+                // 与 CloseWith 一致：Abort 解除 recvTask 阻塞，断线清理及时执行（吊销路径）
+                ws.Abort()
         with _ -> ()
 
     /// 是否应接收某会话的权威增量（快照模式下跳过）。
@@ -139,6 +153,10 @@ type WsConnection(
                                 doneCatchUp <- true
                             else
                                 // 过滤：只保留观察范围内 commit 的对应事件（列表观察者接收全部列表相关事件）
+                                // 观察集合可能被 recvTask 的 HandleEvent 并发修改（Observe/Unobserve），
+                                // 此处 Task.Run 线程读，需经 cursorLock 取快照（可见性一致）
+                                let observedSet, listObserved =
+                                    lock cursorLock (fun () -> observedConversations, observedList)
                                 let items = JsonArray()
                                 let mutable lastItemId = 0UL
                                 for commit in batch do
@@ -146,13 +164,13 @@ type WsConnection(
                                         commit.events
                                         |> List.exists (fun ev ->
                                             match ev with
-                                            | AgentMessageRecorded d -> observedConversations.Contains d.conversationId
-                                            | MessageDeleted d -> observedConversations.Contains d.conversationId
-                                            | ConversationCreated d -> observedList || observedConversations.Contains d.conversationId
-                                            | ConversationForked d -> observedList || observedConversations.Contains d.conversationId
-                                            | ConversationRenamed d -> observedList || observedConversations.Contains d.conversationId
-                                            | EventData.ConversationDeleted d -> observedList || observedConversations.Contains d.conversationId
-                                            | ConversationConfigUpdated d -> observedList || observedConversations.Contains d.conversationId)
+                                            | AgentMessageRecorded d -> observedSet.Contains d.conversationId
+                                            | MessageDeleted d -> observedSet.Contains d.conversationId
+                                            | ConversationCreated d -> listObserved || observedSet.Contains d.conversationId
+                                            | ConversationForked d -> listObserved || observedSet.Contains d.conversationId
+                                            | ConversationRenamed d -> listObserved || observedSet.Contains d.conversationId
+                                            | EventData.ConversationDeleted d -> listObserved || observedSet.Contains d.conversationId
+                                            | ConversationConfigUpdated d -> listObserved || observedSet.Contains d.conversationId)
                                     if relevant then
                                         items.Add(CommitCodec.commitToJsonLine commit)
                                         lastItemId <- commit.id
@@ -161,8 +179,7 @@ type WsConnection(
                                     if this.TrySend catchUp then
                                         lock cursorLock (fun () ->
                                             // awaitingCursor = 最后一条实际发送的 item id（客户端确认的游标是它）
-                                            advertisedCursor <- lastItemId
-                                            awaitingCursor <- Some advertisedCursor)
+                                            awaitingCursor <- Some lastItemId)
                                         // 等待客户端 cursor.advanced 后再发下一批
                                         continueCatchUp <- false
                                         doneCatchUp <- true
@@ -250,10 +267,13 @@ type WsConnection(
 
     member private this.CloseWith(status: WebSocketCloseStatus, reason: string) : Task =
         task {
-            closed <- true
+            lock cursorLock (fun () -> closed <- true)
             try
                 if ws.State = WebSocketState.Open then
                     do! ws.CloseAsync(status, reason, CancellationToken.None)
+                    // CloseAsync 后服务端本地 ReceiveAsync 可能仍阻塞；Abort 强制 recvTask 退出，
+                    // 使 Task.WhenAll 返回、AbortByConnection 附件清理及时执行（认证超时/协议违规路径）
+                    ws.Abort()
             with _ -> ()
         }
 
@@ -268,103 +288,131 @@ type WsConnection(
         let hash = Auth.hashToken token
         let cfg = getConfig ()
         cfg.authClients
-        |> List.exists (fun c -> c.tokenHash = hash && not c.revoked)
+        |> List.exists (fun c -> (not c.revoked) && Auth.constantTimeEquals c.tokenHash hash)
 
     member private this.HandleEvent(ev: WireEvent) : Task =
         task {
             match ev with
             | Hello d ->
-                if d.version <> Constants.ProtocolVersion then
+                if d.protocol <> "wanxiang" || d.version <> Constants.ProtocolVersion then
                     do! this.SendAndClose(UpgradeRequired {| serverVersion = Constants.ProtocolVersion; clientVersion = d.version |}, "protocol version mismatch")
+                else
+                    match lock cursorLock (fun () -> handshakeState) with
+                    | NotStarted -> lock cursorLock (fun () -> handshakeState <- HelloSeen)
+                    | _ -> () // 重复 Hello 幂等
             | Ping -> this.TrySend Pong |> ignore
             | Pong -> ()
             | AuthPresent d ->
-                if not authenticated && this.TryAuthenticate d.token then
-                    authenticated <- true
-                    tokenHash <- Some(Auth.hashToken d.token)
-                    let cfg = getConfig ()
-                    this.TrySend(AuthAccepted {| instanceId = cfg.instanceId.ToString("D") |}) |> ignore
-                elif not authenticated then
-                    do! this.SendAndClose(AuthRejected {| reason = "invalid token" |}, "authentication failed")
+                match handshakeState with
+                | NotStarted ->
+                    // 握手先于认证（决策 55/69）：未发 Hello 直接认证 → 协议违规
+                    do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "hello required before auth")
+                | HelloSeen ->
+                    if this.TryAuthenticate d.token then
+                        lock cursorLock (fun () ->
+                            handshakeState <- Authenticated
+                            tokenHash <- Some(Auth.hashToken d.token))
+                        let cfg = getConfig ()
+                        this.TrySend(AuthAccepted {| instanceId = cfg.instanceId.ToString("D") |}) |> ignore
+                    else
+                        do! this.SendAndClose(AuthRejected {| reason = "invalid token" |}, "authentication failed")
+                | Authenticated -> () // 已认证重复 auth.present：忽略
             | PairingRequested d ->
-                if not authenticated && not pairingRequested then
-                    let now = DateTimeOffset.UtcNow
-                    if failureTracker.IsFrozen(now, remoteAddress) then
-                        let cfg = getConfig ()
-                        this.TrySend(PairingFailed {| reason = "too many failed attempts; frozen"; frozen = true; freezeMinutes = cfg.pairingFreezeMinutes |}) |> ignore
-                    else
-                        pairingRequested <- true
-                        let code = pairing.Start(now, TimeSpan.FromMinutes 5.0)
-                        logPairingCode code
-                        this.TrySend(PairingStarted {| expiresInSeconds = 300 |}) |> ignore
+                match handshakeState with
+                | NotStarted -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "hello required before pairing")
+                | Authenticated -> () // 已认证：配对无意义，忽略
+                | HelloSeen ->
+                    if not pairingRequested then
+                        let now = DateTimeOffset.UtcNow
+                        if failureTracker.IsFrozen(now, remoteAddress) then
+                            let cfg = getConfig ()
+                            this.TrySend(PairingFailed {| reason = "too many failed attempts; frozen"; frozen = true; freezeMinutes = cfg.pairingFreezeMinutes |}) |> ignore
+                        else
+                            pairingRequested <- true
+                            let code = pairing.Start(now, TimeSpan.FromMinutes 5.0)
+                            logPairingCode code
+                            this.TrySend(PairingStarted {| expiresInSeconds = 300 |}) |> ignore
             | PairingAttempted d ->
-                if not authenticated && pairingRequested then
-                    let now = DateTimeOffset.UtcNow
-                    if failureTracker.IsFrozen(now, remoteAddress) then
-                        let cfg = getConfig ()
-                        this.TrySend(PairingFailed {| reason = "frozen"; frozen = true; freezeMinutes = cfg.pairingFreezeMinutes |}) |> ignore
-                    else
-                        match pairing.TryConsume(now, d.code) with
-                        | Ok () ->
-                            // 决策 56：先持久化令牌哈希到 TOML 并 reload 成功，再下发令牌原文
-                            let token = Auth.generateToken ()
-                            let hash = Auth.hashToken token
+                match handshakeState with
+                | NotStarted -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "hello required before pairing")
+                | Authenticated -> ()
+                | HelloSeen ->
+                    if pairingRequested then
+                        let now = DateTimeOffset.UtcNow
+                        if failureTracker.IsFrozen(now, remoteAddress) then
                             let cfg = getConfig ()
-                            let newCfg =
-                                { cfg with
-                                    authClients =
-                                        { tokenHash = hash
-                                          name = d.clientName |> Option.defaultValue (sprintf "client-%s" remoteAddress)
-                                          createdAtUtc = now
-                                          lastSeenUtc = None
-                                          revoked = false }
-                                        :: cfg.authClients }
-                            match rewriteConfig newCfg with
+                            this.TrySend(PairingFailed {| reason = "frozen"; frozen = true; freezeMinutes = cfg.pairingFreezeMinutes |}) |> ignore
+                        else
+                            match pairing.TryConsume(now, d.code) with
                             | Ok () ->
-                                failureTracker.Clear remoteAddress
-                                authenticated <- true
-                                tokenHash <- Some hash
-                                this.TrySend(PairingSucceeded {| token = token |}) |> ignore
-                                let serverCfg = getConfig ()
-                                this.TrySend(AuthAccepted {| instanceId = serverCfg.instanceId.ToString("D") |}) |> ignore
+                                // 决策 56：先持久化令牌哈希到 TOML 并 reload 成功，再下发令牌原文
+                                let token = Auth.generateToken ()
+                                let hash = Auth.hashToken token
+                                let cfg = getConfig ()
+                                let newCfg =
+                                    { cfg with
+                                        authClients =
+                                            { tokenHash = hash
+                                              name = d.clientName |> Option.defaultValue (sprintf "client-%s" remoteAddress)
+                                              createdAtUtc = now
+                                              lastSeenUtc = None
+                                              revoked = false }
+                                            :: cfg.authClients }
+                                match rewriteConfig newCfg with
+                                | Ok () ->
+                                    failureTracker.Clear remoteAddress
+                                    lock cursorLock (fun () ->
+                                        handshakeState <- Authenticated
+                                        tokenHash <- Some hash)
+                                    this.TrySend(PairingSucceeded {| token = token |}) |> ignore
+                                    let serverCfg = getConfig ()
+                                    this.TrySend(AuthAccepted {| instanceId = serverCfg.instanceId.ToString("D") |}) |> ignore
+                                | Error e ->
+                                    this.TrySend(PairingFailed {| reason = e; frozen = false; freezeMinutes = 0 |}) |> ignore
                             | Error e ->
-                                this.TrySend(PairingFailed {| reason = e; frozen = false; freezeMinutes = 0 |}) |> ignore
-                        | Error e ->
-                            let frozen = failureTracker.RecordFailure(now, remoteAddress)
-                            let cfg = getConfig ()
-                            this.TrySend(PairingFailed {| reason = e; frozen = frozen; freezeMinutes = if frozen then cfg.pairingFreezeMinutes else 0 |}) |> ignore
+                                let frozen = failureTracker.RecordFailure(now, remoteAddress)
+                                let cfg = getConfig ()
+                                this.TrySend(PairingFailed {| reason = e; frozen = frozen; freezeMinutes = if frozen then cfg.pairingFreezeMinutes else 0 |}) |> ignore
             | ObserveConversationList ->
-                if authenticated then
-                    observedList <- true
+                match handshakeState with
+                | Authenticated ->
+                    lock cursorLock (fun () -> observedList <- true)
                     let proj = getProjection ()
                     if this.TrySend(ConversationListSnapshot {| items = ServerModel.conversationListItems proj orchestrator.RuntimeStateOf; lastCommitId = proj.latestCommitId |}) then
                         lock cursorLock (fun () -> awaitingCursor <- Some proj.latestCommitId)
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | UnobserveConversationList ->
-                observedList <- false
+                lock cursorLock (fun () -> observedList <- false)
             | ObserveConversation d ->
-                if authenticated then
-                    observedConversations <- observedConversations.Add d.conversationId
+                match handshakeState with
+                | Authenticated ->
+                    lock cursorLock (fun () -> observedConversations <- observedConversations.Add d.conversationId)
                     this.SendConversationSnapshot d.conversationId |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | UnobserveConversation d ->
-                observedConversations <- observedConversations.Remove d.conversationId
+                lock cursorLock (fun () -> observedConversations <- observedConversations.Remove d.conversationId)
             | CursorAdvanced d ->
                 // 决策 33/35：游标表示客户端已成功应用的最后全局提交 id；
                 // 快照应用完成或 catch-up 批次应用完成后客户端发送 cursor.advanced。
                 // 幂等：只向前推进；允许客户端确认的 id 大于我们等待的（快照/批之间可能有新提交）。
-                let (advanced, expected) =
-                    lock cursorLock (fun () ->
-                        let prev = appliedCursor
-                        if d.id > appliedCursor then
-                            appliedCursor <- d.id
-                        (d.id > prev, awaitingCursor))
-                if advanced then
-                    match expected with
-                    | Some exp when d.id >= exp ->
-                        lock cursorLock (fun () -> awaitingCursor <- None)
-                        this.SendCatchUp (lock cursorLock (fun () -> appliedCursor))
-                    | _ -> ()
+                match handshakeState with
+                | Authenticated ->
+                    let (advanced, expected) =
+                        lock cursorLock (fun () ->
+                            let prev = appliedCursor
+                            if d.id > appliedCursor then
+                                appliedCursor <- d.id
+                            (d.id > prev, awaitingCursor))
+                    if advanced then
+                        match expected with
+                        | Some exp when d.id >= exp ->
+                            lock cursorLock (fun () -> awaitingCursor <- None)
+                            this.SendCatchUp (lock cursorLock (fun () -> appliedCursor))
+                        | _ -> ()
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | Command cmd ->
-                if authenticated then
+                match handshakeState with
+                | Authenticated ->
                     let invId = ClientCommand.invocationId cmd
                     let cursor = lock cursorLock (fun () -> appliedCursor)
                     match executeCommand cursor cmd with
@@ -379,32 +427,41 @@ type WsConnection(
                         this.TrySend(WireEvent.CommandCommitted {| invocationId = invId; commandId = commandId; commitId = commitId |}) |> ignore
                     | CommandFailed err ->
                         this.TrySend(WireEvent.CommandRejected {| invocationId = invId; code = WanxiangError.code err; message = WanxiangError.message err |}) |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | GenerationCancel d ->
-                if authenticated then
-                    orchestrator.CancelGeneration(d.conversationId, d.generationId) |> ignore
+                match handshakeState with
+                | Authenticated -> orchestrator.CancelGeneration(d.conversationId, d.generationId) |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | AttachmentBegin d ->
-                if authenticated then
-                    match attachmentStore.Begin(d.attachmentId, d.totalBytes, d.sha256, d.mediaType, d.fileName) with
+                match handshakeState with
+                | Authenticated ->
+                    match attachmentStore.Begin(connectionId, d.attachmentId, d.totalBytes, d.sha256, d.mediaType, d.fileName) with
                     | Ok () -> ()
                     | Error e ->
                         attachmentStore.Abort(d.attachmentId, WanxiangError.message e)
                         this.TrySend(AttachmentAborted {| attachmentId = d.attachmentId; reason = WanxiangError.message e |}) |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | AttachmentChunk d ->
-                if authenticated then
+                match handshakeState with
+                | Authenticated ->
                     match attachmentStore.AppendChunk(d.attachmentId, d.dataBase64) with
                     | Ok () -> ()
                     | Error e ->
                         attachmentStore.Abort(d.attachmentId, WanxiangError.message e)
                         this.TrySend(AttachmentAborted {| attachmentId = d.attachmentId; reason = WanxiangError.message e |}) |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | AttachmentComplete d ->
-                if authenticated then
+                match handshakeState with
+                | Authenticated ->
                     match attachmentStore.Complete(d.attachmentId, d.sha256) with
                     | Ok ref ->
                         this.TrySend(AttachmentCommitted {| attachmentId = d.attachmentId; sha256 = ref.sha256; size = ref.size |}) |> ignore
                     | Error e ->
                         this.TrySend(AttachmentAborted {| attachmentId = d.attachmentId; reason = WanxiangError.message e |}) |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | AttachmentDownloadRequest d ->
-                if authenticated then
+                match handshakeState with
+                | Authenticated ->
                     match attachmentStore.OpenRead d.sha256 with
                     | None ->
                         this.TrySend(ServerError {| message = sprintf "attachment %s not found" d.sha256 |}) |> ignore
@@ -416,7 +473,9 @@ type WsConnection(
                         task {
                             use stream = stream
                             let mutable index = 0
-                            let buf = Array.zeroCreate<byte> (256 * 1024)
+                            // Q172：下载 chunk 跟随配置（与上传一致，默认 256 KiB）
+                            let chunkBytes = max 1024 ((getConfig ()).chunkSizeBytes)
+                            let buf = Array.zeroCreate<byte> chunkBytes
                             let mutable more = true
                             let mutable failed = false
                             while more && not failed do
@@ -437,17 +496,20 @@ type WsConnection(
                         } |> ignore
             | HistoryRequest d ->
                 // Q127/P1-2：按全局 commitID 反向分页；页边界用稳定 commitID（不用 offset）。
-                if authenticated then
+                match handshakeState with
+                | Authenticated ->
                     let proj = getProjection ()
                     match Projection.tryConversation proj d.conversationId with
                     | None -> ()
                     | Some conv ->
                         let items, hasMore = ServerModel.historyPageItems proj conv d.beforeCommitId d.limit
                         this.TrySend(HistoryPage {| conversationId = d.conversationId; beforeCommitId = d.beforeCommitId; items = items; hasMore = hasMore |}) |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | _ -> ()
         }
 
     /// 连接主循环：先发 Hello，然后并行收发。
+    /// 认证超时（决策 55）：建立后 15 秒内未完成认证则关闭，避免悬挂连接占用资源。
     member this.Run(ct: CancellationToken) : Task =
         task {
             let cfg = getConfig ()
@@ -476,9 +538,21 @@ type WsConnection(
                     closed <- true
                     sendChannel.Writer.TryComplete() |> ignore
                 }
-            do! Task.WhenAll(sendTask, recvTask)
+            // 认证超时：Hello 发出后 15 秒内必须认证（auth.present 或配对成功），否则关闭连接
+            let authTimeout = task {
+                let deadline = DateTimeOffset.UtcNow.AddSeconds 15.0
+                let isAuthed () = lock cursorLock (fun () -> handshakeState = Authenticated)
+                let isClosed () = lock cursorLock (fun () -> closed)
+                while not (isClosed ()) && not (isAuthed ()) && DateTimeOffset.UtcNow < deadline do
+                    do! Task.Delay 500
+                if not (isClosed ()) && not (isAuthed ()) then
+                    do! this.CloseWith(WebSocketCloseStatus.PolicyViolation, "authentication timeout")
+            }
+            do! Task.WhenAll(sendTask, recvTask, authTimeout)
             closed <- true
             sendChannel.Writer.TryComplete() |> ignore
+            // 断线清理：取消本连接发起的未完成附件上传（决策 71）
+            attachmentStore.AbortByConnection connectionId
             try
                 if ws.State = WebSocketState.Open then
                     do! ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None)
@@ -506,10 +580,13 @@ type ConnectionRegistry() =
     let connections = ConcurrentDictionary<int, WsConnection>()
     let mutable nextId = 0
 
-    member _.Add(conn: WsConnection) : int =
-        let id = Interlocked.Increment(&nextId)
+    /// 预分配连接 id（构造 WsConnection 前调用；断线清理附件上传用）。
+    member _.AddPlaceholder() : int =
+        Interlocked.Increment(&nextId)
+
+    /// 将已构造的连接对象放入注册表（与 AddPlaceholder 的 id 配对）。
+    member _.Set(id: int, conn: WsConnection) : unit =
         connections[id] <- conn
-        id
 
     member _.Remove(id: int) : unit =
         connections.TryRemove id |> ignore

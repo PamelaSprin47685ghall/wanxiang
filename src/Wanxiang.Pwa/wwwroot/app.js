@@ -65,6 +65,11 @@ let state = {
   missingAttachments: new Set(),
   // P1-5：自动重连（指数退避）
   reconnectDelayMs: 1000,
+  // 认证失败/升级需要：停止自动重连（避免坏令牌无限循环）
+  authFailed: false,
+  upgradeRequired: false,
+  // 乐观删除回滚暂存（invocationId -> 被删会话摘要）
+  pendingDelete: null,
   // P1-2：历史分页进行中标记
   historyLoading: false,
 };
@@ -74,6 +79,8 @@ const $ = (id) => document.getElementById(id);
 function toast(msg) {
   const t = document.createElement("div");
   t.className = "toast";
+  // Q197：状态提示对屏幕阅读器可感知
+  t.setAttribute("role", "status");
   t.textContent = msg;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3500);
@@ -99,7 +106,15 @@ async function registerServiceWorker() {
       t.className = "toast";
       t.style.cursor = "pointer";
       t.textContent = "有新版本，点击刷新";
-      t.onclick = () => worker.postMessage({ type: "SKIP_WAITING" });
+      t.onclick = () => {
+        // Q193：不在编辑/生成中强制 reload——若正在生成或输入框有未发送内容则等待并提示
+        const busy = state.streaming || (document.activeElement === $("input") && $("input").value.trim());
+        if (busy) {
+          toast("正在生成或输入中，稍后再刷新以应用新版本");
+          return;
+        }
+        worker.postMessage({ type: "SKIP_WAITING" });
+      };
       document.body.appendChild(t);
       setTimeout(() => t.remove(), 15000);
     };
@@ -173,6 +188,10 @@ function authorityCommitToEvents(line) {
         state.appliedAuthorityEvents.add(eventKey);
       } else if (event.type === "conversation.deleted") {
         state.conversations.delete(p.conversationId);
+        // 权威删除确认：清掉对应乐观删除暂存（成功路径状态自洽）
+        if (state.pendingDelete && state.pendingDelete.item.conversationId === p.conversationId) {
+          state.pendingDelete = null;
+        }
         state.appliedAuthorityEvents.add(eventKey);
       } else if (event.type === "message.deleted") {
         // 删除消息：从本地会话消息中移除对应 commitId（决策 73 tombstone）
@@ -222,7 +241,8 @@ function connect(url, token) {
 
 // P1-5：断线自动重连（指数退避 1s→30s；重连成功后重新 observe 此前观察的会话）
 function scheduleReconnect(socket) {
-  if (!state.token || socket !== ws) return;
+  // 认证失败/需要升级：停止自动重连（避免坏令牌无限循环；Q193 不强制打断）
+  if (!state.token || socket !== ws || state.authFailed || state.upgradeRequired) return;
   const delay = state.reconnectDelayMs;
   setStatus(`${delay / 1000}s 后自动重连…`);
   setTimeout(() => {
@@ -237,9 +257,15 @@ async function handleEvent(ev) {
   const p = ev.payload || {};
   switch (ev.type) {
     case "protocol.hello":
-      if (p.version !== 1) { toast("协议版本不兼容，请升级客户端"); ws.close(); }
+      if (p.version !== 1) {
+        toast("协议版本不兼容，请升级客户端");
+        state.upgradeRequired = true;
+        ws.close();
+      }
       break;
     case "protocol.upgrade-required":
+      // 置标志停止自动重连（scheduleReconnect 检查该字段；此前从未赋值导致持续重连）
+      state.upgradeRequired = true;
       toast(`需要升级：服务器协议 v${p.serverVersion}`);
       break;
     case "auth.accepted":
@@ -258,6 +284,11 @@ async function handleEvent(ev) {
       break;
     case "auth.rejected":
       toast("认证失败：" + p.reason);
+      // 认证失败：停止自动重连（避免坏令牌无限循环），提示重新配对/输入令牌
+      state.authFailed = true;
+      state.connected = false;
+      state.authenticated = false;
+      setStatus("认证失败，请重新配对");
       break;
     case "pairing.started":
       $("pair-box").classList.add("visible");
@@ -377,6 +408,15 @@ async function handleEvent(ev) {
         toast("状态尚未同步，请稍候重试");
       } else {
         toast("操作被拒绝：" + p.message);
+      }
+      // 乐观删除回滚：若被拒的是删除命令（invocationId 匹配），恢复会话列表（按 conversationId 去重防重复）
+      if (state.pendingDelete && p.invocationId === state.pendingDelete.invocationId) {
+        const pd = state.pendingDelete;
+        state.pendingDelete = null;
+        const restored = pd.item;
+        state.convList = state.convList.filter((c) => c.conversationId !== restored.conversationId).concat([restored]);
+        state.conversations.set(restored.conversationId, { title: restored.title || "(未命名)", messages: [], lastCommitId: 0, runtimeState: "idle" });
+        renderList();
       }
       break;
     case "generation.started":
@@ -522,9 +562,40 @@ if (window.marked && window.hljs) {
         try {
           highlighted = hljs.highlight(text, { language }).value;
         } catch (_) {
-          highlighted = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          // 与 html renderer 一致的完整转义（含 "）；代码块内容视为不可信文本
+          highlighted = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
         }
-        return `<div class="code-block"><div class="code-header"><div class="mac-dots"><span class="mac-dot red"></span><span class="mac-dot yellow"></span><span class="mac-dot green"></span></div><span class="code-lang-tag">${language}</span><button class="code-copy" onclick="copyCodeBlock(this)"><i data-lucide="copy" style="width:13px;height:13px;"></i> 复制</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`;
+        return `<div class="code-block"><div class="code-header"><div class="mac-dots"><span class="mac-dot red"></span><span class="mac-dot yellow"></span><span class="mac-dot green"></span></div><span class="code-lang-tag">${language}</span><button class="code-copy" type="button" aria-label="复制代码"><i data-lucide="copy" style="width:13px;height:13px;"></i> 复制</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`;
+      },
+      // XSS 防护：对话内容视为不可信数据，原始 HTML 一律转义为文本（不执行脚本）
+      html({ text }) {
+        return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      },
+      // 链接协议白名单：仅 http/https/mailto 保留，javascript:/data: 等危险协议转为纯文本。
+      // 链接文本用 parser.parseInline 走自定义 html/text renderer 转义（marked 官方推荐），
+      // 避免 [<script>](url) 这类文本侧注入。
+      link({ href, title, tokens }) {
+        // 先做 HTML 实体解码再查白名单，防 javascript&#58;alert(1) 这类编码绕过
+        const decodeHtml = (s) => String(s || "")
+          .replace(/&amp;/g, "&").replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+          .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10)))
+          .replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'");
+        // 剔除控制字符（换行/制表等）后再查白名单：浏览器解析 href 时忽略控制字符，
+        // 若不解码剔除，`java&#x0a;script:` 类实体可绕过协议白名单
+        const cleanHref = decodeHtml(href).replace(/[\u0000-\u001F\u007F\u2028\u2029]/g, "").trim().toLowerCase();
+        const renderText = () => {
+          if (tokens && tokens.length) {
+            try { return this.parser.parseInline(tokens); } catch (_) { /* fallthrough */ }
+          }
+          return String(href || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        };
+        if (/^(javascript|data|vbscript):/.test(cleanHref)) {
+          return renderText();
+        }
+        // safeHref 全量转义 & < > "，防实体注入与属性逃逸
+        const safeHref = String(href || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        const titleAttr = title ? ` title="${String(title).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}"` : "";
+        return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer"${titleAttr}>${renderText()}</a>`;
       }
     }
   });
@@ -564,6 +635,12 @@ window.copyCodeBlock = function(btn) {
     }, 2000);
   }).catch(() => toast("复制失败"));
 };
+
+// CSP 兼容：代码块复制按钮用事件委托绑定（不依赖内联 onclick，'unsafe-inline' 未开启）
+$("messages").addEventListener("click", (e) => {
+  const btn = e.target.closest && e.target.closest(".code-copy");
+  if (btn && window.copyCodeBlock) window.copyCodeBlock(btn);
+});
 
 function renderList(searchQuery = "") {
   const list = $("conv-list");
@@ -682,11 +759,17 @@ function confirmDelete(item) {
   p.className = "muted";
   p.textContent = `确定要删除会话“${item.title || "(未命名)"}”吗？此操作不可撤销。`;
   showModal({ title: "删除会话", body: p, confirmText: "删除", onConfirm: () => {
-    send({ type: "conversation.delete", payload: { invocationId: uuidv7(), conversationId: item.conversationId } });
+    const invocationId = uuidv7();
+    send({ type: "conversation.delete", payload: { invocationId, conversationId: item.conversationId } });
+    // 乐观移除列表项；若 command.rejected（如 stale），按 invocationId 回滚恢复
+    state.pendingDelete = { invocationId, item };
+    state.convList = state.convList.filter((c) => c.conversationId !== item.conversationId);
+    state.conversations.delete(item.conversationId);
     if (state.activeConv === item.conversationId) {
       state.activeConv = null;
       renderMessages();
     }
+    renderList();
   }});
 }
 
@@ -727,13 +810,17 @@ function renderMessages() {
     return;
   }
   $("input").placeholder = "输入消息…  Enter 发送，Shift+Enter 换行";
-  $("input").value = "";
+  // 仅在切换会话/首次打开时清空输入框，流式渲染时保留用户正在输入的内容（Q193 不打断编辑）
+  const isActive = document.activeElement === $("input");
+  if (!isActive) {
+    $("input").value = "";
+  }
   $("conv-title").textContent = conv.title || "(未命名)";
   $("input").disabled = false;
   $("btn-send").disabled = false;
   $("btn-attach").disabled = false;
   updateSendBtnState();
-  $("input").focus();
+  if (!isActive) $("input").focus();
   const gs = $("gen-status");
   gs.classList.toggle("visible", conv.runtimeState === "generating");
   gs.querySelector(".gen-status-text").textContent = "生成中";
@@ -953,12 +1040,26 @@ async function uploadAttachment(file) {
   send({ type: "attachment.begin", payload: { attachmentId, totalBytes: file.size, sha256, mediaType, fileName: file.name } });
   const chunkSize = 256 * 1024;
   let index = 0;
-  for (let offset = 0; offset < buf.byteLength; offset += chunkSize) {
-    const slice = buf.slice(offset, Math.min(offset + chunkSize, buf.byteLength));
-    const binary = String.fromCharCode.apply(null, new Uint8Array(slice));
-    send({ type: "attachment.chunk", payload: { attachmentId, index, data: btoa(binary) } });
-    index++;
+  const total = buf.byteLength;
+  // 分片转 base64：避免 String.fromCharCode.apply 参数上限（>256KiB 时栈溢出）
+  function bytesToBase64(u8) {
+    let binary = "";
+    const step = 32 * 1024;
+    for (let i = 0; i < u8.length; i += step) {
+      binary += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + step, u8.length)));
+    }
+    return btoa(binary);
   }
+  for (let offset = 0; offset < total; offset += chunkSize) {
+    const slice = new Uint8Array(buf, offset, Math.min(chunkSize, total - offset));
+    send({ type: "attachment.chunk", payload: { attachmentId, index, data: bytesToBase64(slice) } });
+    index++;
+    // 上传进度反馈
+    const pct = Math.round((offset + slice.length) / total * 100);
+    $("attach-chip-name").textContent = `上传中：${file.name} ${pct}%`;
+    await new Promise((r) => setTimeout(r, 0)); // 让出主线程，避免大文件阻塞 UI
+  }
+  $("attach-chip-name").textContent = `上传完成：${file.name}`;
   send({ type: "attachment.complete", payload: { attachmentId, sha256 } });
 }
 
@@ -1008,7 +1109,8 @@ function createConversation() {
   const title = "新会话";
   send({
     type: "conversation.create",
-    payload: { invocationId: uuidv7(), conversationId, title, config: { provider: "openai", model: "gpt-4o-mini" } },
+    // config 由服务端用 TOML 第一个 provider 填充（客户端不硬编码 provider/model）
+    payload: { invocationId: uuidv7(), conversationId, title, config: { provider: "", model: "" } },
   });
   setTimeout(() => {
     send({ type: "conversation.observe", payload: { conversationId } });
@@ -1039,7 +1141,8 @@ function forkConversation() {
     const message = { role: roleOf(parentPayload), contents: [{ text: edited }] };
     send({ type: "conversation.fork", payload: {
       invocationId: uuidv7(), conversationId, parentConversationId: state.activeConv,
-      forkAfterId, config: { provider: "openai", model: "gpt-4o-mini" }, message
+      // fork 继承父会话配置（决策 81 第二问），客户端无需提供有效 config
+      forkAfterId, config: { provider: "", model: "" }, message
     }});
     setTimeout(() => {
       send({ type: "conversation.observe", payload: { conversationId } });
@@ -1060,12 +1163,15 @@ $("btn-connect").onclick = async () => {
 };
 
 $("btn-pair").onclick = () => {
+  // D14：未连接时发送会静默丢弃，给出明确提示
+  if (!ws || ws.readyState !== WebSocket.OPEN) { toast("请先连接服务器再请求配对"); return; }
   send({ type: "pairing.requested", payload: { clientName: "PWA" } });
 };
 
 $("btn-pair-submit").onclick = () => {
   const code = $("pair-code").value.trim();
   if (code.length !== 6) { toast("请输入 6 位配对码"); return; }
+  if (!ws || ws.readyState !== WebSocket.OPEN) { toast("连接已断开，请先重连"); return; }
   send({ type: "pairing.attempted", payload: { code, clientName: "PWA" } });
 };
 
@@ -1120,7 +1226,8 @@ document.querySelectorAll(".prompt-card").forEach((card) => {
       const title = promptText.slice(0, 16).replace(/\n/g, " ") + "…";
       send({
         type: "conversation.create",
-        payload: { invocationId: uuidv7(), conversationId, title, config: { provider: "openai", model: "gpt-4o-mini" } },
+        // config 由服务端用 TOML 第一个 provider 填充
+        payload: { invocationId: uuidv7(), conversationId, title, config: { provider: "", model: "" } },
       });
       setTimeout(() => {
         send({ type: "conversation.observe", payload: { conversationId } });

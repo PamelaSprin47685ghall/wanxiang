@@ -10,6 +10,8 @@ open Wanxiang.Core
 /// 上传会话（运行时状态）。
 type AttachmentUpload = {
     attachmentId: Guid
+    /// 发起上传的连接 id（断线清理用）
+    connectionId: int
     tempPath: string
     expectedSha256: string
     expectedBytes: int64
@@ -101,7 +103,14 @@ type AttachmentStore(dataDir: string, maxBytes: int64, ?chunkSizeBytes: int) =
 
     let uploads = System.Collections.Concurrent.ConcurrentDictionary<Guid, AttachmentUpload>()
 
-    member _.Begin(attachmentId: Guid, totalBytes: int64, sha256: string, mediaType: string, fileName: string) : Result<unit, WanxiangError> =
+    /// 连接断线清理：取消该连接发起的全部未完成上传（决策 71：断线删除未完成上传，不支持续传）。
+    /// connectionId 由 WsConnection 在 Begin 时登记。
+    member this.AbortByConnection(connectionId: int) : unit =
+        for kv in uploads do
+            if kv.Value.connectionId = connectionId then
+                this.Abort(kv.Key, "connection closed")
+
+    member _.Begin(connectionId: int, attachmentId: Guid, totalBytes: int64, sha256: string, mediaType: string, fileName: string) : Result<unit, WanxiangError> =
         let cleanName = sanitizeFileName fileName
         if totalBytes < 0L then
             Error(ValidationError "attachment size must not be negative")
@@ -116,9 +125,12 @@ type AttachmentStore(dataDir: string, maxBytes: int64, ?chunkSizeBytes: int) =
                 let tempPath = Path.Combine(tempDir, attachmentId.ToString("N"))
                 try
                     let stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None)
+                    // Q118：附件文件最小用户权限
+                    try File.SetUnixFileMode(tempPath, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
                     let sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
                     let upload =
                         { attachmentId = attachmentId
+                          connectionId = connectionId
                           tempPath = tempPath
                           expectedSha256 = sha256
                           expectedBytes = totalBytes

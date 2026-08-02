@@ -110,7 +110,7 @@ let ``test_command_idempotency`` () =
         | _ -> failwith "plan failed"
         // 重试（同 invocationId + 同内容）→ 幂等命中
         match plan 1UL with
-        | IdempotentReplay cid -> Assert.Equal(1UL, cid)
+        | PlanResult.IdempotentReplay cid -> Assert.Equal(1UL, cid)
         | _ -> failwith "expected idempotent replay"
         // 新 invocationId → 新提交
         let cmd2 =

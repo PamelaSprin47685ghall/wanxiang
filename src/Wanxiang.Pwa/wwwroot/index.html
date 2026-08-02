@@ -5,15 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <meta name="theme-color" content="#4D5C92" />
+  <!-- CSP：仅同源脚本/样式（lucide 已本地化）；内联 style 用于动态注入的 style 属性；防 XSS 兜底 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self' data:; object-src 'none'; base-uri 'self'" />
   <title>万象 · wanxiang</title>
   <link rel="icon" type="image/png" href="/logo.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
   
-  <!-- CDN 库（Marked / Highlight.js / Lucide 图标） -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+  <!-- 本地静态库（SW 可缓存，离线可用；Q192 静态资源自持） -->
+  <link rel="stylesheet" href="/highlight.github-dark.min.css" />
+  <script src="/marked.min.js"></script>
+  <script src="/highlight.min.js"></script>
+  <script src="/lucide.min.js"></script>
 
   <style>
     /* ================= 万象 · 设计令牌 =================
@@ -406,15 +408,20 @@
       padding: 6px 16px; border-radius: 999px; text-align: center;
       width: auto;
     }
-    .msg .role { display: none; }
+    .msg .role {
+      /* Q197：角色标签对屏幕阅读器可见（sr-only 而非 display:none），视觉上保留在布局外 */
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip-path: inset(50%); white-space: nowrap; margin: -1px; padding: 0;
+    }
     .msg .typing { display: inline-flex; gap: 4px; padding: 6px 2px; color: var(--muted); }
     
-    /* 悬停操作按钮：常驿在正常文档流中，仅悬停时可见，永不遮遮文字 */
+    /* 悬停操作按钮：常驿在正常文档流中，仅悬停/键盘聚焦时可见，永不遮遮文字（Q197 键盘可达） */
     .msg-actions {
       display: flex; align-items: center; gap: 4px; margin-top: 6px; height: 26px;
       opacity: 0; transition: opacity .12s ease; pointer-events: none;
     }
-    .msg-wrapper:hover .msg-actions { opacity: 1; pointer-events: auto; }
+    .msg-wrapper:hover .msg-actions,
+    .msg-wrapper:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
     .tool-row .msg-actions { display: none; }
     .msg-action-btn {
       width: 26px; height: 26px; border-radius: 50%; border: none; background: transparent;

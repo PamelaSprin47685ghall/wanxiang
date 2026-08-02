@@ -21,6 +21,8 @@ type GenerationRuntime = {
     mutable runtime: AgentRuntime
     mutable agentSession: AgentSession
     mutable agentConfig: SessionConfig
+    /// 配置引用的 Provider 已不存在时记录 provider id（Q154：下一次调用失败结束）
+    mutable invalidConfig: string option
     mutable cancelled: bool
     mutable lastProviderMessages: ChatMessage list
 }
@@ -151,7 +153,7 @@ type ChatOrchestrator(
                 | Some g when not g.cancelled -> false
                 | _ ->
                     let cts = new CancellationTokenSource()
-                    let generationId = Guid.NewGuid()
+                    let generationId = Guid.CreateVersion7()
                     // 构建 agent（按会话当前配置）
                     let proj = getProjection ()
                     let conv = Projection.tryConversation proj convId
@@ -189,6 +191,7 @@ type ChatOrchestrator(
                                   runtime = agentRuntime
                                   agentSession = session
                                   agentConfig = config
+                                  invalidConfig = None
                                   cancelled = false
                                   lastProviderMessages = [] }
                         broadcastToConversation convId (GenerationStarted {| conversationId = convId; generationId = generationId |})
@@ -201,13 +204,18 @@ type ChatOrchestrator(
 
     /// 配置变更（决策 87）：同一 generation 内重建 agent 与 session，
     /// 下一次 Provider 调用使用最新配置；不取消在途调用、不篡改已完成结果。
+    /// 若新配置引用的 Provider 已不存在（Q153/Q154）：不再用旧 agent 发起新调用，
+    /// 标记 agentConfig 为无效并在下一轮调用时失败结束，不篡改会话配置。
     member private this.RebuildAgent(rt: ConversationRuntime, g: GenerationRuntime, newConfig: SessionConfig) : unit =
         let provider =
             (getConfig ()).providers.TryFind newConfig.provider
         match provider with
         | None ->
-            // provider 缺失：保留旧 agent，下一次调用后按失败处理
+            // Provider 缺失：标记无效配置；下一轮 RunGenerationLoop 检测到后广播失败并结束（Q154）
+            // 注意：不重置 g.cancelled——若用户已取消，RuntimeStateOf 应继续报告非 generating
             g.agentConfig <- newConfig
+            // 记录一个特殊标记：使用 InvalidProviderConfig 使下一轮直接失败
+            g.invalidConfig <- Some newConfig.provider
         | Some p ->
             let tools = toolRegistry.BuildTools newConfig
             let historyProvider =
@@ -225,6 +233,7 @@ type ChatOrchestrator(
             g.runtime <- agentRuntime
             g.agentSession <- session
             g.agentConfig <- newConfig
+            g.invalidConfig <- None
             // 与 OnAgentResponse 同锁：避免旧调用回调把消息追加到新 agent 名下（决策 89）
             lock rt (fun () -> g.lastProviderMessages <- [])
 
@@ -267,7 +276,19 @@ type ChatOrchestrator(
                                 match tryGetProjectionConversation convId with
                                 | Some c -> Some c.config
                                 | None -> None
-                            if latestConfig.IsSome && latestConfig.Value <> g.agentConfig then
+                            if g.invalidConfig.IsSome then
+                                // Q153/Q154：配置引用的 Provider 已不存在 → 不发起新调用，失败结束（不篡改会话配置）
+                                logInfo(sprintf "generation %O failed: provider %s not configured" generationId g.invalidConfig.Value)
+                                let ev =
+                                    GenerationFinished
+                                        {| conversationId = convId
+                                           generationId = generationId
+                                           status = "failed"
+                                           error = Some(sprintf "provider %s not configured" g.invalidConfig.Value) |}
+                                broadcastToConversation convId ev
+                                lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
+                                running <- false
+                            elif latestConfig.IsSome && latestConfig.Value <> g.agentConfig then
                                 // 配置变化：同一 generation 内重建 agent（新 session），
                                 // 下一次 Provider 调用使用最新配置；不取消、不篡改已完成的结果。
                                 this.RebuildAgent(rt, g, latestConfig.Value)
@@ -313,15 +334,24 @@ type ChatOrchestrator(
                                         responses
                                         |> List.collect MessageSerde.toolCalls
                                     if List.isEmpty calls then
-                                        let ev =
-                                            GenerationFinished
-                                                {| conversationId = convId
-                                                   generationId = generationId
-                                                   status = "completed"
-                                                   error = None |}
-                                        broadcastToConversation convId ev
-                                        lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
-                                        running <- false
+                                        // 决策 22/24：idle 是可插入点——若流式期间有新消息入队，则继续循环排空，
+                                        // 不立即结束 generation（避免排队消息需等下次显式动作才处理）
+                                        let hasQueued =
+                                            lock rt (fun () -> not (List.isEmpty rt.pendingQueue))
+                                        if hasQueued then
+                                            lock rt (fun () -> g.lastProviderMessages <- [])
+                                            // 继续 while 循环（下一轮 DrainQueue 排空 + 再次调 Provider）
+                                            ()
+                                        else
+                                            let ev =
+                                                GenerationFinished
+                                                    {| conversationId = convId
+                                                       generationId = generationId
+                                                       status = "completed"
+                                                       error = None |}
+                                            broadcastToConversation convId ev
+                                            lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
+                                            running <- false
                                     else
                                         // 5. 并行执行工具（决策 92），全部完成后统一返回 Provider（保持原顺序）
                                         let! toolResults = this.ExecuteTools(convId, generationId, calls, g)

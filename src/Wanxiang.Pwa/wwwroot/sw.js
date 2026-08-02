@@ -1,8 +1,10 @@
 // Service Worker：只缓存版本化静态资源（决策 192），不缓存任何业务数据。
 // Q193/P1-3：不自动 skipWaiting；收到 SKIP_WAITING 消息（用户确认刷新）后才激活新版本。
 const CACHE = "wanxiang-v4";
+// 白名单静态资源：只缓存这些路径，其余同源 GET（如未来 API）一律 network-only（Q192）
+const STATIC_ASSETS = ["/", "/app.js", "/logo.png", "/marked.min.js", "/highlight.min.js", "/highlight.github-dark.min.css", "/lucide.min.js", "/manifest.webmanifest"];
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/", "/app.js", "/manifest.webmanifest"])));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(STATIC_ASSETS)));
 });
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))));
@@ -13,11 +15,29 @@ self.addEventListener("message", (e) => {
 });
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
+  // 业务端点（WebSocket）与非同源请求不拦截
   if (url.origin !== location.origin || url.pathname === "/ws") return;
+  // 只对静态资源白名单做缓存；根路径用 network-first（保证新版本页面及时生效，Q193）
+  if (!STATIC_ASSETS.includes(url.pathname)) return;
+  if (e.request.mode === "navigate") {
+    // network-first：优先取网络，失败回退缓存（仅缓存成功响应）
+    e.respondWith(
+      fetch(e.request).then((resp) => {
+        if (resp && resp.ok) {
+          const copy = resp.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy));
+        }
+        return resp;
+      }).catch(() => caches.match(e.request).then((hit) => hit || Response.error()))
+    );
+    return;
+  }
   e.respondWith(
     caches.match(e.request).then((hit) => hit || fetch(e.request).then((resp) => {
-      const copy = resp.clone();
-      caches.open(CACHE).then((c) => c.put(e.request, copy));
+      if (resp && resp.ok) {
+        const copy = resp.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy));
+      }
       return resp;
     }))
   );

@@ -135,3 +135,73 @@ let ``config store rewrite persists and reloads complete configuration`` () =
         Assert.True parsed.runtime.client
         Assert.True parsed.runtime.pwa
         Assert.False parsed.runtime.fix
+
+[<Fact>]
+let ``rewrite 在 reload 失败时返回 Error 并保留旧配置`` () =
+    let dir = Path.Combine(Path.GetTempPath(), "wanxiang-config-" + Guid.NewGuid().ToString("N"))
+    Directory.CreateDirectory dir |> ignore
+    let path = Path.Combine(dir, "wanxiang.toml")
+    try
+        let initial = AppConfig.defaults (Guid.CreateVersion7())
+        File.WriteAllText(path, TomlCodec.serialize initial)
+        use store =
+            match ConfigStore.Open(path, ignore, ignore) with
+            | Ok value -> value
+            | Error e -> failwith e
+        // 成功路径：Rewrite 后内存与磁盘一致（决策 44）
+        let updated = { initial with listen = "127.0.0.1:12345" }
+        match store.Rewrite updated with
+        | Error e -> failwith e
+        | Ok () -> Assert.Equal("127.0.0.1:12345", store.Current.listen)
+        // 制造磁盘文件非法（reload 失败）：外部写入非法内容后 watcher 触发 reload，保留旧配置
+        File.WriteAllText(path, "configVersion = 1\ninstanceId = 1\n") // instanceId 非法 → reload 失败
+        store.TriggerReload()
+        System.Threading.Thread.Sleep 250
+        Assert.Equal("127.0.0.1:12345", store.Current.listen) // 保留最后有效配置
+    finally
+        if Directory.Exists dir then Directory.Delete(dir, true)
+
+[<Fact>]
+let ``首次创建的 instanceId 是 UUIDv7`` () =
+    let dir = Path.Combine(Path.GetTempPath(), "wanxiang-config-" + Guid.NewGuid().ToString("N"))
+    Directory.CreateDirectory dir |> ignore
+    let path = Path.Combine(dir, "wanxiang.toml")
+    try
+        use store =
+            match ConfigStore.Open(path, ignore, ignore) with
+            | Ok value -> value
+            | Error e -> failwith e
+        // UUIDv7 版本号 = 7（Guid.Version 属性在 .NET 8+ 可用）
+        Assert.Equal(7, int (store.Current.instanceId.Version))
+        // 再次打开仍保持同一 instanceId（稳定）
+        let id = store.Current.instanceId
+        store.Dispose()
+        use store2 =
+            match ConfigStore.Open(path, ignore, ignore) with
+            | Ok value -> value
+            | Error e -> failwith e
+        Assert.Equal(id, store2.Current.instanceId)
+    finally
+        if Directory.Exists dir then Directory.Delete(dir, true)
+
+[<Fact>]
+let ``TOML 配置文件权限为 0600`` () =
+    if OperatingSystem.IsLinux() then
+        let dir = Path.Combine(Path.GetTempPath(), "wanxiang-config-" + Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory dir |> ignore
+        let path = Path.Combine(dir, "wanxiang.toml")
+        try
+            let initial = AppConfig.defaults (Guid.CreateVersion7())
+            File.WriteAllText(path, TomlCodec.serialize initial)
+            use store =
+                match ConfigStore.Open(path, ignore, ignore) with
+                | Ok value -> value
+                | Error e -> failwith e
+            let mode = File.GetUnixFileMode path
+            Assert.Equal(UnixFileMode.UserRead ||| UnixFileMode.UserWrite, mode &&& (UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.GroupRead ||| UnixFileMode.GroupWrite ||| UnixFileMode.OtherRead ||| UnixFileMode.OtherWrite))
+            // 写回后权限保持
+            store.Rewrite { initial with listen = "127.0.0.1:54321" } |> ignore
+            let mode2 = File.GetUnixFileMode path
+            Assert.Equal(mode, mode2)
+        finally
+            if Directory.Exists dir then Directory.Delete(dir, true)

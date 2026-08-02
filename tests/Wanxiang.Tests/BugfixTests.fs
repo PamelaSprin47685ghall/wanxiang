@@ -20,13 +20,13 @@ let ``attachment chunk exceeds configured limit is rejected`` () =
         let payload = "0123456789" |> Text.Encoding.UTF8.GetBytes
         let hash = Convert.ToHexString(SHA256.HashData payload).ToLowerInvariant()
         let aid = Guid.NewGuid()
-        store.Begin(aid, int64 payload.Length, hash, "text/plain", "x.txt") |> function Ok () -> () | Error e -> failwith (WanxiangError.message e)
+        store.Begin(1, aid, int64 payload.Length, hash, "text/plain", "x.txt") |> function Ok () -> () | Error e -> failwith (WanxiangError.message e)
         match store.AppendChunk(aid, Convert.ToBase64String payload) with
         | Error (ValidationError m) -> Assert.Contains("limit", m)
         | r -> failwithf "oversized chunk should be rejected, got %A" r
         // 合法块（≤8 字节）可以追加
         let aid2 = Guid.NewGuid()
-        store.Begin(aid2, int64 payload.Length, hash, "text/plain", "x.txt") |> ignore
+        store.Begin(1, aid2, int64 payload.Length, hash, "text/plain", "x.txt") |> ignore
         let chunk1 = Convert.ToBase64String(payload[0..7])
         store.AppendChunk(aid2, chunk1) |> function Ok () -> () | Error e -> failwith (WanxiangError.message e)
         store.AppendChunk(aid2, Convert.ToBase64String(payload[8..])) |> function Ok () -> () | Error e -> failwith (WanxiangError.message e)
@@ -45,7 +45,7 @@ let ``attachment fileName is sanitized`` () =
         let payload = "abc" |> Text.Encoding.UTF8.GetBytes
         let hash = Convert.ToHexString(SHA256.HashData payload).ToLowerInvariant()
         let aid = Guid.NewGuid()
-        store.Begin(aid, 3L, hash, "text/plain", "\u0000bad\u0001name\u001f.txt") |> ignore
+        store.Begin(1, aid, 3L, hash, "text/plain", "\u0000bad\u0001name\u001f.txt") |> ignore
         store.AppendChunk(aid, Convert.ToBase64String payload) |> ignore
         match store.Complete(aid, hash) with
         | Ok ref -> Assert.Equal("badname.txt", ref.fileName)
@@ -53,7 +53,7 @@ let ``attachment fileName is sanitized`` () =
         // 超长文件名截断到 255
         let longName = String.replicate 300 "x" + ".txt"
         let aid2 = Guid.NewGuid()
-        store.Begin(aid2, 3L, hash, "text/plain", longName) |> ignore
+        store.Begin(1, aid2, 3L, hash, "text/plain", longName) |> ignore
         store.AppendChunk(aid2, Convert.ToBase64String payload) |> ignore
         match store.Complete(aid2, hash) with
         | Ok ref -> Assert.True(ref.fileName.Length <= 255)
@@ -74,7 +74,7 @@ let ``attachment media type sniffed and metadata persisted`` () =
         let png = [| 0x89uy; 0x50uy; 0x4Euy; 0x47uy; 0x0Duy; 0x0Auy; 0x1Auy; 0x0Auy; 0x00uy; 0x00uy; 0x00uy; 0x0Duy |]
         let hash = Convert.ToHexString(SHA256.HashData png).ToLowerInvariant()
         let aid = Guid.NewGuid()
-        store.Begin(aid, int64 png.Length, hash, "application/octet-stream", "pic.png") |> ignore
+        store.Begin(1, aid, int64 png.Length, hash, "application/octet-stream", "pic.png") |> ignore
         store.AppendChunk(aid, Convert.ToBase64String png) |> ignore
         match store.Complete(aid, hash) with
         | Ok ref ->
@@ -92,7 +92,7 @@ let ``attachment media type sniffed and metadata persisted`` () =
         let text = "hello" |> Text.Encoding.UTF8.GetBytes
         let thash = Convert.ToHexString(SHA256.HashData text).ToLowerInvariant()
         let aid3 = Guid.NewGuid()
-        store.Begin(aid3, int64 text.Length, thash, "application/x-custom", "t.bin") |> ignore
+        store.Begin(1, aid3, int64 text.Length, thash, "application/x-custom", "t.bin") |> ignore
         store.AppendChunk(aid3, Convert.ToBase64String text) |> ignore
         match store.Complete(aid3, thash) with
         | Ok ref -> Assert.Equal("application/x-custom", ref.mediaType)
@@ -174,3 +174,37 @@ let ``attachment refs are extracted from message payload`` () =
         Assert.Equal("x.png", fileName)
         Assert.Equal(42L, size)
     | r -> failwithf "expected one ref, got %A" r
+
+/// 决策 41：写 stderr 前对已知密钥值做精确替换（不泄漏 apiKey 等凭据）。
+[<Fact>]
+let ``stderr redacts registered secrets`` () =
+    let secret = "sk-test-secret-value-123456"
+    try
+        Stderr.registerSecrets [ secret ]
+        // redact 精确替换已知密钥
+        Assert.Equal("error: *** occurred", Stderr.redact (sprintf "error: %s occurred" secret))
+        // 未注册的字符串不受影响
+        Assert.Equal("other text", Stderr.redact "other text")
+        // 短于 8 字符的候选不注册（避免误伤普通词）
+        Stderr.registerSecrets [ "short" ]
+        Assert.Equal("short word", Stderr.redact "short word")
+    finally
+        Stderr.clearSecrets ()
+
+/// Stderr 脱敏按长度降序替换：短密钥若是长密钥子串，先替换短的不破坏长的完整匹配。
+[<Fact>]
+let ``stderr redact replaces longer secrets first`` () =
+    try
+        let shortSecret = "short-key-123"
+        let longSecret = "short-key-1234567890-long"
+        Stderr.registerSecrets [ shortSecret; longSecret ]
+        // 文本含长密钥：应整体替换为 ***（若短先替换则长密钥残余）
+        let text = sprintf "error with %s inside" longSecret
+        let result = Stderr.redact text
+        Assert.DoesNotContain(longSecret, result)
+        Assert.DoesNotContain(shortSecret, result)
+        Assert.Contains("***", result)
+        // 文本只含短密钥：正常替换
+        Assert.Equal("x *** y", Stderr.redact (sprintf "x %s y" shortSecret))
+    finally
+        Stderr.clearSecrets ()

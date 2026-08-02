@@ -17,7 +17,7 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
     let mutable disposed = false
     let watcher = new FileSystemWatcher(Path.GetDirectoryName path, Path.GetFileName path)
 
-    let reloadFromDisk () =
+    let reloadFromDisk () : Result<AppConfig, string list> =
         let readResult =
             try
                 let text = File.ReadAllText path
@@ -28,9 +28,11 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
         | Ok cfg ->
             lock lockObj (fun () -> current <- cfg)
             onReloaded cfg
+            Ok cfg
         | Error errs ->
             // 继续使用最后一次有效配置；stderr 由调用方记录
             onRejected(String.concat "; " errs)
+            Error errs
 
     let mutable debounceTimer: Timer = null
 
@@ -49,7 +51,7 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
                     (fun _ ->
                         debounceTimer.Dispose()
                         debounceTimer <- null
-                        reloadFromDisk ()),
+                        reloadFromDisk () |> ignore),
                     null,
                     100,
                     Timeout.Infinite
@@ -62,20 +64,26 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
         lock lockObj (fun () -> current)
 
     /// 完整重写 TOML（决策 42/43 单一路径）：生成 → 临时文件 → flush → rename → 重新加载。
-    /// 只有重新加载成功才返回 Ok；失败保留旧配置。
+    /// 只有重新加载成功才返回 Ok；失败保留旧配置（决策 44：不得在 reload 失败时视为成功）。
     member this.Rewrite(newConfig: AppConfig) : Result<unit, string> =
         let dir = Path.GetDirectoryName path
         let tmp = Path.Combine(dir, sprintf ".%s.tmp.%d" (Path.GetFileName path) Environment.ProcessId)
         try
             let text = TomlCodec.serialize newConfig
-            use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
-            let bytes = Encoding.UTF8.GetBytes text
-            fs.Write(bytes, 0, bytes.Length)
-            fs.Flush()
+            // 临时文件写入后显式释放，再执行原子 rename（避免目标文件被占用）
+            do
+                use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
+                // Q118：配置文件最小用户权限（仅当前用户可读写）
+                try File.SetUnixFileMode(tmp, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
+                let bytes = Encoding.UTF8.GetBytes text
+                fs.Write(bytes, 0, bytes.Length)
+                fs.Flush()
             File.Move(tmp, path, true)
-            reloadFromDisk ()
-            Ok()
+            match reloadFromDisk () with
+            | Ok _ -> Ok()
+            | Error errs -> Error(sprintf "config reload failed after rewrite: %s" (String.concat "; " errs))
         with e ->
+            try if File.Exists tmp then File.Delete tmp with _ -> ()
             Error(sprintf "config rewrite failed: %s" e.Message)
 
     member _.Path = path
@@ -96,14 +104,19 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
         if not (String.IsNullOrWhiteSpace dir) then
             Directory.CreateDirectory dir |> ignore
         if not (File.Exists path) then
-            let cfg = AppConfig.defaults (Guid.NewGuid())
+            let cfg = AppConfig.defaults (Guid.CreateVersion7())
             let text = TomlCodec.serialize cfg
             let tmp = Path.Combine(dir, sprintf ".%s.tmp.%d" (Path.GetFileName path) Environment.ProcessId)
-            use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
-            let bytes = Encoding.UTF8.GetBytes text
-            fs.Write(bytes, 0, bytes.Length)
-            fs.Flush()
+            do
+                use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
+                try File.SetUnixFileMode(tmp, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
+                let bytes = Encoding.UTF8.GetBytes text
+                fs.Write(bytes, 0, bytes.Length)
+                fs.Flush()
             File.Move(tmp, path, true)
         match TomlCodec.tryParse (File.ReadAllText path) with
-        | Ok cfg -> Ok(new ConfigStore(path, cfg, onReloaded, onRejected))
+        | Ok cfg ->
+            // Q118：确保配置文件始终为最小用户权限（首建或外部创建时 umask 可能放宽）
+            try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
+            Ok(new ConfigStore(path, cfg, onReloaded, onRejected))
         | Error errs -> Error(String.concat "; " errs)

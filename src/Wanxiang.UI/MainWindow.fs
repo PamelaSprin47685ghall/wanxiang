@@ -309,6 +309,53 @@ type MainWindow() as this =
         this.Background <- Theme.bg
         this.RequestedThemeVariant <- ThemeVariant.Light
 
+        // Q195：窗口尺寸是本机客户端偏好，保存在本地（不经 NDJSON）；启动恢复上次尺寸
+        let uiPrefsPath () =
+            let home =
+                match Environment.GetEnvironmentVariable "WANXIANG_HOME" with
+                | s when not (String.IsNullOrWhiteSpace s) -> s
+                | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".config", "wanxiang")
+            Path.Combine(home, "ui.json")
+        let loadPrefs () =
+            try
+                let path = uiPrefsPath ()
+                if File.Exists path then
+                    let node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText path)
+                    if not (isNull node) then
+                        let o = node.AsObject()
+                        let getD k =
+                            let mutable n: System.Text.Json.Nodes.JsonNode = null
+                            if o.TryGetPropertyValue(k, &n) && n <> null then n.GetValue<double>() else nan
+                        let w, h = getD "width", getD "height"
+                        if not (Double.IsNaN w) && w >= 800.0 && not (Double.IsNaN h) && h >= 560.0 then
+                            this.Width <- w
+                            this.Height <- h
+                        let getI k =
+                            let mutable n: System.Text.Json.Nodes.JsonNode = null
+                            if o.TryGetPropertyValue(k, &n) && n <> null then n.GetValue<int>() else 0
+                        let getB k =
+                            let mutable n: System.Text.Json.Nodes.JsonNode = null
+                            o.TryGetPropertyValue(k, &n) && n <> null && n.GetValueKind() = System.Text.Json.JsonValueKind.True
+                        let x, y = getI "x", getI "y"
+                        // 用显式 hasPosition 标志区分“未保存”与合法的 (0,0) 停靠位置（Q195）
+                        if getB "hasPosition" then this.Position <- PixelPoint(x, y)
+            with _ -> ()
+        loadPrefs ()
+        this.Closed.Add(fun _ ->
+            try
+                let path = uiPrefsPath ()
+                Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+                let o = System.Text.Json.Nodes.JsonObject()
+                o["width"] <- this.Width
+                o["height"] <- this.Height
+                o["x"] <- this.Position.X
+                o["y"] <- this.Position.Y
+                o["hasPosition"] <- true
+                File.WriteAllText(path, o.ToJsonString())
+                // Q118：本机偏好文件最小用户权限（与 TOML/日志/附件一致）
+                try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
+            with _ -> ())
+
         // 品牌标（左上角）
         let brandTile = createBrandTile 32.0 16.0
         let appName = TextBlock(Text = "万象", FontSize = 16.0, FontWeight = FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center)
@@ -323,7 +370,7 @@ type MainWindow() as this =
         sidebarHeaderPanel.Children.Add(headerSpacer)
         let sidebarHeader = Border(Height = 56.0, Padding = Thickness(14.0, 0.0, 12.0, 0.0), BorderBrush = Theme.border, BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0), Child = sidebarHeaderPanel)
 
-        // 会话列表模板：两行（标题 + 预览）
+        // 会话列表模板：两行（标题 + 预览）+ 右键菜单（重命名/删除，D15 桌面端会话管理）
         convList.ItemTemplate <-
             FuncDataTemplate(
                 typeof<ConvSummary>,
@@ -334,6 +381,13 @@ type MainWindow() as this =
                     let panel = StackPanel(Spacing = 3.0)
                     panel.Children.Add(title) |> ignore
                     panel.Children.Add(preview) |> ignore
+                    let renameItem = MenuItem(Header = "重命名")
+                    renameItem.Click.Add(fun _ -> this.BeginRename c)
+                    let deleteItem = MenuItem(Header = "删除")
+                    deleteItem.Click.Add(fun _ -> this.ConfirmDelete c)
+                    panel.ContextMenu <- ContextMenu()
+                    panel.ContextMenu.Items.Add(renameItem) |> ignore
+                    panel.ContextMenu.Items.Add(deleteItem) |> ignore
                     panel :> Control)
 
         // 会话列表条目容器：圆角、留白、选中态（与 PWA 视觉一致）
@@ -761,9 +815,17 @@ type MainWindow() as this =
             let toggleRow = StackPanel(Orientation = Orientation.Horizontal, Cursor = Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand))
             toggleRow.Children.Add(chevron) |> ignore
             toggleRow.Children.Add(thinkLabel) |> ignore
-            toggleRow.PointerPressed.Add(fun _ ->
+            // Q197：键盘可达——可聚焦（Tab），Enter/Space 切换折叠
+            toggleRow.Focusable <- true
+            Avalonia.Automation.AutomationProperties.SetName(toggleRow, "切换思考过程显示")
+            let toggle () =
                 thinkBody.IsVisible <- not thinkBody.IsVisible
-                chevron.Text <- if thinkBody.IsVisible then "▾" else "▸")
+                chevron.Text <- if thinkBody.IsVisible then "▾" else "▸"
+            toggleRow.PointerPressed.Add(fun _ -> toggle ())
+            toggleRow.KeyDown.Add(fun e ->
+                if e.Key = Avalonia.Input.Key.Enter || e.Key = Avalonia.Input.Key.Space then
+                    e.Handled <- true
+                    toggle ())
             let thinkStack = StackPanel(Spacing = 0.0)
             thinkStack.Children.Add(toggleRow) |> ignore
             thinkStack.Children.Add(thinkBody) |> ignore
@@ -936,7 +998,7 @@ type MainWindow() as this =
                                 | ".txt" | ".md" -> "text/plain"
                                 | ".json" -> "application/json"
                                 | _ -> "application/octet-stream"
-                            let aid = Guid.NewGuid()
+                            let aid = Guid.CreateVersion7()
                             client.SendAsync(AttachmentBegin {| attachmentId = aid; totalBytes = int64 bytes.Length; sha256 = hash; mediaType = mediaType; fileName = file.Name |}) |> ignore
                             let chunkSize = 256 * 1024
                             let mutable index = 0
@@ -1004,12 +1066,15 @@ type MainWindow() as this =
     member private this.SendMessage() =
         let text = inputBox.Text
         if String.IsNullOrWhiteSpace text && pendingAttachment.IsNone then ()
+        elif not client.IsConnected then
+            // 断线/未认证：保留输入内容并提示，不静默丢弃（Q36 语义：断网立即报错）；指示灯保持断开色（false）
+            setStatus "未连接，无法发送（请先连接服务器）" false
         else
             match activeConvId with
             | None -> ()
             | Some convId ->
                 inputBox.Text <- ""
-                let invocationId = Guid.NewGuid()
+                let invocationId = Guid.CreateVersion7()
                 let msg = JsonObject()
                 msg["role"] <- "user"
                 let contents = JsonArray()
@@ -1035,22 +1100,70 @@ type MainWindow() as this =
                 // 服务端提交后会广播权威 MessageCommitted；避免在此处乐观展示造成重复。
 
     member private this.CreateConversation() =
-        let conversationId = Guid.NewGuid()
+        let conversationId = Guid.CreateVersion7()
         let title = sprintf "会话 %s" (conversationId.ToString("N").Substring(0, 8))
+        // 配置由服务端用 TOML 第一个 provider 填充（客户端不硬编码 provider/model）
         let cfg =
-            { provider = "openai"
-              model = "gpt-4o-mini"
+            { provider = ""
+              model = ""
               instructions = None
               tools = []
               temperature = None
               maxTokens = None
               extraJson = None }
-        client.SendCommandAsync(CreateConversation {| invocationId = Guid.NewGuid(); conversationId = conversationId; title = title; config = cfg |}) |> ignore
+        client.SendCommandAsync(CreateConversation {| invocationId = Guid.CreateVersion7(); conversationId = conversationId; title = title; config = cfg |}) |> ignore
         // 延迟 observe（等提交完成）
         async {
             do! Async.Sleep 300
             client.SendAsync(ObserveConversation {| conversationId = conversationId |}) |> ignore
         } |> Async.Start
+
+    /// 会话右键菜单：重命名（D15 桌面端会话管理；PWA 已有同名能力）
+    member private this.BeginRename(c: ConvSummary) =
+        if not (client.IsConnected && authenticated) then
+            setStatus "未连接，无法重命名" (authenticated)
+        else
+            let title = c.Title
+            let mutable next = title
+            let dialog = Window(Title = "重命名会话", Width = 420.0, Height = 160.0, WindowStartupLocation = WindowStartupLocation.CenterOwner, SizeToContent = SizeToContent.Height)
+            let box = TextBox(Text = title, Margin = Thickness(16.0, 16.0, 16.0, 8.0), FontSize = 13.5)
+            box.SelectAll()
+            let okBtn = Button(Content = "确定", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 16.0, 16.0))
+            okBtn.Click.Add(fun _ ->
+                next <- box.Text.Trim()
+                if not (String.IsNullOrEmpty next) && next <> title then
+                    client.SendCommandAsync(RenameConversation {| invocationId = Guid.CreateVersion7(); conversationId = c.Id; title = next |}) |> ignore
+                dialog.Close())
+            let cancelBtn = Button(Content = "取消", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 8.0, 16.0))
+            cancelBtn.Click.Add(fun _ -> dialog.Close())
+            let panel = StackPanel()
+            panel.Children.Add(box) |> ignore
+            panel.Children.Add(okBtn) |> ignore
+            panel.Children.Add(cancelBtn) |> ignore
+            dialog.Content <- panel
+            dialog.Opened.Add(fun _ -> box.Focus() |> ignore)
+            dialog.Show(this)
+
+    /// 会话右键菜单：删除（tombstone，决策 73 第二问）
+    member private this.ConfirmDelete(c: ConvSummary) =
+        if not (client.IsConnected && authenticated) then
+            setStatus "未连接，无法删除" (authenticated)
+        else
+            let dialog = Window(Title = "删除会话", Width = 400.0, Height = 170.0, WindowStartupLocation = WindowStartupLocation.CenterOwner, SizeToContent = SizeToContent.Height)
+            let msg = TextBlock(Text = sprintf "确定要删除会话“%s”吗？此操作不可撤销。" c.Title, TextWrapping = TextWrapping.Wrap, Margin = Thickness(16.0, 16.0, 16.0, 8.0), FontSize = 13.5)
+            let okBtn = Button(Content = "删除", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 16.0, 16.0))
+            okBtn.Click.Add(fun _ ->
+                client.SendCommandAsync(DeleteConversation {| invocationId = Guid.CreateVersion7(); conversationId = c.Id |}) |> ignore
+                if activeConvId = Some c.Id then activeConvId <- None
+                dialog.Close())
+            let cancelBtn = Button(Content = "取消", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 8.0, 16.0))
+            cancelBtn.Click.Add(fun _ -> dialog.Close())
+            let panel = StackPanel()
+            panel.Children.Add(msg) |> ignore
+            panel.Children.Add(okBtn) |> ignore
+            panel.Children.Add(cancelBtn) |> ignore
+            dialog.Content <- panel
+            dialog.Show(this)
 
     /// 决策 74-77：编辑最后一条消息并 fork 新会话。
     member private this.ForkConversation() =
@@ -1103,7 +1216,7 @@ type MainWindow() as this =
                     okBtn.Click.Add(fun _ ->
                         let edited = editBox.Text
                         dialog.Close()
-                        let newId = Guid.NewGuid()
+                        let newId = Guid.CreateVersion7()
                         let editedMsg = JsonObject()
                         editedMsg["role"] <- mv.role
                         let contents = JsonArray()
@@ -1111,15 +1224,16 @@ type MainWindow() as this =
                         textContent["text"] <- edited
                         contents.Add textContent
                         editedMsg["contents"] <- contents
+                        // fork 继承父会话配置（决策 81 第二问：服务端投影用父会话 config），客户端无需提供
                         let cfg =
-                            { provider = "openai"
-                              model = "gpt-4o-mini"
+                            { provider = ""
+                              model = ""
                               instructions = None
                               tools = []
                               temperature = None
                               maxTokens = None
                               extraJson = None }
-                        client.SendCommandAsync(ForkConversation {| invocationId = Guid.NewGuid(); conversationId = newId; parentConversationId = convId; forkAfterId = (if commitId > 0UL then Some commitId else None); config = cfg; editedMessageJson = editedMsg |}) |> ignore
+                        client.SendCommandAsync(ForkConversation {| invocationId = Guid.CreateVersion7(); conversationId = newId; parentConversationId = convId; forkAfterId = (if commitId > 0UL then Some commitId else None); config = cfg; editedMessageJson = editedMsg |}) |> ignore
                         async {
                             do! Async.Sleep 300
                             client.SendAsync(ObserveConversation {| conversationId = newId |}) |> ignore

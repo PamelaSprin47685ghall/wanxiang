@@ -48,7 +48,7 @@ module ClientCommand =
             o["conversationId"] <- d.conversationId.ToString("D")
             o["parentConversationId"] <- d.parentConversationId.ToString("D")
             match d.forkAfterId with Some id -> o["forkAfterId"] <- id | None -> ()
-            o["config"] <- Wanxiang.Core.CommitCodec.configToJson d.config
+            // fork 配置由父会话投影继承（决策 81），config 不参与 canonical/commandId（客户端可空）
             o["editedMessage"] <- d.editedMessageJson.DeepClone()
         | SendUserMessage d ->
             o["conversationId"] <- d.conversationId.ToString("D")

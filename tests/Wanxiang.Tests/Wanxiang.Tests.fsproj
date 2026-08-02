@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <Compile Include="Helpers.fs" />
+    <Compile Include="StoreConsistencyTests.fs" />
     <Compile Include="ReplayTests.fs" />
     <Compile Include="CoordinatorTests.fs" />
     <Compile Include="CatchUpSafetyTests.fs" />
