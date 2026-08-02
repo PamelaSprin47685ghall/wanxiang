@@ -267,6 +267,7 @@ type WsConnection(
 
     member private this.CloseWith(status: WebSocketCloseStatus, reason: string) : Task =
         task {
+            logInfo(sprintf "conn %d closing via CloseWith: %s (%d)" connectionId reason (int status))
             lock cursorLock (fun () -> closed <- true)
             try
                 if ws.State = WebSocketState.Open then
@@ -565,7 +566,7 @@ type WsConnection(
                                     do! this.HandleJson jsonText
                     with
                     | :? OperationCanceledException -> ()
-                    | _ -> ()
+                    | e -> Stderr.write "ws-recv-exception" [ "connectionId", connectionId; "message", e.Message; "exception", e ]
                     closed <- true
                     sendChannel.Writer.TryComplete() |> ignore
                 }
