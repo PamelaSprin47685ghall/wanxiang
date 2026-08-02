@@ -30,11 +30,13 @@
 
   <!-- PWA 发布产物（AppBundle：index.html + _framework 运行时）同步到桌面 App 输出目录的 pwa/（ServerApp 托管目录），使 pwa 开关开箱即用。
        必须在 WasmTriggerPublishApp（嵌套 publish，最终生成 AppBundle）之后执行。 -->
-  <Target Name="CopyPwaToApp" AfterTargets="WasmTriggerPublishApp">
+  <!-- 钩在 WasmBuildApp（SDK 每次 Build 后重建 AppBundle 的目标）之后；直接钩 Build 会在 SDK 目标之前执行，拷到上一轮旧 AppBundle。 -->
+  <Target Name="CopyPwaToApp" AfterTargets="WasmBuildApp;WasmTriggerPublishApp">
     <ItemGroup>
       <_PwaFiles Include="$(OutputPath)AppBundle/**/*" />
     </ItemGroup>
-    <Copy SourceFiles="@(_PwaFiles)"
+    <!-- AppBundle 可能尚不存在（首次构建顺序）：无文件时 Copy 为空操作 -->
+    <Copy Condition="'@(_PwaFiles)' != ''" SourceFiles="@(_PwaFiles)"
           DestinationFiles="@(_PwaFiles->'$(MSBuildThisFileDirectory)../Wanxiang.App/bin/$(Configuration)/net10.0/pwa/%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
   </Target>

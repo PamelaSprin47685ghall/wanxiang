@@ -94,4 +94,11 @@ const dotnetRuntime = await dotnet
 dotnetRuntime.setModuleImports("wanxiang", { credList, credPut, credDelete, pageUrl });
 
 const config = dotnetRuntime.getConfig();
+// Avalonia 向 #out 追加 canvas 而不清空既有内容：首个 canvas 出现后移除启动画面
+new MutationObserver((_, obs) => {
+    if (document.querySelector("#out canvas")) {
+        document.querySelector(".splash")?.remove();
+        obs.disconnect();
+    }
+}).observe(document.getElementById("out"), { childList: true });
 await dotnetRuntime.runMain(config.mainAssemblyName, [globalThis.location.href]);

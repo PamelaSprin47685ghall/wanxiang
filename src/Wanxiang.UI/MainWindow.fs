@@ -173,6 +173,9 @@ module MarkdownParser =
 type MainView() as this =
     inherit UserControl()
 
+    // 内嵌 Sarasa Term SC（browser-wasm 无系统字体可访问；桌面与 PWA 统一字形）
+    do this.FontFamily <- FontFamily("avares://Wanxiang.UI/Assets/Fonts/#Sarasa Term SC")
+
     let client = WsClient()
     let state = ClientState()
 
@@ -220,6 +223,7 @@ type MainView() as this =
     let mutable lastToken: string option = None
     let mutable reconnectCts: CancellationTokenSource option = None
     let mutable reconnectDelayMs = 1000
+    let mutable lastCloseInfo = ""
     /// 历史分页（P1-2/Q127）
     let mutable pageLoading = false
     /// 生成状态循环动画（“生成中… / 生成中···”）
@@ -300,6 +304,22 @@ type MainView() as this =
     let setStatus (text: string) (connected: bool) =
         statusText.Text <- text
         connDot.Fill <- if connected then SolidColorBrush(Color.Parse "#34A853") else Theme.faint
+
+    /// 会话列表选中项与 activeConvId 双向对齐的单一入口：
+    /// - 有激活会话时，选中其在 rawSummaries 中的位置（找不到则不动，避免误跳）
+    /// - 无激活会话时，若当前无选中且列表非空，则默认选中首项（冷启动体验）
+    /// 调用点：activeConvId 改变后（ConversationSnapshot / ConfirmDelete / Reconnect 观察恢复）
+    /// 以及 rawSummaries 改变后（ConversationListSnapshot / searchBox 过滤）
+    /// 避免在同一次事件链中重复触发 SelectionChanged：用 `if SelectedIndex <> i` 短路。
+    let syncSelection () =
+        match activeConvId with
+        | Some cid ->
+            match rawSummaries |> Array.tryFindIndex (fun c -> c.Id = cid) with
+            | Some i -> if convList.SelectedIndex <> i then convList.SelectedIndex <- i
+            | None -> ()
+        | None ->
+            if convList.SelectedIndex < 0 && convList.ItemCount > 0 then
+                convList.SelectedIndex <- 0
 
     let setInputsEnabled (enabled: bool) =
         inputBox.IsEnabled <- enabled
@@ -480,9 +500,15 @@ type MainView() as this =
             else
                 convList.ItemsSource <-
                     rawSummaries
-                    |> Array.filter (fun c -> c.Title.ToLowerInvariant().Contains q || c.Preview.ToLowerInvariant().Contains q))
-        newButton.Click.Add(fun _ -> this.CreateConversation())
+                    |> Array.filter (fun c -> c.Title.ToLowerInvariant().Contains q || c.Preview.ToLowerInvariant().Contains q)
+            // 过滤可能把 activeConvId 项隐藏：保持头部仍指向原会话，选中态由 syncSelection 决定
+            syncSelection ())
+        newButton.Click.Add(fun _ ->
+            this.CreateConversation()
+            // 点击后把焦点交给输入框，避免按钮保留焦点时按 Space/Enter 误触发重复新建
+            inputBox.Focus() |> ignore)
         forkButton.Click.Add(fun _ -> this.ForkConversation())
+        connectButton.Click.Add(fun _ -> this.ShowConnectDialog())
         convList.SelectionChanged.Add(fun _ ->
             match convList.SelectedItem with
             | :? ConvSummary as c -> this.OpenConversation c.Id
@@ -506,10 +532,16 @@ type MainView() as this =
         client.EventReceived.Add(fun ev -> Dispatcher.UIThread.Post(fun () -> this.HandleEvent ev))
         state.CursorChanged.Add(fun _ ->
             client.SendAsync(state.CursorAdvancedEvent()) |> ignore)
-        client.Closed.Add(fun _ ->
+        client.Closed.Add(fun err ->
             Dispatcher.UIThread.Post(fun () ->
                 authenticated <- false
-                setStatus "连接已断开" false
+                match err with
+                | Some e ->
+                    lastCloseInfo <- e.GetType().Name + ": " + e.Message
+                    setStatus ("连接已断开: " + lastCloseInfo) false
+                | None ->
+                    lastCloseInfo <- ""
+                    setStatus "连接已断开" false
                 this.ScheduleReconnect()))
 
         // P2-5：桌面客户端令牌（client.toml）存在时自动连接本机 S（决策 64：server+client 同进程自动配对）
@@ -600,6 +632,7 @@ type MainView() as this =
             authenticated <- true
             setStatus (sprintf "已连接 · %s" d.instanceId) true
             connectButton.IsEnabled <- true
+            closeDialog ()
             reconnectDelayMs <- 1000
             // PWA：认证成功后把连接凭据按 instanceId 写入 IndexedDB（决策 52/53、Q191）
             if OperatingSystem.IsBrowser() then
@@ -659,7 +692,7 @@ type MainView() as this =
             else
                 convList.ItemsSource <- rawSummaries |> Array.filter (fun c -> c.Title.ToLowerInvariant().Contains q || c.Preview.ToLowerInvariant().Contains q)
             state.AdvanceCursor()
-            if convList.ItemCount > 0 && convList.SelectedIndex < 0 then convList.SelectedIndex <- 0
+            syncSelection ()
         | ConversationSnapshot d ->
             state.Handle ev
             state.AdvanceCursor()
@@ -671,6 +704,10 @@ type MainView() as this =
             showGenChip (d.runtimeState = "generating")
             if d.runtimeState = "generating" then startGenTimer () else stopGenTimer ()
             setInputsEnabled true
+            // syncSelection 必须放在 chatTitle/RenderMessages 之后、UI 帧内：
+            // 设置 SelectedIndex 会触发 SelectionChanged → OpenConversation，该服务端快照幂等。
+            // 在某些事件序列下，列表快照可能尚未到达，目标不在 rawSummaries，syncSelection 会安全跳过。
+            syncSelection ()
         | MessageCommitted d ->
             state.Handle ev
             state.AdvanceCursor()
@@ -1024,7 +1061,7 @@ type MainView() as this =
             reconnectCts <- Some cts
             let delay = reconnectDelayMs
             reconnectDelayMs <- min (reconnectDelayMs * 2) 30000
-            setStatus (sprintf "连接断开，%.1fs 后自动重连…" (float delay / 1000.0)) false
+            setStatus (sprintf "连接断开，%.1fs 后自动重连…%s" (float delay / 1000.0) (if String.IsNullOrEmpty lastCloseInfo then "" else " [" + lastCloseInfo + "]")) false
             async {
                 do! Async.Sleep delay
                 if not cts.IsCancellationRequested then
@@ -1136,7 +1173,9 @@ type MainView() as this =
             let okBtn = Button(Content = "删除", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 16.0, 0.0))
             okBtn.Click.Add(fun _ ->
                 client.SendCommandAsync(DeleteConversation {| invocationId = Guid.CreateVersion7(); conversationId = c.Id |}) |> ignore
-                if activeConvId = Some c.Id then activeConvId <- None
+                if activeConvId = Some c.Id then
+                    activeConvId <- None
+                    syncSelection ()
                 closeDialog ())
             let cancelBtn = Button(Content = "取消", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 8.0, 0.0))
             cancelBtn.Click.Add(fun _ -> closeDialog ())
@@ -1232,7 +1271,9 @@ type MainView() as this =
                         async {
                             do! Async.Sleep 300
                             client.SendAsync(ObserveConversation {| conversationId = newId |}) |> ignore
-                        } |> Async.Start)
+                        } |> Async.Start
+                        // 与“新建会话”一致：fork 完通常接着输入，提前把焦点送进输入框
+                        Dispatcher.UIThread.Post(fun () -> inputBox.Focus() |> ignore))
                     showDialog panel 480.0
 
     member private this.OpenConversation(id: Guid) =

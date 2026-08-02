@@ -39,7 +39,7 @@ type WsClient() =
                 do! newWs.ConnectAsync(uri, newCts.Token)
                 ws <- newWs
                 cts <- newCts
-                this.ReceiveLoop(newWs, newCts.Token, generation) |> ignore
+                Async.Start(this.ReceiveLoop(newWs, newCts.Token, generation)) |> ignore
             with e ->
                 newCts.Dispose()
                 newWs.Dispose()
@@ -95,8 +95,10 @@ type WsClient() =
                 | :? WebSocketException -> ()
         }
 
-    member private this.ReceiveLoop(socket: ClientWebSocket, ct: CancellationToken, generation: int) : Task =
-        task {
+    /// 接收循环用 async 而不是 task：browser-wasm 单线程运行时中，task CE 对 pending task 的 await 会
+    /// 走 Task.InternalWait 阻塞等待（“Cannot wait on monitors on this runtime”），async 的 trampoline 不会。
+    member private this.ReceiveLoop(socket: ClientWebSocket, ct: CancellationToken, generation: int) : Async<unit> =
+        async {
             let mutable shouldNotify = true
             let isCurrent () = generation = connectionGeneration
             try
@@ -104,7 +106,7 @@ type WsClient() =
                 let ms = new System.IO.MemoryStream()
                 let mutable doneReceiving = false
                 while not doneReceiving && socket.State = WebSocketState.Open do
-                    let! result = socket.ReceiveAsync(ArraySegment<byte>(buffer), ct)
+                    let! result = socket.ReceiveAsync(ArraySegment<byte>(buffer), ct) |> Async.AwaitTask
                     if result.MessageType = WebSocketMessageType.Close then
                         doneReceiving <- true
                     elif result.MessageType = WebSocketMessageType.Binary then

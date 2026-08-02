@@ -1,0 +1,2 @@
+# 内嵌字体标记为 binary，避免 git/编辑器误改行尾
+src/Wanxiang.UI/Assets/Fonts/*.ttf binary

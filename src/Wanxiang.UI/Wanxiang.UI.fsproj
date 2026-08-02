@@ -13,6 +13,12 @@
     <Compile Include="App.fs" />
   </ItemGroup>
 
+  <!-- 内嵌 Sarasa Term SC（OFL-1.1，见 LICENSE-Sarasa.txt）：browser-wasm 的 Skia 无法访问宿主系统字体，
+       PWA 中文显示依赖内嵌字体；桌面端同样生效，保证两端字形一致。 -->
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/Fonts/**" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.0.0" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.0" />

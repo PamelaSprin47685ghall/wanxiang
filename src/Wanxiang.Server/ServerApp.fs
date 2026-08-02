@@ -259,6 +259,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 let contentTypeProvider = FileExtensionContentTypeProvider()
                 contentTypeProvider.Mappings[".symbols"] <- "application/octet-stream"
                 contentTypeProvider.Mappings[".dat"] <- "application/octet-stream"
+                contentTypeProvider.Mappings[".pdb"] <- "application/octet-stream"
                 app.UseStaticFiles(StaticFileOptions(FileProvider = new PhysicalFileProvider(Path.GetFullPath dir), ContentTypeProvider = contentTypeProvider))
                 |> ignore
                 // 根路径与未知路径回退到 index.html
