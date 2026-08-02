@@ -1217,6 +1217,20 @@ type MainWindow() as this =
                         let edited = editBox.Text
                         dialog.Close()
                         let newId = Guid.CreateVersion7()
+                        // 决策 75：fork 点 = 父对话中最后一条被继承消息的全局提交 id。
+                        // 编辑消息 id=X 时继承其之前的历史，因此取可见消息中 < X 的最大 id（编辑首条则为空）。
+                        let forkAfterId =
+                            let mutable prev = 0UL
+                            for m in view.messages do
+                                match m with
+                                | :? JsonObject as o ->
+                                    let mutable c: JsonNode = null
+                                    if o.TryGetPropertyValue("commitId", &c) && not (isNull c) && c :? JsonValue then
+                                        match (c :?> JsonValue).TryGetValue<uint64>() with
+                                        | true, v when v < commitId && v > prev -> prev <- v
+                                        | _ -> ()
+                                | _ -> ()
+                            if prev > 0UL then Some prev else None
                         let editedMsg = JsonObject()
                         editedMsg["role"] <- mv.role
                         let contents = JsonArray()
@@ -1233,7 +1247,7 @@ type MainWindow() as this =
                               temperature = None
                               maxTokens = None
                               extraJson = None }
-                        client.SendCommandAsync(ForkConversation {| invocationId = Guid.CreateVersion7(); conversationId = newId; parentConversationId = convId; forkAfterId = (if commitId > 0UL then Some commitId else None); config = cfg; editedMessageJson = editedMsg |}) |> ignore
+                        client.SendCommandAsync(ForkConversation {| invocationId = Guid.CreateVersion7(); conversationId = newId; parentConversationId = convId; forkAfterId = forkAfterId; config = cfg; editedMessageJson = editedMsg |}) |> ignore
                         async {
                             do! Async.Sleep 300
                             client.SendAsync(ObserveConversation {| conversationId = newId |}) |> ignore

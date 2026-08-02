@@ -405,7 +405,9 @@ async function handleEvent(ev) {
       break;
     case "command.rejected":
       if (p.code === "stale-projection") {
-        toast("状态尚未同步，请稍候重试");
+        // 决策 36：requiredCommitId 指明需要追到的全局提交 id，供用户/客户端判断同步进度
+        const need = p.requiredCommitId ? `（需同步至 #${p.requiredCommitId}）` : "";
+        toast("状态尚未同步，请稍候重试" + need);
       } else {
         toast("操作被拒绝：" + p.message);
       }
@@ -1135,15 +1137,24 @@ function forkConversation() {
   showModal({ title: "编辑并 fork", body: textarea, confirmText: "fork", onConfirm: () => {
     const edited = textarea.value.trim();
     if (!edited) return toast("消息内容不能为空");
-    // 决策 75：fork 点 = 父会话最后一条被继承消息的全局提交 id（commitId 即消息标识，决策 79）
-    const forkAfterId = Number(parentMsg && parentMsg.commitId) || 0;
+    // 决策 75：fork 点 = 父对话中最后一条被继承消息的全局提交 id。
+    // 编辑消息 id=X 时继承其之前的历史，因此取可见消息中 < X 的最大 id（编辑首条则为 0）。
+    let target = Number(parentMsg && parentMsg.commitId) || 0;
+    let forkAfterId = conv.messages.reduce((acc, m) => {
+      const cid = Number(m && m.commitId) || 0;
+      return (cid > 0 && cid < target && cid > acc) ? cid : acc;
+    }, 0);
     const conversationId = uuidv7();
     const message = { role: roleOf(parentPayload), contents: [{ text: edited }] };
-    send({ type: "conversation.fork", payload: {
+    const forkPayload = {
       invocationId: uuidv7(), conversationId, parentConversationId: state.activeConv,
       // fork 继承父会话配置（决策 81 第二问），客户端无需提供有效 config
-      forkAfterId, config: { provider: "", model: "" }, message
-    }});
+      config: { provider: "", model: "" }, message
+    };
+    // 编辑首条消息（无前一条）：不发送 forkAfterId（服务端按 None 处理）；发送 0 会被当作
+    // 不存在的提交 id 拒绝（fork 点必须是父会话可见消息）
+    if (forkAfterId > 0) forkPayload.forkAfterId = forkAfterId;
+    send({ type: "conversation.fork", payload: forkPayload });
     setTimeout(() => {
       send({ type: "conversation.observe", payload: { conversationId } });
       openConversation(conversationId);

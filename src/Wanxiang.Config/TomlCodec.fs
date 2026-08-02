@@ -242,6 +242,9 @@ module TomlCodec =
                 | true, v ->
                     match asTable v with
                     | Some at ->
+                        // Q183：auth 表未知字段（如 clientSecret、漏写 s 的 [[auth.client]]）拒绝整份配置，
+                        // 不能静默接受拼写错误形成的假配置
+                        checkKeys at (set [ "clients" ]) "auth"
                         match at.TryGetValue "clients" with
                         | true, c ->
                             match c with
@@ -342,12 +345,43 @@ module TomlCodec =
         top.Add("pairing", pairing)
 
         let providers = TomlTable()
+        // extra 是已识别字段（knownProviderKeys 含 "extra"）；写回必须保留，
+        // 否则任何一次 Rewrite（配对落盘、吊销、配置修改）都会静默删除用户配置的 extra 内容（决策 42）
+        let rec jsonToToml (node: JsonNode) : obj =
+            match node with
+            | :? JsonObject as o ->
+                let t = TomlTable()
+                for kv in o do
+                    if not (isNull kv.Value) then t.Add(kv.Key, jsonToToml kv.Value)
+                t :> obj
+            | :? JsonArray as a ->
+                let arr = TomlArray()
+                for item in a do
+                    if not (isNull item) then arr.Add(jsonToToml item)
+                arr :> obj
+            | :? JsonValue as v ->
+                let mutable s = ""
+                if v.TryGetValue<string>(&s) then s :> obj
+                else
+                    let mutable b = false
+                    if v.TryGetValue<bool>(&b) then b :> obj
+                    else
+                        let mutable i = 0L
+                        if v.TryGetValue<int64>(&i) then i :> obj
+                        else
+                            let mutable f = 0.0
+                            if v.TryGetValue<double>(&f) then f :> obj
+                            else string v :> obj
+            | _ -> string node :> obj
         for kv in cfg.providers do
             let p = TomlTable()
             p.Add("kind", kv.Value.kind)
             p.Add("baseUrl", kv.Value.baseUrl)
             match kv.Value.apiKey with Some k -> p.Add("apiKey", k) | None -> ()
             p.Add("model", kv.Value.model)
+            match kv.Value.extraJson with
+            | Some n when not (isNull n) -> p.Add("extra", jsonToToml n)
+            | _ -> ()
             providers.Add(kv.Key, p)
         top.Add("providers", providers)
 

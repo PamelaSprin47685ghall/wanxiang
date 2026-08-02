@@ -71,7 +71,7 @@ let ``单写者内部幂等：同 commandId 不同载荷返回冲突`` () =
                 events = [ ConversationCreated { conversationId = convId; title = "B"; config = testConfig () } ]
                 commandHash = Some(CommandId.sha256Hex "different-payload") }
         match coord.Submit submit2 with
-        | TruncatedAndReused (_, CommandIdConflict _) -> ()
+        | CommandIdRejected (CommandIdConflict _) -> ()
         | r -> failwithf "expected conflict, got %A" r
         coord.Shutdown()
     finally
@@ -279,9 +279,11 @@ let ``replay 遇非法 UTF-8 序列触发截尾`` () =
     finally
         cleanup dir
 
-/// 非法事件文件名：fix 时删除文件自身并保留后续文件（不级联误删；id 连续性兜底）。
+/// 非法事件文件名：fix 时删除文件自身并级联删除其后（字典序）所有文件（决策 9）。
+/// 若不级联：损坏点之后的合法文件保留，而 lastCommitId 停在损坏点之前，运行期从 lastCommitId+1
+/// 重新分配 id 会与保留文件中的旧 id 冲突，下次启动重放按 id 连续性截尾 → 运行期写入数据静默丢失。
 [<Fact>]
-let ``replay fix deletes invalid-named file but preserves later files`` () =
+let ``replay fix deletes invalid-named file and all later files`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
@@ -293,19 +295,19 @@ let ``replay fix deletes invalid-named file but preserves later files`` () =
         Directory.CreateDirectory(Path.GetDirectoryName p1) |> ignore
         File.WriteAllText(badPath, "garbage\n")
         File.AppendAllText(p1, CommitCodec.commitToJsonLine c1 + "\n")
-        // fix 模式：删除非法文件自身（offset=0 无可保留）；后续文件保留（id 连续性检测兜底，不级联误删）
+        // fix 模式：删除非法文件自身（offset=0 无可保留）并级联删除其后所有文件
         match Replay.replay dir true with
         | Ok outcome ->
             // badPath 在最前，扫描 stop 早于 p1 → 本次投影为空
             Assert.Equal(0UL, outcome.lastCommitId)
             // 非法文件自身被删除（避免每次启动 fix 重复命中并写 stderr）
             Assert.False(File.Exists badPath)
-            // 后续合法文件不被级联删除（安全：字典序下非法名可能排在合法文件之前）
-            Assert.True(File.Exists p1)
+            // 决策 9：损坏点之后的所有日期文件一并删除（不保留，否则 id 冲突链）
+            Assert.False(File.Exists p1)
         | Error e -> failwith e
-        // 再次 replay：p1 完整重放（一次 fix 清干净，不重复命中）
+        // 再次 replay：目录已清空，从空日志正常启动（fix 幂等）
         match Replay.replay dir false with
-        | Ok outcome2 -> Assert.Equal(1UL, outcome2.lastCommitId)
+        | Ok outcome2 -> Assert.Equal(0UL, outcome2.lastCommitId)
         | Error e -> failwith e
     finally
         cleanup dir

@@ -35,6 +35,11 @@ type ConversationRuntime = {
     mutable pendingInvocationIds: Set<Guid>
 }
 
+/// 工具执行结果：完整结果（成功或失败，需记账）或已取消（无完整结果，不记账）。
+type private ToolOutcome =
+    | ToolResult of string
+    | ToolCancelled
+
 /// 聊天编排器（决策 12/13/22-24/37/38/87-92）：
 /// - 每会话单生成（串行），多会话并行；
 /// - 排队消息只在插入点落盘；
@@ -74,12 +79,35 @@ type ChatOrchestrator(
             | Some g when not g.cancelled -> "generating"
             | _ -> "idle")
 
-    /// 提交一条消息事件（无命令标识；Agent 响应 / 工具结果记账）。
+    /// 提交一条消息事件（Agent 响应 / 工具结果记账）。
+    /// 决策 16：Agent 内部命令也使用独立 invocationId，与普通命令一样带 commandId 提交——
+    /// 记账提交因此纳入单写者的幂等索引：重试/重放不重复落盘，重启 replay 后索引可恢复，
+    /// 与 Server 层所有写路径保持同一提交形态。
     member private _.SubmitMessage(convId: Guid, payloadJson: JsonNode) : Result<Events.Commit, WanxiangError> =
-        match coordinator.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = payloadJson } ] with
+        let invocationId = Guid.CreateVersion7()
+        let canonicalPayload = payloadJson.ToJsonString()
+        let commandId = CommandId.compute invocationId "agent.message" canonicalPayload
+        let canonicalHash = CommandId.sha256Hex canonicalPayload
+        match coordinator.Submit
+            { events = [ AgentMessageRecorded { conversationId = convId; payloadJson = payloadJson } ]
+              commandId = Some commandId
+              commandType = Some "agent.message"
+              commandHash = Some canonicalHash
+              nowUtc = None } with
         | Committed c -> Ok c
-        | TruncatedAndReused _ -> Ok(Events.Commit.create 0UL DateTimeOffset.UtcNow []) // 已截尾：调用方忽略
+        | IdempotentReplay c -> Ok c
+        | TruncatedAndReused (c, _) -> Ok c // 已截尾：调用方忽略
+        | CommandIdRejected e -> Error e
         | CommitFailed e -> Error e
+
+    /// 记账提交结果处理：失败必须可见（决策 10/17：只有 committed 才算成功），
+    /// 记 stderr 并向观察该会话的客户端广播 ServerError。
+    member private this.RecordSubmitOutcome(convId: Guid, submitResult: Result<Events.Commit, WanxiangError>) : unit =
+        match submitResult with
+        | Ok _ -> ()
+        | Error e ->
+            logInfo(sprintf "message accounting failed for conversation %O: %s" convId (WanxiangError.message e))
+            broadcastToConversation convId (ServerError {| message = sprintf "消息记账失败: %s" (WanxiangError.message e) |})
 
     /// 提交一条排队消息（插入点；带命令标识，幂等安全）。
     member private this.SubmitQueuedMessage(convId: Guid, cmd: ClientCommand, payloadJson: JsonNode) : SubmitResult =
@@ -251,9 +279,8 @@ type ChatOrchestrator(
                 match gen with
                 | None -> running <- false
                 | Some g ->
-                    // 1. 插入点：排空队列（决策 24：全部 FIFO 提交，一次 Provider 调用）
-                    let batch = this.DrainQueue convId
-                    // 2. 检查取消
+                    // 1. 取消检查（决策 88：取消只停止当前运行；内存中排队但尚未插入的用户消息
+                    //    继续保留，等待下一个插入点——绝不先提交再取消，否则消息落盘却无回复）
                     if g.cts.IsCancellationRequested then
                         let ev =
                             GenerationFinished
@@ -265,6 +292,8 @@ type ChatOrchestrator(
                         lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
                         running <- false
                     else
+                        // 2. 插入点：排空队列（决策 24：全部 FIFO 提交，一次 Provider 调用）
+                        let batch = this.DrainQueue convId
                         // 3. 构造上下文（历史 + 已提交新消息）
                         let context = loadContextMessages convId
                         if List.isEmpty context && List.isEmpty batch then
@@ -354,45 +383,55 @@ type ChatOrchestrator(
                                             running <- false
                                     else
                                         // 5. 并行执行工具（决策 92），全部完成后统一返回 Provider（保持原顺序）
-                                        let! toolResults = this.ExecuteTools(convId, generationId, calls, g)
-                                        // 提交 Tool Result 消息（独立记账，决策 10/92）
-                                        for (call, resultText) in toolResults do
-                                            let resultMsg = MessageSerde.toolResultMessage call resultText
-                                            this.SubmitMessage(convId, MessageSerde.toJsonNode resultMsg) |> ignore
+                                        //    每条完整 Tool Result 在完成时已分别记账并推送（ExecuteTools 内）
+                                        let! _ = this.ExecuteTools(convId, generationId, calls, g)
                                         // 继续循环（下一轮再调 Provider）
                                         lock rt (fun () -> g.lastProviderMessages <- [])
         }
 
-    /// 并行执行一批工具调用。返回按原顺序的 (call, resultJsonText) 列表。
-    member private this.ExecuteTools(convId: Guid, generationId: Guid, calls: FunctionCallContent list, g: GenerationRuntime) : Task<(FunctionCallContent * string) list> =
+    /// 并行执行一批工具调用。返回按原顺序的 (call, outcome) 列表。
+    /// 决策 89：Tool 成功取消且没有完整结果时，不补写任何消息（NDJSON 无伪造结果）；
+    /// 决策 92：每个完整 Tool Result 一完成就分别记账并实时推送给客户端（不等待整批）。
+    member private this.ExecuteTools(convId: Guid, generationId: Guid, calls: FunctionCallContent list, g: GenerationRuntime) : Task<(FunctionCallContent * ToolOutcome) list> =
         task {
             // 同一批调用使用同一工具快照
             let allTools = toolRegistry.BuildTools g.agentConfig
             let findTool (call: FunctionCallContent) : AITool option =
                 // M.E.AI 生成的函数名与注册名一致；先尝试直接匹配
                 allTools |> List.tryFind (fun t -> t.Name = call.Name || t.Name = sprintf "builtin_%s" (call.Name.Replace("builtin:", "").Replace(".", "_")))
-            let runOne (call: FunctionCallContent) : Task<(FunctionCallContent * string)> =
+            let runOne (call: FunctionCallContent) : Task<(FunctionCallContent * ToolOutcome)> =
                 task {
                     match findTool call with
                     | None ->
-                        return call, sprintf """{"error":"tool %s not found"}""" call.Name
+                        let text = sprintf """{"error":"tool %s not found"}""" call.Name
+                        this.RecordSubmitOutcome(convId, this.SubmitMessage(convId, MessageSerde.toJsonNode (MessageSerde.toolResultMessage call text)))
+                        return call, ToolResult text
                     | Some tool ->
                         try
                             match tool with
                             | :? AIFunction as f ->
                                 let args = AIFunctionArguments(call.Arguments)
                                 let! result = f.InvokeAsync(args, g.cts.Token)
-                                match result with
-                                | null -> return call, """{"result":null}"""
-                                | :? string as s -> return call, s
-                                | other -> return call, JsonSerializer.Serialize(other)
+                                let text =
+                                    match result with
+                                    | null -> """{"result":null}"""
+                                    | :? string as s -> s
+                                    | other -> JsonSerializer.Serialize(other)
+                                // 完成即记账（决策 92）：不等待整批
+                                this.RecordSubmitOutcome(convId, this.SubmitMessage(convId, MessageSerde.toJsonNode (MessageSerde.toolResultMessage call text)))
+                                return call, ToolResult text
                             | _ ->
-                                return call, """{"error":"tool is not an AIFunction"}"""
+                                let text = """{"error":"tool is not an AIFunction"}"""
+                                this.RecordSubmitOutcome(convId, this.SubmitMessage(convId, MessageSerde.toJsonNode (MessageSerde.toolResultMessage call text)))
+                                return call, ToolResult text
                         with
                         | :? OperationCanceledException ->
-                            return call, """{"error":"cancelled"}"""
+                            // 决策 89：Tool 成功取消且没有完整结果 → 不补写任何消息
+                            return call, ToolCancelled
                         | e ->
-                            return call, sprintf """{"error":"%s"}""" (e.Message.Replace("\"", "'"))
+                            let text = sprintf """{"error":"%s"}""" (e.Message.Replace("\"", "'"))
+                            this.RecordSubmitOutcome(convId, this.SubmitMessage(convId, MessageSerde.toJsonNode (MessageSerde.toolResultMessage call text)))
+                            return call, ToolResult text
                 }
             let! results = Task.WhenAll [ for c in calls -> runOne c ]
             return List.ofArray results
@@ -411,7 +450,7 @@ type ChatOrchestrator(
                 | _ -> false)
         if shouldCommit then
             for m in msgs do
-                this.SubmitMessage(convId, MessageSerde.toJsonNode m) |> ignore
+                this.RecordSubmitOutcome(convId, this.SubmitMessage(convId, MessageSerde.toJsonNode m))
 
     member private this.OnAgentFailure(convId: Guid, ex: exn) =
         logInfo(sprintf "agent failure for %O: %s" convId ex.Message)

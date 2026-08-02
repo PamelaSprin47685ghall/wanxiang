@@ -123,6 +123,10 @@ module WireCodec =
             putGuid p "invocationId" d.invocationId
             p["code"] <- d.code
             p["message"] <- d.message
+            // 决策 36：stale-projection 拒绝必须携带 requiredCommitId，客户端据此追赶
+            match d.requiredCommitId with
+            | Some id -> p["requiredCommitId"] <- id
+            | None -> ()
         | CursorAdvanced d -> p["id"] <- d.id
         | AuthorityCatchUp d ->
             p["fromCursor"] <- d.fromCursor
@@ -387,7 +391,12 @@ module WireCodec =
                     | None -> Error "command.committed: missing invocationId"
                 | Some "command.rejected" ->
                     match tryGuid p "invocationId" with
-                    | Some inv -> Ok(CommandRejected {| invocationId = inv; code = tryString p "code" |> Option.defaultValue ""; message = tryString p "message" |> Option.defaultValue "" |})
+                    | Some inv ->
+                        Ok(CommandRejected
+                            {| invocationId = inv
+                               code = tryString p "code" |> Option.defaultValue ""
+                               message = tryString p "message" |> Option.defaultValue ""
+                               requiredCommitId = tryUInt64 p "requiredCommitId" |})
                     | None -> Error "command.rejected: missing invocationId"
                 | Some "cursor.advanced" -> Ok(CursorAdvanced {| id = tryUInt64 p "id" |> Option.defaultValue 0UL |})
                 | Some "authority.catch-up" ->

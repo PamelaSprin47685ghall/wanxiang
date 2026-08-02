@@ -21,6 +21,12 @@ module DataPaths =
     let ensureDataDirs (dataDir: string) : unit =
         Directory.CreateDirectory(eventsDir dataDir) |> ignore
         Directory.CreateDirectory(attachmentsDir dataDir) |> ignore
+        // Q118：事件日志与附件目录采用最小用户权限（仅当前用户可读写执行），
+        // 不依赖 umask——默认 0755 会让组/其他用户读到含消息正文的事件日志。
+        for dir in [ eventsDir dataDir; attachmentsDir dataDir ] do
+            try
+                File.SetUnixFileMode(dir, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+            with _ -> ()
 
     /// 解析事件日志文件名，返回 UTC 日期；命名非法返回 None。
     let tryParseEventFileName (fileName: string) : DateTime option =

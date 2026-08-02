@@ -65,6 +65,14 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         | Some c -> c.Projection
         | None -> failwith "coordinator not ready"
 
+    /// 按 TOML 重建配对限流器（Q188：每远端地址每分钟失败次数/冻结分钟可通过 TOML 调整；启动即生效）
+    let rebuildFailureTracker (cfg: AppConfig) =
+        failureTracker <-
+            Auth.FailureTracker(
+                TimeSpan.FromMinutes(float cfg.pairingFailureWindowMinutes),
+                cfg.pairingMaxFailures,
+                TimeSpan.FromMinutes(float cfg.pairingFreezeMinutes))
+
     let onConfigReloaded (cfg: AppConfig) =
         // 决策 41：配置热重载后新 apiKey 也纳入 stderr 脱敏集（Q164 密钥不落 stderr）
         Stderr.registerSecrets (
@@ -83,11 +91,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                             conn.ForceClose()
                     | None -> ()
             | None -> ()
-            failureTracker <-
-                Auth.FailureTracker(
-                    TimeSpan.FromMinutes(float cfg.pairingFailureWindowMinutes),
-                    cfg.pairingMaxFailures,
-                    TimeSpan.FromMinutes(float cfg.pairingFreezeMinutes))
+            rebuildFailureTracker cfg
         with _ -> ()
 
     let onConfigRejected (errs: string) =
@@ -146,12 +150,12 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                     match coord.Submit submit with
                     | SubmitResult.Committed c -> CommandExecutionResult.CommandCommitted c.id
                     | SubmitResult.IdempotentReplay c -> CommandExecutionResult.CommandIdempotent c.id
-                    | SubmitResult.TruncatedAndReused (commit, err) ->
-                        // Q145：同 commandId 不同 payload 的冲突走专用 stderr 事件；其余为运行时截尾
-                        match err with
-                        | CommandIdConflict _ ->
-                            Stderr.write "command-id-conflict" [ "commandType", ClientCommand.commandType cmd ]
-                        | _ -> Stderr.truncated (CommitCodec.commitToJsonLine commit) err
+                    | SubmitResult.CommandIdRejected e ->
+                        // Q145：同 commandId 不同 payload 的冲突（或幂等记录异常）走专用 stderr 事件
+                        Stderr.write "command-id-conflict" [ "commandType", ClientCommand.commandType cmd; "message", WanxiangError.message e ]
+                        CommandExecutionResult.CommandFailed e
+                    | SubmitResult.TruncatedAndReused (_, err) ->
+                        // 仅剩运行时投影失败截尾路径；stderr 已由协调器 onTruncated 忠实记录（决策 40）
                         CommandExecutionResult.CommandFailed err
                     | SubmitResult.CommitFailed e -> CommandExecutionResult.CommandFailed e
         with e ->
@@ -174,14 +178,16 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 cs.Current.providers
                 |> Seq.choose (fun kv -> kv.Value.apiKey)
                 |> Seq.filter (fun k -> not (String.IsNullOrWhiteSpace k)))
+            // Q188：配对限流参数以 TOML 为权威——启动时即按 TOML 重建，而非等首次热重载
+            rebuildFailureTracker cs.Current
         let broadcastCommit (commit: Events.Commit) =
             try
                 match registry with
                 | Some reg -> reg.BroadcastCommit commit
                 | None -> ()
             with _ -> ()
-        let onTruncated (commit: Events.Commit, err: WanxiangError) =
-            Stderr.truncated (CommitCodec.commitToJsonLine commit) err
+        let onTruncated (commit: Events.Commit, err: WanxiangError, byteOffset: int64, file: string) =
+            Stderr.truncated commit file byteOffset err
         coordinator <- Some(CommitCoordinator(dataDir, replayOutcome, broadcastCommit, onTruncated))
         registry <- Some(ConnectionRegistry())
         let broadcastToConversation (convId: Guid) (ev: WireEvent) =
@@ -218,9 +224,9 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                                 remote,
                                 currentProjection,
                                 currentConfig,
-                                (fun c ->
+                                (fun f ->
                                     match configStore with
-                                    | Some cs -> cs.Rewrite c
+                                    | Some cs -> cs.Update f
                                     | None -> Error "config store not ready"),
                                 executeCommand,
                                 orchestrator.Value,
@@ -272,12 +278,20 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         logInfo(sprintf "wanxiang server listening on http://%s (ws=%s pwa=%b)" (currentConfig ()).listen Constants.WsPath servePwa)
 
     /// 优雅关闭：停止接收新工作、取消生成、排空单写者并 flush（决策 101）。
+    /// Q102：不设置内部固定超时——先关闭全部 WebSocket 连接让 Kestrel 排空完成；
+    /// 强制终止由第二次终止信号（Program）或外部服务管理器负责。
     member this.Stop() : unit =
         if not stopping then
             stopping <- true
             try
+                // 先强制关闭全部连接（吊销/断线路径），否则 Kestrel 排空会等待永不结束的 WebSocket
+                match registry with
+                | Some reg -> for conn in reg.All() do conn.ForceClose()
+                | None -> ()
+            with _ -> ()
+            try
                 match host with
-                | Some h -> h.StopAsync(TimeSpan.FromSeconds 10.0).GetAwaiter().GetResult()
+                | Some h -> h.StopAsync().GetAwaiter().GetResult()
                 | None -> ()
             with _ -> ()
             try

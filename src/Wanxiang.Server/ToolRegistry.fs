@@ -54,6 +54,10 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
     let pending = ConcurrentDictionary<string, TaskCompletionSource<JsonNode>>()
     let mutable nextId = 0
     let semaphore = SemaphoreSlim(config.maxConcurrency |> Option.defaultValue Int32.MaxValue)
+    /// 等待名额或执行中的调用数（Stop 排空判定：排队调用仍按旧配置执行，决策 100）
+    let mutable activeCount = 0
+    /// Stop 已调用（决策 98：排空后不再接受任何调用，绝不重新拉起子进程）
+    let mutable stopped = false
 
     let writeLine (o: JsonObject) =
         lock lockObj (fun () ->
@@ -89,7 +93,9 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
 
     let ensureStarted () : Result<unit, string> =
         lock lockObj (fun () ->
-            if not (isNull process) && not process.HasExited then
+            if stopped then
+                Error(sprintf "mcp %s: server stopped" config.id)
+            elif not (isNull process) && not process.HasExited then
                 Ok()
             else
                 match config.command with
@@ -117,13 +123,37 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
                             if not (isNull e.Data) then onLog(sprintf "[mcp:%s pid=%d] %s" config.id p.Id e.Data))
                         p.BeginErrorReadLine()
                         readerTask <- Task.Run<Task>(Func<Task>(fun () -> readLoop p))
-                        // 初始化握手（带超时，MCP 子进程挂起不会无限阻塞会话生成）
-                        this.RequestRaw("initialize", JsonObject(), CancellationToken.None, 15000) |> Async.AwaitTask |> Async.RunSynchronously |> ignore
-                        let notif = JsonObject()
-                        notif["jsonrpc"] <- "2.0"
-                        notif["method"] <- "notifications/initialized"
-                        writeLine notif
-                        Ok()
+                        // 初始化握手（带超时，MCP 子进程挂起不会无限阻塞会话生成）。
+                        // 响应必须含 result（成功）且无 error 字段——否则握手失败，终止挂起进程，
+                        // 避免把"超时/失败"当作成功、让每次调用都卡满超时窗口。
+                        let initResp =
+                            this.RequestRaw("initialize", JsonObject(), CancellationToken.None, 15000)
+                            |> Async.AwaitTask
+                            |> Async.RunSynchronously
+                        let fail (reason: string) =
+                            try
+                                if not (isNull process) && not process.HasExited then
+                                    process.Kill(entireProcessTree = true)
+                            with _ -> ()
+                            try if not (isNull process) then process.Dispose() with _ -> ()
+                            process <- null
+                            Error reason
+                        match initResp with
+                        | :? JsonObject as o ->
+                            let mutable errNode: JsonNode = null
+                            let mutable resultNode: JsonNode = null
+                            if o.TryGetPropertyValue("error", &errNode) && not (isNull errNode) then
+                                fail(sprintf "mcp %s initialize rejected: %s" config.id (errNode.ToJsonString()))
+                            elif o.TryGetPropertyValue("result", &resultNode) && not (isNull resultNode) then
+                                // 握手成功：发送 initialized 通知
+                                let notif = JsonObject()
+                                notif["jsonrpc"] <- "2.0"
+                                notif["method"] <- "notifications/initialized"
+                                writeLine notif
+                                Ok()
+                            else
+                                fail(sprintf "mcp %s: unexpected initialize response" config.id)
+                        | _ -> fail(sprintf "mcp %s: invalid initialize response" config.id)
                     with e ->
                         Error(sprintf "mcp %s start failed: %s" config.id e.Message))
 
@@ -162,37 +192,32 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
         }
 
     /// 发送 JSON-RPC 请求并等待响应（按配置限流并发；Q167：排队中的调用取消时不启动子进程，先等名额再 ensureStarted）。
+    /// activeCount 统计等待名额+执行中的调用数：Stop 排空时据此等待（决策 100：已排队调用仍按旧配置执行），
+    /// 避免 semaphore.Dispose 让排队中的调用立即失败。
     member this.Request(method: string, paramsObj: JsonObject, ct: CancellationToken) : Task<JsonNode> =
         task {
             let mutable acquired = false
+            Interlocked.Increment(&activeCount)
+            let mutable result = JsonNode.Parse("""{"error":"mcp server stopped"}""")
             try
                 let! a = semaphore.WaitAsync(Timeout.Infinite, ct)
                 acquired <- a
-                // 拿到名额后才启动子进程（若已退出/未启动则按需启动；排队中的调用不触发启动）
-                match ensureStarted () with
-                | Error e ->
-                    if acquired then
-                        try semaphore.Release() |> ignore with _ -> ()
-                    return JsonNode.Parse(sprintf """{"error":"%s"}""" (e.Replace("\"", "'")))
-                | Ok () ->
-                    let! resp = this.RequestRaw(method, paramsObj, ct)
-                    // Stop 排空期间信号量可能已被 Dispose：Release 抛异常不影响真实响应返回
-                    if acquired then
-                        try semaphore.Release() |> ignore with _ -> ()
-                    return resp
+                if acquired then
+                    // 拿到名额后才启动子进程（若已退出/未启动则按需启动；排队中的调用不触发启动）
+                    match ensureStarted () with
+                    | Error e -> result <- JsonNode.Parse(sprintf """{"error":"%s"}""" (e.Replace("\"", "'")))
+                    | Ok () ->
+                        let! resp = this.RequestRaw(method, paramsObj, ct)
+                        result <- resp
             with
-            | :? OperationCanceledException ->
-                if acquired then
-                    try semaphore.Release() |> ignore with _ -> ()
-                return JsonNode.Parse("""{"error":"cancelled"}""")
-            | :? ObjectDisposedException ->
-                if acquired then
-                    try semaphore.Release() |> ignore with _ -> ()
-                return JsonNode.Parse("""{"error":"mcp server stopped"}""")
-            | e ->
-                if acquired then
-                    try semaphore.Release() |> ignore with _ -> ()
-                return JsonNode.Parse(sprintf """{"error":"%s"}""" (e.Message.Replace("\"", "'")))
+            | :? OperationCanceledException -> result <- JsonNode.Parse("""{"error":"cancelled"}""")
+            | :? ObjectDisposedException -> result <- JsonNode.Parse("""{"error":"mcp server stopped"}""")
+            | e -> result <- JsonNode.Parse(sprintf """{"error":"%s"}""" (e.Message.Replace("\"", "'")))
+            // 排空期间信号量可能已被 Stop 超时后 Dispose：Release 抛异常不影响真实响应返回
+            if acquired then
+                try semaphore.Release() |> ignore with _ -> ()
+            Interlocked.Decrement(&activeCount) |> ignore
+            return result
         }
 
     member this.ListTools() : Task<(string * string) list> =
@@ -250,23 +275,28 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) as this =
                 | _ -> return """{"error":"invalid mcp response"}"""
         }
 
-    /// 排空关闭（决策 98）：停止接收新调用，允许在途调用自然完成；排空后关闭子进程。
-    /// 不强制中断在途调用（避免已产生副作用却丢失结果）；排空窗口后仍未完成时再终止。
+    /// 排空关闭（决策 98/100）：停止接收新调用，允许在途调用与已排队调用自然完成；排空后关闭子进程。
+    /// 不强制中断在途调用（避免已产生副作用却丢失结果）；排空窗口超时后才强制结束。
     member this.Stop() =
-        // 1. 拒绝新调用：semaphore 不再发放名额；已在等待名额的调用将被 ObjectDisposed 拒绝
-        try semaphore.Dispose() with _ -> ()
-        // 2. 锁外等待在途调用排空（最多 5 秒），期间允许其自然完成（不阻塞 ensureStarted 等其他路径）。
-        //    pending 是 ConcurrentDictionary，Count 线程安全，无需持 lockObj。
+        // 0. 标记停止：此后 ensureStarted/Request 一律拒绝（排空中的在途/排队调用不受影响），
+        //    防止排空窗口内旧工具快照发起新调用重新拉起孤儿子进程
+        lock lockObj (fun () -> stopped <- true)
+        // 1. 排空等待：pending（在途 JSON-RPC）与 activeCount（等待名额+执行中）都归零，
+        //    或超出排空窗口（挂起进程/无限等待的调用）。期间排队调用仍按旧配置执行（决策 100），
+        //    绝不在排空开始瞬间 Dispose 信号量把排队调用打成失败。
         let deadline = DateTimeOffset.UtcNow.AddSeconds 5.0
-        while pending.Count > 0 && DateTimeOffset.UtcNow < deadline do
+        while (pending.Count > 0 || activeCount > 0) && DateTimeOffset.UtcNow < deadline do
             Thread.Sleep 50
+        // 2. 排空窗口结束仍挂起的调用：结束为失败结果（决策 97：不自动重放）
+        if pending.Count > 0 then
+            for kv in pending do
+                kv.Value.TrySetResult(JsonNode.Parse("""{"error":"mcp server stopping"}""")) |> ignore
+            pending.Clear()
+        // 3. 仍阻塞在 WaitAsync 的排队调用：释放信号量使其失败结束（进程关闭不能无限等待）
+        if activeCount > 0 then
+            try semaphore.Dispose() with _ -> ()
+        // 4. 关闭子进程（无论排空是否完成，避免进程悬挂泄漏）
         lock lockObj (fun () ->
-            // 3. 排空窗口结束仍挂起的调用：结束为失败结果（决策 97：不自动重放）
-            if pending.Count > 0 then
-                for kv in pending do
-                    kv.Value.TrySetResult(JsonNode.Parse("""{"error":"mcp server stopping"}""")) |> ignore
-                pending.Clear()
-            // 4. 关闭子进程（无论排空是否完成，避免进程悬挂泄漏）
             if not (isNull process) then
                 try process.Kill(entireProcessTree = true) with _ -> ()
                 process.Dispose()

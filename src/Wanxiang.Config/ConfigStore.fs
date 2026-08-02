@@ -41,6 +41,9 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
         watcher.Changed.Add(fun _ -> this.TriggerReload())
         watcher.Created.Add(fun _ -> this.TriggerReload())
         watcher.Renamed.Add(fun _ -> this.TriggerReload())
+        // 决策 41 第三问：文件被删除也向 stderr 报告（reload 读文件失败走 onRejected），
+        // 并继续使用最后一次有效配置，而非静默沿用
+        watcher.Deleted.Add(fun _ -> this.TriggerReload())
         watcher.EnableRaisingEvents <- true
 
     /// 文件系统通知合并（决策 43：可重置 debounce ~100ms）。
@@ -65,26 +68,34 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
 
     /// 完整重写 TOML（决策 42/43 单一路径）：生成 → 临时文件 → flush → rename → 重新加载。
     /// 只有重新加载成功才返回 Ok；失败保留旧配置（决策 44：不得在 reload 失败时视为成功）。
+    /// 并发安全：同一进程内多个连接可能同时配对/吊销（决策 46/59），Rewrite 必须串行化，
+    /// 否则并发写同一临时文件（.%s.tmp.<pid>）会互相截断、rename 出半写配置。
     member this.Rewrite(newConfig: AppConfig) : Result<unit, string> =
-        let dir = Path.GetDirectoryName path
-        let tmp = Path.Combine(dir, sprintf ".%s.tmp.%d" (Path.GetFileName path) Environment.ProcessId)
-        try
-            let text = TomlCodec.serialize newConfig
-            // 临时文件写入后显式释放，再执行原子 rename（避免目标文件被占用）
-            do
-                use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
-                // Q118：配置文件最小用户权限（仅当前用户可读写）
-                try File.SetUnixFileMode(tmp, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
-                let bytes = Encoding.UTF8.GetBytes text
-                fs.Write(bytes, 0, bytes.Length)
-                fs.Flush()
-            File.Move(tmp, path, true)
-            match reloadFromDisk () with
-            | Ok _ -> Ok()
-            | Error errs -> Error(sprintf "config reload failed after rewrite: %s" (String.concat "; " errs))
-        with e ->
-            try if File.Exists tmp then File.Delete tmp with _ -> ()
-            Error(sprintf "config rewrite failed: %s" e.Message)
+        lock lockObj (fun () ->
+            let dir = Path.GetDirectoryName path
+            let tmp = Path.Combine(dir, sprintf ".%s.tmp.%d" (Path.GetFileName path) Environment.ProcessId)
+            try
+                let text = TomlCodec.serialize newConfig
+                // 临时文件写入后显式释放，再执行原子 rename（避免目标文件被占用）
+                do
+                    use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
+                    // Q118：配置文件最小用户权限（仅当前用户可读写）
+                    try File.SetUnixFileMode(tmp, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
+                    let bytes = Encoding.UTF8.GetBytes text
+                    fs.Write(bytes, 0, bytes.Length)
+                    fs.Flush()
+                File.Move(tmp, path, true)
+                match reloadFromDisk () with
+                | Ok _ -> Ok()
+                | Error errs -> Error(sprintf "config reload failed after rewrite: %s" (String.concat "; " errs))
+            with e ->
+                try if File.Exists tmp then File.Delete tmp with _ -> ()
+                Error(sprintf "config rewrite failed: %s" e.Message))
+
+    /// 锁内原子读-改-写（决策 46/59：多个连接并发配对/吊销/lastSeen 写回时，
+    /// 各自基于同一旧快照派生新配置会互相覆盖——必须把"读最新值→改→落盘"放进同一把锁）。
+    member this.Update(mutate: AppConfig -> AppConfig) : Result<unit, string> =
+        lock lockObj (fun () -> this.Rewrite(mutate current))
 
     member _.Path = path
 

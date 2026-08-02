@@ -18,6 +18,8 @@ type AttachmentUpload = {
     mediaType: string
     fileName: string
     mutable receivedBytes: int64
+    /// 已接收 chunk 数（index 严格递增校验，决策 71：顺序发送 attachment.chunk）
+    mutable chunkCount: int
     mutable stream: FileStream
     mutable sha: IncrementalHash
 }
@@ -137,6 +139,7 @@ type AttachmentStore(dataDir: string, maxBytes: int64, ?chunkSizeBytes: int) =
                           mediaType = mediaType
                           fileName = cleanName
                           receivedBytes = 0L
+                          chunkCount = 0
                           stream = stream
                           sha = sha }
                     match uploads.TryAdd(attachmentId, upload) with
@@ -148,21 +151,27 @@ type AttachmentStore(dataDir: string, maxBytes: int64, ?chunkSizeBytes: int) =
                 with e ->
                     Error(Poisoned(sprintf "attachment begin failed: %s" e.Message))
 
-    member _.AppendChunk(attachmentId: Guid, dataBase64: string) : Result<unit, WanxiangError> =
+    member _.AppendChunk(attachmentId: Guid, index: int, dataBase64: string) : Result<unit, WanxiangError> =
         match uploads.TryGetValue attachmentId with
         | false, _ -> Error(AttachmentIncomplete attachmentId)
         | true, s ->
             try
-                let bytes = Convert.FromBase64String dataBase64
-                if bytes.Length > maxChunkBytes then
-                    Error(ValidationError(sprintf "attachment chunk exceeds %d bytes limit" maxChunkBytes))
-                elif s.receivedBytes + int64 bytes.Length > s.expectedBytes then
-                    Error(ValidationError "attachment chunk exceeds declared size")
+                // 决策 71：chunk 必须按 index 严格递增顺序到达；乱序/重复/跳号直接拒绝，
+                // 否则重复 chunk 会写放大临时文件，乱序会等到 complete 哈希校验才被发现
+                if index <> s.chunkCount then
+                    Error(ValidationError(sprintf "attachment chunk index %d out of order; expected %d" index s.chunkCount))
                 else
-                    s.stream.Write(bytes, 0, bytes.Length)
-                    s.sha.AppendData(bytes, 0, bytes.Length)
-                    s.receivedBytes <- s.receivedBytes + int64 bytes.Length
-                    Ok()
+                    let bytes = Convert.FromBase64String dataBase64
+                    if bytes.Length > maxChunkBytes then
+                        Error(ValidationError(sprintf "attachment chunk exceeds %d bytes limit" maxChunkBytes))
+                    elif s.receivedBytes + int64 bytes.Length > s.expectedBytes then
+                        Error(ValidationError "attachment chunk exceeds declared size")
+                    else
+                        s.stream.Write(bytes, 0, bytes.Length)
+                        s.sha.AppendData(bytes, 0, bytes.Length)
+                        s.receivedBytes <- s.receivedBytes + int64 bytes.Length
+                        s.chunkCount <- s.chunkCount + 1
+                        Ok()
             with e ->
                 Error(ValidationError(sprintf "attachment chunk decode failed: %s" e.Message))
 

@@ -43,7 +43,7 @@ type WsConnection(
     remoteAddress: string,
     getProjection: unit -> Projection,
     getConfig: unit -> AppConfig,
-    rewriteConfig: AppConfig -> Result<unit, string>,
+    updateConfig: (AppConfig -> AppConfig) -> Result<unit, string>,
     executeCommand: CommitId -> ClientCommand -> CommandExecutionResult,
     orchestrator: ChatOrchestrator,
     attachmentStore: AttachmentStore,
@@ -284,11 +284,22 @@ type WsConnection(
             do! this.CloseWith(WebSocketCloseStatus.PolicyViolation, reason)
         }
 
-    member private this.TryAuthenticate(token: string) : bool =
+    member private this.TryAuthenticate(token: string) : ClientAuthRecord option =
         let hash = Auth.hashToken token
         let cfg = getConfig ()
         cfg.authClients
-        |> List.exists (fun c -> (not c.revoked) && Auth.constantTimeEquals c.tokenHash hash)
+        |> List.tryFind (fun c -> (not c.revoked) && Auth.constantTimeEquals c.tokenHash hash)
+
+    /// 原子写回配置（lastSeen 更新等，锁内读-改-写防并发覆盖）；失败仅记 stderr，不阻断认证（lastSeen 是诊断信息）。
+    member private _.UpdateLastSeen(hash: string) : unit =
+        let now = DateTimeOffset.UtcNow
+        match updateConfig (fun cfg ->
+            { cfg with
+                authClients =
+                    cfg.authClients
+                    |> List.map (fun c -> if c.tokenHash = hash then { c with lastSeenUtc = Some now } else c) }) with
+        | Ok () -> ()
+        | Error e -> Stderr.write "last-seen-update-failed" [ "message", e ]
 
     member private this.HandleEvent(ev: WireEvent) : Task =
         task {
@@ -308,13 +319,22 @@ type WsConnection(
                     // 握手先于认证（决策 55/69）：未发 Hello 直接认证 → 协议违规
                     do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "hello required before auth")
                 | HelloSeen ->
-                    if this.TryAuthenticate d.token then
+                    match this.TryAuthenticate d.token with
+                    | Some client ->
                         lock cursorLock (fun () ->
                             handshakeState <- Authenticated
                             tokenHash <- Some(Auth.hashToken d.token))
                         let cfg = getConfig ()
                         this.TrySend(AuthAccepted {| instanceId = cfg.instanceId.ToString("D") |}) |> ignore
-                    else
+                        // 决策 54：最近连接时间挂在该哈希记录下；认证成功后更新（节流：1 分钟内不重复写盘）
+                        let now = DateTimeOffset.UtcNow
+                        let stale =
+                            match client.lastSeenUtc with
+                            | Some t -> (now - t).TotalMinutes >= 1.0
+                            | None -> true
+                        if stale then
+                            this.UpdateLastSeen client.tokenHash
+                    | None ->
                         do! this.SendAndClose(AuthRejected {| reason = "invalid token" |}, "authentication failed")
                 | Authenticated -> () // 已认证重复 auth.present：忽略
             | PairingRequested d ->
@@ -348,17 +368,17 @@ type WsConnection(
                                 // 决策 56：先持久化令牌哈希到 TOML 并 reload 成功，再下发令牌原文
                                 let token = Auth.generateToken ()
                                 let hash = Auth.hashToken token
-                                let cfg = getConfig ()
-                                let newCfg =
+                                let name = d.clientName |> Option.defaultValue (sprintf "client-%s" remoteAddress)
+                                // 原子读-改-写（决策 46/59）：并发配对/吊销不互相覆盖
+                                match updateConfig (fun cfg ->
                                     { cfg with
                                         authClients =
                                             { tokenHash = hash
-                                              name = d.clientName |> Option.defaultValue (sprintf "client-%s" remoteAddress)
+                                              name = name
                                               createdAtUtc = now
                                               lastSeenUtc = None
                                               revoked = false }
-                                            :: cfg.authClients }
-                                match rewriteConfig newCfg with
+                                            :: cfg.authClients }) with
                                 | Ok () ->
                                     failureTracker.Clear remoteAddress
                                     lock cursorLock (fun () ->
@@ -387,25 +407,31 @@ type WsConnection(
                 match handshakeState with
                 | Authenticated ->
                     lock cursorLock (fun () -> observedConversations <- observedConversations.Add d.conversationId)
-                    this.SendConversationSnapshot d.conversationId |> ignore
+                    // 决策 29：首次 observe 推送完整 snapshot；慢客户端（队列满）下快照发送失败时
+                    // 降级到 catch-up 分批重同步（决策 32-34），绝不静默丢弃快照
+                    if not (this.SendConversationSnapshot d.conversationId) then
+                        this.EnterSnapshotMode()
                 | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | UnobserveConversation d ->
                 lock cursorLock (fun () -> observedConversations <- observedConversations.Remove d.conversationId)
             | CursorAdvanced d ->
-                // 决策 33/35：游标表示客户端已成功应用的最后全局提交 id；
-                // 快照应用完成或 catch-up 批次应用完成后客户端发送 cursor.advanced。
-                // 幂等：只向前推进；允许客户端确认的 id 大于我们等待的（快照/批之间可能有新提交）。
+                // 决策 33/35：游标表示客户端已成功应用的最后全局提交 id。
+                // 上限保护：客户端声明的 id 超过服务端最新提交时按最新提交处理，
+                // 防止 uint64.MaxValue 等超界值把 appliedCursor 抬到虚构位置、令 catch-up 起点错乱。
+                // （陈旧检测本身仍信任客户端确认值——决策 149：服务端只信任已明确确认的游标。）
                 match handshakeState with
                 | Authenticated ->
+                    let latest = (getProjection ()).latestCommitId
+                    let claimed = min d.id latest
                     let (advanced, expected) =
                         lock cursorLock (fun () ->
                             let prev = appliedCursor
-                            if d.id > appliedCursor then
-                                appliedCursor <- d.id
-                            (d.id > prev, awaitingCursor))
+                            if claimed > appliedCursor then
+                                appliedCursor <- claimed
+                            (claimed > prev, awaitingCursor))
                     if advanced then
                         match expected with
-                        | Some exp when d.id >= exp ->
+                        | Some exp when claimed >= exp ->
                             lock cursorLock (fun () -> awaitingCursor <- None)
                             this.SendCatchUp (lock cursorLock (fun () -> appliedCursor))
                         | _ -> ()
@@ -426,7 +452,12 @@ type WsConnection(
                         let commandId = CommandId.compute invId (ClientCommand.commandType cmd) (ClientCommand.canonicalPayload cmd)
                         this.TrySend(WireEvent.CommandCommitted {| invocationId = invId; commandId = commandId; commitId = commitId |}) |> ignore
                     | CommandFailed err ->
-                        this.TrySend(WireEvent.CommandRejected {| invocationId = invId; code = WanxiangError.code err; message = WanxiangError.message err |}) |> ignore
+                        // 决策 36：stale-projection 拒绝携带 requiredCommitId（客户端需追到的提交 id）
+                        let requiredCommitId =
+                            match err with
+                            | StaleProjection wm -> Some wm
+                            | _ -> None
+                        this.TrySend(WireEvent.CommandRejected {| invocationId = invId; code = WanxiangError.code err; message = WanxiangError.message err; requiredCommitId = requiredCommitId |}) |> ignore
                 | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | GenerationCancel d ->
                 match handshakeState with
@@ -444,7 +475,7 @@ type WsConnection(
             | AttachmentChunk d ->
                 match handshakeState with
                 | Authenticated ->
-                    match attachmentStore.AppendChunk(d.attachmentId, d.dataBase64) with
+                    match attachmentStore.AppendChunk(d.attachmentId, d.index, d.dataBase64) with
                     | Ok () -> ()
                     | Error e ->
                         attachmentStore.Abort(d.attachmentId, WanxiangError.message e)

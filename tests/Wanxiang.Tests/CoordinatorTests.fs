@@ -30,7 +30,7 @@ let ``test_cursor_catch_up_commits_replayed`` () =
         let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
         let committed = ResizeArray<Events.Commit>()
         let truncated = ResizeArray<Events.Commit * WanxiangError>()
-        use coord = new CommitCoordinator(dir, outcome, committed.Add, (fun (c, e) -> truncated.Add(c, e)))
+        use coord = new CommitCoordinator(dir, outcome, committed.Add, (fun (c, e, _, _) -> truncated.Add(c, e)))
         let convId = newConversationId ()
         let r1 =
             coord.Submit
@@ -60,7 +60,7 @@ let ``test_truncate_and_reuse_id`` () =
         DataPaths.ensureDataDirs dir
         let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
         let truncated = ResizeArray<Events.Commit * WanxiangError>()
-        use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun (c, e) -> truncated.Add(c, e)))
+        use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun (c, e, _, _) -> truncated.Add(c, e)))
         // 事件引用不存在的会话 → 投影失败 → 截尾
         let bad =
             coord.Submit

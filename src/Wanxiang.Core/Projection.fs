@@ -60,14 +60,19 @@ module Projection =
 
     /// 递归展开会话在 untilCommitId 时刻的有效可见消息（fork 结构共享）。
     /// 父分支只考虑其 forkBaseCommitId 时刻的状态；父分支之后的删除/新增不影响子分支。
+    /// 决策 74/75：子分支只继承父分支截至 forkAfterId 的消息（被编辑消息之前的历史），
+    /// 被编辑的旧消息被 fork 提交中的新消息"替代"，不进入子分支。
     let rec effectiveMessagesAtMap (conversations: Map<Guid, Conversation>) (convId: Guid) (untilCommitId: CommitId) : MessageRecord list =
         match conversations.TryFind convId with
         | None -> []
         | Some conv ->
             let own = conv.messages |> List.filter (visibleInScope untilCommitId)
             match conv.parent, conv.forkBaseCommitId with
-            | Some (parentId, _), Some baseId when baseId <= untilCommitId ->
-                effectiveMessagesAtMap conversations parentId baseId @ own
+            | Some (parentId, forkAfter), Some baseId when baseId <= untilCommitId ->
+                let inherited = effectiveMessagesAtMap conversations parentId baseId
+                match forkAfter with
+                | Some afterId -> (inherited |> List.filter (fun m -> m.commitId <= afterId)) @ own
+                | None -> own
             | _ -> own
 
     /// 递归展开会话在 untilCommitId 时刻的有效可见消息（fork 结构共享）。

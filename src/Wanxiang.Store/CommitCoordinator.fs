@@ -22,6 +22,8 @@ type SubmitResult =
     | TruncatedAndReused of Events.Commit * WanxiangError
     /// 同一 commandId 已提交过：幂等命中，返回原提交 id（决策 13/15）
     | IdempotentReplay of Events.Commit
+    /// 命令标识冲突/幂等记录异常：未写盘、未截尾，拒绝（Q145；不借用截尾语义）
+    | CommandIdRejected of WanxiangError
 
 /// Commit Coordinator 与 NDJSON 单写者是同一进程内组件（决策 39）。
 /// 独占：分配连续 id、选择 UTC 日期文件、序列化原子提交、append+flush、
@@ -30,7 +32,7 @@ type SubmitResult =
 /// 幂等边界（决策 13/15）：命令入口（CommandEngine.plan）与单写者内部双重检查。
 /// 单写者内部检查覆盖"plan 之后、提交之前"的竞态窗口（如排队消息 DrainQueue），
 /// 命中时返回 IdempotentReplay，不追加事件。
-type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Events.Commit -> unit, onTruncated: Events.Commit * WanxiangError -> unit) =
+type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Events.Commit -> unit, onTruncated: Events.Commit * WanxiangError * int64 * string -> unit) =
 
     let writer = new NdjsonWriter(dataDir, outcome.lastDateUtc)
 
@@ -69,14 +71,12 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
                         | Some original -> Some(IdempotentReplay original)
                         | None ->
                             // 投影有记录但内存列表缺该提交（理论上不应发生）；按冲突处理，避免重复提交
-                            Some(TruncatedAndReused(Events.Commit.create nextId DateTimeOffset.UtcNow submit.events,
-                                 Poisoned(sprintf "idempotency record %s references missing commit %d" cid idemRec.commitId)))
+                            Some(CommandIdRejected(Poisoned(sprintf "idempotency record %s references missing commit %d" cid idemRec.commitId)))
                     | Some _ ->
                         // 同一 commandId 对应不同规范化载荷：严重冲突，拒绝（决策 15/Q145）。
                         // stderr 由 ServerApp 的 command-id-conflict 事件记录（Q145），此处不重复写截尾事件。
                         let conflictErr = CommandIdConflict(sprintf "commandId %s reused with different payload" cid)
-                        let conflictCommit = Events.Commit.create nextId DateTimeOffset.UtcNow submit.events
-                        Some(TruncatedAndReused(conflictCommit, conflictErr))
+                        Some(CommandIdRejected conflictErr)
                     | None -> None
                 | None -> None
             match idemHit with
@@ -94,7 +94,7 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
                     writer.AppendCommit commit
                 with e ->
                     // 决策 40：append 失败（半行/未 flush）已由写入器回滚偏移，等同截尾复用 id
-                    onTruncated(commit, Poisoned(sprintf "append failed: %s" e.Message))
+                    onTruncated(commit, Poisoned(sprintf "append failed: %s" e.Message), -1L, writer.CurrentFilePath)
                     -1L
             if offsetBefore < 0L then
                 CommitFailed(Poisoned "append failed")
@@ -110,11 +110,11 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
                     // 决策 40：运行时投影失败 -> 截掉尾行、复用 id；stderr 忠实记录（调用方处理）
                     try
                         writer.TruncateTo offsetBefore
-                        onTruncated(commit, err)
+                        onTruncated(commit, err, offsetBefore, writer.CurrentFilePath)
                         TruncatedAndReused(commit, err)
                     with e ->
                         // 无法截尾：poison 标记并继续（决策 40：截尾失败才 poison）
-                        onTruncated(commit, Poisoned(sprintf "projection failed (%s); truncation failed: %s" (WanxiangError.message err) e.Message))
+                        onTruncated(commit, Poisoned(sprintf "projection failed (%s); truncation failed: %s" (WanxiangError.message err) e.Message), offsetBefore, writer.CurrentFilePath)
                         CommitFailed(Poisoned(sprintf "projection failed and truncation failed: %s" e.Message))
 
         let rec loop () =

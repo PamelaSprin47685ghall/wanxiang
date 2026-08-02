@@ -199,6 +199,11 @@ module Program =
 
             let isDoctorOnly = not switches.server && not switches.client && not switches.pwa
 
+            // 决策 50：pwa 开关 = 托管 PWA 静态资源。PWA 由 S 托管并依赖其 /ws 端点（决策 2），
+            // 因此 pwa=true 隐含 server 功能——pwa-only 组合 = 托管 PWA + WebSocket 端点的无 UI 模式，
+            // 绝不静默空转挂起。
+            let effectiveServer = switches.server || switches.pwa
+
             if isDoctorOnly then
                 // 0000：只读 doctor；0001：doctor + 修复（决策 51）
                 if switches.fix then
@@ -230,7 +235,7 @@ module Program =
             // Q107：纯客户端（无 S）不检查本地数据目录状态，不被数据问题阻塞启动。
             // 数据锁（决策 105/Q110）：任何可能修改 NDJSON 的修复必须在持锁后进行。
             let startupReplayOutcome =
-                if not switches.server then
+                if not effectiveServer then
                     None
                 else
                     let lockHandle =
@@ -239,22 +244,19 @@ module Program =
                         | Error e ->
                             eprintfn "data directory locked: %s" e
                             exit 1
+                    // 决策 51 第一问：正常 server 启动仍按既定规则自动截尾（决策 8-10/9：
+                    // 截断损坏文件、删除损坏点之后所有日期文件、从最后有效 id+1 继续写入），
+                    // 不需要 --fix 开关放行——fix 只决定 doctor 模式（0000 vs 0001）的只读/修复语义。
+                    // 截尾本身失败（文件不可写等阻断性问题）才拒绝启动（fix=false 亦然）。
                     let outcome =
-                        if switches.fix then
-                            match Replay.replay dataDir true with
-                            | Ok o ->
-                                for f in o.truncatedFiles do
-                                    logInfo(sprintf "startup fix truncated %s" f)
-                                Some o
-                            | Error e ->
-                                eprintfn "fix failed: %s" e
-                                exit 1
-                        else
-                            match Replay.replay dataDir false with
-                            | Ok o -> Some o
-                            | Error e ->
-                                eprintfn "log damaged: %s (run with --fix to repair)" e
-                                exit 1
+                        match Replay.replay dataDir true with
+                        | Ok o ->
+                            for f in o.truncatedFiles do
+                                logInfo(sprintf "startup recovery truncated %s" f)
+                            Some o
+                        | Error e ->
+                            eprintfn "log damaged and recovery failed: %s" e
+                            exit 1
                     match lockHandle with
                     | Some l -> (l :> IDisposable).Dispose()
                     | None -> ()
@@ -340,9 +342,9 @@ module Program =
                 | Ok () -> ()
                 | Error e -> logInfo(sprintf "desktop auto-pairing skipped: %s" e)
 
-            // 服务器（若启用）：后台线程运行
+            // 服务器（若启用）：后台线程运行。
             let serverApp =
-                if switches.server then
+                if effectiveServer then
                     let pwaDir =
                         if switches.pwa then
                             let candidate = Path.Combine(AppContext.BaseDirectory, "pwa")
@@ -368,8 +370,32 @@ module Program =
             if switches.client then
                 // 桌面客户端（决策 49：同进程 UI，通过真实 WebSocket 连接本机 S）
                 // 有本地 S 时自动连接 loopback（决策 62）；无 S 时由用户在 UI 中选择（决策 62）
+                // Q101/102：默认 UI+S 模式同样注册信号处理——第一次信号优雅排空（连接关闭、
+                // 单写者 flush）后退出，第二次立即退出（强制终止由外部管理器负责）
+                let signalLock = obj()
+                let mutable sigCount = 0
+                let shutdownUi () =
+                    lock signalLock (fun () ->
+                        sigCount <- sigCount + 1
+                        if sigCount >= 2 then
+                            Environment.Exit 130
+                        else
+                            logInfo "shutting down gracefully (signal; send again to force)"
+                            stopServer ()
+                            Environment.Exit 0)
+                let ctrlHandler = ConsoleCancelEventHandler(fun _ e ->
+                    e.Cancel <- true
+                    shutdownUi ())
+                Console.CancelKeyPress.AddHandler ctrlHandler
+                let sigterm =
+                    try
+                        Some(PosixSignalRegistration.Create(PosixSignal.SIGTERM, Action<PosixSignalContext>(fun ctx ->
+                            ctx.Cancel <- true
+                            shutdownUi ())))
+                    with _ -> None
                 let code = Wanxiang.UI.UiEntry.run argv
                 stopServer ()
+                match sigterm with Some r -> r.Dispose() | None -> ()
                 code
             else
                 // 无 UI：服务器等待信号优雅关闭（决策 101/102）。

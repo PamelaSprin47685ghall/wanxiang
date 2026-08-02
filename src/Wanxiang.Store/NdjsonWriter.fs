@@ -27,6 +27,9 @@ type NdjsonWriter(dataDir: string, initialDateUtc: DateTime) =
     /// 当前文件字节长度（用于截尾）。
     member _.Position : int64 = stream.Length
 
+    /// 当前打开的日志文件路径（截尾 stderr 诊断用）。
+    member _.CurrentFilePath : string = DataPaths.eventFilePath dataDir currentDate
+
     /// 写入一条提交（完整一行 + 换行）并 flush。
     /// 返回写前偏移，供运行时截尾复用 id。
     /// 换日语义（决策 109）：日志日期不得回退——时钟回拨时保持最后持久化日期文件。

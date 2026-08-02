@@ -31,10 +31,12 @@ let ``test_41581`` () =
     let parentMsgs = Projection.effectiveMessages proj parent |> List.map (fun m -> m.commitId)
     Assert.Equal<CommitId list>([ 2UL; 6UL ], parentMsgs)
 
-    // 子分支：m1, m2（fork 点之前）, m3' —— 父分支之后的 m4 和删除不影响子分支
+    // 子分支：m1（fork 点之前） + 编辑后的新消息 m3'。
+    // 决策 74/75：被编辑消息 m2（id=3）被新消息"替代"，不进入子分支；
+    // 父分支之后的 m4 和删除也不影响子分支。
     let forkConv = Projection.tryConversation proj forkId |> Option.get
     let forkMsgs = Projection.effectiveMessages proj forkConv |> List.map (fun m -> m.commitId)
-    Assert.Equal<CommitId list>([ 2UL; 3UL; 5UL ], forkMsgs)
+    Assert.Equal<CommitId list>([ 2UL; 5UL ], forkMsgs)
 
 [<Fact>]
 let ``test_14283`` () =

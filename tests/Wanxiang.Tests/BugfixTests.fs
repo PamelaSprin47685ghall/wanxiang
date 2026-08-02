@@ -21,15 +21,15 @@ let ``attachment chunk exceeds configured limit is rejected`` () =
         let hash = Convert.ToHexString(SHA256.HashData payload).ToLowerInvariant()
         let aid = Guid.NewGuid()
         store.Begin(1, aid, int64 payload.Length, hash, "text/plain", "x.txt") |> function Ok () -> () | Error e -> failwith (WanxiangError.message e)
-        match store.AppendChunk(aid, Convert.ToBase64String payload) with
+        match store.AppendChunk(aid, 0, Convert.ToBase64String payload) with
         | Error (ValidationError m) -> Assert.Contains("limit", m)
         | r -> failwithf "oversized chunk should be rejected, got %A" r
         // 合法块（≤8 字节）可以追加
         let aid2 = Guid.NewGuid()
         store.Begin(1, aid2, int64 payload.Length, hash, "text/plain", "x.txt") |> ignore
         let chunk1 = Convert.ToBase64String(payload[0..7])
-        store.AppendChunk(aid2, chunk1) |> function Ok () -> () | Error e -> failwith (WanxiangError.message e)
-        store.AppendChunk(aid2, Convert.ToBase64String(payload[8..])) |> function Ok () -> () | Error e -> failwith (WanxiangError.message e)
+        store.AppendChunk(aid2, 0, chunk1) |> function Ok () -> () | Error e -> failwith (WanxiangError.message e)
+        store.AppendChunk(aid2, 1, Convert.ToBase64String(payload[8..])) |> function Ok () -> () | Error e -> failwith (WanxiangError.message e)
         store.Complete(aid2, hash) |> function Ok _ -> () | Error e -> failwith (WanxiangError.message e)
         store.Dispose()
     finally
@@ -46,7 +46,7 @@ let ``attachment fileName is sanitized`` () =
         let hash = Convert.ToHexString(SHA256.HashData payload).ToLowerInvariant()
         let aid = Guid.NewGuid()
         store.Begin(1, aid, 3L, hash, "text/plain", "\u0000bad\u0001name\u001f.txt") |> ignore
-        store.AppendChunk(aid, Convert.ToBase64String payload) |> ignore
+        store.AppendChunk(aid, 0, Convert.ToBase64String payload) |> ignore
         match store.Complete(aid, hash) with
         | Ok ref -> Assert.Equal("badname.txt", ref.fileName)
         | Error e -> failwith (WanxiangError.message e)
@@ -54,7 +54,7 @@ let ``attachment fileName is sanitized`` () =
         let longName = String.replicate 300 "x" + ".txt"
         let aid2 = Guid.NewGuid()
         store.Begin(1, aid2, 3L, hash, "text/plain", longName) |> ignore
-        store.AppendChunk(aid2, Convert.ToBase64String payload) |> ignore
+        store.AppendChunk(aid2, 0, Convert.ToBase64String payload) |> ignore
         match store.Complete(aid2, hash) with
         | Ok ref -> Assert.True(ref.fileName.Length <= 255)
         | Error e -> failwith (WanxiangError.message e)
@@ -75,7 +75,7 @@ let ``attachment media type sniffed and metadata persisted`` () =
         let hash = Convert.ToHexString(SHA256.HashData png).ToLowerInvariant()
         let aid = Guid.NewGuid()
         store.Begin(1, aid, int64 png.Length, hash, "application/octet-stream", "pic.png") |> ignore
-        store.AppendChunk(aid, Convert.ToBase64String png) |> ignore
+        store.AppendChunk(aid, 0, Convert.ToBase64String png) |> ignore
         match store.Complete(aid, hash) with
         | Ok ref ->
             Assert.Equal("image/png", ref.mediaType)
@@ -93,7 +93,7 @@ let ``attachment media type sniffed and metadata persisted`` () =
         let thash = Convert.ToHexString(SHA256.HashData text).ToLowerInvariant()
         let aid3 = Guid.NewGuid()
         store.Begin(1, aid3, int64 text.Length, thash, "application/x-custom", "t.bin") |> ignore
-        store.AppendChunk(aid3, Convert.ToBase64String text) |> ignore
+        store.AppendChunk(aid3, 0, Convert.ToBase64String text) |> ignore
         match store.Complete(aid3, thash) with
         | Ok ref -> Assert.Equal("application/x-custom", ref.mediaType)
         | Error e -> failwith (WanxiangError.message e)

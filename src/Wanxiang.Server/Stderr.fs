@@ -3,6 +3,7 @@ namespace Wanxiang.Server
 open System
 open System.Text.Json
 open System.Text.Json.Nodes
+open Wanxiang.Core
 
 /// stderr 结构化 JSON Lines 输出（决策 198/41）。
 /// stderr 是截尾/poison 现场的最后证据，必须忠实记录；密钥按结构禁止持久化。
@@ -79,8 +80,18 @@ module Stderr =
         eprintfn "%s" (o.ToJsonString options)
 
     /// 运行时截尾记录（决策 40：stderr 是唯一剩余证据，rawCommit 忠实输出；已知密钥值脱敏）。
-    let truncated (commitJson: string) (err: Wanxiang.Core.WanxiangError) =
-        write "ndjson-tail-truncated" [ "phase", "runtime-commit"; "exceptionMessage", Wanxiang.Core.WanxiangError.message err; "rawCommit", redact commitJson ]
+    /// 决策 40 第三问要求字段：file、commitId、byteOffset、exceptionType、exceptionMessage、rawCommit、action。
+    let truncated (commit: Wanxiang.Core.Events.Commit) (file: string) (byteOffset: int64) (err: Wanxiang.Core.WanxiangError) =
+        write
+            "ndjson-tail-truncated"
+            [ "phase", "runtime-commit"
+              "file", file
+              "commitId", commit.id
+              "byteOffset", byteOffset
+              "exceptionType", Wanxiang.Core.WanxiangError.code err
+              "exceptionMessage", Wanxiang.Core.WanxiangError.message err
+              "action", "truncated-and-id-reused"
+              "rawCommit", redact (CommitCodec.commitToJsonLine commit) ]
 
     /// 启动截尾记录。
     let replayTruncated (file: string) (reason: string) =

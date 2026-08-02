@@ -230,10 +230,21 @@ module Replay =
                             let isDateRegression = reason.StartsWith "event file date regression"
                             match fileDate with
                             | Some d when not isDateRegression -> deleteAfter d
-                            | _ ->
-                                // 非法文件名或降序损坏：不级联删除后续文件
-                                // （字典序/重放语义下级联会误删有效日志，安全风险）
-                                ()
+                            | None ->
+                                // 非法文件名：按重放顺序（字典序）删除该文件之后的所有文件（决策 9）。
+                                // 若不级联，损坏点之后的合法文件保留在磁盘，而 lastCommitId 停在损坏点之前，
+                                // 运行期从 lastCommitId+1 重新分配 id 会与保留文件中的旧 id 冲突，
+                                // 下次启动重放按 id 连续性截尾 → 运行期写入的新数据被静默丢弃，且 fix 不幂等。
+                                let index = files |> List.tryFindIndex (fun (n, _) -> n = Path.GetFileName path)
+                                match index with
+                                | Some i when i >= 0 ->
+                                    for (_, p) in files |> List.skip (i + 1) do
+                                        try
+                                            File.Delete p
+                                            truncatedPaths <- p :: truncatedPaths
+                                        with _ -> ()
+                                | _ -> ()
+                            | Some _ -> ()
                             // 非法文件名（无日期）或降序损坏点，且 offset=0（无可保留内容）：删除文件自身，
                             // 避免每次启动 fix 重复命中并写 stderr（合法日期文件的截空行为不受影响）
                             if offset = 0L && (fileDate.IsNone || isDateRegression) then

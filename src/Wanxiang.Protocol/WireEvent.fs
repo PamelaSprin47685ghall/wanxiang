@@ -34,7 +34,7 @@ type WireEvent =
     | Command of ClientCommand
     | CommandAccepted of {| invocationId: Guid |}
     | CommandCommitted of {| invocationId: Guid; commandId: string; commitId: CommitId |}
-    | CommandRejected of {| invocationId: Guid; code: string; message: string |}
+    | CommandRejected of {| invocationId: Guid; code: string; message: string; requiredCommitId: CommitId option |}
     | CursorAdvanced of {| id: CommitId |}
     | AuthorityCatchUp of {| fromCursor: CommitId; toCommitId: CommitId; items: JsonArray |}
     // ---- 生成 ----
