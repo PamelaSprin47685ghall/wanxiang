@@ -5,7 +5,9 @@
   <Project Path="Wanxiang.Client/Wanxiang.Client.fsproj" />
   <Project Path="Wanxiang.Config/Wanxiang.Config.fsproj" />
   <Project Path="Wanxiang.Core/Wanxiang.Core.fsproj" />
+  <Project Path="Wanxiang.Interop/Wanxiang.Interop.csproj" />
   <Project Path="Wanxiang.Protocol/Wanxiang.Protocol.fsproj" />
+  <Project Path="Wanxiang.Pwa/Wanxiang.Pwa.fsproj" />
   <Project Path="Wanxiang.Server/Wanxiang.Server.fsproj" />
   <Project Path="Wanxiang.Store/Wanxiang.Store.fsproj" />
 </Solution>

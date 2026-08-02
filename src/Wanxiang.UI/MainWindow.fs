@@ -168,8 +168,10 @@ module MarkdownParser =
                 [ NormalText raw ]
 
 /// 主窗口：会话列表 + 聊天视图 + 连接管理。
-type MainWindow() as this =
-    inherit Window()
+/// 万象主视图（决策 48：桌面与 PWA 共用同一套 UI 代码；桌面由 MainWindow 窗口壳承载，PWA 直接作为单视图内容）。
+/// 应用内对话框（连接/配对/重命名/删除/fork）统一用遮罩 overlay 实现，避免平台窗口差异。
+type MainView() as this =
+    inherit UserControl()
 
     let client = WsClient()
     let state = ClientState()
@@ -214,7 +216,7 @@ type MainWindow() as this =
     /// 下载确认缺失的附件（P2-3/Q179：渲染为“附件缺失”）
     let mutable missingAttachments: Set<string> = Set.empty
     /// 断线重连（P1-5：指数退避，重连后重新 observe）
-    let mutable lastUrl = "ws://127.0.0.1:8765/ws"
+    let mutable lastUrl = CredentialStore.defaultServerUrl ()
     let mutable lastToken: string option = None
     let mutable reconnectCts: CancellationTokenSource option = None
     let mutable reconnectDelayMs = 1000
@@ -224,6 +226,36 @@ type MainWindow() as this =
     let mutable genTimer: DispatcherTimer option = None
     /// 认证状态（本地跟踪，驱动状态点颜色）
     let mutable authenticated = false
+
+    /// TopLevel 成员（Clipboard/StorageProvider）需经 TopLevel.GetTopLevel 获取（UserControl 非 TopLevel）。
+    let topLevel () = TopLevel.GetTopLevel(this)
+
+    // ---- 应用内对话框（overlay 遮罩；桌面与 PWA 共用，避免平台窗口差异）----
+    let dialogOverlay = Grid(IsVisible = false, Background = SolidColorBrush(Color.Parse "#66000000"))
+    let dialogCard =
+        Border(
+            Background = Theme.panel, CornerRadius = CornerRadius(14.0), Padding = Thickness(22.0),
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
+    let showDialog (content: Control) (width: float) =
+        dialogCard.Child <- content
+        dialogCard.Width <- width
+        dialogOverlay.IsVisible <- true
+    let closeDialog () =
+        dialogOverlay.IsVisible <- false
+        dialogCard.Child <- null
+    do
+        dialogCard.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 8.0, Blur = 32.0, Spread = 0.0, Color = Color.Parse "#33000000"))
+        dialogOverlay.Children.Add(dialogCard)
+        // 点击遮罩（卡片外）关闭对话框
+        dialogOverlay.PointerPressed.Add(fun e ->
+            let pos = e.GetPosition(dialogCard)
+            if pos.X < 0.0 || pos.Y < 0.0 || pos.X > dialogCard.Bounds.Width || pos.Y > dialogCard.Bounds.Height then
+                closeDialog ())
+        // Esc 关闭（键盘可达性，Q197）
+        dialogOverlay.KeyDown.Add(fun e ->
+            if e.Key = Avalonia.Input.Key.Escape then
+                e.Handled <- true
+                closeDialog ())
 
     // ---- 视觉辅助 ----
     let tryLoadLogo () : Bitmap option =
@@ -301,60 +333,7 @@ type MainWindow() as this =
         else sprintf "%.1f MiB" (float n / (1024.0 * 1024.0))
 
     do
-        this.Title <- "万象"
-        this.Width <- 1180.0
-        this.Height <- 760.0
-        this.MinWidth <- 800.0
-        this.MinHeight <- 560.0
         this.Background <- Theme.bg
-        this.RequestedThemeVariant <- ThemeVariant.Light
-
-        // Q195：窗口尺寸是本机客户端偏好，保存在本地（不经 NDJSON）；启动恢复上次尺寸
-        let uiPrefsPath () =
-            let home =
-                match Environment.GetEnvironmentVariable "WANXIANG_HOME" with
-                | s when not (String.IsNullOrWhiteSpace s) -> s
-                | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".config", "wanxiang")
-            Path.Combine(home, "ui.json")
-        let loadPrefs () =
-            try
-                let path = uiPrefsPath ()
-                if File.Exists path then
-                    let node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText path)
-                    if not (isNull node) then
-                        let o = node.AsObject()
-                        let getD k =
-                            let mutable n: System.Text.Json.Nodes.JsonNode = null
-                            if o.TryGetPropertyValue(k, &n) && n <> null then n.GetValue<double>() else nan
-                        let w, h = getD "width", getD "height"
-                        if not (Double.IsNaN w) && w >= 800.0 && not (Double.IsNaN h) && h >= 560.0 then
-                            this.Width <- w
-                            this.Height <- h
-                        let getI k =
-                            let mutable n: System.Text.Json.Nodes.JsonNode = null
-                            if o.TryGetPropertyValue(k, &n) && n <> null then n.GetValue<int>() else 0
-                        let getB k =
-                            let mutable n: System.Text.Json.Nodes.JsonNode = null
-                            o.TryGetPropertyValue(k, &n) && n <> null && n.GetValueKind() = System.Text.Json.JsonValueKind.True
-                        let x, y = getI "x", getI "y"
-                        // 用显式 hasPosition 标志区分“未保存”与合法的 (0,0) 停靠位置（Q195）
-                        if getB "hasPosition" then this.Position <- PixelPoint(x, y)
-            with _ -> ()
-        loadPrefs ()
-        this.Closed.Add(fun _ ->
-            try
-                let path = uiPrefsPath ()
-                Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
-                let o = System.Text.Json.Nodes.JsonObject()
-                o["width"] <- this.Width
-                o["height"] <- this.Height
-                o["x"] <- this.Position.X
-                o["y"] <- this.Position.Y
-                o["hasPosition"] <- true
-                File.WriteAllText(path, o.ToJsonString())
-                // Q118：本机偏好文件最小用户权限（与 TOML/日志/附件一致）
-                try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
-            with _ -> ())
 
         // 品牌标（左上角）
         let brandTile = createBrandTile 32.0 16.0
@@ -487,6 +466,9 @@ type MainWindow() as this =
         Grid.SetColumn(chat, 1)
         split.Children.Add(sidebarBorder)
         split.Children.Add(chat)
+        // 对话框遮罩覆盖整个视图（跨两列，Z 序最上）
+        Grid.SetColumnSpan(dialogOverlay, 2)
+        split.Children.Add(dialogOverlay)
         this.Content <- split
         // 启动即渲染空状态（无事件时也展示品牌区）
         this.RenderMessages()
@@ -531,32 +513,28 @@ type MainWindow() as this =
                 this.ScheduleReconnect()))
 
         // P2-5：桌面客户端令牌（client.toml）存在时自动连接本机 S（决策 64：server+client 同进程自动配对）
-        let clientConfigPath =
-            let home =
-                match Environment.GetEnvironmentVariable "WANXIANG_HOME" with
-                | s when not (String.IsNullOrWhiteSpace s) -> s
-                | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".config", "wanxiang")
-            Path.Combine(home, "client.toml")
-        if File.Exists clientConfigPath then
-            let lines = try File.ReadAllLines clientConfigPath with _ -> [||]
-            let get (key: string) =
-                lines
-                |> Array.tryPick (fun line ->
-                    let t = line.Trim()
-                    if t.StartsWith(key + " =") || t.StartsWith(key + "=") then
-                        let v = t.Substring(t.IndexOf '=' + 1).Trim().Trim('"')
-                        if String.IsNullOrWhiteSpace v then None else Some v
-                    else None)
-            match get "url", get "token" with
-            | Some url, Some token ->
-                lastUrl <- url
-                lastToken <- Some token
-                Dispatcher.UIThread.Post(fun () -> this.Reconnect())
-            | _ -> ()
+        // PWA：IndexedDB 凭据（决策 52/53、Q191：按 instanceId 主键）异步读取后自动连接
+        match CredentialStore.tryLoadClientToml () with
+        | Some(url, token) ->
+            lastUrl <- url
+            lastToken <- Some token
+            Dispatcher.UIThread.Post(fun () -> this.Reconnect())
+        | None ->
+            if OperatingSystem.IsBrowser() then
+                async {
+                    let! conn = CredentialStore.tryLoadBrowserConnectionAsync () |> Async.AwaitTask
+                    match conn with
+                    | Some(url, token, _) when not client.IsConnected ->
+                        Dispatcher.UIThread.Post(fun () ->
+                            lastUrl <- url
+                            lastToken <- Some token
+                            this.Reconnect())
+                    | _ -> ()
+                } |> Async.Start
 
     /// 连接对话框（URL + 令牌 / 配对）。
     member private _.ShowConnectDialog() =
-        let urlBox = TextBox(Text = "ws://127.0.0.1:8765/ws", PlaceholderText = "服务器地址", CornerRadius = CornerRadius(10.0), Padding = Thickness(10.0, 8.0))
+        let urlBox = TextBox(Text = CredentialStore.defaultServerUrl (), PlaceholderText = "服务器地址", CornerRadius = CornerRadius(10.0), Padding = Thickness(10.0, 8.0))
         let tokenBox = TextBox(PlaceholderText = "访问令牌（首次使用可请求配对）", CornerRadius = CornerRadius(10.0), Padding = Thickness(10.0, 8.0))
         let pairCodeBox = TextBox(PlaceholderText = "6 位配对码", MaxLength = 6, CornerRadius = CornerRadius(10.0), Padding = Thickness(10.0, 8.0))
         pairCodeBox.IsVisible <- false
@@ -570,9 +548,9 @@ type MainWindow() as this =
             pairSubmit.IsEnabled <- client.IsConnected
             pairingRequestedBeforeConnect <- true
             if client.IsConnected then
-                client.SendAsync(PairingRequested {| clientName = Some "wanxiang-desktop" |}) |> ignore)
+                client.SendAsync(PairingRequested {| clientName = Some CredentialStore.clientName |}) |> ignore)
         pairSubmit.Click.Add(fun _ ->
-            client.SendAsync(PairingAttempted {| code = pairCodeBox.Text; clientName = Some "wanxiang-desktop" |}) |> ignore)
+            client.SendAsync(PairingAttempted {| code = pairCodeBox.Text; clientName = Some CredentialStore.clientName |}) |> ignore)
         let panel = StackPanel(Spacing = 10.0, Width = 380.0)
         panel.Children.Add(TextBlock(Text = "连接到万象服务器", FontSize = 16.0, FontWeight = FontWeight.Bold))
         panel.Children.Add(TextBlock(Text = "服务器地址与访问令牌；首次使用可请求配对。", FontSize = 12.5, Foreground = Theme.muted, TextWrapping = TextWrapping.Wrap))
@@ -603,7 +581,7 @@ type MainWindow() as this =
                         if not (String.IsNullOrWhiteSpace token) then
                             do! client.SendAsync(AuthPresent {| token = token |}) |> Async.AwaitTask
                         elif pairingRequestedBeforeConnect then
-                            do! client.SendAsync(PairingRequested {| clientName = Some "wanxiang-desktop" |}) |> Async.AwaitTask
+                            do! client.SendAsync(PairingRequested {| clientName = Some CredentialStore.clientName |}) |> Async.AwaitTask
                             Dispatcher.UIThread.Post(fun () -> pairSubmit.IsEnabled <- true)
                         Dispatcher.UIThread.Post(fun () -> setStatus "连接中…" false)
                     with e ->
@@ -612,8 +590,7 @@ type MainWindow() as this =
                             connectButton.IsEnabled <- true)
                 } |> Async.Start)
         panel.Children.Add(ok)
-        let dialog = Window(Title = "连接", Content = panel, Width = 440.0, Height = 400.0, Background = Theme.panel, WindowStartupLocation = WindowStartupLocation.CenterOwner)
-        dialog.ShowDialog(this) |> ignore
+        showDialog panel 380.0
 
     /// 处理服务端事件（UI 线程）。
     member private this.HandleEvent(ev: WireEvent) =
@@ -624,6 +601,12 @@ type MainWindow() as this =
             setStatus (sprintf "已连接 · %s" d.instanceId) true
             connectButton.IsEnabled <- true
             reconnectDelayMs <- 1000
+            // PWA：认证成功后把连接凭据按 instanceId 写入 IndexedDB（决策 52/53、Q191）
+            if OperatingSystem.IsBrowser() then
+                match lastToken with
+                | Some token ->
+                    CredentialStore.saveBrowserConnectionAsync d.instanceId lastUrl token CredentialStore.clientName |> ignore
+                | None -> ()
             match reconnectCts with
             | Some c -> c.Cancel()
             | None -> ()
@@ -865,7 +848,7 @@ type MainWindow() as this =
                         let copyBtn = Button(Content = "复制", FontSize = 11.0, Padding = Thickness(8.0, 2.0), CornerRadius = CornerRadius(4.0), Background = SolidColorBrush(Color.Parse "#21262D"), Foreground = SolidColorBrush(Color.Parse "#C9D1D9"), BorderThickness = Thickness(0.0), VerticalAlignment = VerticalAlignment.Center)
                         copyBtn.Click.Add(fun _ ->
                             try
-                                this.Clipboard.SetTextAsync(code) |> ignore
+                                (topLevel ()).Clipboard.SetTextAsync(code) |> ignore
                                 copyBtn.Content <- "已复制！"
                                 async {
                                     do! Async.Sleep 2000
@@ -972,7 +955,7 @@ type MainWindow() as this =
             async {
                 try
                     let files =
-                        this.StorageProvider.OpenFilePickerAsync(FilePickerOpenOptions(AllowMultiple = false))
+                        (topLevel ()).StorageProvider.OpenFilePickerAsync(FilePickerOpenOptions(AllowMultiple = false))
                         |> Async.AwaitTask
                     let! picked = files
                     if picked.Count > 0 then
@@ -1021,7 +1004,7 @@ type MainWindow() as this =
     member private this.SaveDownload(fileName: string, bytes: byte[]) =
         async {
             try
-                let picked = this.StorageProvider.SaveFilePickerAsync(FilePickerSaveOptions(SuggestedFileName = fileName)) |> Async.AwaitTask
+                let picked = (topLevel ()).StorageProvider.SaveFilePickerAsync(FilePickerSaveOptions(SuggestedFileName = fileName)) |> Async.AwaitTask
                 let! file = picked
                 if not (isNull file) then
                     use! stream = file.OpenWriteAsync() |> Async.AwaitTask
@@ -1125,7 +1108,6 @@ type MainWindow() as this =
         else
             let title = c.Title
             let mutable next = title
-            let dialog = Window(Title = "重命名会话", Width = 420.0, Height = 160.0, WindowStartupLocation = WindowStartupLocation.CenterOwner, SizeToContent = SizeToContent.Height)
             let box = TextBox(Text = title, Margin = Thickness(16.0, 16.0, 16.0, 8.0), FontSize = 13.5)
             box.SelectAll()
             let okBtn = Button(Content = "确定", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 16.0, 16.0))
@@ -1133,37 +1115,37 @@ type MainWindow() as this =
                 next <- box.Text.Trim()
                 if not (String.IsNullOrEmpty next) && next <> title then
                     client.SendCommandAsync(RenameConversation {| invocationId = Guid.CreateVersion7(); conversationId = c.Id; title = next |}) |> ignore
-                dialog.Close())
+                closeDialog ())
             let cancelBtn = Button(Content = "取消", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 8.0, 16.0))
-            cancelBtn.Click.Add(fun _ -> dialog.Close())
-            let panel = StackPanel()
+            cancelBtn.Click.Add(fun _ -> closeDialog ())
+            let panel = StackPanel(Spacing = 8.0)
+            panel.Children.Add(TextBlock(Text = "重命名会话", FontSize = 15.0, FontWeight = FontWeight.Bold)) |> ignore
             panel.Children.Add(box) |> ignore
             panel.Children.Add(okBtn) |> ignore
             panel.Children.Add(cancelBtn) |> ignore
-            dialog.Content <- panel
-            dialog.Opened.Add(fun _ -> box.Focus() |> ignore)
-            dialog.Show(this)
+            showDialog panel 420.0
+            // 控件尚未布局时 Focus 无效：下一帧聚焦（Q197 键盘可达）
+            Dispatcher.UIThread.Post(fun () -> box.Focus() |> ignore)
 
     /// 会话右键菜单：删除（tombstone，决策 73 第二问）
     member private this.ConfirmDelete(c: ConvSummary) =
         if not (client.IsConnected && authenticated) then
             setStatus "未连接，无法删除" (authenticated)
         else
-            let dialog = Window(Title = "删除会话", Width = 400.0, Height = 170.0, WindowStartupLocation = WindowStartupLocation.CenterOwner, SizeToContent = SizeToContent.Height)
-            let msg = TextBlock(Text = sprintf "确定要删除会话“%s”吗？此操作不可撤销。" c.Title, TextWrapping = TextWrapping.Wrap, Margin = Thickness(16.0, 16.0, 16.0, 8.0), FontSize = 13.5)
-            let okBtn = Button(Content = "删除", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 16.0, 16.0))
+            let msg = TextBlock(Text = sprintf "确定要删除会话“%s”吗？此操作不可撤销。" c.Title, TextWrapping = TextWrapping.Wrap, Margin = Thickness(0.0, 4.0, 0.0, 8.0), FontSize = 13.5)
+            let okBtn = Button(Content = "删除", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 16.0, 0.0))
             okBtn.Click.Add(fun _ ->
                 client.SendCommandAsync(DeleteConversation {| invocationId = Guid.CreateVersion7(); conversationId = c.Id |}) |> ignore
                 if activeConvId = Some c.Id then activeConvId <- None
-                dialog.Close())
-            let cancelBtn = Button(Content = "取消", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 8.0, 16.0))
-            cancelBtn.Click.Add(fun _ -> dialog.Close())
-            let panel = StackPanel()
+                closeDialog ())
+            let cancelBtn = Button(Content = "取消", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 8.0, 0.0))
+            cancelBtn.Click.Add(fun _ -> closeDialog ())
+            let panel = StackPanel(Spacing = 8.0)
+            panel.Children.Add(TextBlock(Text = "删除会话", FontSize = 15.0, FontWeight = FontWeight.Bold)) |> ignore
             panel.Children.Add(msg) |> ignore
             panel.Children.Add(okBtn) |> ignore
             panel.Children.Add(cancelBtn) |> ignore
-            dialog.Content <- panel
-            dialog.Show(this)
+            showDialog panel 400.0
 
     /// 决策 74-77：编辑最后一条消息并 fork 新会话。
     member private this.ForkConversation() =
@@ -1211,11 +1193,10 @@ type MainWindow() as this =
                     panel.Children.Add(TextBlock(Text = "编辑消息并 fork 新会话", FontSize = 15.0, FontWeight = FontWeight.Bold))
                     panel.Children.Add(editBox)
                     panel.Children.Add(btnRow)
-                    let dialog = Window(Title = "编辑并 fork", Content = panel, Width = 480.0, Height = 300.0, Background = Theme.panel, WindowStartupLocation = WindowStartupLocation.CenterOwner)
-                    cancelBtn.Click.Add(fun _ -> dialog.Close()) |> ignore
+                    cancelBtn.Click.Add(fun _ -> closeDialog ()) |> ignore
                     okBtn.Click.Add(fun _ ->
                         let edited = editBox.Text
-                        dialog.Close()
+                        closeDialog ()
                         let newId = Guid.CreateVersion7()
                         // 决策 75：fork 点 = 父对话中最后一条被继承消息的全局提交 id。
                         // 编辑消息 id=X 时继承其之前的历史，因此取可见消息中 < X 的最大 id（编辑首条则为空）。
@@ -1252,7 +1233,69 @@ type MainWindow() as this =
                             do! Async.Sleep 300
                             client.SendAsync(ObserveConversation {| conversationId = newId |}) |> ignore
                         } |> Async.Start)
-                    dialog.ShowDialog(this) |> ignore
+                    showDialog panel 480.0
 
     member private this.OpenConversation(id: Guid) =
         client.SendAsync(ObserveConversation {| conversationId = id |}) |> ignore
+
+/// 桌面窗口壳（决策 48：桌面入口是 Window，UI 主体在 MainView；Q195 窗口尺寸偏好是本机客户端偏好）。
+type MainWindow() as this =
+    inherit Window()
+
+    do
+        this.Title <- "万象"
+        this.Width <- 1180.0
+        this.Height <- 760.0
+        this.MinWidth <- 800.0
+        this.MinHeight <- 560.0
+        this.Background <- Theme.bg
+        this.RequestedThemeVariant <- ThemeVariant.Light
+
+        // Q195：窗口尺寸是本机客户端偏好，保存在本地（不经 NDJSON）；启动恢复上次尺寸
+        let uiPrefsPath () =
+            let home =
+                match Environment.GetEnvironmentVariable "WANXIANG_HOME" with
+                | s when not (String.IsNullOrWhiteSpace s) -> s
+                | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".config", "wanxiang")
+            Path.Combine(home, "ui.json")
+        let loadPrefs () =
+            try
+                let path = uiPrefsPath ()
+                if File.Exists path then
+                    let node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText path)
+                    if not (isNull node) then
+                        let o = node.AsObject()
+                        let getD k =
+                            let mutable n: System.Text.Json.Nodes.JsonNode = null
+                            if o.TryGetPropertyValue(k, &n) && n <> null then n.GetValue<double>() else nan
+                        let w, h = getD "width", getD "height"
+                        if not (Double.IsNaN w) && w >= 800.0 && not (Double.IsNaN h) && h >= 560.0 then
+                            this.Width <- w
+                            this.Height <- h
+                        let getI k =
+                            let mutable n: System.Text.Json.Nodes.JsonNode = null
+                            if o.TryGetPropertyValue(k, &n) && n <> null then n.GetValue<int>() else 0
+                        let getB k =
+                            let mutable n: System.Text.Json.Nodes.JsonNode = null
+                            o.TryGetPropertyValue(k, &n) && n <> null && n.GetValueKind() = System.Text.Json.JsonValueKind.True
+                        let x, y = getI "x", getI "y"
+                        // 用显式 hasPosition 标志区分“未保存”与合法的 (0,0) 停靠位置（Q195）
+                        if getB "hasPosition" then this.Position <- PixelPoint(x, y)
+            with _ -> ()
+        loadPrefs ()
+        this.Closed.Add(fun _ ->
+            try
+                let path = uiPrefsPath ()
+                Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+                let o = System.Text.Json.Nodes.JsonObject()
+                o["width"] <- this.Width
+                o["height"] <- this.Height
+                o["x"] <- this.Position.X
+                o["y"] <- this.Position.Y
+                o["hasPosition"] <- true
+                File.WriteAllText(path, o.ToJsonString())
+                // Q118：本机偏好文件最小用户权限（与 TOML/日志/附件一致）
+                try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
+            with _ -> ())
+
+        this.Content <- MainView()

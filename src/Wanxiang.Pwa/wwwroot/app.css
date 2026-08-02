@@ -1,0 +1,49 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #f6f6f9;
+}
+
+.splash {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: #f6f6f9;
+}
+
+.splash-logo {
+    width: 72px;
+    height: 72px;
+    border-radius: 20px;
+}
+
+.splash-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: #1c1b1f;
+}
+
+.splash-sub {
+    font-size: 13px;
+    color: #8b8a90;
+}
+
+.toast {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 9999;
+    padding: 10px 16px;
+    border-radius: 10px;
+    background: #4d5c92;
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}

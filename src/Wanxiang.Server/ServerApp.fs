@@ -7,6 +7,7 @@ open System.Threading.Tasks
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
+open Microsoft.AspNetCore.StaticFiles
 open Microsoft.Extensions.FileProviders
 open Microsoft.Extensions.Hosting
 open Wanxiang.Config
@@ -254,7 +255,11 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         if servePwa then
             match pwaDir with
             | Some dir when Directory.Exists dir ->
-                app.UseStaticFiles(StaticFileOptions(FileProvider = new PhysicalFileProvider(Path.GetFullPath dir)))
+                // PWA 产物（.NET WASM AppBundle）含非常规扩展名（.symbols 等）：补全 MIME 映射，避免 Kestrel 对未知类型返回 404
+                let contentTypeProvider = FileExtensionContentTypeProvider()
+                contentTypeProvider.Mappings[".symbols"] <- "application/octet-stream"
+                contentTypeProvider.Mappings[".dat"] <- "application/octet-stream"
+                app.UseStaticFiles(StaticFileOptions(FileProvider = new PhysicalFileProvider(Path.GetFullPath dir), ContentTypeProvider = contentTypeProvider))
                 |> ignore
                 // 根路径与未知路径回退到 index.html
                 app.MapGet(

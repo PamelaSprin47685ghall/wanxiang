@@ -34,14 +34,8 @@ type App() =
         match this.ApplicationLifetime with
         | :? IClassicDesktopStyleApplicationLifetime as desktop ->
             desktop.MainWindow <- MainWindow()
+        | :? ISingleViewApplicationLifetime as singleView ->
+            // PWA（决策 48：Linux C 与 PWA 共用同一套 F# UI 代码；browser 不支持 Window，根视图必须是 Control）
+            singleView.MainView <- MainView()
         | _ -> ()
         base.OnFrameworkInitializationCompleted()
-
-module UiEntry =
-
-    /// 启动桌面 UI（由 wanxiang 入口在 client=true 时调用；server 模式同进程时自动连接本机 loopback）。
-    let run (argv: string array) : int =
-        AppBuilder
-            .Configure<App>()
-            .UsePlatformDetect()
-            .StartWithClassicDesktopLifetime(argv)

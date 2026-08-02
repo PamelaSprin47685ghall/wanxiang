@@ -8,18 +8,19 @@
 
   <ItemGroup>
     <Compile Include="Theme.fs" />
+    <Compile Include="CredentialStore.fs" />
     <Compile Include="MainWindow.fs" />
     <Compile Include="App.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.0.0" />
-    <PackageReference Include="Avalonia.Desktop" Version="12.0.0" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.0" />
     <PackageReference Include="Markdig" Version="1.3.2" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Wanxiang.Interop\Wanxiang.Interop.csproj" />
     <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
     <ProjectReference Include="..\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
     <ProjectReference Include="..\Wanxiang.Client\Wanxiang.Client.fsproj" />

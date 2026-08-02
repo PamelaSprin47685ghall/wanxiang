@@ -7,6 +7,8 @@ open System.Net.Sockets
 open System.Runtime.InteropServices
 open System.Threading
 open System.Threading.Tasks
+open Avalonia
+open Avalonia.Controls.ApplicationLifetimes
 open Wanxiang.Config
 open Wanxiang.Core
 open Wanxiang.Store
@@ -350,10 +352,17 @@ module Program =
                             let candidate = Path.Combine(AppContext.BaseDirectory, "pwa")
                             if Directory.Exists candidate then Some candidate
                             else
-                                // 开发模式：从源码目录读取
-                                let dev = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Wanxiang.Pwa", "wwwroot")
-                                if Directory.Exists(Path.GetFullPath dev) then Some(Path.GetFullPath dev)
-                                else None
+                                // 开发模式：优先 Wanxiang.Pwa 的发布产物 AppBundle（含 _framework 运行时），其次源码静态壳
+                                let baseDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."))
+                                let publishCandidates = [
+                                    Path.Combine(baseDir, "Wanxiang.Pwa", "bin", "Debug", "net10.0-browser", "browser-wasm", "AppBundle")
+                                    Path.Combine(baseDir, "Wanxiang.Pwa", "bin", "Release", "net10.0-browser", "browser-wasm", "AppBundle")
+                                ]
+                                match publishCandidates |> List.tryFind Directory.Exists with
+                                | Some p -> Some(Path.GetFullPath p)
+                                | None ->
+                                    let dev = Path.Combine(baseDir, "Wanxiang.Pwa", "wwwroot")
+                                    if Directory.Exists dev then Some dev else None
                         else None
                     let app = Wanxiang.Server.ServerApp(dataDir, configPath, false, pwaDir, logInfo, ?startupOutcome = startupReplayOutcome)
                     app.Start(switches.pwa)
@@ -393,7 +402,13 @@ module Program =
                             ctx.Cancel <- true
                             shutdownUi ())))
                     with _ -> None
-                let code = Wanxiang.UI.UiEntry.run argv
+                // 桌面 UI 入口（决策 48：本机客户端也必须走真实 WebSocket，入口仅负责 AppBuilder 平台启动）
+                let runDesktopUi (argv: string array) : int =
+                    AppBuilder
+                        .Configure<Wanxiang.UI.App>()
+                        .UsePlatformDetect()
+                        .StartWithClassicDesktopLifetime(argv)
+                let code = runDesktopUi argv
                 stopServer ()
                 match sigterm with Some r -> r.Dispose() | None -> ()
                 code

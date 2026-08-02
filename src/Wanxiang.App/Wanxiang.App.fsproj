@@ -16,6 +16,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="12.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
     <ProjectReference Include="..\Wanxiang.Store\Wanxiang.Store.fsproj" />
     <ProjectReference Include="..\Wanxiang.Config\Wanxiang.Config.fsproj" />
