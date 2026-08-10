@@ -24,7 +24,7 @@ module Program =
                     RenderingMode =
                         [| BrowserRenderingMode.WebGL2
                            BrowserRenderingMode.WebGL1 |],
-                    FrameworkAssetPathResolver = fun fileName -> $"./{fileName}?v=20260810j"
+                    FrameworkAssetPathResolver = fun fileName -> $"./{fileName}?v=20260810m"
                 )
             do!
                 AppBuilder

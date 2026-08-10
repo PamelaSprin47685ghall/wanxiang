@@ -2,7 +2,7 @@
 // 可缓存范围：静态壳白名单 + /_framework/（.NET/WASM 运行时产物）。
 // 全部为 network-first（文件名不带内容 hash，cache-first 会在更新后提供旧版本），缓存仅作离线回退。
 // Q193/P1-3：不自动 skipWaiting；收到 SKIP_WAITING 消息（用户确认刷新）后才激活新版本。
-const CACHE = "wanxiang-av4";
+const CACHE = "wanxiang-av6";
 // 静态壳白名单：只缓存这些路径，其余同源 GET 一律 network-only（Q192）
 const STATIC_ASSETS = ["/", "/index.html", "/app.css", "/main.js", "/logo.png", "/manifest.webmanifest"];
 

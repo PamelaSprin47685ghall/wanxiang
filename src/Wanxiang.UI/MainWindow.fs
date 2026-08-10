@@ -313,7 +313,29 @@ type MainView() as this =
             Child = TextBlock(Text = "+", FontSize = 16.0, FontWeight = FontWeight.Medium, Foreground = Theme.text,
                               HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center))
     do ToolTip.SetTip(newButton, "新建会话")
-    let searchBox = TextBox(PlaceholderText = "搜索", CornerRadius = CornerRadius(Theme.radiusSm), Margin = Thickness(Theme.sidebarInset, Theme.shellGap, Theme.sidebarInset, Theme.space2), Padding = Thickness(Theme.space2, 5.0), BorderThickness = Thickness(0.0), Background = Theme.panel, FontSize = 12.5, MinHeight = 32.0)
+    // 放大镜：点开后再显示搜索框（避免常驻输入框占位难看）
+    let searchIcon =
+        let c = Canvas(Width = 14.0, Height = 14.0)
+        let ring = Ellipse(Width = 8.5, Height = 8.5, Stroke = Theme.text, StrokeThickness = 1.4, Fill = Brushes.Transparent)
+        Canvas.SetLeft(ring, 1.0)
+        Canvas.SetTop(ring, 1.0)
+        let handle = Line(StartPoint = Point(8.2, 8.2), EndPoint = Point(12.2, 12.2), Stroke = Theme.text, StrokeThickness = 1.5)
+        c.Children.Add(ring) |> ignore
+        c.Children.Add(handle) |> ignore
+        Viewbox(Width = 16.0, Height = 16.0, Stretch = Stretch.Uniform, Child = c)
+    let searchButton =
+        Border(
+            Width = Theme.iconBtn, Height = Theme.iconBtn, CornerRadius = CornerRadius(Theme.radiusMd),
+            Background = Theme.panel, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0),
+            Cursor = Cursor(StandardCursorType.Hand), VerticalAlignment = VerticalAlignment.Center,
+            Child = searchIcon)
+    do ToolTip.SetTip(searchButton, "搜索会话")
+    let searchBox =
+        TextBox(
+            PlaceholderText = "搜索会话…", CornerRadius = CornerRadius(Theme.radiusSm),
+            Margin = Thickness(Theme.sidebarInset, Theme.space2, Theme.sidebarInset, Theme.space1),
+            Padding = Thickness(Theme.space2, 5.0), BorderThickness = Thickness(1.0), BorderBrush = Theme.outlineVariant,
+            Background = Theme.panel, FontSize = 12.5, MinHeight = 32.0, IsVisible = false)
     let filteredCountLabel = TextBlock(Text = "", FontSize = 10.5, Foreground = Theme.muted, Margin = Thickness(Theme.sidebarInset, 0.0, Theme.sidebarInset, Theme.space1), IsVisible = false)
     let convList = ListBox(Background = Brushes.Transparent, BorderThickness = Thickness(0.0))
     // P1-1：显式 VirtualizingStackPanel；侧栏 Dock 给 ListBox 有界高度，由其自身滚动虚拟化（勿外包无限高 ScrollViewer）
@@ -547,16 +569,20 @@ type MainView() as this =
         // 品牌标（左上角）：小标 + 名称，右端圆形新建
         let brandTile = createBrandTile 22.0 Theme.radiusSm
         brandTile.VerticalAlignment <- VerticalAlignment.Center
-        let appName = TextBlock(Text = "万象", FontSize = 14.0, FontWeight = FontWeight.Medium, Foreground = Theme.text, VerticalAlignment = VerticalAlignment.Center, LetterSpacing = 0.6)
+        let appName = TextBlock(Text = "万象", FontSize = 14.0, FontWeight = FontWeight.Medium, Foreground = Theme.text, VerticalAlignment = VerticalAlignment.Center, LetterSpacing = 0.6, TextTrimming = TextTrimming.CharacterEllipsis)
         let headerSpacer = Border()
         let sidebarHeaderPanel = DockPanel()
         DockPanel.SetDock(brandTile, Dock.Left)
         DockPanel.SetDock(appName, Dock.Left)
-        DockPanel.SetDock(newButton, Dock.Right)
+        // 右侧动作组：放大镜在左、+ 在右（比两个独立 Dock.Right 更稳）
+        let headerActions = StackPanel(Orientation = Orientation.Horizontal, Spacing = Theme.space1, VerticalAlignment = VerticalAlignment.Center)
+        headerActions.Children.Add(searchButton) |> ignore
+        headerActions.Children.Add(newButton) |> ignore
+        DockPanel.SetDock(headerActions, Dock.Right)
         sidebarHeaderPanel.Children.Add(brandTile)
         sidebarHeaderPanel.Children.Add(Border(Width = Theme.space2))
         sidebarHeaderPanel.Children.Add(appName)
-        sidebarHeaderPanel.Children.Add(newButton)
+        sidebarHeaderPanel.Children.Add(headerActions)
         sidebarHeaderPanel.Children.Add(headerSpacer)
         let sidebarHeader = Border(Height = Theme.barHeight, Padding = Thickness(Theme.sidebarInset, 0.0, Theme.sidebarInset, 0.0), BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0), Child = sidebarHeaderPanel)
 
@@ -723,12 +749,7 @@ type MainView() as this =
         // 启动即渲染空状态（无事件时也展示品牌区）
         this.RenderMessages()
 
-        searchBox.GotFocus.Add(fun _ ->
-            searchBox.BorderThickness <- Thickness(1.0)
-            searchBox.BorderBrush <- Theme.outlineVariant)
-        searchBox.LostFocus.Add(fun _ ->
-            searchBox.BorderThickness <- Thickness(0.0))
-        searchBox.TextChanged.Add(fun _ ->
+        let applySearchFilter () =
             let q = if String.IsNullOrWhiteSpace searchBox.Text then "" else searchBox.Text.Trim().ToLowerInvariant()
             if String.IsNullOrEmpty q then
                 convList.ItemsSource <- rawSummaries
@@ -736,9 +757,30 @@ type MainView() as this =
                 convList.ItemsSource <-
                     rawSummaries
                     |> Array.filter (fun c -> c.Title.ToLowerInvariant().Contains q || c.Preview.ToLowerInvariant().Contains q)
-            // 过滤可能把 activeConvId 项隐藏：保持头部仍指向原会话，选中态由 syncSelection 决定
             syncSelection ()
-            refreshListEmpty ())
+            refreshListEmpty ()
+        let closeSearch () =
+            searchBox.IsVisible <- false
+            searchBox.Text <- ""
+            searchButton.Background <- Theme.panel
+            searchButton.BorderBrush <- Theme.outlineVariant
+            applySearchFilter ()
+        let openSearch () =
+            searchBox.IsVisible <- true
+            searchButton.Background <- Theme.primaryContainer
+            searchButton.BorderBrush <- Theme.muted
+            Dispatcher.UIThread.Post(fun () ->
+                searchBox.Focus() |> ignore
+                searchBox.CaretIndex <- if isNull searchBox.Text then 0 else searchBox.Text.Length)
+        searchButton.PointerPressed.Add(fun _ ->
+            if searchBox.IsVisible then closeSearch () else openSearch ())
+        searchBox.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape then
+                closeSearch ()
+                e.Handled <- true)
+        searchBox.TextChanged.Add(fun _ ->
+            // 过滤可能把 activeConvId 项隐藏：保持头部仍指向原会话，选中态由 syncSelection 决定
+            applySearchFilter ())
         let beginCreate () =
             this.CreateConversation()
             // 点击后把焦点交给输入框，避免按钮保留焦点时按 Space/Enter 误触发重复新建
