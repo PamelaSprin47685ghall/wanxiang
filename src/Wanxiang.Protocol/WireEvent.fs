@@ -40,7 +40,7 @@ type WireEvent =
     // ---- 生成 ----
     | GenerationDelta of {| conversationId: Guid; generationId: Guid; payload: JsonNode |}
     | GenerationStarted of {| conversationId: Guid; generationId: Guid |}
-    | GenerationFinished of {| conversationId: Guid; generationId: Guid; status: string; error: string option |}
+    | GenerationFinished of {| conversationId: Guid; generationId: Guid; status: string; error: string option; usage: GenerationUsage option |}
     | GenerationCancel of {| conversationId: Guid; generationId: Guid |}
     // ---- 附件 ----
     | AttachmentBegin of {| attachmentId: Guid; totalBytes: int64; sha256: string; mediaType: string; fileName: string |}

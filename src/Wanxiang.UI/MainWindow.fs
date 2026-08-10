@@ -313,9 +313,10 @@ type MainView() as this =
         TextBox(
             PlaceholderText = "搜索会话…", CornerRadius = CornerRadius(Theme.radiusSm),
             Margin = Thickness(Theme.sidebarInset, Theme.space2, Theme.sidebarInset, Theme.space1),
-            Padding = Thickness(Theme.space2, 5.0), BorderThickness = Thickness(1.0), BorderBrush = Theme.outlineVariant,
-            Background = Theme.panel, FontSize = 12.5, MinHeight = 32.0, IsVisible = false)
-    do searchBox.Classes.Add("wx-field")
+            Padding = Thickness(Theme.space2, 5.0), BorderThickness = Thickness(0.0), Background = Brushes.Transparent,
+            FontSize = 12.5, MinHeight = 32.0, IsVisible = false)
+    do searchBox.Classes.Add("wx-input")
+    do searchBox.Classes.Add("wx-input-field")
     let filteredCountLabel = TextBlock(Text = "", FontSize = 10.5, Foreground = Theme.muted, Margin = Thickness(Theme.sidebarInset, 0.0, Theme.sidebarInset, Theme.space1), IsVisible = false)
     let convList = ListBox(Background = Brushes.Transparent, BorderThickness = Thickness(0.0))
     // P1-1：显式 VirtualizingStackPanel；侧栏 Dock 给 ListBox 有界高度，由其自身滚动虚拟化（勿外包无限高 ScrollViewer）
@@ -351,7 +352,8 @@ type MainView() as this =
     let messagesHost = Grid()
     let scrollViewer = ScrollViewer(Content = messagesHost, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled)
     let inputBox = TextBox(PlaceholderText = "输入消息…", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, BorderThickness = Thickness(0.0), Background = Brushes.Transparent, FontSize = 14.0, VerticalContentAlignment = VerticalAlignment.Center, MinHeight = 34.0, MaxHeight = 120.0, Padding = Thickness(Theme.space1, 0.0, 0.0, 0.0))
-    do inputBox.Classes.Add("wx-input-inner")
+    do inputBox.Classes.Add("wx-input")
+    do inputBox.Classes.Add("wx-input-shell")
     let sendButton = Icons.createButton Icons.Filled (Icons.sendUp Theme.onPrimary)
     let attachButton = Icons.createButton Icons.Outline (Icons.paperclip Theme.text)
     do Icons.setEnabled sendButton false
@@ -388,6 +390,36 @@ type MainView() as this =
     let mutable genTimer: DispatcherTimer option = None
     /// 认证状态（本地跟踪，驱动状态点颜色）
     let mutable authenticated = false
+    /// 本机 UI 偏好（ui.json）
+    let mutable uiPrefs = UiPrefs.load()
+    /// 各会话最近一次完成的 token/耗时（generation.finished 透传）
+    let mutable lastUsageByConv: Map<Guid, GenerationUsage> = Map.empty
+    /// 当前生成开始时刻（推理/耗时展示）
+    let mutable generationStartedAt: DateTimeOffset option = None
+    /// 流式推理计时器（刷新思考时长标签）
+    let mutable reasoningTickTimer: DispatcherTimer option = None
+
+    let messageFontSize = uiPrefs.fontScale
+    let smallFontSize = max 10.5 (uiPrefs.fontScale - 2.5)
+
+    let formatReasoningDuration (ms: int64) =
+        if ms >= 1000L then sprintf "%.1fs" (float ms / 1000.0)
+        else sprintf "%dms" (int ms)
+
+    let stopReasoningTimer () =
+        match reasoningTickTimer with
+        | Some t ->
+            t.Stop()
+            reasoningTickTimer <- None
+        | None -> ()
+
+    let startReasoningTimer () =
+        stopReasoningTimer ()
+        let t = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 400.0)
+        t.Tick.Add(fun _ ->
+            if activeConvId.IsSome && streamReasoning.Length > 0 then this.RenderMessages())
+        t.Start()
+        reasoningTickTimer <- Some t
 
     /// TopLevel 成员（Clipboard/StorageProvider）需经 TopLevel.GetTopLevel 获取（UserControl 非 TopLevel）。
     let topLevel () = TopLevel.GetTopLevel(this)
@@ -716,8 +748,6 @@ type MainView() as this =
                 Background = Theme.panel, BorderBrush = Theme.border, BorderThickness = Thickness(1.0),
                 CornerRadius = CornerRadius(Theme.radiusLg), Padding = Thickness(Theme.space2, Theme.space1, Theme.space1, Theme.space1),
                 HorizontalAlignment = HorizontalAlignment.Stretch, Child = inputBar)
-        inputBox.GotFocus.Add(fun _ -> inputShell.BorderBrush <- Theme.muted)
-        inputBox.LostFocus.Add(fun _ -> inputShell.BorderBrush <- Theme.border)
         let inputColumn = StackPanel(Orientation = Orientation.Vertical, Spacing = Theme.space1, HorizontalAlignment = HorizontalAlignment.Stretch)
         inputColumn.Children.Add(inputShell) |> ignore
         let inputWrap =
@@ -1044,8 +1074,10 @@ type MainView() as this =
         | GenerationStarted d ->
             state.Handle ev
             activeGenerationId <- Some d.generationId
+            generationStartedAt <- Some DateTimeOffset.UtcNow
             cancelButton.IsEnabled <- true
             streamText.Clear() |> ignore
+            streamReasoning.Clear() |> ignore
             showGenChip true
             startGenTimer ()
             if activeConvId = Some d.conversationId then
@@ -1058,15 +1090,28 @@ type MainView() as this =
                 streamText.Append mv.text |> ignore
                 streamReasoning.Clear() |> ignore
                 streamReasoning.Append mv.reasoning |> ignore
+                if mv.reasoning.Length > 0 then startReasoningTimer ()
                 this.RenderMessages()
         | GenerationFinished d ->
             state.Handle ev
             state.AdvanceCursor()
             activeGenerationId <- None
+            let startedAt = generationStartedAt
+            generationStartedAt <- None
+            stopReasoningTimer ()
             cancelButton.IsEnabled <- false
             stopGenTimer ()
             showGenChip false
             streamText.Clear() |> ignore
+            streamReasoning.Clear() |> ignore
+            match d.usage with
+            | Some u -> lastUsageByConv <- lastUsageByConv.Add(d.conversationId, u)
+            | None ->
+                match startedAt with
+                | Some s ->
+                    let ms = int64 (DateTimeOffset.UtcNow - s).TotalMilliseconds
+                    lastUsageByConv <- lastUsageByConv.Add(d.conversationId, { GenerationUsage.empty with durationMs = Some ms })
+                | None -> ()
             if activeConvId = Some d.conversationId then
                 match d.status with
                 | "completed" -> ()
@@ -1124,9 +1169,11 @@ type MainView() as this =
                 this.RenderMessages()
         | _ -> ()
 
-    member private this.AppendMessage(mv: MessageView, refs: AttachmentRef list, streaming: bool, ?commitId: uint64) =
+    member private this.AppendMessage(mv: MessageView, refs: AttachmentRef list, streaming: bool, ?commitId: uint64, ?usage: GenerationUsage, ?showUsage: bool) =
         let isUser = mv.role = "user"
         let isTool = mv.role = "tool"
+        let usage = defaultArg usage GenerationUsage.empty
+        let showUsage = defaultArg showUsage false
         // 用户：唯一保留的“气泡”，收窄柔和；助手/工具：无边框融入画布（避免大方块感）
         let bubble = Border(Padding = Thickness(0.0), MaxWidth = 760.0)
         if isUser then
@@ -1145,20 +1192,38 @@ type MainView() as this =
             bubble.Background <- Brushes.Transparent
             bubble.HorizontalAlignment <- HorizontalAlignment.Stretch
         let panel = StackPanel(Spacing = 6.0)
-        // 思维链：左侧竖线引用式折叠（流式期间展开，提交后收起，与 PWA 思考链视觉一致）
+        // 思维链：左侧竖线引用式折叠（流式期间展开；完成后可自动收起）
         if not isUser && not isTool && not (String.IsNullOrEmpty mv.reasoning) then
-            // 自定义折叠开关（轻量链接样本——Fluent 默认 Expander 带硬边框、与无边框基调不符）
-            let thinkBody = TextBlock(Text = mv.reasoning, TextWrapping = TextWrapping.Wrap, FontSize = 12.5, Foreground = Theme.muted, LineHeight = 19.0, IsVisible = streaming, Margin = Thickness(0.0, 6.0, 0.0, 0.0))
-            let chevron = TextBlock(Text = (if streaming then "▾" else "▸"), FontSize = 10.0, Foreground = Theme.primary, VerticalAlignment = VerticalAlignment.Center, Margin = Thickness(0.0, 0.0, 6.0, 0.0))
-            let thinkLabel = TextBlock(Text = "思考过程", FontSize = 12.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.muted, LetterSpacing = 0.4)
+            let reasoningMs =
+                if streaming then
+                    match generationStartedAt with
+                    | Some s -> Some(int64 (DateTimeOffset.UtcNow - s).TotalMilliseconds)
+                    | None -> None
+                else usage.durationMs
+            let durationSuffix =
+                match reasoningMs with
+                | Some ms -> " · " + formatReasoningDuration ms
+                | None -> ""
+            let collapsedDefault = not streaming && uiPrefs.autoCollapseReasoning
+            let thinkBody = TextBlock(Text = mv.reasoning, TextWrapping = TextWrapping.Wrap, FontSize = smallFontSize, Foreground = Theme.muted, LineHeight = 19.0, IsVisible = not collapsedDefault, Margin = Thickness(0.0, 6.0, 0.0, 0.0))
+            let chevron = TextBlock(Text = (if collapsedDefault then "▸" else "▾"), FontSize = 10.0, Foreground = Theme.primary, VerticalAlignment = VerticalAlignment.Center, Margin = Thickness(0.0, 0.0, 6.0, 0.0))
+            let thinkLabel = TextBlock(Text = "思考过程" + durationSuffix, FontSize = smallFontSize, FontWeight = FontWeight.SemiBold, Foreground = Theme.muted, LetterSpacing = 0.4)
+            let autoCollapseToggle =
+                CheckBox(
+                    Content = "完成后自动收起", FontSize = 10.5, Foreground = Theme.faint,
+                    IsChecked = Nullable uiPrefs.autoCollapseReasoning, Margin = Thickness(0.0, 4.0, 0.0, 0.0), IsVisible = thinkBody.IsVisible)
+            autoCollapseToggle.Click.Add(fun _ ->
+                let isOn = autoCollapseToggle.IsChecked.GetValueOrDefault(true)
+                uiPrefs <- { uiPrefs with autoCollapseReasoning = isOn }
+                UiPrefs.save uiPrefs)
             let toggleRow = StackPanel(Orientation = Orientation.Horizontal, Cursor = Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand))
             toggleRow.Children.Add(chevron) |> ignore
             toggleRow.Children.Add(thinkLabel) |> ignore
-            // Q197：键盘可达——可聚焦（Tab），Enter/Space 切换折叠
             toggleRow.Focusable <- true
             Avalonia.Automation.AutomationProperties.SetName(toggleRow, "切换思考过程显示")
             let toggle () =
                 thinkBody.IsVisible <- not thinkBody.IsVisible
+                autoCollapseToggle.IsVisible <- thinkBody.IsVisible
                 chevron.Text <- if thinkBody.IsVisible then "▾" else "▸"
             toggleRow.PointerPressed.Add(fun _ -> toggle ())
             toggleRow.KeyDown.Add(fun e ->
@@ -1168,6 +1233,7 @@ type MainView() as this =
             let thinkStack = StackPanel(Spacing = 0.0)
             thinkStack.Children.Add(toggleRow) |> ignore
             thinkStack.Children.Add(thinkBody) |> ignore
+            thinkStack.Children.Add(autoCollapseToggle) |> ignore
             let thinkAccent =
                 Border(
                     BorderBrush = Theme.primary, BorderThickness = Thickness(2.0, 0.0, 0.0, 0.0),
@@ -1178,13 +1244,13 @@ type MainView() as this =
         
         if not (String.IsNullOrEmpty mv.text) then
             if isUser then
-                panel.Children.Add(TextBlock(Text = mv.text, TextWrapping = TextWrapping.Wrap, Foreground = fg, FontSize = 14.5, LineHeight = 21.0))
+                panel.Children.Add(TextBlock(Text = mv.text, TextWrapping = TextWrapping.Wrap, Foreground = fg, FontSize = messageFontSize, LineHeight = 21.0))
             else
                 let segments = MarkdownParser.parse mv.text
                 for seg in segments do
                     match seg with
                     | NormalText spans ->
-                        let tb = SelectableTextBlock(TextWrapping = TextWrapping.Wrap, Foreground = fg, FontSize = 14.5, LineHeight = 24.0)
+                        let tb = SelectableTextBlock(TextWrapping = TextWrapping.Wrap, Foreground = fg, FontSize = messageFontSize, LineHeight = 24.0)
                         for span in spans do
                             match span with
                             | TextSpan(t, bold, italic, code) ->
@@ -1201,7 +1267,7 @@ type MainView() as this =
                                         Text = label,
                                         Foreground = Theme.primary,
                                         TextDecorations = TextDecorations.Underline,
-                                        FontSize = 14.5,
+                                        FontSize = messageFontSize,
                                         Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
                                         VerticalAlignment = VerticalAlignment.Center)
                                 linkText.PointerPressed.Add(fun ev ->
@@ -1254,6 +1320,17 @@ type MainView() as this =
                 let link = Button(Content = sprintf "下载附件：%s (%s)" r.fileName (formatSize r.size), FontSize = 12.0, Padding = Thickness(10.0, 4.0), CornerRadius = CornerRadius(999.0), Background = Theme.panel, Foreground = Theme.text, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0), HorizontalAlignment = HorizontalAlignment.Left, Margin = Thickness(0.0, 4.0, 0.0, 0.0))
                 link.Click.Add(fun _ -> this.DownloadAttachment r.sha256)
                 panel.Children.Add link
+        // P1-2：token/耗时弱字展示（悬停出明细）
+        if showUsage && not isUser && not isTool then
+            match GenerationUsage.formatSummary usage with
+            | Some summary ->
+                let meta =
+                    TextBlock(
+                        Text = summary, FontSize = 11.0, Foreground = Theme.faint,
+                        Margin = Thickness(0.0, 4.0, 0.0, 0.0), HorizontalAlignment = HorizontalAlignment.Left)
+                ToolTip.SetTip(meta, GenerationUsage.formatDetail usage)
+                panel.Children.Add meta
+            | None -> ()
         bubble.Child <- panel
 
         // P0-2：消息级悬浮工具条（复制 / 复制代码 / 编辑并 fork）；悬停才显
@@ -1355,14 +1432,27 @@ type MainView() as this =
                 if view.messages.Count = 0 && view.runtimeState <> "generating" then
                     emptyHint.Text <- "写一条消息开始"
                     emptyOverlay.IsVisible <- true
-                for m in view.messages do
-                    // 消息结构：{ commitId, payload }（决策 79）
+                let convUsage = lastUsageByConv |> Map.tryFind convId |> Option.defaultValue GenerationUsage.empty
+                let msgArray = view.messages |> Seq.cast<JsonNode> |> Seq.toArray
+                let lastAssistantIdx =
+                    msgArray
+                    |> Array.mapi (fun i node ->
+                        let payload =
+                            match node with
+                            | :? JsonObject as o ->
+                                let mutable p: JsonNode = null
+                                if o.TryGetPropertyValue("payload", &p) && not (isNull p) then p else node
+                            | _ -> node
+                        let mv = MessageView.ofJson payload
+                        if mv.role = "assistant" then Some i else None)
+                    |> Array.choose id
+                    |> Array.tryLast
+                for i, m in msgArray |> Array.indexed do
                     let payload =
                         match m with
-                        | :? JsonNode as node when node.GetValueKind() = JsonValueKind.Object ->
+                        | :? JsonObject as o ->
                             let mutable p: JsonNode = null
-                            if node.AsObject().TryGetPropertyValue("payload", &p) && not (isNull p) then p
-                            else node
+                            if o.TryGetPropertyValue("payload", &p) && not (isNull p) then p else o
                         | node -> node
                     let cid =
                         match m with
@@ -1374,12 +1464,18 @@ type MainView() as this =
                                 | _ -> None
                             else None
                         | _ -> None
+                    let showUsage = lastAssistantIdx = Some i
+                    let usage = if showUsage then convUsage else GenerationUsage.empty
                     match cid with
-                    | Some id -> this.AppendMessage(MessageView.ofJson payload, AttachmentRef.extract payload, false, commitId = id)
-                    | None -> this.AppendMessage(MessageView.ofJson payload, AttachmentRef.extract payload, false)
+                    | Some id -> this.AppendMessage(MessageView.ofJson payload, AttachmentRef.extract payload, false, commitId = id, usage = usage, showUsage = showUsage)
+                    | None -> this.AppendMessage(MessageView.ofJson payload, AttachmentRef.extract payload, false, usage = usage, showUsage = showUsage)
                 // P1-4：流式增量（临时展示）
-                if view.runtimeState = "generating" && streamText.Length > 0 then
-                    this.AppendMessage({ role = "assistant"; text = streamText.ToString(); reasoning = streamReasoning.ToString() }, [], true)
+                if view.runtimeState = "generating" && (streamText.Length > 0 || streamReasoning.Length > 0) then
+                    let liveUsage =
+                        match generationStartedAt with
+                        | Some s -> { GenerationUsage.empty with durationMs = Some(int64 (DateTimeOffset.UtcNow - s).TotalMilliseconds) }
+                        | None -> GenerationUsage.empty
+                    this.AppendMessage({ role = "assistant"; text = streamText.ToString(); reasoning = streamReasoning.ToString() }, [], true, usage = liveUsage, showUsage = false)
         scrollViewer.ScrollToEnd()
 
     /// P1-2：请求更早历史（页边界 = 稳定 commitID）。
@@ -1889,4 +1985,11 @@ type MainWindow() as this =
                 try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
             with _ -> ())
 
-        this.Content <- MainView()
+        // P1-5：窗口居中 + 极轻外阴影（收敛默认 Fluent 平板感）
+        this.WindowStartupLocation <- WindowStartupLocation.CenterScreen
+        let shell =
+            Border(
+                Background = Theme.bg,
+                BoxShadow = BoxShadows.Parse "0 1px 0 #E2E0DA, 0 16px 48px -20px #1C1B191A",
+                Child = MainView())
+        this.Content <- shell

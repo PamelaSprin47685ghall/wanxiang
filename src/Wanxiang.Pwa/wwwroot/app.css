@@ -147,6 +147,20 @@ html, body {
     100% { transform: translateX(350%); }
 }
 
+@media (prefers-reduced-motion: reduce) {
+    .splash,
+    .splash-logo,
+    .splash-bar::after {
+        animation: none !important;
+    }
+    .splash-bar::after {
+        transform: none;
+        width: 55%;
+        background: #2E343E;
+        opacity: 0.35;
+    }
+}
+
 /* ============================================================
  * Toast（服务工作者更新提示）：固定底栏、可点击刷新
  * ============================================================ */

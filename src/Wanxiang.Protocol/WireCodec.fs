@@ -44,6 +44,17 @@ module WireCodec =
             | _ -> None
         | _ -> None
 
+    let private parseUsage (p: JsonObject) : GenerationUsage option =
+        match tryGet p "usage" with
+        | Some (:? JsonObject as uo) ->
+            Some
+                { promptTokens = tryInt uo "promptTokens"
+                  completionTokens = tryInt uo "completionTokens"
+                  cachedTokens = tryInt uo "cachedTokens"
+                  totalTokens = tryInt uo "totalTokens"
+                  durationMs = tryInt64 uo "durationMs" }
+        | _ -> None
+
     let private tryGuid (o: JsonObject) (k: string) : Guid option =
         match tryString o k with
         | Some s ->
@@ -145,6 +156,16 @@ module WireCodec =
             putGuid p "generationId" d.generationId
             p["status"] <- d.status
             match d.error with Some e -> p["error"] <- e | None -> ()
+            match d.usage with
+            | Some u ->
+                let uo = JsonObject()
+                match u.promptTokens with Some v -> uo["promptTokens"] <- v | None -> ()
+                match u.completionTokens with Some v -> uo["completionTokens"] <- v | None -> ()
+                match u.cachedTokens with Some v -> uo["cachedTokens"] <- v | None -> ()
+                match u.totalTokens with Some v -> uo["totalTokens"] <- v | None -> ()
+                match u.durationMs with Some v -> uo["durationMs"] <- v | None -> ()
+                p["usage"] <- uo
+            | None -> ()
         | GenerationCancel d ->
             putGuid p "conversationId" d.conversationId
             putGuid p "generationId" d.generationId
@@ -420,7 +441,8 @@ module WireCodec =
                     | _ -> Error "generation.started: missing conversationId/generationId"
                 | Some "generation.finished" ->
                     match tryGuid p "conversationId", tryGuid p "generationId" with
-                    | Some cid, Some gid -> Ok(GenerationFinished {| conversationId = cid; generationId = gid; status = tryString p "status" |> Option.defaultValue "completed"; error = tryString p "error" |})
+                    | Some cid, Some gid ->
+                        Ok(GenerationFinished {| conversationId = cid; generationId = gid; status = tryString p "status" |> Option.defaultValue "completed"; error = tryString p "error"; usage = parseUsage p |})
                     | _ -> Error "generation.finished: missing conversationId/generationId"
                 | Some "generation.cancel" ->
                     match tryGuid p "conversationId", tryGuid p "generationId" with

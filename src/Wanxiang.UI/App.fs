@@ -37,20 +37,26 @@ type App() =
         itemStyle.Setters.Add(Setter(Control.MarginProperty, Thickness(Theme.sidebarInset, 1.0)))
         itemStyle.Setters.Add(Setter(ContentControl.CornerRadiusProperty, CornerRadius(Theme.radiusSm)))
         this.Styles.Add(itemStyle)
-        // 输入壳内 TextBox：无边框，焦点由外层 Border 单独表达，避免双重大黑边
-        let inputInner = Style(fun s -> s.OfType<TextBox>().Class("wx-input-inner"))
-        inputInner.Setters.Add(Setter(TemplatedControl.BorderThicknessProperty, Thickness(0.0)))
-        inputInner.Setters.Add(Setter(TextBox.BorderBrushProperty, Brushes.Transparent))
-        this.Styles.Add(inputInner)
-        let inputInnerFocus = Style(fun s -> s.OfType<TextBox>().Class("wx-input-inner").Class(":focus"))
-        inputInnerFocus.Setters.Add(Setter(TemplatedControl.BorderThicknessProperty, Thickness(0.0)))
-        inputInnerFocus.Setters.Add(Setter(TextBox.BorderBrushProperty, Brushes.Transparent))
-        this.Styles.Add(inputInnerFocus)
-        // 侧栏搜索框：聚焦时保持浅描边，不叠 Fluent 墨色强调环
-        let fieldFocus = Style(fun s -> s.OfType<TextBox>().Class("wx-field").Class(":focus"))
-        fieldFocus.Setters.Add(Setter(TextBox.BorderBrushProperty, Theme.muted))
-        fieldFocus.Setters.Add(Setter(TemplatedControl.BorderThicknessProperty, Thickness(1.0)))
-        this.Styles.Add(fieldFocus)
+        // wx-input：统一压过 Fluent TextBox 模板 focus/hover 大黑边（PART_BorderElement）
+        let wxInputCtrl = Style(fun s -> s.OfType<TextBox>().Class("wx-input"))
+        wxInputCtrl.Setters.Add(Setter(TemplatedControl.BorderThicknessProperty, Thickness(0.0)))
+        wxInputCtrl.Setters.Add(Setter(TextBox.BorderBrushProperty, Brushes.Transparent))
+        this.Styles.Add(wxInputCtrl)
+        let addWxInputTplStyles (variantClass: string) (borderBrush: IBrush) (thickness: Thickness) (background: IBrush) =
+            for pseudo in [| ""; ":focus"; ":pointerover" |] do
+                let style =
+                    Style(fun s ->
+                        let sel = s.OfType<TextBox>().Class("wx-input").Class(variantClass)
+                        let sel' = if pseudo = "" then sel else sel.Class(pseudo)
+                        sel'.Template().OfType<Border>().Name("PART_BorderElement"))
+                style.Setters.Add(Setter(Border.BorderBrushProperty, borderBrush))
+                style.Setters.Add(Setter(Border.BorderThicknessProperty, thickness))
+                style.Setters.Add(Setter(Border.BackgroundProperty, background))
+                this.Styles.Add(style)
+        // 壳内输入：描边由外层 Border 承担
+        addWxInputTplStyles "wx-input-shell" Brushes.Transparent (Thickness(0.0)) Brushes.Transparent
+        // 独立字段（侧栏搜索等）：浅描边，各态同色，不叠 Fluent 强调环
+        addWxInputTplStyles "wx-input-field" Theme.outlineVariant (Thickness(1.0)) Theme.panel
 
     override this.OnFrameworkInitializationCompleted() =
         match this.ApplicationLifetime with

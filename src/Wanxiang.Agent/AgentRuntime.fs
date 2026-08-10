@@ -9,7 +9,7 @@ open Wanxiang.Config
 
 /// 单次生成调用（一次 Provider 往返）。
 type AgentCallResult =
-    | Completed of responseMessages: ChatMessage list
+    | Completed of usage: UsageDetails option
     | Failed of exn
     | Cancelled
 
@@ -52,12 +52,14 @@ type AgentRuntime(provider: ProviderConfig, instructions: string option, tools: 
             try
                 let updates = agent.RunStreamingAsync(messages, session, cancellationToken = ct)
                 let mutable deltaMsg: ChatMessage = null
+                let collected = ResizeArray<AgentResponseUpdate>()
                 let enumerator = updates.GetAsyncEnumerator(ct)
                 let mutable running = true
                 while running do
                     let! hasNext = enumerator.MoveNextAsync()
                     if hasNext then
                         let update = enumerator.Current
+                        collected.Add(update)
                         if update.Role.HasValue && update.Role.Value = ChatRole.Assistant then
                             // 正文与思维链都转发（TextReasoningContent；决策 18 透明映射）
                             let pieces =
@@ -78,7 +80,13 @@ type AgentRuntime(provider: ProviderConfig, instructions: string option, tools: 
                                 onDelta deltaMsg
                     else
                         running <- false
-                return Completed []
+                let usage =
+                    try
+                        let response = AgentResponseExtensions.ToAgentResponse(collected)
+                        if isNull response || isNull response.Usage then None else Some response.Usage
+                    with _ ->
+                        None
+                return Completed usage
             with
             | :? OperationCanceledException -> return Cancelled
             | ex -> return Failed ex
@@ -89,8 +97,8 @@ type AgentRuntime(provider: ProviderConfig, instructions: string option, tools: 
         task {
             try
                 let! agentResponse = agent.RunAsync(message, session, cancellationToken = ct)
-                let msgs = agentResponse.Messages |> List.ofSeq
-                return Completed msgs
+                let usage = if isNull agentResponse || isNull agentResponse.Usage then None else Some agentResponse.Usage
+                return Completed usage
             with
             | :? OperationCanceledException -> return Cancelled
             | ex -> return Failed ex

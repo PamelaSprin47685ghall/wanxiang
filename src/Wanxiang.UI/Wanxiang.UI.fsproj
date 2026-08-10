@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="Theme.fs" />
     <Compile Include="Icons.fs" />
+    <Compile Include="UiPrefs.fs" />
     <Compile Include="CredentialStore.fs" />
     <Compile Include="MainWindow.fs" />
     <Compile Include="App.fs" />

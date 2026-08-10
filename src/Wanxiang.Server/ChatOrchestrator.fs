@@ -17,6 +17,7 @@ open Wanxiang.Store
 /// 会话运行时的生成状态。
 type GenerationRuntime = {
     generationId: Guid
+    startedAtUtc: DateTimeOffset
     cts: CancellationTokenSource
     mutable runtime: AgentRuntime
     mutable agentSession: AgentSession
@@ -59,6 +60,29 @@ type ChatOrchestrator(
 
     let getRuntime (convId: Guid) : ConversationRuntime =
         runtimes.GetOrAdd(convId, fun id -> { conversationId = id; generation = None; pendingQueue = []; pendingInvocationIds = Set.empty })
+
+    let nullableInt (n: Nullable<int64>) =
+        if n.HasValue then Some(int n.Value) else None
+
+    let usageFromDetails (usage: UsageDetails option) (startedAt: DateTimeOffset) : GenerationUsage option =
+        match usage with
+        | None -> None
+        | Some u ->
+            let durationMs = int64 (DateTimeOffset.UtcNow - startedAt).TotalMilliseconds
+            Some
+                { promptTokens = nullableInt u.InputTokenCount
+                  completionTokens = nullableInt u.OutputTokenCount
+                  cachedTokens = nullableInt u.CachedInputTokenCount
+                  totalTokens = nullableInt u.TotalTokenCount
+                  durationMs = Some durationMs }
+
+    let finishedEvent (convId: Guid) (generationId: Guid) (status: string) (error: string option) (startedAt: DateTimeOffset) (usage: UsageDetails option) =
+        GenerationFinished
+            {| conversationId = convId
+               generationId = generationId
+               status = status
+               error = error
+               usage = usageFromDetails usage startedAt |}
 
     let tryGetProjectionConversation (convId: Guid) : Conversation option =
         Projection.tryConversation (getProjection ()) convId
@@ -195,12 +219,9 @@ type ChatOrchestrator(
                     | None ->
                         // 配置缺失：排队消息仍按插入点语义提交（决策 22/23），随后失败结束
                         this.DrainQueue(convId) |> ignore
+                        let startedAt = DateTimeOffset.UtcNow
                         let errEv =
-                            GenerationFinished
-                                {| conversationId = convId
-                                   generationId = generationId
-                                   status = "failed"
-                                   error = Some(sprintf "provider %s not configured" config.provider) |}
+                            finishedEvent convId generationId "failed" (Some(sprintf "provider %s not configured" config.provider)) startedAt None
                         broadcastToConversation convId errEv
                         false
                     | Some p ->
@@ -212,9 +233,11 @@ type ChatOrchestrator(
                                 (fun cid ex -> this.OnAgentFailure(cid, ex)))
                         let agentRuntime = AgentRuntime(p, config.instructions, tools, historyProvider)
                         let session = agentRuntime.CreateSession convId
+                        let startedAt = DateTimeOffset.UtcNow
                         rt.generation <-
                             Some
                                 { generationId = generationId
+                                  startedAtUtc = startedAt
                                   cts = cts
                                   runtime = agentRuntime
                                   agentSession = session
@@ -282,12 +305,7 @@ type ChatOrchestrator(
                     // 1. 取消检查（决策 88：取消只停止当前运行；内存中排队但尚未插入的用户消息
                     //    继续保留，等待下一个插入点——绝不先提交再取消，否则消息落盘却无回复）
                     if g.cts.IsCancellationRequested then
-                        let ev =
-                            GenerationFinished
-                                {| conversationId = convId
-                                   generationId = generationId
-                                   status = "cancelled"
-                                   error = None |}
+                        let ev = finishedEvent convId generationId "cancelled" None g.startedAtUtc None
                         broadcastToConversation convId ev
                         lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
                         running <- false
@@ -309,11 +327,7 @@ type ChatOrchestrator(
                                 // Q153/Q154：配置引用的 Provider 已不存在 → 不发起新调用，失败结束（不篡改会话配置）
                                 logInfo(sprintf "generation %O failed: provider %s not configured" generationId g.invalidConfig.Value)
                                 let ev =
-                                    GenerationFinished
-                                        {| conversationId = convId
-                                           generationId = generationId
-                                           status = "failed"
-                                           error = Some(sprintf "provider %s not configured" g.invalidConfig.Value) |}
+                                    finishedEvent convId generationId "failed" (Some(sprintf "provider %s not configured" g.invalidConfig.Value)) g.startedAtUtc None
                                 broadcastToConversation convId ev
                                 lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
                                 running <- false
@@ -335,27 +349,17 @@ type ChatOrchestrator(
                                     g.runtime.RunStreaming(g.agentSession, context, onDelta, g.cts.Token)
                                 match result with
                                 | AgentCallResult.Cancelled ->
-                                    let ev =
-                                        GenerationFinished
-                                            {| conversationId = convId
-                                               generationId = generationId
-                                               status = "cancelled"
-                                               error = None |}
+                                    let ev = finishedEvent convId generationId "cancelled" None g.startedAtUtc None
                                     broadcastToConversation convId ev
                                     lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
                                     running <- false
                                 | Failed ex ->
                                     logInfo(sprintf "generation %O failed: %s" generationId ex.Message)
-                                    let ev =
-                                        GenerationFinished
-                                            {| conversationId = convId
-                                               generationId = generationId
-                                               status = "failed"
-                                               error = Some ex.Message |}
+                                    let ev = finishedEvent convId generationId "failed" (Some ex.Message) g.startedAtUtc None
                                     broadcastToConversation convId ev
                                     lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
                                     running <- false
-                                | Completed _ ->
+                                | Completed usage ->
                                     // 响应消息已由 HistoryProvider 回调提交；检查工具调用
                                     // （OnAgentResponse 在 rt 锁内写 lastProviderMessages，读取必须同锁）
                                     let responses = lock rt (fun () -> g.lastProviderMessages)
@@ -372,12 +376,7 @@ type ChatOrchestrator(
                                             // 继续 while 循环（下一轮 DrainQueue 排空 + 再次调 Provider）
                                             ()
                                         else
-                                            let ev =
-                                                GenerationFinished
-                                                    {| conversationId = convId
-                                                       generationId = generationId
-                                                       status = "completed"
-                                                       error = None |}
+                                            let ev = finishedEvent convId generationId "completed" None g.startedAtUtc usage
                                             broadcastToConversation convId ev
                                             lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
                                             running <- false

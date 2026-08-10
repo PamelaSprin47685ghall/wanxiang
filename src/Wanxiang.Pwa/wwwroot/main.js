@@ -98,6 +98,7 @@ const config = dotnetRuntime.getConfig();
 function dismissSplash() {
     const splash = document.querySelector(".splash");
     if (!splash) return;
+    splash.setAttribute("aria-busy", "false");
     splash.style.transition = "opacity 220ms ease, transform 220ms ease";
     splash.style.opacity = "0";
     splash.style.transform = "scale(0.98)";

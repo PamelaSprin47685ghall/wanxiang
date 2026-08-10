@@ -26,6 +26,60 @@ module Constants =
     [<Literal>]
     let WsPath = "/ws"
 
+/// 单次生成用量（generation.finished 透传，不落 NDJSON）。
+type GenerationUsage = {
+    promptTokens: int option
+    completionTokens: int option
+    cachedTokens: int option
+    totalTokens: int option
+    durationMs: int64 option
+}
+
+module GenerationUsage =
+
+    let empty =
+        { promptTokens = None
+          completionTokens = None
+          cachedTokens = None
+          totalTokens = None
+          durationMs = None }
+
+    let formatSummary (u: GenerationUsage) : string option =
+        let total =
+            match u.totalTokens with
+            | Some t -> Some t
+            | None ->
+                match u.promptTokens, u.completionTokens with
+                | Some p, Some c -> Some(p + c)
+                | _ -> None
+        match total with
+        | None -> None
+        | Some t ->
+            let tok =
+                if t >= 1000 then sprintf "%.1fk tok" (float t / 1000.0)
+                else sprintf "%d tok" t
+            match u.durationMs with
+            | Some ms when ms >= 1000L -> Some(sprintf "%s · %.1fs" tok (float ms / 1000.0))
+            | Some ms -> Some(sprintf "%s · %dms" tok (int ms))
+            | None -> Some tok
+
+    let formatDetail (u: GenerationUsage) : string =
+        let part label v =
+            match v with
+            | Some n -> sprintf "%s %d" label n
+            | None -> ""
+        let parts =
+            [| part "输入" u.promptTokens
+               part "输出" u.completionTokens
+               part "缓存" u.cachedTokens
+               part "合计" u.totalTokens |]
+            |> Array.filter (fun s -> s <> "")
+        let body = if parts.Length = 0 then "暂无 token 数据" else String.Join(" · ", parts)
+        match u.durationMs with
+        | Some ms when ms >= 1000L -> body + sprintf " · 耗时 %.1fs" (float ms / 1000.0)
+        | Some ms -> body + sprintf " · 耗时 %dms" (int ms)
+        | None -> body
+
 type WanxiangError =
     | ValidationError of string
     | StaleProjection of requiredCommitId: CommitId

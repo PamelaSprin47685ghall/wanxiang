@@ -10,9 +10,13 @@ WANXIANG_BIN="${ROOT}/src/Wanxiang.App/bin/Debug/net10.0/wanxiang"
 
 export DISPLAY="${DISPLAY:-:0.0}"
 
+if [ "${WANXIANG_SKIP_BUILD:-0}" != "1" ]; then
+  echo "building latest…" >&2
+  dotnet build "$ROOT/src/Wanxiang.slnx" -c Debug --verbosity minimal
+fi
+
 if [ ! -x "$WANXIANG_BIN" ]; then
   echo "error: wanxiang binary not found at $WANXIANG_BIN" >&2
-  echo "run: dotnet build src/Wanxiang.slnx" >&2
   exit 1
 fi
 
