@@ -133,31 +133,29 @@ html, body {
 }
 
 /* ============================================================
- * Toast（服务工作者更新提示）：浅色变体 + 进度环
+ * Toast（服务工作者更新提示）：固定底栏、可点击刷新
  * ============================================================ */
 .toast {
     position: fixed;
-    right: 16px;
+    left: 50%;
     bottom: 16px;
+    transform: translateX(-50%);
     z-index: 9999;
     padding: 10px 16px;
-    border-radius: 12px;
-    background: #4D5C92;
+    border-radius: 999px;
+    background: #323232;
     color: #FFFFFF;
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    box-shadow:
-        0 1px 0 rgba(255, 255, 255, 0.15) inset,
-        0 8px 24px -6px rgba(77, 92, 146, 0.45),
-        0 2px 4px rgba(0, 0, 0, 0.08);
-    transition: transform 160ms ease, box-shadow 160ms ease;
+    box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.35), 0 2px 4px rgba(0, 0, 0, 0.12);
+    transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
 }
 .toast:hover {
-    transform: translateY(-1px);
+    transform: translateX(-50%) translateY(-1px);
 }
 .toast:active {
-    transform: translateY(0);
+    transform: translateX(-50%) translateY(0);
 }
 
 /* PWA 端通用 focus 环（兼容键盘 / 鼠标 —— 鼠标点击后立即移除） */
@@ -165,4 +163,60 @@ html, body {
     outline: 2px solid #4D5C92;
     outline-offset: 2px;
     border-radius: 4px;
+}
+
+/* ============================================================
+ * 深色系统：启动画面与壳层对比度（Avalonia 画布仍走 Theme.fs）
+ *
+ * .wx-input-shell：输入壳的边框 / 阴影 / 表面色由 Avalonia Theme.fs
+ * （surfaceVariant / outlineVariant）在 F# 侧绘制，WASM 画布不暴露该
+ * DOM class；此处不重复覆写，以免与 RequestedThemeVariant=Light 冲突。
+ *
+ * 滚动条：虚拟化列表下保持细 thumb + padding-box，深色仅调透明度。
+ * ============================================================ */
+@media (prefers-color-scheme: dark) {
+    html, body {
+        background: #121214;
+        color: #E8E8EC;
+    }
+
+    .splash {
+        background:
+            radial-gradient(60% 50% at 50% 38%, #1E1E22 0%, #121214 70%),
+            #121214;
+    }
+
+    .splash-title {
+        color: #E8E8EC;
+    }
+
+    .splash-sub {
+        color: #A0A0AA;
+    }
+
+    .splash-bar {
+        background: rgba(77, 92, 146, 0.28);
+    }
+
+    .splash-logo {
+        box-shadow:
+            0 1px 0 rgba(255, 255, 255, 0.06) inset,
+            0 12px 32px -8px rgba(77, 92, 146, 0.35),
+            0 2px 6px rgba(0, 0, 0, 0.35);
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.14);
+        border: 2px solid transparent;
+        background-clip: padding-box;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.24);
+        border: 2px solid transparent;
+        background-clip: padding-box;
+    }
+
+    *:focus-visible {
+        outline-color: #8B9AD6;
+    }
 }
