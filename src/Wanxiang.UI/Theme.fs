@@ -30,6 +30,15 @@ module Theme =
     let iconGlyph = 14.0
     let iconStroke = 1.5
 
+    /// 品牌 logo 尺寸 SSOT（与 PWA splash `.splash-logo` 76px / 22px 圆角同比例）
+    let logoSplashSize = 76.0
+    let logoRadiusRatio = 22.0 / logoSplashSize
+    let logoSizeSidebar = 28.0
+    let logoSizeEmpty = 72.0
+    let logoSizeAvatar = 28.0
+    /// splash 轻阴影：0 8px 24px -8px rgba(28,27,25,.12) + 0 2px 4px rgba(0,0,0,.04)
+    let logoShadowFar = Color.Parse "#1C1B191F"
+
     /// 壳层水平内边距 SSOT：侧栏/顶栏/消息/输入共用同一刻度，避免「差不远却不对齐」
     let sidebarInset = space4
     let chatInset = space4

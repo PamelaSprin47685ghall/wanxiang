@@ -441,23 +441,42 @@ type MainView() as this =
 
     let logoBitmap = tryLoadLogo ()
 
-    let createBrandTile (size: float) (radius: float) =
-        let border = Border(Width = size, Height = size, CornerRadius = CornerRadius(radius), Background = Theme.primary, ClipToBounds = true)
+    let createBrandLogo (size: float) =
+        let radius = size * Theme.logoRadiusRatio
+        let tile =
+            Border(
+                Width = size,
+                Height = size,
+                CornerRadius = CornerRadius(radius),
+                Background = Brushes.Transparent,
+                ClipToBounds = true,
+                BoxShadow = BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 8.0, Blur = 24.0, Spread = -8.0, Color = Theme.logoShadowFar)))
         match logoBitmap with
         | Some bmp ->
-            let img = Image(Source = bmp, Stretch = Stretch.Uniform)
-            border.Child <- img
+            let img = Image(Source = bmp, Stretch = Stretch.UniformToFill)
+            tile.Child <- img
         | None ->
-            let txt = TextBlock(Text = "万", Foreground = Theme.onPrimary, FontSize = size * 0.42, FontWeight = FontWeight.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
-            border.Child <- txt
-        border
+            let fallback =
+                Border(
+                    Background = Theme.panel,
+                    CornerRadius = CornerRadius(radius),
+                    Child =
+                        TextBlock(
+                            Text = "万",
+                            Foreground = Theme.text,
+                            FontSize = size * 0.38,
+                            FontWeight = FontWeight.SemiBold,
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                            VerticalAlignment = VerticalAlignment.Center))
+            tile.Child <- fallback
+        tile
 
     // 空状态：品牌标 + 标题 + 提示；靠上对齐，避免 tall 聊天区垂直居中「养鱼」
     let emptyPanel = StackPanel(Spacing = Theme.space3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = Thickness(Theme.chatInset, Theme.shellGap * 4.0, Theme.chatInset, 0.0))
     let emptyOverlay = Grid(HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, IsVisible = false, Background = Brushes.Transparent)
     do emptyOverlay.Children.Add(emptyPanel)
     do
-        let emptyLogo = createBrandTile 40.0 Theme.radiusMd
+        let emptyLogo = createBrandLogo Theme.logoSizeEmpty
         emptyLogo.HorizontalAlignment <- HorizontalAlignment.Center
         let emptyTitle = TextBlock(Text = "万象", FontSize = 17.0, FontWeight = FontWeight.Medium, Foreground = Theme.text, HorizontalAlignment = HorizontalAlignment.Center, LetterSpacing = 0.5)
         emptyPanel.Children.Add(emptyLogo) |> ignore
@@ -544,7 +563,7 @@ type MainView() as this =
         this.Background <- Theme.bg
 
         // 品牌标（左上角）：小标 + 名称，右端圆形新建
-        let brandTile = createBrandTile 22.0 Theme.radiusSm
+        let brandTile = createBrandLogo Theme.logoSizeSidebar
         brandTile.VerticalAlignment <- VerticalAlignment.Center
         let appName = TextBlock(Text = "万象", FontSize = 14.0, FontWeight = FontWeight.Medium, Foreground = Theme.text, VerticalAlignment = VerticalAlignment.Center, LetterSpacing = 0.6, TextTrimming = TextTrimming.CharacterEllipsis)
         let headerSpacer = Border()
@@ -1295,7 +1314,7 @@ type MainView() as this =
                         b.Child <- TextBlock(Text = "你", FontSize = 11.5, FontWeight = FontWeight.SemiBold, Foreground = Theme.onPrimary, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
                         b :> Control
                     else
-                        createBrandTile 26.0 Theme.radiusSm :> Control
+                        createBrandLogo Theme.logoSizeAvatar :> Control
                 avatar.VerticalAlignment <- VerticalAlignment.Top
                 avatar.Margin <- Thickness(0.0, 2.0, 0.0, 0.0)
                 let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = 10.0)
