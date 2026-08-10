@@ -1,6 +1,6 @@
 /* ============================================================
- * wanxiang PWA · 设计语言：Material You 靛蓝，clean-room 独立实现
- * 配色已固定（在 Theme.fs），这里只做排版/动效/滚动条/焦点态打磨
+ * wanxiang PWA · 设计语言：纸感中性 + 墨色点缀（克制高级感）
+ * 配色 SSOT 在 Theme.fs；这里对齐壳层底色/动效/滚动条
  * ============================================================ */
 
 :root {
@@ -12,14 +12,13 @@
     --wx-mono:
         ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
 
-    /* 节奏：4 的倍数 */
+    /* 节奏：4 的倍数；圆角偏建筑感 */
     --wx-r-sm: 6px;
-    --wx-r-md: 10px;
-    --wx-r-lg: 16px;
+    --wx-r-md: 8px;
+    --wx-r-lg: 10px;
     --wx-r-pill: 999px;
 
-    /* 极细描边（在 #FFFFFF 浅面板上比 1px 实线更柔和） */
-    --wx-hairline: 1px solid rgba(227, 227, 236, 0.7);
+    --wx-hairline: 1px solid rgba(226, 224, 218, 0.75);
 }
 
 html, body {
@@ -27,8 +26,8 @@ html, body {
     padding: 0;
     height: 100%;
     overflow: hidden;
-    background: #F6F6F9;
-    color: #1A1B21;
+    background: #F5F4F1;
+    color: #1C1B19;
     font-family: var(--wx-font);
     font-size: 14px;
     line-height: 1.5;
@@ -69,8 +68,8 @@ html, body {
     justify-content: center;
     gap: 18px;
     background:
-        radial-gradient(60% 50% at 50% 38%, #FFFFFF 0%, #F6F6F9 70%),
-        #F6F6F9;
+        radial-gradient(60% 50% at 50% 38%, #FFFFFF 0%, #F5F4F1 70%),
+        #F5F4F1;
     animation: splashFade 720ms ease-out both;
 }
 
@@ -98,7 +97,7 @@ html, body {
 .splash-title {
     font-size: 18px;
     font-weight: 600;
-    color: #1A1B21;
+    color: #1C1B19;
     letter-spacing: 0.2px;
 }
 

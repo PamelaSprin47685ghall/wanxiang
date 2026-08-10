@@ -2,9 +2,9 @@ namespace Wanxiang.UI
 
 open Avalonia.Media
 
-/// 万象视觉主题（灵感：Material You 默认靛蓝；clean-room 独立实现）。
-/// 桌面端固定浅色（深色由 PWA 通过 prefers-color-scheme 提供）。
-/// 间距刻度：4 的倍数；桌面与 PWA 共用同一套常量，避免两端观感漂移。
+/// 万象视觉主题：克制高级感（纸感中性 + 墨色点缀；clean-room 独立实现）。
+/// 桌面端固定浅色；PWA 深色壳由 wwwroot/app.css 承担。
+/// 原则：少填色、弱圆角、轻阴影、用字重/留白分层，避免糖果色塑料感。
 module Theme =
 
     let private hex (s: string) = SolidColorBrush(Color.Parse s)
@@ -16,63 +16,62 @@ module Theme =
     let space4 = 16.0
     let space5 = 20.0
     let space6 = 24.0
-    let radiusSm = 8.0
-    let radiusMd = 12.0
-    let radiusLg = 16.0
-    let radiusXl = 20.0
+    /// 克制圆角：偏建筑感，避免胶囊/玩具感
+    let radiusSm = 6.0
+    let radiusMd = 8.0
+    let radiusLg = 10.0
+    let radiusXl = 12.0
     let radiusPill = 999.0
-    /// 侧栏固定宽
-    let sidebarWidth = 280.0
-    /// 消息 / 输入 / 顶栏内容同宽阅读列
+    let sidebarWidth = 268.0
     let readingWidth = 720.0
-    /// 侧栏顶栏、聊天顶栏、底栏统一高度
-    let barHeight = 52.0
-    /// 图标按钮边长（附件 / 发送 / 新建）
-    let iconBtn = 34.0
+    let barHeight = 48.0
+    let iconBtn = 32.0
 
-    let bg = hex "#F6F6F9"
-    let panel = hex "#FFFFFF"
-    let sidebar = hex "#EFEFF5"
-    let border = hex "#E3E3EC"
-    let text = hex "#1A1B21"
-    let muted = hex "#61626C"
-    let faint = hex "#8B8C98"
+    // ---- 纸感中性面 ----
+    let bg = hex "#F5F4F1"
+    let panel = hex "#FBFBF9"
+    let sidebar = hex "#EFEEEA"
+    let border = hex "#E2E0DA"
+    let text = hex "#1C1B19"
+    let muted = hex "#6A6862"
+    let faint = hex "#96948D"
 
-    let primary = hex "#4D5C92"
-    let onPrimary = hex "#FFFFFF"
-    let primaryContainer = hex "#DCE1FF"
-    let onPrimaryContainer = hex "#1A2A63"
-    let secondaryContainer = hex "#DEE1F9"
-    let onSecondaryContainer = hex "#161B2C"
-    let toolChip = hex "#E8EAF6"
+    /// 墨色强调：只用于必要动作，不作大面积底色
+    let primary = hex "#2E343E"
+    let onPrimary = hex "#F7F6F3"
+    /// 浅强调面：近中性，非糖果色容器
+    let primaryContainer = hex "#E8E7E2"
+    let onPrimaryContainer = hex "#2E343E"
+    let secondaryContainer = hex "#EFEDEA"
+    let onSecondaryContainer = hex "#3A3935"
+    let toolChip = hex "#EBEAE5"
 
-    let userBubble = hex "#4D5C92"
-    let userText = hex "#FFFFFF"
-    let assistantBubble = hex "#FFFFFF"
-    let assistantBorder = hex "#E3E3EC"
+    let userBubble = hex "#2E343E"
+    let userText = hex "#F7F6F3"
+    let assistantBubble = hex "#FBFBF9"
+    let assistantBorder = hex "#E2E0DA"
 
-    /// 极细分隔线（头尾栏用，比 border 更淡，避免硬分割的“大方块”感）
-    let borderSubtle = SolidColorBrush(Color.Parse "#E3E3EC", 0.55)
+    let borderSubtle = SolidColorBrush(Color.Parse "#E2E0DA", 0.7)
+    let surfaceVariant = hex "#EBEAE5"
+    let outlineVariant = hex "#D4D2CB"
+    let errorContainer = hex "#F0E4E1"
 
-    // ---- 轻量语义色（灵感：Material You 角色名；柔和灰调，单色而非全套调色板）----
-    /// 输入壳等次级表面：略冷于 panel，避免纯白硬块
-    let surfaceVariant = hex "#E8E7F0"
-    /// 分割线 / 输入壳描边：比 border 略沉、比 text 远，深色壳层亦不刺眼
-    let outlineVariant = hex "#C9C8D4"
-    /// 错误条 / 状态警示底：柔和玫瑰灰，非高饱和红
-    let errorContainer = hex "#F5E0DE"
+    let hover = SolidColorBrush(Color.Parse "#1C1B19", 0.04)
+    let pressed = SolidColorBrush(Color.Parse "#1C1B19", 0.07)
+    /// 选中态：暖灰洗色，不用亮紫/亮蓝
+    let selectedHover = hex "#E4E2DC"
+    let selectedPressed = hex "#DAD8D1"
 
-    let hover = hex "#0D1A1B21"      // 5% 黑
-    let pressed = hex "#141A1B21"    // 8% 黑
-    let selectedHover = hex "#D4DAFF"
-    let selectedPressed = hex "#C6CEFF"
+    // ---- 代码块（克制暗面）----
+    let codeBg = hex "#16171A"
+    let codeHeaderBg = hex "#1C1D21"
+    let codeBorder = hex "#2A2B30"
+    let codeHeaderText = hex "#8E9098"
+    let codeText = hex "#C8CAD0"
+    let inlineCodeBg = SolidColorBrush(Color.Parse "#1C1B19", 0.06)
+    let link = hex "#3A4554"
+    let overlayScrim = SolidColorBrush(Color.Parse "#1C1B19", 0.28)
 
-    // ---- 代码块（与消息卡片同阶，克制暗面；不在 PWA 深色媒体查询里再翻转）----
-    let codeBg = hex "#0D1117"
-    let codeHeaderBg = hex "#161B22"
-    let codeBorder = hex "#21262D"
-    let codeHeaderText = hex "#8B949E"
-    let codeText = hex "#C9D1D9"
-    let inlineCodeBg = SolidColorBrush(Color.Parse "#12141A14") // 8% 靛灰底
-    let link = primary
-    let overlayScrim = SolidColorBrush(Color.Parse "#52000000") // 32% 黑，柔化遮罩
+    /// 极轻阴影（对话框等）；日常控件尽量无阴影
+    let shadowSoft = Color.Parse "#1C1B1922"
+    let shadowFocus = Color.Parse "#2E343E28"

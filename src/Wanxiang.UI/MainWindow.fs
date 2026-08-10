@@ -18,6 +18,7 @@ open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Platform.Storage
 open Avalonia.Controls.Shapes
+open Avalonia.Input
 open Avalonia.Input.Platform
 open Avalonia.Media.Imaging
 open Avalonia.Styling
@@ -301,10 +302,17 @@ type MainView() as this =
     // ---- 控件（视觉语言见 Theme.fs）----
     let statusText = TextBlock(Text = "未连接", Foreground = Theme.muted, FontSize = 11.0, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, Margin = Thickness(Theme.space2, 0.0, 0.0, 0.0))
     let connDot = Ellipse(Width = 7.0, Height = 7.0, Fill = Theme.faint, VerticalAlignment = VerticalAlignment.Center)
-    let connectButton = Button(Content = "连接", Height = 30.0, Padding = Thickness(Theme.space3, 0.0), FontSize = 12.0, CornerRadius = CornerRadius(Theme.radiusSm), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
-    let newButton = Button(Content = "+", Width = Theme.iconBtn, Height = Theme.iconBtn, Padding = Thickness(0.0), CornerRadius = CornerRadius(Theme.iconBtn / 2.0), Background = Theme.primary, Foreground = Theme.onPrimary, BorderThickness = Thickness(0.0), FontSize = 18.0, FontWeight = FontWeight.Medium, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
+    let connectButton = Button(Content = "连接", Height = 28.0, Padding = Thickness(Theme.space3, 0.0), FontSize = 12.0, CornerRadius = CornerRadius(Theme.radiusSm), Background = Theme.panel, Foreground = Theme.text, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0), VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
+    do connectButton.Classes.Add("quiet")
+    let newButton =
+        Border(
+            Width = Theme.iconBtn, Height = Theme.iconBtn, CornerRadius = CornerRadius(Theme.radiusMd),
+            Background = Theme.panel, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0),
+            Cursor = Cursor(StandardCursorType.Hand), VerticalAlignment = VerticalAlignment.Center,
+            Child = TextBlock(Text = "+", FontSize = 16.0, FontWeight = FontWeight.Medium, Foreground = Theme.text,
+                              HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center))
     do ToolTip.SetTip(newButton, "新建会话")
-    let searchBox = TextBox(PlaceholderText = "搜索会话…", CornerRadius = CornerRadius(Theme.radiusMd), Margin = Thickness(Theme.space3, Theme.space2, Theme.space3, Theme.space2), Padding = Thickness(10.0, 6.0), BorderThickness = Thickness(1.0), BorderBrush = Theme.border, Background = Theme.panel, FontSize = 12.5, MinHeight = 34.0)
+    let searchBox = TextBox(PlaceholderText = "搜索", CornerRadius = CornerRadius(Theme.radiusSm), Margin = Thickness(Theme.space3, Theme.space1, Theme.space3, Theme.space2), Padding = Thickness(10.0, 5.0), BorderThickness = Thickness(1.0), BorderBrush = Theme.borderSubtle, Background = Brushes.Transparent, FontSize = 12.5, MinHeight = 32.0)
     let filteredCountLabel = TextBlock(Text = "", FontSize = 10.5, Foreground = Theme.muted, Margin = Thickness(Theme.space4, 0.0, Theme.space3, Theme.space1), IsVisible = false)
     let convList = ListBox(Background = Brushes.Transparent, BorderThickness = Thickness(0.0))
     // P1-1：显式 VirtualizingStackPanel；侧栏 Dock 给 ListBox 有界高度，由其自身滚动虚拟化（勿外包无限高 ScrollViewer）
@@ -312,7 +320,7 @@ type MainView() as this =
     let chatTitle = TextBlock(Text = "选择一个会话", FontSize = 14.5, FontWeight = FontWeight.SemiBold, Foreground = Theme.faint, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis)
     let genStatus = TextBlock(Text = "", FontSize = 11.5, Foreground = Theme.onPrimaryContainer)
     let genDot = Ellipse(Width = 6.0, Height = 6.0, Fill = Theme.primary)
-    let genChip = Border(Background = Theme.primaryContainer, CornerRadius = CornerRadius(Theme.radiusPill), Padding = Thickness(10.0, 3.0, 12.0, 3.0), IsVisible = false, VerticalAlignment = VerticalAlignment.Center, Margin = Thickness(Theme.space2, 0.0, 0.0, 0.0))
+    let genChip = Border(Background = Theme.surfaceVariant, CornerRadius = CornerRadius(Theme.radiusSm), Padding = Thickness(10.0, 3.0, 12.0, 3.0), IsVisible = false, VerticalAlignment = VerticalAlignment.Center, Margin = Thickness(Theme.space2, 0.0, 0.0, 0.0), BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(1.0))
     do
         // 后设置 Child：避免在 ctor 表达式中传 Children 数组（Avalonia StackPanel 不可）
         let genInner = StackPanel(Orientation = Orientation.Horizontal, Spacing = 6.0)
@@ -328,13 +336,21 @@ type MainView() as this =
     do ToolTip.SetTip(settingsButton, "会话设置")
     let messagesPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Theme.space3)
     let emptyHint = TextBlock(Text = "", Foreground = Theme.muted, FontSize = 13.0, HorizontalAlignment = HorizontalAlignment.Center, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, MaxWidth = 320.0, LineHeight = 20.0)
-    let emptyCta = Button(Content = "新建会话", Height = 34.0, Padding = Thickness(18.0, 0.0), CornerRadius = CornerRadius(Theme.radiusMd), Background = Theme.primary, Foreground = Theme.onPrimary, BorderThickness = Thickness(0.0), FontSize = 13.0, FontWeight = FontWeight.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, IsVisible = false, Margin = Thickness(0.0, Theme.space2, 0.0, 0.0))
+    let emptyCta =
+        Border(
+            Height = 32.0, Padding = Thickness(16.0, 0.0), CornerRadius = CornerRadius(Theme.radiusSm),
+            Background = Theme.panel, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0),
+            HorizontalAlignment = HorizontalAlignment.Center, IsVisible = false, Margin = Thickness(0.0, Theme.space3, 0.0, 0.0),
+            Cursor = Cursor(StandardCursorType.Hand),
+            Child = TextBlock(Text = "新建会话", FontSize = 12.5, FontWeight = FontWeight.Medium, Foreground = Theme.text,
+                              HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center))
     let listEmptyHint = TextBlock(Text = "没有匹配的会话", Foreground = Theme.muted, FontSize = 12.0, HorizontalAlignment = HorizontalAlignment.Center, Margin = Thickness(Theme.space4, Theme.space5, Theme.space4, 0.0), IsVisible = false, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center)
     let messagesHost = Grid()
     let scrollViewer = ScrollViewer(Content = messagesHost, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled)
     let inputBox = TextBox(PlaceholderText = "输入消息…", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, BorderThickness = Thickness(0.0), Background = Brushes.Transparent, FontSize = 14.0, VerticalContentAlignment = VerticalAlignment.Center, MinHeight = 34.0, MaxHeight = 120.0, Padding = Thickness(Theme.space1, 0.0, 0.0, 0.0))
-    let sendButton = Button(Content = "↑", Width = Theme.iconBtn, Height = Theme.iconBtn, Padding = Thickness(0.0), CornerRadius = CornerRadius(Theme.iconBtn / 2.0), Background = Theme.border, Foreground = Theme.faint, BorderThickness = Thickness(0.0), FontSize = 15.0, FontWeight = FontWeight.Bold, IsEnabled = false, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
-    let attachButton = Button(Content = "＋", Width = Theme.iconBtn, Height = Theme.iconBtn, Padding = Thickness(0.0), FontSize = 16.0, CornerRadius = CornerRadius(Theme.iconBtn / 2.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), IsEnabled = false, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = Thickness(0.0, 0.0, Theme.space2, 0.0))
+    let sendButton = Button(Content = "↑", Width = Theme.iconBtn, Height = Theme.iconBtn, Padding = Thickness(0.0), CornerRadius = CornerRadius(Theme.radiusMd), Background = Theme.primary, Foreground = Theme.onPrimary, BorderThickness = Thickness(0.0), FontSize = 14.0, FontWeight = FontWeight.SemiBold, IsEnabled = false, Opacity = 0.35, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
+    let attachButton = Button(Content = "＋", Width = Theme.iconBtn, Height = Theme.iconBtn, Padding = Thickness(0.0), FontSize = 15.0, CornerRadius = CornerRadius(Theme.radiusMd), Background = Theme.panel, Foreground = Theme.muted, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0), IsEnabled = false, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = Thickness(0.0, 0.0, Theme.space2, 0.0))
+    do attachButton.Classes.Add("quiet")
     do ToolTip.SetTip(attachButton, "添加附件")
     do ToolTip.SetTip(sendButton, "发送（Enter）")
     do ToolTip.SetTip(inputBox, "Enter 发送，Shift+Enter 换行")
@@ -375,7 +391,8 @@ type MainView() as this =
     let dialogOverlay = Grid(IsVisible = false, Background = Theme.overlayScrim)
     let dialogCard =
         Border(
-            Background = Theme.panel, CornerRadius = CornerRadius(16.0), Padding = Thickness(24.0),
+            Background = Theme.panel, CornerRadius = CornerRadius(Theme.radiusLg), Padding = Thickness(Theme.space5),
+            BorderBrush = Theme.border, BorderThickness = Thickness(1.0),
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
     let showDialog (content: Control) (width: float) =
         dialogCard.Child <- content
@@ -385,7 +402,7 @@ type MainView() as this =
         dialogOverlay.IsVisible <- false
         dialogCard.Child <- null
     do
-        dialogCard.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 16.0, Blur = 48.0, Spread = -8.0, Color = Color.Parse "#1A1B2140"))
+        dialogCard.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 10.0, Blur = 32.0, Spread = -6.0, Color = Theme.shadowSoft))
         dialogOverlay.Children.Add(dialogCard)
         // 点击遮罩（卡片外）关闭对话框
         dialogOverlay.PointerPressed.Add(fun e ->
@@ -421,21 +438,19 @@ type MainView() as this =
         let border = Border(Width = size, Height = size, CornerRadius = CornerRadius(radius), Background = Theme.primary, ClipToBounds = true)
         match logoBitmap with
         | Some bmp ->
-            // 透明 PNG 在浅色主画布上会“消失”——加一层柔色描边 + 阴影，让品牌体现出来
             let img = Image(Source = bmp, Stretch = Stretch.Uniform)
             border.Child <- img
-            border.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 1.0, Blur = 3.0, Spread = 0.0, Color = Color.Parse "#1A1B2129"))
         | None ->
-            let txt = TextBlock(Text = "万", Foreground = Theme.onPrimary, FontSize = size * 0.5, FontWeight = FontWeight.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
+            let txt = TextBlock(Text = "万", Foreground = Theme.onPrimary, FontSize = size * 0.42, FontWeight = FontWeight.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
             border.Child <- txt
         border
 
     // 空状态：品牌标 + 标题 + 提示（与 PWA 空状态一致）
     let emptyPanel = StackPanel(Spacing = Theme.space3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsVisible = false)
     do
-        let emptyLogo = createBrandTile 64.0 18.0
+        let emptyLogo = createBrandTile 40.0 Theme.radiusMd
         emptyLogo.HorizontalAlignment <- HorizontalAlignment.Center
-        let emptyTitle = TextBlock(Text = "万象 · 智能工作站", FontSize = 17.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.text, HorizontalAlignment = HorizontalAlignment.Center)
+        let emptyTitle = TextBlock(Text = "万象", FontSize = 17.0, FontWeight = FontWeight.Medium, Foreground = Theme.text, HorizontalAlignment = HorizontalAlignment.Center, LetterSpacing = 0.5)
         emptyPanel.Children.Add(emptyLogo) |> ignore
         emptyPanel.Children.Add(emptyTitle) |> ignore
         emptyPanel.Children.Add(emptyHint) |> ignore
@@ -443,7 +458,7 @@ type MainView() as this =
 
     let setStatus (text: string) (connected: bool) =
         statusText.Text <- text
-        connDot.Fill <- if connected then SolidColorBrush(Color.Parse "#34A853") else Theme.faint
+        connDot.Fill <- if connected then Theme.primary else Theme.faint
 
     /// 过滤后会话列表为空时，在侧栏展示「没有匹配的会话」（与聊天区 emptyPanel 分工）。
     let refreshListEmpty () =
@@ -477,12 +492,16 @@ type MainView() as this =
             if convList.SelectedIndex < 0 && convList.ItemCount > 0 then
                 convList.SelectedIndex <- 0
 
+    let setSendEnabled (enabled: bool) =
+        sendButton.IsEnabled <- enabled
+        sendButton.Opacity <- if enabled then 1.0 else 0.35
+        sendButton.Background <- Theme.primary
+        sendButton.Foreground <- Theme.onPrimary
+
     let setInputsEnabled (enabled: bool) =
         inputBox.IsEnabled <- enabled
-        sendButton.IsEnabled <- enabled
+        setSendEnabled enabled
         attachButton.IsEnabled <- enabled
-        sendButton.Background <- if enabled then Theme.primary else Theme.border
-        sendButton.Foreground <- if enabled then Theme.onPrimary else Theme.faint
 
     let stopGenTimer () =
         match genTimer with
@@ -519,9 +538,9 @@ type MainView() as this =
         this.Background <- Theme.bg
 
         // 品牌标（左上角）：小标 + 名称，右端圆形新建
-        let brandTile = createBrandTile 28.0 8.0
+        let brandTile = createBrandTile 22.0 Theme.radiusSm
         brandTile.VerticalAlignment <- VerticalAlignment.Center
-        let appName = TextBlock(Text = "万象", FontSize = 15.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.text, VerticalAlignment = VerticalAlignment.Center)
+        let appName = TextBlock(Text = "万象", FontSize = 14.0, FontWeight = FontWeight.Medium, Foreground = Theme.text, VerticalAlignment = VerticalAlignment.Center, LetterSpacing = 0.6)
         let headerSpacer = Border()
         let sidebarHeaderPanel = DockPanel()
         DockPanel.SetDock(brandTile, Dock.Left)
@@ -556,16 +575,15 @@ type MainView() as this =
 
         // 会话列表条目容器：圆角、留白、选中态（与 PWA 视觉一致）
         let itemBase = Style(fun x -> x.OfType<ListBoxItem>())
-        itemBase.Setters.Add(Setter(ListBoxItem.PaddingProperty, Thickness(10.0, 8.0)))
-        itemBase.Setters.Add(Setter(ListBoxItem.MarginProperty, Thickness(Theme.space2, 1.0)))
-        itemBase.Setters.Add(Setter(ListBoxItem.CornerRadiusProperty, CornerRadius(Theme.radiusMd)))
-        itemBase.Setters.Add(Setter(ListBoxItem.MinHeightProperty, 44.0))
+        itemBase.Setters.Add(Setter(ListBoxItem.PaddingProperty, Thickness(10.0, 7.0)))
+        itemBase.Setters.Add(Setter(ListBoxItem.MarginProperty, Thickness(Theme.space2, 0.0)))
+        itemBase.Setters.Add(Setter(ListBoxItem.CornerRadiusProperty, CornerRadius(Theme.radiusSm)))
+        itemBase.Setters.Add(Setter(ListBoxItem.MinHeightProperty, 40.0))
         itemBase.Setters.Add(Setter(ListBoxItem.BackgroundProperty, Brushes.Transparent))
         convList.Styles.Add(itemBase)
         // 选中：背景染色 + 左侧 3px 品牌色描边（只画左边、其它边为 None，避免抖动）
         let itemAccent = Style(fun x -> x.OfType<ListBoxItem>().Class(":selected"))
-        itemAccent.Setters.Add(Setter(ListBoxItem.BorderBrushProperty, Theme.primary))
-        itemAccent.Setters.Add(Setter(ListBoxItem.BorderThicknessProperty, Thickness(3.0, 0.0, 0.0, 0.0)))
+        itemAccent.Setters.Add(Setter(ListBoxItem.BorderThicknessProperty, Thickness(0.0)))
         itemAccent.Setters.Add(Setter(ListBoxItem.BackgroundProperty, Theme.primaryContainer))
         convList.Styles.Add(itemAccent)
 
@@ -574,12 +592,22 @@ type MainView() as this =
         ghostHover.Setters.Add(Setter(Button.BackgroundProperty, Theme.hover))
         ghostHover.Setters.Add(Setter(Button.ForegroundProperty, Theme.text))
         this.Styles.Add(ghostHover)
+        let quietBase = Style(fun x -> x.OfType<Button>().Class("quiet"))
+        quietBase.Setters.Add(Setter(Button.BackgroundProperty, Theme.panel))
+        quietBase.Setters.Add(Setter(Button.ForegroundProperty, Theme.text))
+        quietBase.Setters.Add(Setter(Button.BorderBrushProperty, Theme.outlineVariant))
+        quietBase.Setters.Add(Setter(Button.BorderThicknessProperty, Thickness(1.0)))
+        this.Styles.Add(quietBase)
+        let quietHover = Style(fun x -> x.OfType<Button>().Class("quiet").Class(":pointerover"))
+        quietHover.Setters.Add(Setter(Button.BackgroundProperty, Theme.hover))
+        quietHover.Setters.Add(Setter(Button.BorderBrushProperty, Theme.muted))
+        this.Styles.Add(quietHover)
 
         // 侧栏（无硬分割线，靠底色与主画布区分）
         let sidebar = DockPanel(Background = Theme.sidebar)
         let sidebarBorder = Border(Child = sidebar, BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 0.0, 1.0, 0.0))
         // LetterSpacing 单位是像素；原先 60 会把「会话」拉开到几乎不可见
-        let listLabel = TextBlock(Text = "会话", FontSize = 11.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.faint, Margin = Thickness(Theme.space4, Theme.space2, 0.0, Theme.space1))
+        let listLabel = TextBlock(Text = "会话", FontSize = 10.5, FontWeight = FontWeight.Medium, Foreground = Theme.faint, Margin = Thickness(Theme.space4, Theme.space1, 0.0, Theme.space1))
         // P1-1：搜索/标题/计数固定在顶，ListBox 占剩余有界高度以启用虚拟化；空提示叠在列表上
         let listChrome = DockPanel()
         DockPanel.SetDock(searchBox, Dock.Top)
@@ -645,16 +673,13 @@ type MainView() as this =
         inputBar.Children.Add(inputBox)
         let inputShell =
             Border(
-                Background = Theme.panel, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0),
-                CornerRadius = CornerRadius(Theme.radiusXl), Padding = Thickness(Theme.space3, 4.0, 4.0, 4.0),
+                Background = Theme.panel, BorderBrush = Theme.border, BorderThickness = Thickness(1.0),
+                CornerRadius = CornerRadius(Theme.radiusLg), Padding = Thickness(Theme.space3, 4.0, 4.0, 4.0),
                 HorizontalAlignment = HorizontalAlignment.Stretch, Child = inputBar)
-        inputShell.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 4.0, Blur = 18.0, Spread = -4.0, Color = Color.Parse "#1A1B211F"))
         inputBox.GotFocus.Add(fun _ ->
-            inputShell.BorderBrush <- Theme.primary
-            inputShell.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 4.0, Blur = 18.0, Spread = -2.0, Color = Color.Parse "#4D5C9230")))
+            inputShell.BorderBrush <- Theme.primary)
         inputBox.LostFocus.Add(fun _ ->
-            inputShell.BorderBrush <- Theme.outlineVariant
-            inputShell.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 4.0, Blur = 18.0, Spread = -4.0, Color = Color.Parse "#1A1B211F")))
+            inputShell.BorderBrush <- Theme.border)
         let inputColumn = StackPanel(Orientation = Orientation.Vertical, Spacing = Theme.space1, MaxWidth = Theme.readingWidth, HorizontalAlignment = HorizontalAlignment.Stretch)
         inputColumn.Children.Add(inputShell) |> ignore
         let inputWrap =
@@ -706,8 +731,8 @@ type MainView() as this =
             this.CreateConversation()
             // 点击后把焦点交给输入框，避免按钮保留焦点时按 Space/Enter 误触发重复新建
             inputBox.Focus() |> ignore
-        newButton.Click.Add(fun _ -> beginCreate ())
-        emptyCta.Click.Add(fun _ -> beginCreate ())
+        newButton.PointerPressed.Add(fun _ -> beginCreate ())
+        emptyCta.PointerPressed.Add(fun _ -> beginCreate ())
         forkButton.Click.Add(fun _ -> this.ForkConversation())
         settingsButton.Click.Add(fun _ -> this.ShowSessionSettings())
         connectButton.Click.Add(fun _ -> this.ShowConnectDialog())
@@ -779,8 +804,8 @@ type MainView() as this =
         let tokenBox = TextBox(PlaceholderText = "访问令牌（首次使用可请求配对）", CornerRadius = CornerRadius(10.0), Padding = Thickness(12.0, 9.0), FontSize = 13.0)
         let pairCodeBox = TextBox(PlaceholderText = "6 位配对码", MaxLength = 6, CornerRadius = CornerRadius(10.0), Padding = Thickness(12.0, 9.0), FontSize = 14.0, HorizontalContentAlignment = HorizontalAlignment.Center, LetterSpacing = 8.0)
         pairCodeBox.IsVisible <- false
-        let pairButton = Button(Content = "首次使用？请求配对", Margin = Thickness(0.0, 4.0, 0.0, 0.0), CornerRadius = CornerRadius(10.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), Padding = Thickness(12.0, 8.0), FontSize = 12.0, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center)
-        let pairSubmit = Button(Content = "提交配对码", Margin = Thickness(0.0, 4.0, 0.0, 0.0), CornerRadius = CornerRadius(10.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), Padding = Thickness(12.0, 8.0), FontSize = 12.0, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center)
+        let pairButton = Button(Content = "首次使用？请求配对", Margin = Thickness(0.0, 4.0, 0.0, 0.0), CornerRadius = CornerRadius(10.0), Background = Theme.panel, Foreground = Theme.text, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0), Padding = Thickness(12.0, 8.0), FontSize = 12.0, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center)
+        let pairSubmit = Button(Content = "提交配对码", Margin = Thickness(0.0, 4.0, 0.0, 0.0), CornerRadius = CornerRadius(10.0), Background = Theme.panel, Foreground = Theme.text, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0), Padding = Thickness(12.0, 8.0), FontSize = 12.0, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center)
         pairSubmit.IsVisible <- false
         pairSubmit.IsEnabled <- false
         pairButton.Click.Add(fun _ ->
@@ -1048,12 +1073,12 @@ type MainView() as this =
         let bubble = Border(Padding = Thickness(0.0), MaxWidth = 760.0)
         if isUser then
             bubble.Padding <- Thickness(15.0, 10.0)
-            bubble.CornerRadius <- CornerRadius(18.0, 18.0, 6.0, 18.0)
+            bubble.CornerRadius <- CornerRadius(Theme.radiusLg, Theme.radiusLg, Theme.radiusSm, Theme.radiusLg)
             bubble.Background <- Theme.primary
             bubble.MaxWidth <- 520.0
             bubble.HorizontalAlignment <- HorizontalAlignment.Right
         elif isTool then
-            bubble.CornerRadius <- CornerRadius(999.0)
+            bubble.CornerRadius <- CornerRadius(Theme.radiusLg, Theme.radiusLg, Theme.radiusLg, Theme.radiusSm)
             bubble.Background <- Theme.toolChip
             bubble.Padding <- Thickness(14.0, 6.0)
             bubble.MaxWidth <- 460.0
@@ -1168,7 +1193,7 @@ type MainView() as this =
                 let missingText = TextBlock(Text = sprintf "附件缺失: %s（原文件已删除）" r.fileName, FontSize = 12.0, Foreground = Theme.faint, Margin = Thickness(0.0, 4.0, 0.0, 0.0))
                 panel.Children.Add missingText
             else
-                let link = Button(Content = sprintf "下载附件：%s (%s)" r.fileName (formatSize r.size), FontSize = 12.0, Padding = Thickness(10.0, 4.0), CornerRadius = CornerRadius(999.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), HorizontalAlignment = HorizontalAlignment.Left, Margin = Thickness(0.0, 4.0, 0.0, 0.0))
+                let link = Button(Content = sprintf "下载附件：%s (%s)" r.fileName (formatSize r.size), FontSize = 12.0, Padding = Thickness(10.0, 4.0), CornerRadius = CornerRadius(999.0), Background = Theme.panel, Foreground = Theme.text, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0), HorizontalAlignment = HorizontalAlignment.Left, Margin = Thickness(0.0, 4.0, 0.0, 0.0))
                 link.Click.Add(fun _ -> this.DownloadAttachment r.sha256)
                 panel.Children.Add link
         bubble.Child <- panel
@@ -1229,7 +1254,7 @@ type MainView() as this =
                         b.Child <- TextBlock(Text = "你", FontSize = 11.5, FontWeight = FontWeight.SemiBold, Foreground = Theme.onPrimary, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
                         b :> Control
                     else
-                        createBrandTile 30.0 8.0 :> Control
+                        createBrandTile 26.0 Theme.radiusSm :> Control
                 avatar.VerticalAlignment <- VerticalAlignment.Top
                 avatar.Margin <- Thickness(0.0, 2.0, 0.0, 0.0)
                 let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = 10.0)
@@ -1260,7 +1285,7 @@ type MainView() as this =
         emptyCta.IsVisible <- false
         match activeConvId with
         | None ->
-            emptyHint.Text <- "还没有会话，点击 新建 开始"
+            emptyHint.Text <- "从侧栏新建，或点下方开始"
             emptyCta.IsVisible <- true
             emptyPanel.IsVisible <- true
         | Some convId ->
@@ -1270,7 +1295,7 @@ type MainView() as this =
                 ()
             | Some view ->
                 if view.messages.Count = 0 && view.runtimeState <> "generating" then
-                    emptyHint.Text <- "发送第一条消息，开始对话"
+                    emptyHint.Text <- "写一条消息开始"
                     emptyPanel.IsVisible <- true
                 for m in view.messages do
                     // 消息结构：{ commitId, payload }（决策 79）
@@ -1675,7 +1700,7 @@ type MainView() as this =
                             cid
                     let mv = match editedSeed with Some seed -> seed | None -> MessageView.ofJson payload
                     let editBox = TextBox(Text = mv.text, AcceptsReturn = true, MinHeight = 120.0, TextWrapping = TextWrapping.Wrap, CornerRadius = CornerRadius(10.0), Padding = Thickness(10.0, 8.0))
-                    let cancelBtn = Button(Content = "取消", CornerRadius = CornerRadius(10.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), Padding = Thickness(14.0, 8.0), Margin = Thickness(0.0, 0.0, 8.0, 0.0))
+                    let cancelBtn = Button(Content = "取消", CornerRadius = CornerRadius(10.0), Background = Theme.panel, Foreground = Theme.text, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0), Padding = Thickness(14.0, 8.0), Margin = Thickness(0.0, 0.0, 8.0, 0.0))
                     let okBtn = Button(Content = "fork", CornerRadius = CornerRadius(10.0), Background = Theme.primary, Foreground = Theme.onPrimary, BorderThickness = Thickness(0.0), Padding = Thickness(14.0, 8.0))
                     let btnRow = StackPanel(Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right)
                     btnRow.Children.Add(cancelBtn)
