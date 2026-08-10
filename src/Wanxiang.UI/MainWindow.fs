@@ -352,7 +352,6 @@ type MainView() as this =
     let inputBox = TextBox(PlaceholderText = "输入消息…", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, BorderThickness = Thickness(0.0), Background = Brushes.Transparent, FontSize = 14.0, VerticalContentAlignment = VerticalAlignment.Center, MinHeight = 34.0, MaxHeight = 120.0, Padding = Thickness(Theme.space1, 0.0, 0.0, 0.0))
     let sendButton = Icons.createButton Icons.Filled (Icons.sendUp Theme.onPrimary)
     let attachButton = Icons.createButton Icons.Outline (Icons.paperclip Theme.text)
-    do attachButton.Margin <- Thickness(0.0, 0.0, Theme.space2, 0.0)
     do Icons.setEnabled sendButton false
     do Icons.setEnabled attachButton false
     do ToolTip.SetTip(attachButton, "添加附件")
@@ -553,9 +552,14 @@ type MainView() as this =
         DockPanel.SetDock(brandTile, Dock.Left)
         DockPanel.SetDock(appName, Dock.Left)
         // 右侧动作组：放大镜在左、+ 在右（比两个独立 Dock.Right 更稳）
-        let headerActions = StackPanel(Orientation = Orientation.Horizontal, Spacing = Theme.space1, VerticalAlignment = VerticalAlignment.Center)
-        headerActions.Children.Add(searchButton) |> ignore
-        headerActions.Children.Add(newButton) |> ignore
+        let headerActions =
+            StackPanel(
+                Orientation = Orientation.Horizontal,
+                Spacing = Theme.space1,
+                VerticalAlignment = VerticalAlignment.Center,
+                MaxHeight = Theme.iconBtn)
+        headerActions.Children.Add(Icons.slot searchButton) |> ignore
+        headerActions.Children.Add(Icons.slot newButton) |> ignore
         DockPanel.SetDock(headerActions, Dock.Right)
         sidebarHeaderPanel.Children.Add(brandTile)
         sidebarHeaderPanel.Children.Add(Border(Width = Theme.space2))
@@ -674,10 +678,17 @@ type MainView() as this =
 
         // 输入区：撑满聊天栏宽度（阅读列宽度仅约束消息气泡）
         let inputBar = DockPanel()
-        DockPanel.SetDock(sendButton, Dock.Right)
-        DockPanel.SetDock(attachButton, Dock.Right)
-        inputBar.Children.Add(sendButton)
-        inputBar.Children.Add(attachButton)
+        let inputActions =
+            StackPanel(
+                Orientation = Orientation.Horizontal,
+                Spacing = Theme.space2,
+                VerticalAlignment = VerticalAlignment.Center,
+                MaxHeight = Theme.iconBtn)
+        inputActions.Children.Add(Icons.slot attachButton) |> ignore
+        inputActions.Children.Add(Icons.slot sendButton) |> ignore
+        let inputActionsHost = Border(Background = Brushes.Transparent, BorderThickness = Thickness(0.0), VerticalAlignment = VerticalAlignment.Center, Child = inputActions)
+        DockPanel.SetDock(inputActionsHost, Dock.Right)
+        inputBar.Children.Add(inputActionsHost)
         inputBar.Children.Add(inputBox)
         let inputShell =
             Border(
