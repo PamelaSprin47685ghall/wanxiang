@@ -305,30 +305,9 @@ type MainView() as this =
     let connDot = Ellipse(Width = 7.0, Height = 7.0, Fill = Theme.faint, VerticalAlignment = VerticalAlignment.Center)
     let connectButton = Button(Content = "连接", Height = 28.0, Padding = Thickness(Theme.space3, 0.0), FontSize = 12.0, CornerRadius = CornerRadius(Theme.radiusSm), Background = Theme.panel, Foreground = Theme.text, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0), VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
     do connectButton.Classes.Add("quiet")
-    let newButton =
-        Border(
-            Width = Theme.iconBtn, Height = Theme.iconBtn, CornerRadius = CornerRadius(Theme.radiusMd),
-            Background = Theme.panel, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0),
-            Cursor = Cursor(StandardCursorType.Hand), VerticalAlignment = VerticalAlignment.Center,
-            Child = TextBlock(Text = "+", FontSize = 16.0, FontWeight = FontWeight.Medium, Foreground = Theme.text,
-                              HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center))
+    let newButton = Icons.createButton Icons.Outline (Icons.plus Theme.text)
     do ToolTip.SetTip(newButton, "新建会话")
-    // 放大镜：点开后再显示搜索框（避免常驻输入框占位难看）
-    let searchIcon =
-        let c = Canvas(Width = 14.0, Height = 14.0)
-        let ring = Ellipse(Width = 8.5, Height = 8.5, Stroke = Theme.text, StrokeThickness = 1.4, Fill = Brushes.Transparent)
-        Canvas.SetLeft(ring, 1.0)
-        Canvas.SetTop(ring, 1.0)
-        let handle = Line(StartPoint = Point(8.2, 8.2), EndPoint = Point(12.2, 12.2), Stroke = Theme.text, StrokeThickness = 1.5)
-        c.Children.Add(ring) |> ignore
-        c.Children.Add(handle) |> ignore
-        Viewbox(Width = 16.0, Height = 16.0, Stretch = Stretch.Uniform, Child = c)
-    let searchButton =
-        Border(
-            Width = Theme.iconBtn, Height = Theme.iconBtn, CornerRadius = CornerRadius(Theme.radiusMd),
-            Background = Theme.panel, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0),
-            Cursor = Cursor(StandardCursorType.Hand), VerticalAlignment = VerticalAlignment.Center,
-            Child = searchIcon)
+    let searchButton = Icons.createButton Icons.Outline (Icons.search Theme.text)
     do ToolTip.SetTip(searchButton, "搜索会话")
     let searchBox =
         TextBox(
@@ -371,9 +350,11 @@ type MainView() as this =
     let messagesHost = Grid()
     let scrollViewer = ScrollViewer(Content = messagesHost, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled)
     let inputBox = TextBox(PlaceholderText = "输入消息…", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, BorderThickness = Thickness(0.0), Background = Brushes.Transparent, FontSize = 14.0, VerticalContentAlignment = VerticalAlignment.Center, MinHeight = 34.0, MaxHeight = 120.0, Padding = Thickness(Theme.space1, 0.0, 0.0, 0.0))
-    let sendButton = Button(Content = "↑", Width = Theme.iconBtn, Height = Theme.iconBtn, Padding = Thickness(0.0), CornerRadius = CornerRadius(Theme.radiusMd), Background = Theme.primary, Foreground = Theme.onPrimary, BorderThickness = Thickness(0.0), FontSize = 14.0, FontWeight = FontWeight.SemiBold, IsEnabled = false, Opacity = 0.35, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
-    let attachButton = Button(Content = "＋", Width = Theme.iconBtn, Height = Theme.iconBtn, Padding = Thickness(0.0), FontSize = 15.0, CornerRadius = CornerRadius(Theme.radiusMd), Background = Theme.panel, Foreground = Theme.muted, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0), IsEnabled = false, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = Thickness(0.0, 0.0, Theme.space2, 0.0))
-    do attachButton.Classes.Add("quiet")
+    let sendButton = Icons.createButton Icons.Filled (Icons.sendUp Theme.onPrimary)
+    let attachButton = Icons.createButton Icons.Outline (Icons.paperclip Theme.text)
+    do attachButton.Margin <- Thickness(0.0, 0.0, Theme.space2, 0.0)
+    do Icons.setEnabled sendButton false
+    do Icons.setEnabled attachButton false
     do ToolTip.SetTip(attachButton, "添加附件")
     do ToolTip.SetTip(sendButton, "发送（Enter）")
     do ToolTip.SetTip(inputBox, "Enter 发送，Shift+Enter 换行")
@@ -522,15 +503,12 @@ type MainView() as this =
                 convList.SelectedIndex <- 0
 
     let setSendEnabled (enabled: bool) =
-        sendButton.IsEnabled <- enabled
-        sendButton.Opacity <- if enabled then 1.0 else 0.35
-        sendButton.Background <- Theme.primary
-        sendButton.Foreground <- Theme.onPrimary
+        Icons.setEnabled sendButton enabled
 
     let setInputsEnabled (enabled: bool) =
         inputBox.IsEnabled <- enabled
         setSendEnabled enabled
-        attachButton.IsEnabled <- enabled
+        Icons.setEnabled attachButton enabled
 
     let stopGenTimer () =
         match genTimer with
@@ -762,13 +740,11 @@ type MainView() as this =
         let closeSearch () =
             searchBox.IsVisible <- false
             searchBox.Text <- ""
-            searchButton.Background <- Theme.panel
-            searchButton.BorderBrush <- Theme.outlineVariant
+            Icons.setOutlineActive searchButton false
             applySearchFilter ()
         let openSearch () =
             searchBox.IsVisible <- true
-            searchButton.Background <- Theme.primaryContainer
-            searchButton.BorderBrush <- Theme.muted
+            Icons.setOutlineActive searchButton true
             Dispatcher.UIThread.Post(fun () ->
                 searchBox.Focus() |> ignore
                 searchBox.CaretIndex <- if isNull searchBox.Text then 0 else searchBox.Text.Length)
@@ -794,8 +770,8 @@ type MainView() as this =
             match convList.SelectedItem with
             | :? ConvSummary as c -> this.OpenConversation c.Id
             | _ -> ())
-        sendButton.Click.Add(fun _ -> this.SendMessage())
-        attachButton.Click.Add(fun _ -> this.PickAttachment())
+        sendButton.PointerPressed.Add(fun _ -> this.SendMessage())
+        attachButton.PointerPressed.Add(fun _ -> this.PickAttachment())
         cancelButton.Click.Add(fun _ ->
             // 决策 88-92：携带 generationId 精确取消
             match activeConvId, activeGenerationId with

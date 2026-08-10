@@ -26,6 +26,9 @@ module Theme =
     let readingWidth = 720.0
     let barHeight = 48.0
     let iconBtn = 32.0
+    /// 线稿图标画布边长（Icons.fs SSOT）
+    let iconGlyph = 16.0
+    let iconStroke = 1.5
 
     /// 壳层水平内边距 SSOT：侧栏/顶栏/消息/输入共用同一刻度，避免「差不远却不对齐」
     let sidebarInset = space4
