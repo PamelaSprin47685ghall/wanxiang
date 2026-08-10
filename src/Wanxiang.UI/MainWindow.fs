@@ -450,8 +450,8 @@ type MainView() as this =
             border.Child <- txt
         border
 
-    // 空状态：品牌标 + 标题 + 提示；emptyOverlay 在聊天可视高度内垂直居中
-    let emptyPanel = StackPanel(Spacing = Theme.space3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
+    // 空状态：品牌标 + 标题 + 提示；靠上对齐，避免 tall 聊天区垂直居中「养鱼」
+    let emptyPanel = StackPanel(Spacing = Theme.space3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = Thickness(0.0, 88.0, 0.0, 0.0))
     let emptyOverlay = Grid(HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, IsVisible = false, Background = Brushes.Transparent)
     do emptyOverlay.Children.Add(emptyPanel)
     do
@@ -658,10 +658,7 @@ type MainView() as this =
         headerPanel.Children.Add(settingsButton)
         headerPanel.Children.Add(headerFiller)
         let chatHeaderInner =
-            Border(
-                MaxWidth = Theme.readingWidth,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                Child = headerPanel)
+            Border(HorizontalAlignment = HorizontalAlignment.Stretch, Child = headerPanel)
         let chatHeader =
             Border(
                 Height = Theme.barHeight,
@@ -671,7 +668,7 @@ type MainView() as this =
                 Padding = Thickness(Theme.space5, 0.0),
                 Child = chatHeaderInner)
 
-        // 输入区（悬浮作曲器，与阅读列同宽居中）。送 Send/Stop 复用 sendButton 的样式与状态
+        // 输入区：撑满聊天栏宽度（阅读列宽度仅约束消息气泡）
         let inputBar = DockPanel()
         DockPanel.SetDock(sendButton, Dock.Right)
         DockPanel.SetDock(attachButton, Dock.Right)
@@ -687,7 +684,7 @@ type MainView() as this =
             inputShell.BorderBrush <- Theme.primary)
         inputBox.LostFocus.Add(fun _ ->
             inputShell.BorderBrush <- Theme.border)
-        let inputColumn = StackPanel(Orientation = Orientation.Vertical, Spacing = Theme.space1, MaxWidth = Theme.readingWidth, HorizontalAlignment = HorizontalAlignment.Stretch)
+        let inputColumn = StackPanel(Orientation = Orientation.Vertical, Spacing = Theme.space1, HorizontalAlignment = HorizontalAlignment.Stretch)
         inputColumn.Children.Add(inputShell) |> ignore
         let inputWrap =
             Border(
@@ -697,7 +694,6 @@ type MainView() as this =
         // 聊天区（消息居中阅读列；空状态 overlay 填满中间可视区）
         messagesPanel.MaxWidth <- Theme.readingWidth
         messagesPanel.HorizontalAlignment <- HorizontalAlignment.Center
-        emptyPanel.MaxWidth <- Theme.readingWidth
         let chat = DockPanel()
         messagesHost.Children.Add(messagesPanel)
         scrollViewer.Padding <- Thickness(Theme.space5, Theme.space4, Theme.space5, Theme.space2)
