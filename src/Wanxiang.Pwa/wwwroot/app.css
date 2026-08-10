@@ -84,8 +84,8 @@ html, body {
     border-radius: 22px;
     box-shadow:
         0 1px 0 rgba(255, 255, 255, 0.9) inset,
-        0 12px 32px -8px rgba(77, 92, 146, 0.28),
-        0 2px 6px rgba(0, 0, 0, 0.04);
+        0 8px 24px -8px rgba(28, 27, 25, 0.12),
+        0 2px 4px rgba(0, 0, 0, 0.04);
     animation: splashBob 2400ms ease-in-out infinite;
 }
 
@@ -113,7 +113,7 @@ html, body {
     width: 168px;
     height: 3px;
     border-radius: 999px;
-    background: rgba(77, 92, 146, 0.12);
+    background: rgba(46, 52, 62, 0.10);
     overflow: hidden;
     position: relative;
 }
@@ -122,7 +122,7 @@ html, body {
     position: absolute;
     inset: 0;
     width: 40%;
-    background: linear-gradient(90deg, transparent, #4D5C92, transparent);
+    background: linear-gradient(90deg, transparent, #2E343E, transparent);
     border-radius: 999px;
     animation: splashSweep 1200ms ease-in-out infinite;
 }
@@ -159,7 +159,7 @@ html, body {
 
 /* PWA 端通用 focus 环（兼容键盘 / 鼠标 —— 鼠标点击后立即移除） */
 *:focus-visible {
-    outline: 2px solid #4D5C92;
+    outline: 2px solid #2E343E;
     outline-offset: 2px;
     border-radius: 4px;
 }
@@ -194,13 +194,13 @@ html, body {
     }
 
     .splash-bar {
-        background: rgba(77, 92, 146, 0.28);
+        background: rgba(46, 52, 62, 0.22);
     }
 
     .splash-logo {
         box-shadow:
             0 1px 0 rgba(255, 255, 255, 0.06) inset,
-            0 12px 32px -8px rgba(77, 92, 146, 0.35),
+            0 8px 24px -8px rgba(0, 0, 0, 0.35),
             0 2px 6px rgba(0, 0, 0, 0.35);
     }
 
@@ -216,6 +216,6 @@ html, body {
     }
 
     *:focus-visible {
-        outline-color: #8B9AD6;
+        outline-color: #6A6862;
     }
 }
