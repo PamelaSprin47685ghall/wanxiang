@@ -16,7 +16,10 @@ type App() =
 
     override this.Initialize() =
         this.Styles.Add(FluentTheme())
-        // 固定浅色（与 Theme.fs 的浅色板一致；深色由 PWA 端提供）
+        // 固定浅色（与 Theme.fs 浅色板一致）。桌面端不做 prefers-color-scheme 自动切。
+        // PWA 端 Avalonia RequestedThemeVariant 同样保持 Light，避免 Fluent 整套画布误切深色；
+        // 深色壳层对比度（html/body、splash、toast、滚动条）由 wwwroot/app.css 的
+        // @media (prefers-color-scheme: dark) 承担。
         this.RequestedThemeVariant <- ThemeVariant.Light
         // 会话列表：靛蓝选择态 + 圆角条目（覆盖 Fluent 高亮资源，作用域仅本应用）
         this.Resources["ListBoxItemPadding"] <- Thickness(12.0, 10.0)

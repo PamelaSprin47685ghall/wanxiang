@@ -1,6 +1,7 @@
 namespace Wanxiang.UI
 
 open System
+open System.Diagnostics
 open System.IO
 open System.Security.Cryptography
 open System.Text
@@ -10,6 +11,7 @@ open System.Threading
 open System.Threading.Tasks
 open Avalonia
 open Avalonia.Controls
+open Avalonia.Controls.Documents
 open Avalonia.Controls.Primitives
 open Avalonia.Controls.Templates
 open Avalonia.Layout
@@ -117,6 +119,7 @@ module AttachmentRef =
 open Markdig
 open Markdig.Syntax
 open Markdig.Syntax.Inlines
+open Markdig.Extensions.Tables
 
 type ConvSummary = {
     Id: Guid
@@ -125,25 +128,139 @@ type ConvSummary = {
     Running: bool
 }
 
+/// Markdown 行内片段：在 AppendMessage 中转为 Run / 可点击链接。
+type RichSpan =
+    | TextSpan of text: string * bold: bool * italic: bool * code: bool
+    | LinkSpan of text: string * url: string
+    | BreakSpan
+
 type TextSegment =
-    | NormalText of string
+    | NormalText of RichSpan list
     | CodeBlock of lang: string * code: string
 
 module MarkdownParser =
     let pipeline = MarkdownPipelineBuilder().UseAdvancedExtensions().Build()
 
-    let rec private inlineText (i: Inline) : string =
+    let rec private plainInline (i: Inline) : string =
         match i with
+        | null -> ""
         | :? LiteralInline as lit -> lit.Content.ToString()
+        | :? CodeInline as c -> c.Content
         | :? LineBreakInline -> "\n"
-        | :? ContainerInline as c -> String.Concat(seq { for ch in c do yield inlineText ch })
+        | :? ContainerInline as c -> String.Concat(seq { for ch in c do yield plainInline ch })
         | _ -> ""
 
-    let rec private blockText (b: Block) : string =
+    let private trimTrailingBreaks (acc: System.Collections.Generic.List<RichSpan>) =
+        let mutable finished = false
+        while (not finished) && acc.Count > 0 do
+            match acc[acc.Count - 1] with
+            | BreakSpan -> acc.RemoveAt(acc.Count - 1)
+            | _ -> finished <- true
+
+    let rec private collectInlines (i: Inline) (bold: bool) (italic: bool) (acc: System.Collections.Generic.List<RichSpan>) =
+        match i with
+        | null -> ()
+        | :? LiteralInline as lit ->
+            let t = lit.Content.ToString()
+            if t.Length > 0 then acc.Add(TextSpan(t, bold, italic, false))
+        | :? CodeInline as c ->
+            let t = c.Content
+            if not (String.IsNullOrEmpty t) then acc.Add(TextSpan(t, false, false, true))
+        | :? LineBreakInline ->
+            acc.Add(BreakSpan)
+        | :? LinkInline as link ->
+            let label = plainInline link
+            let url = if isNull link.Url then "" else link.Url
+            if link.IsImage then
+                let alt = if String.IsNullOrEmpty label then "image" else label
+                acc.Add(TextSpan(sprintf "[%s]" alt, false, false, false))
+            elif String.IsNullOrEmpty url then
+                if not (String.IsNullOrEmpty label) then
+                    acc.Add(TextSpan(label, bold, italic, false))
+            else
+                let text = if String.IsNullOrEmpty label then url else label
+                acc.Add(LinkSpan(text, url))
+        | :? EmphasisInline as em ->
+            let nextBold = bold || em.DelimiterCount >= 2
+            let nextItalic = italic || em.DelimiterCount = 1
+            for ch in em do collectInlines ch nextBold nextItalic acc
+        | :? ContainerInline as c ->
+            for ch in c do collectInlines ch bold italic acc
+        | _ -> ()
+
+    let private appendLeaf (leaf: LeafBlock) (prefix: string) (acc: System.Collections.Generic.List<RichSpan>) =
+        if not (String.IsNullOrEmpty prefix) then
+            acc.Add(TextSpan(prefix, false, false, false))
+        if not (isNull leaf.Inline) then
+            collectInlines leaf.Inline false false acc
+
+    let rec private appendBlock (b: Block) (linePrefix: string) (acc: System.Collections.Generic.List<RichSpan>) =
         match b with
-        | :? LeafBlock as leaf when not (isNull leaf.Inline) -> inlineText leaf.Inline
-        | :? ContainerBlock as c -> String.Join("\n", [ for ch in c do yield blockText ch ])
-        | _ -> ""
+        | null -> ()
+        | :? FencedCodeBlock as f ->
+            if not (String.IsNullOrEmpty linePrefix) then
+                acc.Add(TextSpan(linePrefix, false, false, false))
+            let codeLines = [ for i = 0 to f.Lines.Count - 1 do yield f.Lines.Lines[i].ToString().TrimEnd('\r', '\n') ]
+            let code = String.Join("\n", codeLines)
+            if not (String.IsNullOrEmpty code) then
+                acc.Add(TextSpan(code, false, false, true))
+            acc.Add(BreakSpan)
+        | :? HeadingBlock as h ->
+            appendLeaf h linePrefix acc
+            acc.Add(BreakSpan)
+        | :? ParagraphBlock as p ->
+            appendLeaf p linePrefix acc
+            acc.Add(BreakSpan)
+        | :? QuoteBlock as q ->
+            for ch in q do appendBlock ch "> " acc
+        | :? ListBlock as list ->
+            let mutable n =
+                match Int32.TryParse(list.OrderedStart) with
+                | true, v -> v
+                | _ -> 1
+            for item in list do
+                match item with
+                | :? ListItemBlock as li ->
+                    let bullet =
+                        if list.IsOrdered then
+                            let s = sprintf "%d. " n
+                            n <- n + 1
+                            s
+                        else "- "
+                    let mutable first = true
+                    for ch in li do
+                        let pfx = if first then bullet else "  "
+                        first <- false
+                        appendBlock ch pfx acc
+                | other -> appendBlock other linePrefix acc
+        | :? Table as table ->
+            for rowObj in table do
+                match rowObj with
+                | :? TableRow as row ->
+                    acc.Add(TextSpan("| ", false, false, false))
+                    let mutable firstCell = true
+                    for cellObj in row do
+                        if not firstCell then acc.Add(TextSpan("| ", false, false, false))
+                        firstCell <- false
+                        match cellObj with
+                        | :? TableCell as cell ->
+                            for ch in cell do
+                                appendBlock ch "" acc
+                                trimTrailingBreaks acc
+                        | _ -> ()
+                    acc.Add(TextSpan(" |", false, false, false))
+                    acc.Add(BreakSpan)
+                | _ -> ()
+        | :? LeafBlock as leaf ->
+            appendLeaf leaf linePrefix acc
+            acc.Add(BreakSpan)
+        | :? ContainerBlock as c ->
+            for ch in c do appendBlock ch linePrefix acc
+        | _ -> ()
+
+    let private spansOfRaw (raw: string) : RichSpan list =
+        if String.IsNullOrEmpty raw then []
+        else [ TextSpan(raw, false, false, false) ]
 
     let parse (raw: string) : TextSegment list =
         if String.IsNullOrEmpty raw then []
@@ -155,17 +272,19 @@ module MarkdownParser =
                     match node with
                     | :? FencedCodeBlock as f ->
                         let lang = if String.IsNullOrEmpty f.Info then "code" else f.Info
-                        let codeLines = [ for i = 0 to f.Lines.Count - 1 do yield f.Lines.Lines[i].ToString() ]
+                        let codeLines = [ for i = 0 to f.Lines.Count - 1 do yield f.Lines.Lines[i].ToString().TrimEnd('\r', '\n') ]
                         let code = String.Join("\n", codeLines)
                         results.Add(CodeBlock(lang, code))
                     | block ->
-                        let text = blockText block
-                        if not (String.IsNullOrWhiteSpace text) then
-                            results.Add(NormalText text)
+                        let spans = System.Collections.Generic.List<RichSpan>()
+                        appendBlock block "" spans
+                        trimTrailingBreaks spans
+                        if spans.Count > 0 then
+                            results.Add(NormalText(List.ofSeq spans))
                 if results.Count > 0 then List.ofSeq results
-                else [ NormalText raw ]
+                else [ NormalText(spansOfRaw raw) ]
             with _ ->
-                [ NormalText raw ]
+                [ NormalText(spansOfRaw raw) ]
 
 /// 主窗口：会话列表 + 聊天视图 + 连接管理。
 /// 万象主视图（决策 48：桌面与 PWA 共用同一套 UI 代码；桌面由 MainWindow 窗口壳承载，PWA 直接作为单视图内容）。
@@ -180,34 +299,45 @@ type MainView() as this =
     let state = ClientState()
 
     // ---- 控件（视觉语言见 Theme.fs）----
-    let statusText = TextBlock(Text = "未连接", Foreground = Theme.muted, FontSize = 12.0, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis)
-    let connDot = Ellipse(Width = 8.0, Height = 8.0, Fill = Theme.faint, VerticalAlignment = VerticalAlignment.Center)
-    let connectButton = Button(Content = "连接", Height = 32.0, Padding = Thickness(14.0, 0.0), FontSize = 12.5, CornerRadius = CornerRadius(9.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
-    let newButton = Button(Content = "✦  新建", Height = 30.0, Padding = Thickness(10.0, 0.0), CornerRadius = CornerRadius(8.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), FontSize = 12.0, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
+    let statusText = TextBlock(Text = "未连接", Foreground = Theme.muted, FontSize = 11.0, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, Margin = Thickness(Theme.space2, 0.0, 0.0, 0.0))
+    let connDot = Ellipse(Width = 7.0, Height = 7.0, Fill = Theme.faint, VerticalAlignment = VerticalAlignment.Center)
+    let connectButton = Button(Content = "连接", Height = 30.0, Padding = Thickness(Theme.space3, 0.0), FontSize = 12.0, CornerRadius = CornerRadius(Theme.radiusSm), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
+    let newButton = Button(Content = "+", Width = Theme.iconBtn, Height = Theme.iconBtn, Padding = Thickness(0.0), CornerRadius = CornerRadius(Theme.iconBtn / 2.0), Background = Theme.primary, Foreground = Theme.onPrimary, BorderThickness = Thickness(0.0), FontSize = 18.0, FontWeight = FontWeight.Medium, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
     do ToolTip.SetTip(newButton, "新建会话")
-    let searchBox = TextBox(PlaceholderText = "搜索会话…", CornerRadius = CornerRadius(10.0), Margin = Thickness(12.0, 0.0, 12.0, 8.0), Padding = Thickness(10.0, 7.0), BorderThickness = Thickness(1.0), BorderBrush = Theme.border, Background = Theme.panel, FontSize = 12.5)
+    let searchBox = TextBox(PlaceholderText = "搜索会话…", CornerRadius = CornerRadius(Theme.radiusMd), Margin = Thickness(Theme.space3, Theme.space2, Theme.space3, Theme.space2), Padding = Thickness(10.0, 6.0), BorderThickness = Thickness(1.0), BorderBrush = Theme.border, Background = Theme.panel, FontSize = 12.5, MinHeight = 34.0)
+    let filteredCountLabel = TextBlock(Text = "", FontSize = 10.5, Foreground = Theme.muted, Margin = Thickness(Theme.space4, 0.0, Theme.space3, Theme.space1), IsVisible = false)
     let convList = ListBox(Background = Brushes.Transparent, BorderThickness = Thickness(0.0))
-    let chatTitle = TextBlock(Text = "选择一个会话", FontSize = 15.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.faint, VerticalAlignment = VerticalAlignment.Center)
-    let genStatus = TextBlock(Text = "", FontSize = 12.0, Foreground = Theme.onPrimaryContainer)
+    // P1-1：显式 VirtualizingStackPanel；侧栏 Dock 给 ListBox 有界高度，由其自身滚动虚拟化（勿外包无限高 ScrollViewer）
+    do convList.ItemsPanel <- FuncTemplate<Panel>(fun () -> VirtualizingStackPanel() :> Panel)
+    let chatTitle = TextBlock(Text = "选择一个会话", FontSize = 14.5, FontWeight = FontWeight.SemiBold, Foreground = Theme.faint, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis)
+    let genStatus = TextBlock(Text = "", FontSize = 11.5, Foreground = Theme.onPrimaryContainer)
     let genDot = Ellipse(Width = 6.0, Height = 6.0, Fill = Theme.primary)
-    let genChip = Border(Background = Theme.primaryContainer, CornerRadius = CornerRadius(999.0), Padding = Thickness(10.0, 4.0, 12.0, 4.0), IsVisible = false, VerticalAlignment = VerticalAlignment.Center)
+    let genChip = Border(Background = Theme.primaryContainer, CornerRadius = CornerRadius(Theme.radiusPill), Padding = Thickness(10.0, 3.0, 12.0, 3.0), IsVisible = false, VerticalAlignment = VerticalAlignment.Center, Margin = Thickness(Theme.space2, 0.0, 0.0, 0.0))
     do
         // 后设置 Child：避免在 ctor 表达式中传 Children 数组（Avalonia StackPanel 不可）
         let genInner = StackPanel(Orientation = Orientation.Horizontal, Spacing = 6.0)
         genInner.Children.Add(genDot) |> ignore
         genInner.Children.Add(genStatus) |> ignore
         genChip.Child <- genInner
-    let forkButton = Button(Content = "编辑并 fork", Height = 30.0, Padding = Thickness(10.0, 0.0), FontSize = 12.5, CornerRadius = CornerRadius(8.0), Background = Brushes.Transparent, Foreground = Theme.muted, BorderThickness = Thickness(0.0), VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = Thickness(0.0, 0.0, 4.0, 0.0))
-    let cancelButton = Button(Content = "取消生成", Height = 30.0, Padding = Thickness(10.0, 0.0), FontSize = 12.5, CornerRadius = CornerRadius(8.0), Background = Brushes.Transparent, Foreground = Theme.muted, BorderThickness = Thickness(0.0), IsEnabled = false, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
+    let forkButton = Button(Content = "编辑并 fork", Height = 28.0, Padding = Thickness(10.0, 0.0), FontSize = 12.0, CornerRadius = CornerRadius(Theme.radiusSm), Background = Brushes.Transparent, Foreground = Theme.muted, BorderThickness = Thickness(0.0), VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = Thickness(0.0, 0.0, Theme.space1, 0.0), IsVisible = false)
+    let cancelButton = Button(Content = "取消", Height = 28.0, Padding = Thickness(10.0, 0.0), FontSize = 12.0, CornerRadius = CornerRadius(Theme.radiusSm), Background = Brushes.Transparent, Foreground = Theme.muted, BorderThickness = Thickness(0.0), IsEnabled = false, IsVisible = false, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
+    let settingsButton = Button(Content = "设置", Height = 28.0, Padding = Thickness(10.0, 0.0), FontSize = 12.0, CornerRadius = CornerRadius(Theme.radiusSm), Background = Brushes.Transparent, Foreground = Theme.muted, BorderThickness = Thickness(0.0), VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, IsVisible = false)
     do forkButton.Classes.Add("ghost")
     do cancelButton.Classes.Add("ghost")
-    let messagesPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = 20.0)
-    let emptyHint = TextBlock(Text = "", Foreground = Theme.muted, FontSize = 13.5, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsVisible = false)
+    do settingsButton.Classes.Add("ghost")
+    do ToolTip.SetTip(settingsButton, "会话设置")
+    let messagesPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Theme.space3)
+    let emptyHint = TextBlock(Text = "", Foreground = Theme.muted, FontSize = 13.0, HorizontalAlignment = HorizontalAlignment.Center, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, MaxWidth = 320.0, LineHeight = 20.0)
+    let emptyCta = Button(Content = "新建会话", Height = 34.0, Padding = Thickness(18.0, 0.0), CornerRadius = CornerRadius(Theme.radiusMd), Background = Theme.primary, Foreground = Theme.onPrimary, BorderThickness = Thickness(0.0), FontSize = 13.0, FontWeight = FontWeight.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, IsVisible = false, Margin = Thickness(0.0, Theme.space2, 0.0, 0.0))
+    let listEmptyHint = TextBlock(Text = "没有匹配的会话", Foreground = Theme.muted, FontSize = 12.0, HorizontalAlignment = HorizontalAlignment.Center, Margin = Thickness(Theme.space4, Theme.space5, Theme.space4, 0.0), IsVisible = false, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center)
     let messagesHost = Grid()
     let scrollViewer = ScrollViewer(Content = messagesHost, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled)
-    let inputBox = TextBox(PlaceholderText = "输入消息，Enter 发送，Shift+Enter 换行", AcceptsReturn = false, BorderThickness = Thickness(0.0), Background = Brushes.Transparent, FontSize = 14.0, VerticalContentAlignment = VerticalAlignment.Center, MinHeight = 36.0, Padding = Thickness(2.0, 0.0, 0.0, 0.0))
-    let sendButton = Button(Content = "↵", Width = 36.0, Height = 36.0, Padding = Thickness(0.0), CornerRadius = CornerRadius(18.0), Background = Theme.border, Foreground = Theme.faint, BorderThickness = Thickness(0.0), FontSize = 18.0, FontWeight = FontWeight.Bold, IsEnabled = false, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
-    let attachButton = Button(Content = "⊕ 附件", Height = 36.0, Padding = Thickness(12.0, 0.0), FontSize = 12.5, CornerRadius = CornerRadius(18.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), IsEnabled = false, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = Thickness(0.0, 0.0, 6.0, 0.0))
+    let inputBox = TextBox(PlaceholderText = "输入消息…", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, BorderThickness = Thickness(0.0), Background = Brushes.Transparent, FontSize = 14.0, VerticalContentAlignment = VerticalAlignment.Center, MinHeight = 34.0, MaxHeight = 120.0, Padding = Thickness(Theme.space1, 0.0, 0.0, 0.0))
+    let sendButton = Button(Content = "↑", Width = Theme.iconBtn, Height = Theme.iconBtn, Padding = Thickness(0.0), CornerRadius = CornerRadius(Theme.iconBtn / 2.0), Background = Theme.border, Foreground = Theme.faint, BorderThickness = Thickness(0.0), FontSize = 15.0, FontWeight = FontWeight.Bold, IsEnabled = false, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
+    let attachButton = Button(Content = "＋", Width = Theme.iconBtn, Height = Theme.iconBtn, Padding = Thickness(0.0), FontSize = 16.0, CornerRadius = CornerRadius(Theme.iconBtn / 2.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), IsEnabled = false, VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = Thickness(0.0, 0.0, Theme.space2, 0.0))
+    do ToolTip.SetTip(attachButton, "添加附件")
+    do ToolTip.SetTip(sendButton, "发送（Enter）")
+    do ToolTip.SetTip(inputBox, "Enter 发送，Shift+Enter 换行")
 
     let mutable activeConvId: Guid option = None
     let mutable pairingRequestedBeforeConnect = false
@@ -242,7 +372,7 @@ type MainView() as this =
     let topLevel () = TopLevel.GetTopLevel(this)
 
     // ---- 应用内对话框（overlay 遮罩；桌面与 PWA 共用，避免平台窗口差异）----
-    let dialogOverlay = Grid(IsVisible = false, Background = SolidColorBrush(Color.Parse "#66000000"))
+    let dialogOverlay = Grid(IsVisible = false, Background = Theme.overlayScrim)
     let dialogCard =
         Border(
             Background = Theme.panel, CornerRadius = CornerRadius(16.0), Padding = Thickness(24.0),
@@ -255,7 +385,7 @@ type MainView() as this =
         dialogOverlay.IsVisible <- false
         dialogCard.Child <- null
     do
-        dialogCard.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 16.0, Blur = 48.0, Spread = -8.0, Color = Color.Parse "#1F1A1B2140"))
+        dialogCard.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 16.0, Blur = 48.0, Spread = -8.0, Color = Color.Parse "#1A1B2140"))
         dialogOverlay.Children.Add(dialogCard)
         // 点击遮罩（卡片外）关闭对话框
         dialogOverlay.PointerPressed.Add(fun e ->
@@ -301,18 +431,35 @@ type MainView() as this =
         border
 
     // 空状态：品牌标 + 标题 + 提示（与 PWA 空状态一致）
-    let emptyPanel = StackPanel(Spacing = 14.0, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsVisible = false)
+    let emptyPanel = StackPanel(Spacing = Theme.space3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsVisible = false)
     do
-        let emptyLogo = createBrandTile 88.0 24.0
+        let emptyLogo = createBrandTile 64.0 18.0
         emptyLogo.HorizontalAlignment <- HorizontalAlignment.Center
-        let emptyTitle = TextBlock(Text = "万象 · 智能工作站", FontSize = 20.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.text, HorizontalAlignment = HorizontalAlignment.Center)
+        let emptyTitle = TextBlock(Text = "万象 · 智能工作站", FontSize = 17.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.text, HorizontalAlignment = HorizontalAlignment.Center)
         emptyPanel.Children.Add(emptyLogo) |> ignore
         emptyPanel.Children.Add(emptyTitle) |> ignore
         emptyPanel.Children.Add(emptyHint) |> ignore
+        emptyPanel.Children.Add(emptyCta) |> ignore
 
     let setStatus (text: string) (connected: bool) =
         statusText.Text <- text
         connDot.Fill <- if connected then SolidColorBrush(Color.Parse "#34A853") else Theme.faint
+
+    /// 过滤后会话列表为空时，在侧栏展示「没有匹配的会话」（与聊天区 emptyPanel 分工）。
+    let refreshListEmpty () =
+        let q = if String.IsNullOrWhiteSpace searchBox.Text then "" else searchBox.Text.Trim()
+        let count =
+            match convList.ItemsSource with
+            | :? (ConvSummary array) as arr -> arr.Length
+            | _ -> convList.ItemCount
+        listEmptyHint.IsVisible <- not (String.IsNullOrEmpty q) && count = 0
+        // P1-1：搜索非空时显示「已筛选 N 条」（稳妥替代 ItemTemplate Run 高亮）
+        if String.IsNullOrEmpty q then
+            filteredCountLabel.IsVisible <- false
+            filteredCountLabel.Text <- ""
+        else
+            filteredCountLabel.Text <- sprintf "已筛选 %d 条" count
+            filteredCountLabel.IsVisible <- true
 
     /// 会话列表选中项与 activeConvId 双向对齐的单一入口：
     /// - 有激活会话时，选中其在 rawSummaries 中的位置（找不到则不动，避免误跳）
@@ -354,7 +501,14 @@ type MainView() as this =
         t.Start()
         genTimer <- Some t
 
-    let showGenChip (visible: bool) = genChip.IsVisible <- visible
+    let showGenChip (visible: bool) =
+        genChip.IsVisible <- visible
+        cancelButton.IsVisible <- visible
+        cancelButton.IsEnabled <- visible
+
+    let setConversationChrome (hasConversation: bool) =
+        forkButton.IsVisible <- hasConversation
+        settingsButton.IsVisible <- hasConversation
 
     let formatSize (n: int64) =
         if n < 1024L then sprintf "%d B" n
@@ -364,21 +518,21 @@ type MainView() as this =
     do
         this.Background <- Theme.bg
 
-        // 品牌标（左上角）：小标 + 名称 + 副名（节点式身份），右端 + 新建
-        let brandTile = createBrandTile 30.0 9.0
-        let appName = TextBlock(Text = "万象", FontSize = 15.5, FontWeight = FontWeight.SemiBold, Foreground = Theme.text, VerticalAlignment = VerticalAlignment.Center)
+        // 品牌标（左上角）：小标 + 名称，右端圆形新建
+        let brandTile = createBrandTile 28.0 8.0
+        brandTile.VerticalAlignment <- VerticalAlignment.Center
+        let appName = TextBlock(Text = "万象", FontSize = 15.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.text, VerticalAlignment = VerticalAlignment.Center)
         let headerSpacer = Border()
         let sidebarHeaderPanel = DockPanel()
         DockPanel.SetDock(brandTile, Dock.Left)
         DockPanel.SetDock(appName, Dock.Left)
         DockPanel.SetDock(newButton, Dock.Right)
-        // 用 8px 留白代替紧贴，避免小标文字
         sidebarHeaderPanel.Children.Add(brandTile)
-        sidebarHeaderPanel.Children.Add(Border(Width = 9.0))
+        sidebarHeaderPanel.Children.Add(Border(Width = Theme.space2))
         sidebarHeaderPanel.Children.Add(appName)
         sidebarHeaderPanel.Children.Add(newButton)
         sidebarHeaderPanel.Children.Add(headerSpacer)
-        let sidebarHeader = Border(Height = 56.0, Padding = Thickness(16.0, 0.0, 12.0, 0.0), BorderBrush = Theme.border, BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0), Child = sidebarHeaderPanel)
+        let sidebarHeader = Border(Height = Theme.barHeight, Padding = Thickness(Theme.space4, 0.0, Theme.space3, 0.0), BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0), Child = sidebarHeaderPanel)
 
         // 会话列表模板：两行（标题 + 预览）+ 右键菜单（重命名/删除，D15 桌面端会话管理）
         convList.ItemTemplate <-
@@ -386,9 +540,9 @@ type MainView() as this =
                 typeof<ConvSummary>,
                 fun (item: obj) (_: INameScope) ->
                     let c = item :?> ConvSummary
-                    let title = TextBlock(Text = c.Title, FontSize = 13.5, FontWeight = FontWeight.SemiBold, Foreground = Theme.text, TextTrimming = TextTrimming.CharacterEllipsis)
-                    let preview = TextBlock(Text = c.Preview, FontSize = 12.0, Foreground = Theme.muted, TextTrimming = TextTrimming.CharacterEllipsis)
-                    let panel = StackPanel(Spacing = 3.0)
+                    let title = TextBlock(Text = c.Title, FontSize = 13.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.text, TextTrimming = TextTrimming.CharacterEllipsis)
+                    let preview = TextBlock(Text = c.Preview, FontSize = 11.5, Foreground = Theme.muted, TextTrimming = TextTrimming.CharacterEllipsis)
+                    let panel = StackPanel(Spacing = 2.0)
                     panel.Children.Add(title) |> ignore
                     panel.Children.Add(preview) |> ignore
                     let renameItem = MenuItem(Header = "重命名")
@@ -402,9 +556,10 @@ type MainView() as this =
 
         // 会话列表条目容器：圆角、留白、选中态（与 PWA 视觉一致）
         let itemBase = Style(fun x -> x.OfType<ListBoxItem>())
-        itemBase.Setters.Add(Setter(ListBoxItem.PaddingProperty, Thickness(14.0, 10.0)))
-        itemBase.Setters.Add(Setter(ListBoxItem.MarginProperty, Thickness(10.0, 2.0)))
-        itemBase.Setters.Add(Setter(ListBoxItem.CornerRadiusProperty, CornerRadius(12.0)))
+        itemBase.Setters.Add(Setter(ListBoxItem.PaddingProperty, Thickness(10.0, 8.0)))
+        itemBase.Setters.Add(Setter(ListBoxItem.MarginProperty, Thickness(Theme.space2, 1.0)))
+        itemBase.Setters.Add(Setter(ListBoxItem.CornerRadiusProperty, CornerRadius(Theme.radiusMd)))
+        itemBase.Setters.Add(Setter(ListBoxItem.MinHeightProperty, 44.0))
         itemBase.Setters.Add(Setter(ListBoxItem.BackgroundProperty, Brushes.Transparent))
         convList.Styles.Add(itemBase)
         // 选中：背景染色 + 左侧 3px 品牌色描边（只画左边、其它边为 None，避免抖动）
@@ -422,14 +577,22 @@ type MainView() as this =
 
         // 侧栏（无硬分割线，靠底色与主画布区分）
         let sidebar = DockPanel(Background = Theme.sidebar)
-        let sidebarBorder = Border(Child = sidebar)
-        let listLabel = TextBlock(Text = "会话", FontSize = 10.5, FontWeight = FontWeight.SemiBold, Foreground = Theme.faint, Margin = Thickness(24.0, 14.0, 0.0, 6.0), LetterSpacing = 60.0)
-        let listPanel = StackPanel()
-        listPanel.Children.Add(searchBox) |> ignore
-        listPanel.Children.Add(listLabel) |> ignore
-        listPanel.Children.Add(convList) |> ignore
-        let listScroll = ScrollViewer(Content = listPanel, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled)
-        let footer = Border(Height = 56.0, BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 1.0, 0.0, 0.0), Padding = Thickness(20.0, 0.0))
+        let sidebarBorder = Border(Child = sidebar, BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 0.0, 1.0, 0.0))
+        // LetterSpacing 单位是像素；原先 60 会把「会话」拉开到几乎不可见
+        let listLabel = TextBlock(Text = "会话", FontSize = 11.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.faint, Margin = Thickness(Theme.space4, Theme.space2, 0.0, Theme.space1))
+        // P1-1：搜索/标题/计数固定在顶，ListBox 占剩余有界高度以启用虚拟化；空提示叠在列表上
+        let listChrome = DockPanel()
+        DockPanel.SetDock(searchBox, Dock.Top)
+        DockPanel.SetDock(listLabel, Dock.Top)
+        DockPanel.SetDock(filteredCountLabel, Dock.Top)
+        let listBody = Grid()
+        listBody.Children.Add(convList) |> ignore
+        listBody.Children.Add(listEmptyHint) |> ignore
+        listChrome.Children.Add(searchBox) |> ignore
+        listChrome.Children.Add(listLabel) |> ignore
+        listChrome.Children.Add(filteredCountLabel) |> ignore
+        listChrome.Children.Add(listBody) |> ignore
+        let footer = Border(Height = Theme.barHeight, BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 1.0, 0.0, 0.0), Padding = Thickness(Theme.space4, 0.0, Theme.space3, 0.0))
         let footerPanel = DockPanel()
         let footerSpacer = Border()
         DockPanel.SetDock(connDot, Dock.Left)
@@ -443,23 +606,35 @@ type MainView() as this =
         DockPanel.SetDock(footer, Dock.Bottom)
         sidebar.Children.Add(sidebarHeader)
         sidebar.Children.Add(footer)
-        sidebar.Children.Add(listScroll)
+        sidebar.Children.Add(listChrome)
 
-        // 聊天头部（透明背景，极细分隔）。标题左右加节奏：左侧头像 + 文本，右侧操作三件套
-        let chatHeader = Border(Height = 60.0, Background = Theme.bg, BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0), Padding = Thickness(24.0, 0.0))
-        let headerSpacer1 = Border(Width = 12.0)
+        // 聊天头部：内容与阅读列同宽，避免标题/操作与气泡错位
         let headerPanel = DockPanel()
         let headerFiller = Border()
         DockPanel.SetDock(genChip, Dock.Left)
         DockPanel.SetDock(cancelButton, Dock.Right)
         DockPanel.SetDock(forkButton, Dock.Right)
-        chatHeader.Child <- headerPanel
+        DockPanel.SetDock(settingsButton, Dock.Right)
         headerPanel.Children.Add(chatTitle)
-        headerPanel.Children.Add(headerSpacer1)
+        headerPanel.Children.Add(Border(Width = Theme.space2))
         headerPanel.Children.Add(genChip)
         headerPanel.Children.Add(cancelButton)
         headerPanel.Children.Add(forkButton)
-        headerPanel.Children.Add(headerFiller) // 占满剩余空间
+        headerPanel.Children.Add(settingsButton)
+        headerPanel.Children.Add(headerFiller)
+        let chatHeaderInner =
+            Border(
+                MaxWidth = Theme.readingWidth,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Child = headerPanel)
+        let chatHeader =
+            Border(
+                Height = Theme.barHeight,
+                Background = Theme.bg,
+                BorderBrush = Theme.borderSubtle,
+                BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0),
+                Padding = Thickness(Theme.space5, 0.0),
+                Child = chatHeaderInner)
 
         // 输入区（悬浮作曲器，与阅读列同宽居中）。送 Send/Stop 复用 sendButton 的样式与状态
         let inputBar = DockPanel()
@@ -470,30 +645,31 @@ type MainView() as this =
         inputBar.Children.Add(inputBox)
         let inputShell =
             Border(
-                Background = Theme.panel, BorderBrush = Theme.border, BorderThickness = Thickness(1.0),
-                CornerRadius = CornerRadius(22.0), Padding = Thickness(14.0, 5.0, 6.0, 5.0),
-                MaxWidth = 760.0, HorizontalAlignment = HorizontalAlignment.Stretch, Child = inputBar)
-        inputShell.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 6.0, Blur = 24.0, Spread = -4.0, Color = Color.Parse "#1A1B2129"))
-        // 焦点环：输入框获得焦点时，shell 描边换为品牌色，阴影染色——避免纯黑外发光
+                Background = Theme.panel, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0),
+                CornerRadius = CornerRadius(Theme.radiusXl), Padding = Thickness(Theme.space3, 4.0, 4.0, 4.0),
+                HorizontalAlignment = HorizontalAlignment.Stretch, Child = inputBar)
+        inputShell.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 4.0, Blur = 18.0, Spread = -4.0, Color = Color.Parse "#1A1B211F"))
         inputBox.GotFocus.Add(fun _ ->
             inputShell.BorderBrush <- Theme.primary
-            inputShell.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 6.0, Blur = 24.0, Spread = -2.0, Color = Color.Parse "#4D5C9238")))
+            inputShell.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 4.0, Blur = 18.0, Spread = -2.0, Color = Color.Parse "#4D5C9230")))
         inputBox.LostFocus.Add(fun _ ->
-            inputShell.BorderBrush <- Theme.border
-            inputShell.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 6.0, Blur = 24.0, Spread = -4.0, Color = Color.Parse "#1A1B2129")))
+            inputShell.BorderBrush <- Theme.outlineVariant
+            inputShell.BoxShadow <- BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 4.0, Blur = 18.0, Spread = -4.0, Color = Color.Parse "#1A1B211F")))
+        let inputColumn = StackPanel(Orientation = Orientation.Vertical, Spacing = Theme.space1, MaxWidth = Theme.readingWidth, HorizontalAlignment = HorizontalAlignment.Stretch)
+        inputColumn.Children.Add(inputShell) |> ignore
         let inputWrap =
             Border(
-                Background = Brushes.Transparent, Padding = Thickness(24.0, 10.0, 24.0, 22.0),
-                HorizontalAlignment = HorizontalAlignment.Stretch, Child = inputShell)
+                Background = Brushes.Transparent, Padding = Thickness(Theme.space5, Theme.space2, Theme.space5, Theme.space4),
+                HorizontalAlignment = HorizontalAlignment.Stretch, Child = inputColumn)
 
-        // 聊天区（消息居中阅读列，760px）
-        messagesPanel.MaxWidth <- 760.0
+        // 聊天区（消息居中阅读列）
+        messagesPanel.MaxWidth <- Theme.readingWidth
         messagesPanel.HorizontalAlignment <- HorizontalAlignment.Center
-        emptyPanel.MaxWidth <- 760.0
+        emptyPanel.MaxWidth <- Theme.readingWidth
         let chat = DockPanel()
         messagesHost.Children.Add(messagesPanel)
         messagesHost.Children.Add(emptyPanel)
-        scrollViewer.Padding <- Thickness(24.0, 24.0, 24.0, 12.0)
+        scrollViewer.Padding <- Thickness(Theme.space5, Theme.space4, Theme.space5, Theme.space2)
         DockPanel.SetDock(chatHeader, Dock.Top)
         DockPanel.SetDock(inputWrap, Dock.Bottom)
         chat.Children.Add(chatHeader)
@@ -502,7 +678,7 @@ type MainView() as this =
 
         // 左右分栏
         let split = Grid()
-        split.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(264.0)))
+        split.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(Theme.sidebarWidth)))
         split.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
         Grid.SetColumn(sidebarBorder, 0)
         Grid.SetColumn(chat, 1)
@@ -524,12 +700,16 @@ type MainView() as this =
                     rawSummaries
                     |> Array.filter (fun c -> c.Title.ToLowerInvariant().Contains q || c.Preview.ToLowerInvariant().Contains q)
             // 过滤可能把 activeConvId 项隐藏：保持头部仍指向原会话，选中态由 syncSelection 决定
-            syncSelection ())
-        newButton.Click.Add(fun _ ->
+            syncSelection ()
+            refreshListEmpty ())
+        let beginCreate () =
             this.CreateConversation()
             // 点击后把焦点交给输入框，避免按钮保留焦点时按 Space/Enter 误触发重复新建
-            inputBox.Focus() |> ignore)
+            inputBox.Focus() |> ignore
+        newButton.Click.Add(fun _ -> beginCreate ())
+        emptyCta.Click.Add(fun _ -> beginCreate ())
         forkButton.Click.Add(fun _ -> this.ForkConversation())
+        settingsButton.Click.Add(fun _ -> this.ShowSessionSettings())
         connectButton.Click.Add(fun _ -> this.ShowConnectDialog())
         convList.SelectionChanged.Add(fun _ ->
             match convList.SelectedItem with
@@ -545,7 +725,14 @@ type MainView() as this =
             | _ -> ())
         inputBox.KeyDown.Add(fun e ->
             if e.Key = Avalonia.Input.Key.Enter then
-                this.SendMessage())
+                let shift = e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Shift)
+                let ctrl = e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Control)
+                if shift then
+                    () // AcceptsReturn：Shift+Enter 换行
+                elif ctrl || e.KeyModifiers = Avalonia.Input.KeyModifiers.None then
+                    e.Handled <- true
+                    this.SendMessage()
+                    inputBox.Focus() |> ignore)
         // P1-2：滚动到顶部时请求更早历史（页边界为稳定 commitID）
         scrollViewer.ScrollChanged.Add(fun e ->
             if scrollViewer.Offset.Y <= 0.0 && e.ExtentDelta.Y <= 0.0 then
@@ -590,7 +777,7 @@ type MainView() as this =
     member private _.ShowConnectDialog() =
         let urlBox = TextBox(Text = CredentialStore.defaultServerUrl (), PlaceholderText = "服务器地址", CornerRadius = CornerRadius(10.0), Padding = Thickness(12.0, 9.0), FontSize = 13.0)
         let tokenBox = TextBox(PlaceholderText = "访问令牌（首次使用可请求配对）", CornerRadius = CornerRadius(10.0), Padding = Thickness(12.0, 9.0), FontSize = 13.0)
-        let pairCodeBox = TextBox(PlaceholderText = "6 位配对码", MaxLength = 6, CornerRadius = CornerRadius(10.0), Padding = Thickness(12.0, 9.0), FontSize = 14.0, HorizontalContentAlignment = HorizontalAlignment.Center, LetterSpacing = 240.0)
+        let pairCodeBox = TextBox(PlaceholderText = "6 位配对码", MaxLength = 6, CornerRadius = CornerRadius(10.0), Padding = Thickness(12.0, 9.0), FontSize = 14.0, HorizontalContentAlignment = HorizontalAlignment.Center, LetterSpacing = 8.0)
         pairCodeBox.IsVisible <- false
         let pairButton = Button(Content = "首次使用？请求配对", Margin = Thickness(0.0, 4.0, 0.0, 0.0), CornerRadius = CornerRadius(10.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), Padding = Thickness(12.0, 8.0), FontSize = 12.0, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center)
         let pairSubmit = Button(Content = "提交配对码", Margin = Thickness(0.0, 4.0, 0.0, 0.0), CornerRadius = CornerRadius(10.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), Padding = Thickness(12.0, 8.0), FontSize = 12.0, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center)
@@ -683,7 +870,7 @@ type MainView() as this =
             | None -> ()
         | AuthRejected d ->
             authenticated <- false
-            setStatus ("认证失败: " + d.reason) false
+            setStatus (sprintf "认证失败：%s · 请重新连接或重新配对" d.reason) false
             connectButton.IsEnabled <- true
             lastToken <- None
         | PairingStarted _ ->
@@ -693,7 +880,10 @@ type MainView() as this =
             lastToken <- Some d.token
             client.SendAsync(AuthPresent {| token = d.token |}) |> ignore
         | PairingFailed d ->
-            setStatus ("配对失败: " + d.reason) false
+            if d.frozen then
+                setStatus (sprintf "配对已冻结 %d 分钟：%s · 请稍后重试" d.freezeMinutes d.reason) false
+            else
+                setStatus (sprintf "配对失败：%s · 请核对配对码后重试" d.reason) false
         | ConversationListSnapshot d ->
             state.Handle ev
             rawSummaries <-
@@ -718,6 +908,11 @@ type MainView() as this =
                                        else ""
                                    yield { Id = g; Title = title; Preview = lastMsg; Running = (runtime = "generating") }
                                | _ -> () |]
+            // P1-1：生成中会话置顶，其余保持服务端更新时间倒序
+            rawSummaries <-
+                Array.append
+                    (rawSummaries |> Array.filter (fun c -> c.Running))
+                    (rawSummaries |> Array.filter (fun c -> not c.Running))
             let q = if String.IsNullOrWhiteSpace searchBox.Text then "" else searchBox.Text.Trim().ToLowerInvariant()
             if String.IsNullOrEmpty q then
                 convList.ItemsSource <- rawSummaries
@@ -725,11 +920,15 @@ type MainView() as this =
                 convList.ItemsSource <- rawSummaries |> Array.filter (fun c -> c.Title.ToLowerInvariant().Contains q || c.Preview.ToLowerInvariant().Contains q)
             state.AdvanceCursor()
             syncSelection ()
+            refreshListEmpty ()
+            // 列表变空或尚无激活会话时刷新空态文案（无会话 vs 过滤无匹配）
+            if activeConvId.IsNone then this.RenderMessages()
         | ConversationSnapshot d ->
             state.Handle ev
             state.AdvanceCursor()
             activeConvId <- Some d.conversationId
             chatTitle.Text <- d.title
+            setConversationChrome true
             chatTitle.Foreground <- Theme.text
             pageLoading <- false
             this.RenderMessages()
@@ -827,9 +1026,14 @@ type MainView() as this =
         | CommandCommitted _ ->
             ()
         | CommandRejected d ->
-            setStatus (sprintf "命令被拒绝: %s (%s)" d.message d.code) (authenticated)
+            match d.requiredCommitId with
+            | Some _ ->
+                // 决策 36：stale-projection — 游标追赶已由 AuthorityCatchUp 驱动，提示用户重试即可
+                setStatus "数据不是最新，已自动追赶请重试" (authenticated)
+            | None ->
+                setStatus (sprintf "命令被拒绝：%s · 请重试" d.message) (authenticated)
         | ServerError d ->
-            setStatus d.message (authenticated)
+            setStatus (sprintf "服务器错误：%s · 请稍后重试" d.message) (authenticated)
             // P2-3/Q179：附件缺失标记（blob 被删时下载失败）
             if d.message.StartsWith "attachment " && d.message.Contains "not found" then
                 let sha = d.message.Substring("attachment ".Length, 64)
@@ -837,7 +1041,7 @@ type MainView() as this =
                 this.RenderMessages()
         | _ -> ()
 
-    member private _.AppendMessage(mv: MessageView, refs: AttachmentRef list, streaming: bool) =
+    member private this.AppendMessage(mv: MessageView, refs: AttachmentRef list, streaming: bool, ?commitId: uint64) =
         let isUser = mv.role = "user"
         let isTool = mv.role = "tool"
         // 用户：唯一保留的“气泡”，收窄柔和；助手/工具：无边框融入画布（避免大方块感）
@@ -863,7 +1067,7 @@ type MainView() as this =
             // 自定义折叠开关（轻量链接样本——Fluent 默认 Expander 带硬边框、与无边框基调不符）
             let thinkBody = TextBlock(Text = mv.reasoning, TextWrapping = TextWrapping.Wrap, FontSize = 12.5, Foreground = Theme.muted, LineHeight = 19.0, IsVisible = streaming, Margin = Thickness(0.0, 6.0, 0.0, 0.0))
             let chevron = TextBlock(Text = (if streaming then "▾" else "▸"), FontSize = 10.0, Foreground = Theme.primary, VerticalAlignment = VerticalAlignment.Center, Margin = Thickness(0.0, 0.0, 6.0, 0.0))
-            let thinkLabel = TextBlock(Text = "思考过程", FontSize = 12.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.muted, LetterSpacing = 20.0)
+            let thinkLabel = TextBlock(Text = "思考过程", FontSize = 12.0, FontWeight = FontWeight.SemiBold, Foreground = Theme.muted, LetterSpacing = 0.4)
             let toggleRow = StackPanel(Orientation = Orientation.Horizontal, Cursor = Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand))
             toggleRow.Children.Add(chevron) |> ignore
             toggleRow.Children.Add(thinkLabel) |> ignore
@@ -896,8 +1100,37 @@ type MainView() as this =
                 let segments = MarkdownParser.parse mv.text
                 for seg in segments do
                     match seg with
-                    | NormalText text ->
-                        panel.Children.Add(TextBlock(Text = text, TextWrapping = TextWrapping.Wrap, Foreground = fg, FontSize = 14.5, LineHeight = 24.0))
+                    | NormalText spans ->
+                        let tb = SelectableTextBlock(TextWrapping = TextWrapping.Wrap, Foreground = fg, FontSize = 14.5, LineHeight = 24.0)
+                        for span in spans do
+                            match span with
+                            | TextSpan(t, bold, italic, code) ->
+                                let run = Run(t)
+                                if bold then run.FontWeight <- FontWeight.Bold
+                                if italic then run.FontStyle <- FontStyle.Italic
+                                if code then
+                                    run.FontFamily <- FontFamily("ui-monospace, SFMono-Regular, Menlo, Consolas, monospace")
+                                    run.Foreground <- SolidColorBrush(Color.Parse "#57606A")
+                                tb.Inlines.Add(run) |> ignore
+                            | LinkSpan(label, url) ->
+                                let linkText =
+                                    TextBlock(
+                                        Text = label,
+                                        Foreground = Theme.primary,
+                                        TextDecorations = TextDecorations.Underline,
+                                        FontSize = 14.5,
+                                        Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+                                        VerticalAlignment = VerticalAlignment.Center)
+                                linkText.PointerPressed.Add(fun ev ->
+                                    ev.Handled <- true
+                                    try
+                                        Process.Start(ProcessStartInfo(FileName = url, UseShellExecute = true)) |> ignore
+                                    with ex ->
+                                        setStatus (sprintf "无法打开链接: %s" ex.Message) authenticated)
+                                tb.Inlines.Add(InlineUIContainer(linkText)) |> ignore
+                            | BreakSpan ->
+                                tb.Inlines.Add(LineBreak()) |> ignore
+                        panel.Children.Add(tb)
                     | CodeBlock(lang, code) ->
                         let card = Border(Background = SolidColorBrush(Color.Parse "#0D1117"), BorderBrush = SolidColorBrush(Color.Parse "#21262D"), BorderThickness = Thickness(1.0), CornerRadius = CornerRadius(12.0), Margin = Thickness(0.0, 8.0), Padding = Thickness(0.0))
                         let cardStack = StackPanel(Spacing = 0.0)
@@ -905,7 +1138,7 @@ type MainView() as this =
                         let header = Border(Background = SolidColorBrush(Color.Parse "#161B22"), BorderBrush = SolidColorBrush(Color.Parse "#21262D"), BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0), Padding = Thickness(14.0, 8.0), Child = headerDock)
 
                         // 语言标签：纯文本 + 字符间距，配合右上的复制按钮（去掉撞色的 mac-dot，让整体走同一套调色）
-                        let langLabel = TextBlock(Text = lang.ToLowerInvariant(), FontSize = 11.0, Foreground = SolidColorBrush(Color.Parse "#8B949E"), FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, LetterSpacing = 40.0)
+                        let langLabel = TextBlock(Text = lang.ToLowerInvariant(), FontSize = 11.0, Foreground = SolidColorBrush(Color.Parse "#8B949E"), FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, LetterSpacing = 0.5)
                         let copyBtn = Button(Content = "复制", FontSize = 11.0, Padding = Thickness(10.0, 3.0), CornerRadius = CornerRadius(6.0), Background = SolidColorBrush(Color.Parse "#21262D"), Foreground = SolidColorBrush(Color.Parse "#C9D1D9"), BorderThickness = Thickness(0.0), VerticalAlignment = VerticalAlignment.Center)
                         copyBtn.Click.Add(fun _ ->
                             try
@@ -939,41 +1172,102 @@ type MainView() as this =
                 link.Click.Add(fun _ -> this.DownloadAttachment r.sha256)
                 panel.Children.Add link
         bubble.Child <- panel
-        if isTool then
-            messagesPanel.Children.Add(bubble)
+
+        // P0-2：消息级悬浮工具条（复制 / 复制代码 / 编辑并 fork）；悬停才显
+        let makeGhostBtn (label: string) =
+            let b =
+                Button(
+                    Content = label, Height = 22.0, FontSize = 11.0, Padding = Thickness(10.0, 0.0),
+                    CornerRadius = CornerRadius(999.0), Background = Brushes.Transparent, Foreground = Theme.muted,
+                    BorderThickness = Thickness(0.0), VerticalAlignment = VerticalAlignment.Center,
+                    VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center)
+            b.Classes.Add("ghost")
+            b
+        let bindCopyFeedback (btn: Button) (text: string) (idleLabel: string) =
+            btn.Click.Add(fun _ ->
+                try
+                    (topLevel ()).Clipboard.SetTextAsync(text) |> ignore
+                    btn.Content <- "已复制✓"
+                    async {
+                        do! Async.Sleep 1600
+                        Dispatcher.UIThread.Post(fun () -> btn.Content <- idleLabel)
+                    } |> Async.Start
+                with _ -> ())
+        let toolbar = StackPanel(Orientation = Orientation.Horizontal, Spacing = 2.0, IsVisible = false, Margin = Thickness(0.0, 0.0, 0.0, 2.0))
+        if isUser then
+            toolbar.HorizontalAlignment <- HorizontalAlignment.Right
+            toolbar.Margin <- Thickness(0.0, 0.0, 40.0, 2.0) // 与头像对齐，贴气泡右缘
+        elif isTool then
+            toolbar.HorizontalAlignment <- HorizontalAlignment.Center
         else
-            // 头像行：助手用品牌标，用户用圆形文字徽标（与 PWA 一致）
-            let avatar: Control =
-                if isUser then
-                    let b = Border(Width = 30.0, Height = 30.0, CornerRadius = CornerRadius(15.0), Background = Theme.primary, BorderBrush = Brushes.Transparent, BorderThickness = Thickness(0.0))
-                    b.Child <- TextBlock(Text = "你", FontSize = 11.5, FontWeight = FontWeight.SemiBold, Foreground = Theme.onPrimary, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
-                    b :> Control
-                else
-                    createBrandTile 30.0 8.0 :> Control
-            avatar.VerticalAlignment <- VerticalAlignment.Top
-            avatar.Margin <- Thickness(0.0, 2.0, 0.0, 0.0)
-            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = 10.0)
-            if isUser then
-                row.HorizontalAlignment <- HorizontalAlignment.Right
-                row.Children.Add(bubble) |> ignore
-                row.Children.Add(avatar) |> ignore
+            toolbar.HorizontalAlignment <- HorizontalAlignment.Left
+            toolbar.Margin <- Thickness(40.0, 0.0, 0.0, 2.0) // 跳过头像列，贴气泡左缘
+        let copyAllBtn = makeGhostBtn "复制"
+        bindCopyFeedback copyAllBtn (if isNull mv.text then "" else mv.text) "复制"
+        toolbar.Children.Add(copyAllBtn) |> ignore
+        if not isUser && not isTool && not (String.IsNullOrEmpty mv.text) && mv.text.Contains("```") then
+            let codeOnly =
+                MarkdownParser.parse mv.text
+                |> List.choose (function CodeBlock(_, code) -> Some code | _ -> None)
+                |> fun parts -> if List.isEmpty parts then mv.text else String.Join("\n\n", parts)
+            let copyCodeBtn = makeGhostBtn "复制代码"
+            bindCopyFeedback copyCodeBtn codeOnly "复制代码"
+            toolbar.Children.Add(copyCodeBtn) |> ignore
+        if isUser && not streaming then
+            let forkHereBtn = makeGhostBtn "编辑并 fork"
+            forkHereBtn.Click.Add(fun _ -> this.ForkConversation(?commitId = commitId, editedSeed = mv))
+            toolbar.Children.Add(forkHereBtn) |> ignore
+
+        let messageBody: Control =
+            if isTool then
+                bubble :> Control
             else
-                row.HorizontalAlignment <- HorizontalAlignment.Left
-                row.Children.Add(avatar) |> ignore
-                row.Children.Add(bubble) |> ignore
-            messagesPanel.Children.Add(row)
+                // 头像行：助手用品牌标，用户用圆形文字徽标（与 PWA 一致）
+                let avatar: Control =
+                    if isUser then
+                        let b = Border(Width = 30.0, Height = 30.0, CornerRadius = CornerRadius(15.0), Background = Theme.primary, BorderBrush = Brushes.Transparent, BorderThickness = Thickness(0.0))
+                        b.Child <- TextBlock(Text = "你", FontSize = 11.5, FontWeight = FontWeight.SemiBold, Foreground = Theme.onPrimary, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
+                        b :> Control
+                    else
+                        createBrandTile 30.0 8.0 :> Control
+                avatar.VerticalAlignment <- VerticalAlignment.Top
+                avatar.Margin <- Thickness(0.0, 2.0, 0.0, 0.0)
+                let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = 10.0)
+                if isUser then
+                    row.HorizontalAlignment <- HorizontalAlignment.Right
+                    row.Children.Add(bubble) |> ignore
+                    row.Children.Add(avatar) |> ignore
+                else
+                    row.HorizontalAlignment <- HorizontalAlignment.Left
+                    row.Children.Add(avatar) |> ignore
+                    row.Children.Add(bubble) |> ignore
+                row :> Control
+
+        let host = StackPanel(Spacing = 0.0)
+        if isUser then host.HorizontalAlignment <- HorizontalAlignment.Right
+        elif isTool then host.HorizontalAlignment <- HorizontalAlignment.Center
+        else host.HorizontalAlignment <- HorizontalAlignment.Stretch
+        host.Children.Add(toolbar) |> ignore
+        host.Children.Add(messageBody) |> ignore
+        host.PointerEntered.Add(fun _ -> toolbar.IsVisible <- true)
+        host.PointerExited.Add(fun _ -> toolbar.IsVisible <- false)
+        messagesPanel.Children.Add(host)
 
     /// 完整重绘消息面板（快照 / 新消息 / 流式增量 / 历史分页共用）。
     member private this.RenderMessages() =
         messagesPanel.Children.Clear()
         emptyPanel.IsVisible <- false
+        emptyCta.IsVisible <- false
         match activeConvId with
         | None ->
-            emptyHint.Text <- "选择左侧会话，或点击 ＋ 新建一个"
+            emptyHint.Text <- "还没有会话，点击 新建 开始"
+            emptyCta.IsVisible <- true
             emptyPanel.IsVisible <- true
         | Some convId ->
             match state.Conversations.TryFind convId with
-            | None -> ()
+            | None ->
+                // 会话切换等待快照：标题已是「加载中…」，此处保持空白阅读区
+                ()
             | Some view ->
                 if view.messages.Count = 0 && view.runtimeState <> "generating" then
                     emptyHint.Text <- "发送第一条消息，开始对话"
@@ -987,7 +1281,19 @@ type MainView() as this =
                             if node.AsObject().TryGetPropertyValue("payload", &p) && not (isNull p) then p
                             else node
                         | node -> node
-                    this.AppendMessage(MessageView.ofJson payload, AttachmentRef.extract payload, false)
+                    let cid =
+                        match m with
+                        | :? JsonObject as o ->
+                            let mutable c: JsonNode = null
+                            if o.TryGetPropertyValue("commitId", &c) && not (isNull c) && c :? JsonValue then
+                                match (c :?> JsonValue).TryGetValue<uint64>() with
+                                | true, v -> Some v
+                                | _ -> None
+                            else None
+                        | _ -> None
+                    match cid with
+                    | Some id -> this.AppendMessage(MessageView.ofJson payload, AttachmentRef.extract payload, false, commitId = id)
+                    | None -> this.AppendMessage(MessageView.ofJson payload, AttachmentRef.extract payload, false)
                 // P1-4：流式增量（临时展示）
                 if view.runtimeState = "generating" && streamText.Length > 0 then
                     this.AppendMessage({ role = "assistant"; text = streamText.ToString(); reasoning = streamReasoning.ToString() }, [], true)
@@ -1114,6 +1420,7 @@ type MainView() as this =
             | None -> ()
             | Some convId ->
                 inputBox.Text <- ""
+                inputBox.Focus() |> ignore
                 let invocationId = Guid.CreateVersion7()
                 let msg = JsonObject()
                 msg["role"] <- "user"
@@ -1195,7 +1502,13 @@ type MainView() as this =
                 client.SendCommandAsync(DeleteConversation {| invocationId = Guid.CreateVersion7(); conversationId = c.Id |}) |> ignore
                 if activeConvId = Some c.Id then
                     activeConvId <- None
+                    chatTitle.Text <- "选择一个会话"
+                    chatTitle.Foreground <- Theme.faint
+                    stopGenTimer ()
+                    showGenChip false
+                    setConversationChrome false
                     syncSelection ()
+                    this.RenderMessages()
                 closeDialog ())
             let cancelBtn = Button(Content = "取消", HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 8.0, 8.0, 0.0))
             cancelBtn.Click.Add(fun _ -> closeDialog ())
@@ -1206,8 +1519,122 @@ type MainView() as this =
             panel.Children.Add(cancelBtn) |> ignore
             showDialog panel 400.0
 
+    /// P0-4：会话设置最小入口——读写 SessionConfig，落 UpdateConversationConfig（不改 TOML）。
+    member private this.ShowSessionSettings() =
+        match activeConvId with
+        | None -> setStatus "请先选择会话" (authenticated)
+        | Some convId ->
+            let current =
+                match state.Conversations.TryFind convId with
+                | Some view -> view.config
+                | None -> SessionConfig.empty
+            let labeledBox (label: string) (box: TextBox) =
+                let col = StackPanel(Spacing = 4.0)
+                col.Children.Add(TextBlock(Text = label, FontSize = 12.0, Foreground = Theme.muted)) |> ignore
+                col.Children.Add(box) |> ignore
+                col
+            let fieldBox (text: string) (placeholder: string) =
+                TextBox(
+                    Text = text, PlaceholderText = placeholder, CornerRadius = CornerRadius(10.0),
+                    Padding = Thickness(12.0, 9.0), FontSize = 13.0, BorderBrush = Theme.border, BorderThickness = Thickness(1.0))
+            let providerBox = fieldBox current.provider "如 openai / ollama"
+            let modelBox = fieldBox current.model "模型名称"
+            let temperatureBox =
+                fieldBox
+                    (match current.temperature with Some t -> t.ToString("0.##") | None -> "")
+                    "0–2，空为不设"
+            let instructionsBox =
+                TextBox(
+                    Text = (current.instructions |> Option.defaultValue ""),
+                    PlaceholderText = "系统指令（可选）",
+                    AcceptsReturn = true,
+                    TextWrapping = TextWrapping.Wrap,
+                    MinHeight = 80.0,
+                    CornerRadius = CornerRadius(10.0),
+                    Padding = Thickness(12.0, 9.0),
+                    FontSize = 13.0,
+                    BorderBrush = Theme.border,
+                    BorderThickness = Thickness(1.0))
+            let maxTokensBox =
+                fieldBox
+                    (match current.maxTokens with Some m -> string m | None -> "")
+                    "最大 token（可选）"
+            let cancelBtn =
+                Button(
+                    Content = "取消", CornerRadius = CornerRadius(10.0), Background = Theme.secondaryContainer,
+                    Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0),
+                    Padding = Thickness(14.0, 8.0), Margin = Thickness(0.0, 0.0, 8.0, 0.0))
+            let okBtn =
+                Button(
+                    Content = "确定", CornerRadius = CornerRadius(10.0), Background = Theme.primary,
+                    Foreground = Theme.onPrimary, BorderThickness = Thickness(0.0), Padding = Thickness(14.0, 8.0))
+            let btnRow = StackPanel(Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = Thickness(0.0, 4.0, 0.0, 0.0))
+            btnRow.Children.Add(cancelBtn) |> ignore
+            btnRow.Children.Add(okBtn) |> ignore
+            let panel = StackPanel(Spacing = 10.0, Width = 420.0)
+            panel.Children.Add(TextBlock(Text = "会话设置", FontSize = 15.0, FontWeight = FontWeight.Bold, Foreground = Theme.text)) |> ignore
+            panel.Children.Add(TextBlock(Text = "修改本会话的模型与生成参数，不改 TOML。", FontSize = 12.5, Foreground = Theme.muted, TextWrapping = TextWrapping.Wrap)) |> ignore
+            panel.Children.Add(labeledBox "Provider" providerBox) |> ignore
+            panel.Children.Add(labeledBox "Model" modelBox) |> ignore
+            panel.Children.Add(labeledBox "Temperature" temperatureBox) |> ignore
+            panel.Children.Add(labeledBox "System Instructions" instructionsBox) |> ignore
+            panel.Children.Add(labeledBox "MaxTokens" maxTokensBox) |> ignore
+            panel.Children.Add(btnRow) |> ignore
+            cancelBtn.Click.Add(fun _ -> closeDialog ())
+            okBtn.Click.Add(fun _ ->
+                let provider = if isNull providerBox.Text then "" else providerBox.Text.Trim()
+                let model = if isNull modelBox.Text then "" else modelBox.Text.Trim()
+                let instructions =
+                    let s = if isNull instructionsBox.Text then "" else instructionsBox.Text
+                    if String.IsNullOrWhiteSpace s then None else Some s
+                let temperature =
+                    let s = if isNull temperatureBox.Text then "" else temperatureBox.Text.Trim()
+                    if String.IsNullOrWhiteSpace s then None
+                    else
+                        match Double.TryParse(s, Globalization.NumberStyles.Float, Globalization.CultureInfo.InvariantCulture) with
+                        | true, t -> Some t
+                        | _ ->
+                            match Double.TryParse(s) with
+                            | true, t -> Some t
+                            | _ -> None
+                let maxTokens =
+                    let s = if isNull maxTokensBox.Text then "" else maxTokensBox.Text.Trim()
+                    if String.IsNullOrWhiteSpace s then None
+                    else
+                        match Int32.TryParse(s) with
+                        | true, m -> Some m
+                        | _ -> None
+                // 保留 tools/extraJson：设置弹窗只改可见字段，避免无意清空
+                let cfg =
+                    { provider = provider
+                      model = model
+                      instructions = instructions
+                      tools = current.tools
+                      temperature = temperature
+                      maxTokens = maxTokens
+                      extraJson = current.extraJson }
+                if not (SessionConfig.isValid cfg) then
+                    setStatus "会话配置无效：需填写 Provider/Model；Temperature 0–2；MaxTokens > 0" (authenticated)
+                else
+                    client.SendCommandAsync(
+                        UpdateConversationConfig
+                            {| invocationId = Guid.CreateVersion7()
+                               conversationId = convId
+                               config = cfg |})
+                    |> ignore
+                    // 本地立即反映，便于再次打开设置；重新 observe 后仍以服务端快照为准
+                    match state.Conversations.TryFind convId with
+                    | Some view -> view.config <- cfg
+                    | None -> ()
+                    closeDialog ()
+                    setStatus "会话配置已更新" (authenticated)
+                    // 重新 observe：验收「投影更新后重新 observe 可见生效」
+                    client.SendAsync(ObserveConversation {| conversationId = convId |}) |> ignore)
+            showDialog panel 480.0
+            Dispatcher.UIThread.Post(fun () -> providerBox.Focus() |> ignore)
+
     /// 决策 74-77：编辑最后一条消息并 fork 新会话。
-    member private this.ForkConversation() =
+    member private this.ForkConversation(?commitId: uint64, ?editedSeed: MessageView) =
         match activeConvId with
         | None -> setStatus "当前没有可 fork 的会话" (authenticated)
         | Some convId ->
@@ -1225,23 +1652,28 @@ type MainView() as this =
                             if node.AsObject().TryGetPropertyValue("payload", &p) && not (isNull p) then p
                             else node
                         | node -> node
-                    let mutable commitId = 0UL
-                    match last with
-                    | :? JsonObject as o ->
-                        let mutable c: JsonNode = null
-                        if o.TryGetPropertyValue("commitId", &c) && not (isNull c) then
-                            match c.GetValueKind() with
-                            | JsonValueKind.Number ->
-                                match c :? JsonValue with
-                                | true ->
-                                    match (c :?> JsonValue).TryGetValue<uint64>() with
-                                    | true, v -> commitId <- v
+                    let resolvedCommitId =
+                        match commitId with
+                        | Some v -> v
+                        | None ->
+                            let mutable cid = 0UL
+                            match last with
+                            | :? JsonObject as o ->
+                                let mutable c: JsonNode = null
+                                if o.TryGetPropertyValue("commitId", &c) && not (isNull c) then
+                                    match c.GetValueKind() with
+                                    | JsonValueKind.Number ->
+                                        match c :? JsonValue with
+                                        | true ->
+                                            match (c :?> JsonValue).TryGetValue<uint64>() with
+                                            | true, v -> cid <- v
+                                            | _ -> ()
+                                        | _ -> ()
                                     | _ -> ()
-                                | _ -> ()
+                                else ()
                             | _ -> ()
-                        else ()
-                    | _ -> ()
-                    let mv = MessageView.ofJson payload
+                            cid
+                    let mv = match editedSeed with Some seed -> seed | None -> MessageView.ofJson payload
                     let editBox = TextBox(Text = mv.text, AcceptsReturn = true, MinHeight = 120.0, TextWrapping = TextWrapping.Wrap, CornerRadius = CornerRadius(10.0), Padding = Thickness(10.0, 8.0))
                     let cancelBtn = Button(Content = "取消", CornerRadius = CornerRadius(10.0), Background = Theme.secondaryContainer, Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0), Padding = Thickness(14.0, 8.0), Margin = Thickness(0.0, 0.0, 8.0, 0.0))
                     let okBtn = Button(Content = "fork", CornerRadius = CornerRadius(10.0), Background = Theme.primary, Foreground = Theme.onPrimary, BorderThickness = Thickness(0.0), Padding = Thickness(14.0, 8.0))
@@ -1267,7 +1699,7 @@ type MainView() as this =
                                     let mutable c: JsonNode = null
                                     if o.TryGetPropertyValue("commitId", &c) && not (isNull c) && c :? JsonValue then
                                         match (c :?> JsonValue).TryGetValue<uint64>() with
-                                        | true, v when v < commitId && v > prev -> prev <- v
+                                        | true, v when v < resolvedCommitId && v > prev -> prev <- v
                                         | _ -> ()
                                 | _ -> ()
                             if prev > 0UL then Some prev else None
@@ -1297,6 +1729,22 @@ type MainView() as this =
                     showDialog panel 480.0
 
     member private this.OpenConversation(id: Guid) =
+        // 会话切换：标题弱字「加载中…」；若目标会话正在生成则保持 genChip 生成态
+        if activeConvId <> Some id then
+            activeConvId <- Some id
+            chatTitle.Text <- "加载中…"
+            chatTitle.Foreground <- Theme.faint
+            setConversationChrome true
+            streamText.Clear() |> ignore
+            streamReasoning.Clear() |> ignore
+            match rawSummaries |> Array.tryFind (fun c -> c.Id = id) with
+            | Some c when c.Running ->
+                showGenChip true
+                startGenTimer ()
+            | _ ->
+                stopGenTimer ()
+                showGenChip false
+            this.RenderMessages()
         client.SendAsync(ObserveConversation {| conversationId = id |}) |> ignore
 
 /// 桌面窗口壳（决策 48：桌面入口是 Window，UI 主体在 MainView；Q195 窗口尺寸偏好是本机客户端偏好）。
