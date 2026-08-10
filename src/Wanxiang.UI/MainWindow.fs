@@ -21,6 +21,7 @@ open Avalonia.Controls.Shapes
 open Avalonia.Input
 open Avalonia.Input.Platform
 open Avalonia.Media.Imaging
+open Avalonia.Platform
 open Avalonia.Styling
 open Avalonia.Threading
 open Wanxiang.Client
@@ -417,20 +418,24 @@ type MainView() as this =
 
     // ---- 视觉辅助 ----
     let tryLoadLogo () : Bitmap option =
+        // PWA/browser-wasm 无宿主文件系统：优先 avares 内嵌 logo（与 splash / manifest 同源）
         try
-            let candidates = [
-                Path.Combine(AppContext.BaseDirectory, "logo.png")
-                Path.Combine(AppContext.BaseDirectory, "pwa", "logo.png")
-                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "logo.png")
-                Path.Combine(Environment.CurrentDirectory, "logo.png")
-                let home = match Environment.GetEnvironmentVariable "WANXIANG_HOME" with s when not (String.IsNullOrWhiteSpace s) -> s | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".config", "wanxiang")
-                Path.Combine(home, "logo.png")
-            ]
-            candidates
-            |> List.map Path.GetFullPath
-            |> List.tryFind File.Exists
-            |> Option.map (fun path -> new Bitmap(path))
-        with _ -> None
+            use stream = AssetLoader.Open(Uri("avares://Wanxiang.UI/Assets/logo.png"))
+            Some(new Bitmap(stream))
+        with _ ->
+            try
+                let candidates = [
+                    Path.Combine(AppContext.BaseDirectory, "logo.png")
+                    Path.Combine(AppContext.BaseDirectory, "pwa", "logo.png")
+                    Path.Combine(Environment.CurrentDirectory, "logo.png")
+                    let home = match Environment.GetEnvironmentVariable "WANXIANG_HOME" with s when not (String.IsNullOrWhiteSpace s) -> s | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".config", "wanxiang")
+                    Path.Combine(home, "logo.png")
+                ]
+                candidates
+                |> List.map Path.GetFullPath
+                |> List.tryFind File.Exists
+                |> Option.map (fun path -> new Bitmap(path))
+            with _ -> None
 
     let logoBitmap = tryLoadLogo ()
 
@@ -445,8 +450,10 @@ type MainView() as this =
             border.Child <- txt
         border
 
-    // 空状态：品牌标 + 标题 + 提示（与 PWA 空状态一致）
-    let emptyPanel = StackPanel(Spacing = Theme.space3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsVisible = false)
+    // 空状态：品牌标 + 标题 + 提示；emptyOverlay 在聊天可视高度内垂直居中
+    let emptyPanel = StackPanel(Spacing = Theme.space3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center)
+    let emptyOverlay = Grid(HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, IsVisible = false, Background = Brushes.Transparent)
+    do emptyOverlay.Children.Add(emptyPanel)
     do
         let emptyLogo = createBrandTile 40.0 Theme.radiusMd
         emptyLogo.HorizontalAlignment <- HorizontalAlignment.Center
@@ -687,19 +694,21 @@ type MainView() as this =
                 Background = Brushes.Transparent, Padding = Thickness(Theme.space5, Theme.space2, Theme.space5, Theme.space4),
                 HorizontalAlignment = HorizontalAlignment.Stretch, Child = inputColumn)
 
-        // 聊天区（消息居中阅读列）
+        // 聊天区（消息居中阅读列；空状态 overlay 填满中间可视区）
         messagesPanel.MaxWidth <- Theme.readingWidth
         messagesPanel.HorizontalAlignment <- HorizontalAlignment.Center
         emptyPanel.MaxWidth <- Theme.readingWidth
         let chat = DockPanel()
         messagesHost.Children.Add(messagesPanel)
-        messagesHost.Children.Add(emptyPanel)
         scrollViewer.Padding <- Thickness(Theme.space5, Theme.space4, Theme.space5, Theme.space2)
+        let chatBody = Grid()
+        chatBody.Children.Add(scrollViewer)
+        chatBody.Children.Add(emptyOverlay)
         DockPanel.SetDock(chatHeader, Dock.Top)
         DockPanel.SetDock(inputWrap, Dock.Bottom)
         chat.Children.Add(chatHeader)
         chat.Children.Add(inputWrap)
-        chat.Children.Add(scrollViewer)
+        chat.Children.Add(chatBody)
 
         // 左右分栏
         let split = Grid()
@@ -1281,13 +1290,13 @@ type MainView() as this =
     /// 完整重绘消息面板（快照 / 新消息 / 流式增量 / 历史分页共用）。
     member private this.RenderMessages() =
         messagesPanel.Children.Clear()
-        emptyPanel.IsVisible <- false
+        emptyOverlay.IsVisible <- false
         emptyCta.IsVisible <- false
         match activeConvId with
         | None ->
             emptyHint.Text <- "从侧栏新建，或点下方开始"
             emptyCta.IsVisible <- true
-            emptyPanel.IsVisible <- true
+            emptyOverlay.IsVisible <- true
         | Some convId ->
             match state.Conversations.TryFind convId with
             | None ->
@@ -1296,7 +1305,7 @@ type MainView() as this =
             | Some view ->
                 if view.messages.Count = 0 && view.runtimeState <> "generating" then
                     emptyHint.Text <- "写一条消息开始"
-                    emptyPanel.IsVisible <- true
+                    emptyOverlay.IsVisible <- true
                 for m in view.messages do
                     // 消息结构：{ commitId, payload }（决策 79）
                     let payload =
@@ -1586,8 +1595,7 @@ type MainView() as this =
                     "最大 token（可选）"
             let cancelBtn =
                 Button(
-                    Content = "取消", CornerRadius = CornerRadius(10.0), Background = Theme.secondaryContainer,
-                    Foreground = Theme.onSecondaryContainer, BorderThickness = Thickness(0.0),
+                    Content = "取消", CornerRadius = CornerRadius(Theme.radiusSm), Background = Theme.panel, Foreground = Theme.text, BorderBrush = Theme.outlineVariant, BorderThickness = Thickness(1.0),
                     Padding = Thickness(14.0, 8.0), Margin = Thickness(0.0, 0.0, 8.0, 0.0))
             let okBtn =
                 Button(

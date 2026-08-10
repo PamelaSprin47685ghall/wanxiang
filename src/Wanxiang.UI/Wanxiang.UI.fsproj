@@ -17,6 +17,7 @@
        PWA 中文显示依赖内嵌字体；桌面端同样生效，保证两端字形一致。 -->
   <ItemGroup>
     <AvaloniaResource Include="Assets/Fonts/**" />
+    <AvaloniaResource Include="Assets/logo.png" />
   </ItemGroup>
 
   <ItemGroup>
