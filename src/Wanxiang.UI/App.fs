@@ -26,14 +26,14 @@ type App() =
         this.Resources["SystemAccentColorDark1"] <- Color.Parse "#2E343E"
         this.Resources["SystemAccentColorLight1"] <- Color.Parse "#E8E7E2"
         // 会话列表：暖灰选中态 + 克制圆角（覆盖 Fluent 高亮资源，作用域仅本应用）
-        this.Resources["ListBoxItemPadding"] <- Thickness(10.0, 7.0)
+        this.Resources["ListBoxItemPadding"] <- Thickness(Theme.space2, 7.0)
         this.Resources["SystemControlHighlightListAccentLowBrush"] <- Theme.primaryContainer
         this.Resources["SystemControlHighlightListAccentMediumBrush"] <- Theme.selectedHover
         this.Resources["SystemControlHighlightListAccentHighBrush"] <- Theme.selectedPressed
         this.Resources["SystemControlHighlightListLowBrush"] <- Theme.hover
         this.Resources["SystemControlHighlightListMediumBrush"] <- Theme.pressed
         let itemStyle = Style(Selector = Selectors.Is<ListBoxItem>(null))
-        itemStyle.Setters.Add(Setter(Control.MarginProperty, Thickness(Theme.space2, 0.0)))
+        itemStyle.Setters.Add(Setter(Control.MarginProperty, Thickness(Theme.sidebarInset, 1.0)))
         itemStyle.Setters.Add(Setter(ContentControl.CornerRadiusProperty, CornerRadius(Theme.radiusSm)))
         this.Styles.Add(itemStyle)
 

@@ -27,6 +27,12 @@ module Theme =
     let barHeight = 48.0
     let iconBtn = 32.0
 
+    /// 壳层水平内边距 SSOT：侧栏/顶栏/消息/输入共用同一刻度，避免「差不远却不对齐」
+    let sidebarInset = space4
+    let chatInset = space4
+    /// 区块之间呼吸（头-内容、内容-输入），避免分隔线 + 控件描边堆砌
+    let shellGap = space3
+
     // ---- 纸感中性面 ----
     let bg = hex "#F5F4F1"
     let panel = hex "#FBFBF9"

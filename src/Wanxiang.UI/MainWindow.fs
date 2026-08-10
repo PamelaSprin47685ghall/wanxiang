@@ -313,8 +313,8 @@ type MainView() as this =
             Child = TextBlock(Text = "+", FontSize = 16.0, FontWeight = FontWeight.Medium, Foreground = Theme.text,
                               HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center))
     do ToolTip.SetTip(newButton, "新建会话")
-    let searchBox = TextBox(PlaceholderText = "搜索", CornerRadius = CornerRadius(Theme.radiusSm), Margin = Thickness(Theme.space3, Theme.space1, Theme.space3, Theme.space2), Padding = Thickness(10.0, 5.0), BorderThickness = Thickness(1.0), BorderBrush = Theme.borderSubtle, Background = Brushes.Transparent, FontSize = 12.5, MinHeight = 32.0)
-    let filteredCountLabel = TextBlock(Text = "", FontSize = 10.5, Foreground = Theme.muted, Margin = Thickness(Theme.space4, 0.0, Theme.space3, Theme.space1), IsVisible = false)
+    let searchBox = TextBox(PlaceholderText = "搜索", CornerRadius = CornerRadius(Theme.radiusSm), Margin = Thickness(Theme.sidebarInset, Theme.shellGap, Theme.sidebarInset, Theme.space2), Padding = Thickness(Theme.space2, 5.0), BorderThickness = Thickness(0.0), Background = Theme.panel, FontSize = 12.5, MinHeight = 32.0)
+    let filteredCountLabel = TextBlock(Text = "", FontSize = 10.5, Foreground = Theme.muted, Margin = Thickness(Theme.sidebarInset, 0.0, Theme.sidebarInset, Theme.space1), IsVisible = false)
     let convList = ListBox(Background = Brushes.Transparent, BorderThickness = Thickness(0.0))
     // P1-1：显式 VirtualizingStackPanel；侧栏 Dock 给 ListBox 有界高度，由其自身滚动虚拟化（勿外包无限高 ScrollViewer）
     do convList.ItemsPanel <- FuncTemplate<Panel>(fun () -> VirtualizingStackPanel() :> Panel)
@@ -345,7 +345,7 @@ type MainView() as this =
             Cursor = Cursor(StandardCursorType.Hand),
             Child = TextBlock(Text = "新建会话", FontSize = 12.5, FontWeight = FontWeight.Medium, Foreground = Theme.text,
                               HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center))
-    let listEmptyHint = TextBlock(Text = "没有匹配的会话", Foreground = Theme.muted, FontSize = 12.0, HorizontalAlignment = HorizontalAlignment.Center, Margin = Thickness(Theme.space4, Theme.space5, Theme.space4, 0.0), IsVisible = false, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center)
+    let listEmptyHint = TextBlock(Text = "没有匹配的会话", Foreground = Theme.muted, FontSize = 12.0, HorizontalAlignment = HorizontalAlignment.Center, Margin = Thickness(Theme.sidebarInset, Theme.space5, Theme.sidebarInset, 0.0), IsVisible = false, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center)
     let messagesHost = Grid()
     let scrollViewer = ScrollViewer(Content = messagesHost, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled)
     let inputBox = TextBox(PlaceholderText = "输入消息…", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, BorderThickness = Thickness(0.0), Background = Brushes.Transparent, FontSize = 14.0, VerticalContentAlignment = VerticalAlignment.Center, MinHeight = 34.0, MaxHeight = 120.0, Padding = Thickness(Theme.space1, 0.0, 0.0, 0.0))
@@ -451,7 +451,7 @@ type MainView() as this =
         border
 
     // 空状态：品牌标 + 标题 + 提示；靠上对齐，避免 tall 聊天区垂直居中「养鱼」
-    let emptyPanel = StackPanel(Spacing = Theme.space3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = Thickness(0.0, 88.0, 0.0, 0.0))
+    let emptyPanel = StackPanel(Spacing = Theme.space3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = Thickness(Theme.chatInset, Theme.shellGap * 4.0, Theme.chatInset, 0.0))
     let emptyOverlay = Grid(HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, IsVisible = false, Background = Brushes.Transparent)
     do emptyOverlay.Children.Add(emptyPanel)
     do
@@ -558,7 +558,7 @@ type MainView() as this =
         sidebarHeaderPanel.Children.Add(appName)
         sidebarHeaderPanel.Children.Add(newButton)
         sidebarHeaderPanel.Children.Add(headerSpacer)
-        let sidebarHeader = Border(Height = Theme.barHeight, Padding = Thickness(Theme.space4, 0.0, Theme.space3, 0.0), BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0), Child = sidebarHeaderPanel)
+        let sidebarHeader = Border(Height = Theme.barHeight, Padding = Thickness(Theme.sidebarInset, 0.0, Theme.sidebarInset, 0.0), BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0), Child = sidebarHeaderPanel)
 
         // 会话列表模板：两行（标题 + 预览）+ 右键菜单（重命名/删除，D15 桌面端会话管理）
         convList.ItemTemplate <-
@@ -582,8 +582,8 @@ type MainView() as this =
 
         // 会话列表条目容器：圆角、留白、选中态（与 PWA 视觉一致）
         let itemBase = Style(fun x -> x.OfType<ListBoxItem>())
-        itemBase.Setters.Add(Setter(ListBoxItem.PaddingProperty, Thickness(10.0, 7.0)))
-        itemBase.Setters.Add(Setter(ListBoxItem.MarginProperty, Thickness(Theme.space2, 0.0)))
+        itemBase.Setters.Add(Setter(ListBoxItem.PaddingProperty, Thickness(Theme.space2, 7.0)))
+        itemBase.Setters.Add(Setter(ListBoxItem.MarginProperty, Thickness(Theme.sidebarInset, 1.0)))
         itemBase.Setters.Add(Setter(ListBoxItem.CornerRadiusProperty, CornerRadius(Theme.radiusSm)))
         itemBase.Setters.Add(Setter(ListBoxItem.MinHeightProperty, 40.0))
         itemBase.Setters.Add(Setter(ListBoxItem.BackgroundProperty, Brushes.Transparent))
@@ -614,7 +614,7 @@ type MainView() as this =
         let sidebar = DockPanel(Background = Theme.sidebar)
         let sidebarBorder = Border(Child = sidebar, BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 0.0, 1.0, 0.0))
         // LetterSpacing 单位是像素；原先 60 会把「会话」拉开到几乎不可见
-        let listLabel = TextBlock(Text = "会话", FontSize = 10.5, FontWeight = FontWeight.Medium, Foreground = Theme.faint, Margin = Thickness(Theme.space4, Theme.space1, 0.0, Theme.space1))
+        let listLabel = TextBlock(Text = "会话", FontSize = 10.5, FontWeight = FontWeight.Medium, Foreground = Theme.faint, Margin = Thickness(Theme.sidebarInset, Theme.space2, Theme.sidebarInset, Theme.space1))
         // P1-1：搜索/标题/计数固定在顶，ListBox 占剩余有界高度以启用虚拟化；空提示叠在列表上
         let listChrome = DockPanel()
         DockPanel.SetDock(searchBox, Dock.Top)
@@ -627,7 +627,7 @@ type MainView() as this =
         listChrome.Children.Add(listLabel) |> ignore
         listChrome.Children.Add(filteredCountLabel) |> ignore
         listChrome.Children.Add(listBody) |> ignore
-        let footer = Border(Height = Theme.barHeight, BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 1.0, 0.0, 0.0), Padding = Thickness(Theme.space4, 0.0, Theme.space3, 0.0))
+        let footer = Border(Height = Theme.barHeight, BorderBrush = Theme.borderSubtle, BorderThickness = Thickness(0.0, 1.0, 0.0, 0.0), Padding = Thickness(Theme.sidebarInset, 0.0, Theme.sidebarInset, 0.0))
         let footerPanel = DockPanel()
         let footerSpacer = Border()
         DockPanel.SetDock(connDot, Dock.Left)
@@ -665,7 +665,7 @@ type MainView() as this =
                 Background = Theme.bg,
                 BorderBrush = Theme.borderSubtle,
                 BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0),
-                Padding = Thickness(Theme.space5, 0.0),
+                Padding = Thickness(Theme.chatInset, 0.0),
                 Child = chatHeaderInner)
 
         // 输入区：撑满聊天栏宽度（阅读列宽度仅约束消息气泡）
@@ -678,17 +678,19 @@ type MainView() as this =
         let inputShell =
             Border(
                 Background = Theme.panel, BorderBrush = Theme.border, BorderThickness = Thickness(1.0),
-                CornerRadius = CornerRadius(Theme.radiusLg), Padding = Thickness(Theme.space3, 4.0, 4.0, 4.0),
+                CornerRadius = CornerRadius(Theme.radiusLg), Padding = Thickness(Theme.space2, Theme.space1, Theme.space1, Theme.space1),
                 HorizontalAlignment = HorizontalAlignment.Stretch, Child = inputBar)
         inputBox.GotFocus.Add(fun _ ->
-            inputShell.BorderBrush <- Theme.primary)
+            inputShell.BorderBrush <- Theme.primary
+            inputShell.BorderThickness <- Thickness(1.0))
         inputBox.LostFocus.Add(fun _ ->
-            inputShell.BorderBrush <- Theme.border)
+            inputShell.BorderBrush <- Theme.border
+            inputShell.BorderThickness <- Thickness(1.0))
         let inputColumn = StackPanel(Orientation = Orientation.Vertical, Spacing = Theme.space1, HorizontalAlignment = HorizontalAlignment.Stretch)
         inputColumn.Children.Add(inputShell) |> ignore
         let inputWrap =
             Border(
-                Background = Brushes.Transparent, Padding = Thickness(Theme.space5, Theme.space2, Theme.space5, Theme.space4),
+                Background = Brushes.Transparent, Padding = Thickness(Theme.chatInset, Theme.shellGap, Theme.chatInset, Theme.shellGap),
                 HorizontalAlignment = HorizontalAlignment.Stretch, Child = inputColumn)
 
         // 聊天区（消息居中阅读列；空状态 overlay 填满中间可视区）
@@ -696,7 +698,7 @@ type MainView() as this =
         messagesPanel.HorizontalAlignment <- HorizontalAlignment.Center
         let chat = DockPanel()
         messagesHost.Children.Add(messagesPanel)
-        scrollViewer.Padding <- Thickness(Theme.space5, Theme.space4, Theme.space5, Theme.space2)
+        scrollViewer.Padding <- Thickness(Theme.chatInset, Theme.shellGap, Theme.chatInset, Theme.shellGap)
         let chatBody = Grid()
         chatBody.Children.Add(scrollViewer)
         chatBody.Children.Add(emptyOverlay)
@@ -721,6 +723,11 @@ type MainView() as this =
         // 启动即渲染空状态（无事件时也展示品牌区）
         this.RenderMessages()
 
+        searchBox.GotFocus.Add(fun _ ->
+            searchBox.BorderThickness <- Thickness(1.0)
+            searchBox.BorderBrush <- Theme.outlineVariant)
+        searchBox.LostFocus.Add(fun _ ->
+            searchBox.BorderThickness <- Thickness(0.0))
         searchBox.TextChanged.Add(fun _ ->
             let q = if String.IsNullOrWhiteSpace searchBox.Text then "" else searchBox.Text.Trim().ToLowerInvariant()
             if String.IsNullOrEmpty q then
