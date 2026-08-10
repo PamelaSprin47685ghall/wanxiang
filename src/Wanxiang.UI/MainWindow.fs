@@ -315,6 +315,7 @@ type MainView() as this =
             Margin = Thickness(Theme.sidebarInset, Theme.space2, Theme.sidebarInset, Theme.space1),
             Padding = Thickness(Theme.space2, 5.0), BorderThickness = Thickness(1.0), BorderBrush = Theme.outlineVariant,
             Background = Theme.panel, FontSize = 12.5, MinHeight = 32.0, IsVisible = false)
+    do searchBox.Classes.Add("wx-field")
     let filteredCountLabel = TextBlock(Text = "", FontSize = 10.5, Foreground = Theme.muted, Margin = Thickness(Theme.sidebarInset, 0.0, Theme.sidebarInset, Theme.space1), IsVisible = false)
     let convList = ListBox(Background = Brushes.Transparent, BorderThickness = Thickness(0.0))
     // P1-1：显式 VirtualizingStackPanel；侧栏 Dock 给 ListBox 有界高度，由其自身滚动虚拟化（勿外包无限高 ScrollViewer）
@@ -350,6 +351,7 @@ type MainView() as this =
     let messagesHost = Grid()
     let scrollViewer = ScrollViewer(Content = messagesHost, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled)
     let inputBox = TextBox(PlaceholderText = "输入消息…", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, BorderThickness = Thickness(0.0), Background = Brushes.Transparent, FontSize = 14.0, VerticalContentAlignment = VerticalAlignment.Center, MinHeight = 34.0, MaxHeight = 120.0, Padding = Thickness(Theme.space1, 0.0, 0.0, 0.0))
+    do inputBox.Classes.Add("wx-input-inner")
     let sendButton = Icons.createButton Icons.Filled (Icons.sendUp Theme.onPrimary)
     let attachButton = Icons.createButton Icons.Outline (Icons.paperclip Theme.text)
     do Icons.setEnabled sendButton false
@@ -714,12 +716,8 @@ type MainView() as this =
                 Background = Theme.panel, BorderBrush = Theme.border, BorderThickness = Thickness(1.0),
                 CornerRadius = CornerRadius(Theme.radiusLg), Padding = Thickness(Theme.space2, Theme.space1, Theme.space1, Theme.space1),
                 HorizontalAlignment = HorizontalAlignment.Stretch, Child = inputBar)
-        inputBox.GotFocus.Add(fun _ ->
-            inputShell.BorderBrush <- Theme.primary
-            inputShell.BorderThickness <- Thickness(1.0))
-        inputBox.LostFocus.Add(fun _ ->
-            inputShell.BorderBrush <- Theme.border
-            inputShell.BorderThickness <- Thickness(1.0))
+        inputBox.GotFocus.Add(fun _ -> inputShell.BorderBrush <- Theme.muted)
+        inputBox.LostFocus.Add(fun _ -> inputShell.BorderBrush <- Theme.border)
         let inputColumn = StackPanel(Orientation = Orientation.Vertical, Spacing = Theme.space1, HorizontalAlignment = HorizontalAlignment.Stretch)
         inputColumn.Children.Add(inputShell) |> ignore
         let inputWrap =
