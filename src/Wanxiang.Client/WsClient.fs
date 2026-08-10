@@ -139,6 +139,8 @@ type ConversationView = {
     /// 快照携带的最早 commitId 与是否还有更早历史（Q127 分页）
     mutable pageEarliest: CommitId
     mutable pageHasMore: bool
+    /// 会话级配置快照（P0-4：UI 读写 SessionConfig）
+    mutable config: SessionConfig
 }
 
 /// 客户端状态机：维护观察视图 + 游标。
@@ -179,6 +181,7 @@ type ClientState() =
                     v.messages <- d.messages
                     v.pageEarliest <- d.snapshotEarliestCommitId
                     v.pageHasMore <- d.snapshotHasMore
+                    v.config <- d.config
                     v
                 | None ->
                     { conversationId = d.conversationId
@@ -187,7 +190,8 @@ type ClientState() =
                       runtimeState = d.runtimeState
                       messages = d.messages
                       pageEarliest = d.snapshotEarliestCommitId
-                      pageHasMore = d.snapshotHasMore }
+                      pageHasMore = d.snapshotHasMore
+                      config = d.config }
             conversations <- conversations.Add(d.conversationId, view)
             latestCommitId <- max latestCommitId d.lastCommitId
             convChanged.Trigger d.conversationId

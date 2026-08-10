@@ -24,7 +24,7 @@ type WireEvent =
     | ConversationListSnapshot of {| items: JsonArray; lastCommitId: CommitId |}
     | ObserveConversation of {| conversationId: Guid |}
     | UnobserveConversation of {| conversationId: Guid |}
-    | ConversationSnapshot of {| conversationId: Guid; title: string; lastCommitId: CommitId; runtimeState: string; messages: JsonArray; snapshotEarliestCommitId: CommitId; snapshotHasMore: bool |}
+    | ConversationSnapshot of {| conversationId: Guid; title: string; lastCommitId: CommitId; runtimeState: string; messages: JsonArray; snapshotEarliestCommitId: CommitId; snapshotHasMore: bool; config: SessionConfig |}
     | ConversationUpdated of {| conversationId: Guid; commitId: CommitId; change: JsonObject |}
     | MessageCommitted of {| conversationId: Guid; commitId: CommitId; payload: JsonNode |}
     // ---- 历史分页（Q127：按 commitID 反向分页，稳定 ID 作页边界）----

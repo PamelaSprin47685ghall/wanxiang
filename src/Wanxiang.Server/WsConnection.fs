@@ -222,7 +222,8 @@ type WsConnection(
                            runtimeState = state
                            messages = messages
                            snapshotEarliestCommitId = earliest
-                           snapshotHasMore = hasMore |})
+                           snapshotHasMore = hasMore
+                           config = conv.config |})
             if sent then
                 lock cursorLock (fun () -> awaitingCursor <- Some proj.latestCommitId)
             sent
