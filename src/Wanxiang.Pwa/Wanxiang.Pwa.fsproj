@@ -28,10 +28,16 @@
     <ProjectReference Include="..\Wanxiang.UI\Wanxiang.UI.fsproj" />
   </ItemGroup>
 
+  <!-- AMD/ANGLE Chrome：Avalonia 默认 failIfMajorPerformanceCaveat=true 会得到“能创建但不呈现 Skia 帧”的 WebGL 上下文，表现为启动画面后白屏。
+       构建后补丁 avalonia.js（禁止软渲染回退；见 tools/patch_avalonia_js.py）。 -->
+  <Target Name="PatchAvaloniaJsWebGl" AfterTargets="WasmBuildApp">
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)../../tools/patch_avalonia_js.py&quot; &quot;$(OutputPath)AppBundle/_framework/avalonia.js&quot;"
+          Condition="Exists('$(OutputPath)AppBundle/_framework/avalonia.js')" />
+  </Target>
+
   <!-- PWA 发布产物（AppBundle：index.html + _framework 运行时）同步到桌面 App 输出目录的 pwa/（ServerApp 托管目录），使 pwa 开关开箱即用。
-       必须在 WasmTriggerPublishApp（嵌套 publish，最终生成 AppBundle）之后执行。 -->
-  <!-- 钩在 WasmBuildApp（SDK 每次 Build 后重建 AppBundle 的目标）之后；直接钩 Build 会在 SDK 目标之前执行，拷到上一轮旧 AppBundle。 -->
-  <Target Name="CopyPwaToApp" AfterTargets="WasmBuildApp;WasmTriggerPublishApp">
+       必须在 PatchAvaloniaJsWebGl / WasmTriggerPublishApp 之后执行，避免拷到未补丁或上一轮旧包。 -->
+  <Target Name="CopyPwaToApp" AfterTargets="PatchAvaloniaJsWebGl;WasmTriggerPublishApp">
     <ItemGroup>
       <_PwaFiles Include="$(OutputPath)AppBundle/**/*" />
     </ItemGroup>

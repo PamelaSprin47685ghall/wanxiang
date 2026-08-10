@@ -16,10 +16,20 @@ module Program =
     [<EntryPoint>]
     let main argv =
         task {
+            // 强制 WebGL（不准软渲染）：WebGL2 → WebGL1，不回退 Software2D。
+            // ES module 会相对 /_framework/ 解析 "./avalonia.js"；只追加版本查询打穿缓存。
+            // 不要写成 "./_framework/..."，否则会变成 /_framework/_framework/ 404。
+            let options =
+                BrowserPlatformOptions(
+                    RenderingMode =
+                        [| BrowserRenderingMode.WebGL2
+                           BrowserRenderingMode.WebGL1 |],
+                    FrameworkAssetPathResolver = fun fileName -> $"./{fileName}?v=20260810d"
+                )
             do!
                 AppBuilder
                     .Configure<App>()
-                    .StartBrowserAppAsync("out")
+                    .StartBrowserAppAsync("out", options)
         }
         |> ignore
         0

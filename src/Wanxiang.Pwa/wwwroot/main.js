@@ -94,17 +94,46 @@ const dotnetRuntime = await dotnet
 dotnetRuntime.setModuleImports("wanxiang", { credList, credPut, credDelete, pageUrl });
 
 const config = dotnetRuntime.getConfig();
-// Avalonia 向 #out 追加 canvas 而不清空既有内容：首个 canvas 出现后给启动画面一层淡出再移除
+
+function dismissSplash() {
+    const splash = document.querySelector(".splash");
+    if (!splash) return;
+    splash.style.transition = "opacity 220ms ease, transform 220ms ease";
+    splash.style.opacity = "0";
+    splash.style.transform = "scale(0.98)";
+    setTimeout(() => splash.remove(), 240);
+}
+
+// 等 canvas 被 Avalonia ResizeHandler 设到真实像素尺寸后再收启动画面。
+// 注意：切勿在此调用 canvas.getContext —— 会抢在 Avalonia 之前占用 WebGL 上下文，导致启动后白屏。
+async function dismissSplashWhenPainted() {
+    const deadline = performance.now() + 20000;
+    while (performance.now() < deadline) {
+        const c = document.querySelector("#out canvas");
+        if (c && c.width >= 640 && c.height >= 400) {
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+            dismissSplash();
+            return;
+        }
+        await new Promise((r) => requestAnimationFrame(r));
+    }
+    dismissSplash();
+}
+
 new MutationObserver((_, obs) => {
     if (document.querySelector("#out canvas")) {
-        const splash = document.querySelector(".splash");
-        if (splash) {
-            splash.style.transition = "opacity 220ms ease, transform 220ms ease";
-            splash.style.opacity = "0";
-            splash.style.transform = "scale(0.98)";
-            setTimeout(() => splash.remove(), 240);
-        }
         obs.disconnect();
+        dismissSplashWhenPainted();
     }
 }).observe(document.getElementById("out"), { childList: true });
-await dotnetRuntime.runMain(config.mainAssemblyName, [globalThis.location.href]);
+
+try {
+    await dotnetRuntime.runMain(config.mainAssemblyName, [globalThis.location.href]);
+} catch (e) {
+    console.error("wanxiang boot failed", e);
+    const d = document.createElement("pre");
+    d.style.cssText = "position:fixed;inset:12px;overflow:auto;background:#1a1b21;color:#f88;padding:16px;z-index:99999;font:12px/1.4 monospace;white-space:pre-wrap";
+    d.textContent = "万象启动失败\n" + (e && (e.stack || e.message || String(e)));
+    document.body.appendChild(d);
+    throw e;
+}
