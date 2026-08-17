@@ -1,24 +1,39 @@
 /* ============================================================
- * wanxiang PWA · 设计语言：纸感中性 + 墨色点缀（克制高级感）
- * 配色 SSOT 在 Theme.fs；这里对齐壳层底色/动效/滚动条
+ * wanxiang PWA · Kami 纸感体系（warm parchment + ink-blue）
+ * Tokens 对齐 kami/references/tokens.json；SSOT 在 Theme.fs
+ * 规则：单墨蓝强调 ≤5%，暖灰四阶，hairline 分割，whisper 阴影
  * ============================================================ */
 
 :root {
-    /* 字体栈：桌面端优先系统字体，PWA 端走 Sarasa Term SC（已在 .fsproj 内嵌）。
-       渲染中文时统一使用 PingFang / Microsoft YaHei 的 fallback，保证两端字形一致。 */
-    --wx-font:
-        "Sarasa Term SC", "PingFang SC", "Microsoft YaHei",
-        -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    --wx-mono:
-        ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+    /* 纸感基底（Kami --parchment #f5f4ed / --ivory #faf9f5） */
+    --parchment:  #f5f4ed;
+    --ivory:      #faf9f5;
+    --warm-sand:  #e8e6dc;
+    --brand:      #1B365D;
+    --brand-light:#2D5A8A;
+    --brand-tint: #EEF2F7;
+    --tag-bg:     #E4ECF5;
+    --near-black: #141413;
+    --dark-warm:  #3d3d3a;
+    --olive:      #504e49;
+    --stone:      #6b6a64;
+    --border:     #e8e6dc;
+    --border-soft:#e5e3d8;
+    --line:       #d8d5c8;
 
-    /* 节奏：4 的倍数；圆角偏建筑感 */
+    /* 字体栈：PWA 走 Sarasa Term SC 内嵌 + 平替；行高取 Kami 1.55 阅读档 */
+    --wx-font:
+        "Sarasa Term SC", "TsangerJinKai02", "Source Han Serif SC",
+        "PingFang SC", "Microsoft YaHei",
+        -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Georgia, serif;
+    --wx-mono:
+        "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
     --wx-r-sm: 6px;
     --wx-r-md: 8px;
-    --wx-r-lg: 10px;
+    --wx-r-lg: 12px;
     --wx-r-pill: 999px;
-
-    --wx-hairline: 1px solid rgba(226, 224, 218, 0.75);
+    --wx-hairline: 1px solid #e8e6dc;
 }
 
 html, body {
@@ -27,17 +42,20 @@ html, body {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #F5F4F1;
-    color: #1C1B19;
+    background:
+        radial-gradient(120% 80% at 50% 0%, rgba(255,255,255,0.55) 0%, transparent 55%),
+        var(--parchment);
+    color: var(--near-black);
     font-family: var(--wx-font);
     font-size: 14px;
-    line-height: 1.5;
+    line-height: 1.58;
+    letter-spacing: 0.2px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
 }
 
-/* Avalonia 画布容器：必须撑满视口，否则 canvas absolute 100% 参照高度为 0 */
+/* Avalonia 画布容器：撑满视口，canvas 100% 参照 */
 #out {
     position: relative;
     width: 100%;
@@ -52,28 +70,27 @@ html, body {
     height: 100% !important;
 }
 
-/* 在 WASM 启动前隐藏刚出现的滚动条带来的闪烁 */
+/* 滚动条：暖灰细 thumb，避免冷灰 */
 ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.12);
+    background: rgba(20, 19, 19, 0.14);
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 0, 0, 0.22);
+    background: rgba(20, 19, 19, 0.22);
     border: 2px solid transparent;
     background-clip: padding-box;
 }
-::-webkit-scrollbar-track {
-    background: transparent;
-}
+::-webkit-scrollbar-track { background: transparent; }
 
 /* ============================================================
- * 启动画面：径向渐变 + 慢呼吸 + 进度条，与右上角的"加载中"读数同步
+ * 启动画面 · Kami 纸感：暖纸径向 + 慢呼吸 + 单线扫光
+ * 与 Theme.logoShadowFar 同系，避免冷灰阴影
  * ============================================================ */
 .splash {
     position: fixed;
@@ -82,54 +99,50 @@ html, body {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 18px;
+    gap: 16px;
     background:
-        radial-gradient(60% 50% at 50% 38%, #FFFFFF 0%, #F5F4F1 70%),
-        #F5F4F1;
-    animation: splashFade 720ms ease-out both;
+        radial-gradient(62% 52% at 50% 36%, #ffffff 0%, var(--parchment) 68%),
+        var(--parchment);
+    animation: splashFade 640ms ease-out both;
 }
-
-@keyframes splashFade {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-}
+@keyframes splashFade { from { opacity: 0; } to { opacity: 1; } }
 
 .splash-logo {
     width: 76px;
     height: 76px;
     border-radius: 22px;
+    /* Kami whisper：抬升靠 ivory 白位 + 极轻暖灰扩散，不用重阴影 */
     box-shadow:
-        0 1px 0 rgba(255, 255, 255, 0.9) inset,
-        0 8px 24px -8px rgba(28, 27, 25, 0.12),
-        0 2px 4px rgba(0, 0, 0, 0.04);
+        0 1px 0 rgba(255,255,255,0.96) inset,
+        0 10px 28px -14px rgba(20,19,19,0.16),
+        0 2px 6px rgba(20,19,19,0.06);
     animation: splashBob 2400ms ease-in-out infinite;
 }
-
 @keyframes splashBob {
     0%, 100% { transform: translateY(0); }
-    50%      { transform: translateY(-3px); }
+    50%      { transform: translateY(-2.5px); }
 }
-
 .splash-title {
+    font-family: var(--wx-font);
     font-size: 18px;
-    font-weight: 600;
-    color: #1C1B19;
-    letter-spacing: 0.2px;
+    font-weight: 500;
+    color: var(--near-black);
+    letter-spacing: 0.6px;
+    line-height: 1.2;
 }
-
 .splash-sub {
     font-size: 12.5px;
-    color: #8B8C98;
-    margin-top: 2px;
+    color: var(--stone);
+    margin-top: 1px;
+    letter-spacing: 0.2px;
 }
-
-/* 启动画面底部进度条：单方向扫光的细线，表达"WASM 正在加载"的真实状态 */
+/* 进度扫光：墨蓝单线（Kami accent ≤5%） */
 .splash-bar {
-    margin-top: 14px;
+    margin-top: 12px;
     width: 168px;
     height: 3px;
     border-radius: 999px;
-    background: rgba(46, 52, 62, 0.10);
+    background: rgba(27, 54, 93, 0.10);
     overflow: hidden;
     position: relative;
 }
@@ -137,115 +150,73 @@ html, body {
     content: "";
     position: absolute;
     inset: 0;
-    width: 40%;
-    background: linear-gradient(90deg, transparent, #2E343E, transparent);
+    width: 38%;
+    background: linear-gradient(90deg, transparent, var(--brand), transparent);
     border-radius: 999px;
-    animation: splashSweep 1200ms ease-in-out infinite;
+    animation: splashSweep 1180ms ease-in-out infinite;
 }
 @keyframes splashSweep {
     0%   { transform: translateX(-100%); }
-    100% { transform: translateX(350%); }
+    100% { transform: translateX(360%); }
 }
-
 @media (prefers-reduced-motion: reduce) {
-    .splash,
-    .splash-logo,
-    .splash-bar::after {
-        animation: none !important;
-    }
-    .splash-bar::after {
-        transform: none;
-        width: 55%;
-        background: #2E343E;
-        opacity: 0.35;
-    }
+    .splash, .splash-logo, .splash-bar::after { animation: none !important; }
+    .splash-bar::after { transform: none; width: 56%; background: var(--brand); opacity: 0.32; }
 }
 
 /* ============================================================
- * Toast（服务工作者更新提示）：固定底栏、可点击刷新
+ * Toast：墨蓝底 + ivory 字；Kami 单强调
  * ============================================================ */
 .toast {
     position: fixed;
     left: 50%;
-    bottom: 16px;
+    bottom: 18px;
     transform: translateX(-50%);
     z-index: 9999;
-    padding: 10px 16px;
+    padding: 10px 20px;
     border-radius: 999px;
-    background: #323232;
-    color: #FFFFFF;
+    background: var(--near-black);
+    color: var(--ivory);
     font-size: 13px;
     font-weight: 500;
+    letter-spacing: 0.2px;
     cursor: pointer;
-    box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.35), 0 2px 4px rgba(0, 0, 0, 0.12);
+    border: 1px solid rgba(245,244,237,0.12);
+    box-shadow: 0 12px 32px -16px rgba(20,19,19,0.32), 0 2px 8px rgba(20,19,19,0.12);
     transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
 }
-.toast:hover {
-    transform: translateX(-50%) translateY(-1px);
-}
-.toast:active {
-    transform: translateX(-50%) translateY(0);
-}
+.toast:hover { transform: translateX(-50%) translateY(-1px); }
+.toast:active { transform: translateX(-50%) translateY(0); }
 
-/* PWA 端通用 focus 环（兼容键盘 / 鼠标 —— 鼠标点击后立即移除） */
+/* Focus 环：墨蓝 1.5px + 2px offset；PWA 画布内与桌面一致 */
 *:focus-visible {
-    outline: 2px solid #2E343E;
+    outline: 1.5px solid var(--brand);
     outline-offset: 2px;
     border-radius: 4px;
 }
+#out:focus-visible { outline-offset: 0; }
 
 /* ============================================================
- * 深色系统：启动画面与壳层对比度（Avalonia 画布仍走 Theme.fs）
- *
- * .wx-input-shell：输入壳的边框 / 阴影 / 表面色由 Avalonia Theme.fs
- * （surfaceVariant / outlineVariant）在 F# 侧绘制，WASM 画布不暴露该
- * DOM class；此处不重复覆写，以免与 RequestedThemeVariant=Light 冲突。
- *
- * 滚动条：虚拟化列表下保持细 thumb + padding-box，深色仅调透明度。
+ * 深色系统：仅壳层（html/body/splash/scrollbar）做对比度补偿
+ * Avalonia 画布 RequestedThemeVariant=Light 保持纸感，不跟随系统
  * ============================================================ */
 @media (prefers-color-scheme: dark) {
-    html, body {
-        background: #121214;
-        color: #E8E8EC;
-    }
-
+    html, body { background: #141413; color: #e8e6dc; }
     .splash {
         background:
-            radial-gradient(60% 50% at 50% 38%, #1E1E22 0%, #121214 70%),
-            #121214;
+            radial-gradient(62% 52% at 50% 36%, #1e1e1c 0%, #141413 68%),
+            #141413;
     }
-
-    .splash-title {
-        color: #E8E8EC;
-    }
-
-    .splash-sub {
-        color: #A0A0AA;
-    }
-
-    .splash-bar {
-        background: rgba(46, 52, 62, 0.22);
-    }
-
+    .splash-title { color: #faf9f5; }
+    .splash-sub { color: #b0aea5; }
+    .splash-bar { background: rgba(250,249,245,0.10); }
     .splash-logo {
         box-shadow:
-            0 1px 0 rgba(255, 255, 255, 0.06) inset,
-            0 8px 24px -8px rgba(0, 0, 0, 0.35),
-            0 2px 6px rgba(0, 0, 0, 0.35);
+            0 1px 0 rgba(255,255,255,0.06) inset,
+            0 10px 28px -14px rgba(0,0,0,0.42),
+            0 2px 6px rgba(0,0,0,0.30);
     }
-
-    ::-webkit-scrollbar-thumb {
-        background: rgba(255, 255, 255, 0.14);
-        border: 2px solid transparent;
-        background-clip: padding-box;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-        background: rgba(255, 255, 255, 0.24);
-        border: 2px solid transparent;
-        background-clip: padding-box;
-    }
-
-    *:focus-visible {
-        outline-color: #6A6862;
-    }
+    ::-webkit-scrollbar-thumb { background: rgba(250,249,245,0.14); border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(250,249,245,0.22); border: 2px solid transparent; background-clip: padding-box; }
+    *:focus-visible { outline-color: #E4ECF5; }
 }

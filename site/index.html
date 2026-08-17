@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>万象 · 你的对话底座</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="万象是 Linux x64 与 PWA 的对等对话底座。F# + Avalonia 重写，NDJSON 事件日志与 muxed WebSocket 对等通信，数据留在你手里。">
+<meta property="og:title" content="万象 · 你的对话底座">
+<meta property="og:description" content="F# + Avalonia 的对等对话底座。Linux x64 自带服务端，PWA 纯前端直连。NDJSON 落盘，WebSocket 对等同步。">
+<meta property="og:image" content="logo.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wanxiang.example.com/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" sizes="32x32" href="logo.png">
+<link rel="canonical" href="https://wanxiang.example.com/">
+<link rel="alternate" hreflang="x-default" href="https://wanxiang.example.com/">
+<meta property="og:locale" content="zh_CN">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"万象","applicationCategory":"CommunicationApplication","operatingSystem":"Linux x64, Modern Browser (PWA)","description":"万象是 Linux x64 与 PWA 的对等对话底座。","url":"https://wanxiang.example.com/","inLanguage":"zh-CN"}
+</script>
+<style>
+@font-face{font-family:"TsangerJinKai02";src:url("https://cdn.jsdelivr.net/gh/AlfredoSequeworthy/TsangerJinKai02@main/TsangerJinKai02-W04.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"TsangerJinKai02";src:url("https://cdn.jsdelivr.net/gh/AlfredoSequeworthy/TsangerJinKai02@main/TsangerJinKai02-W05.woff2") format("woff2");font-weight:500;font-style:normal;font-display:swap}
+:root{
+  --parchment:#f5f4ed; --ivory:#faf9f5; --warm-sand:#e8e6dc;
+  --brand:#1B365D; --brand-light:#2D5A8A; --brand-tint:#EEF2F7;
+  --near-black:#141413; --dark-warm:#3d3d3a; --olive:#504e49; --stone:#6b6a64;
+  --border:#e8e6dc; --border-soft:#e5e3d8; --line:#d8d5c8;
+  --serif:"TsangerJinKai02","Source Han Serif SC","Source Han Serif CN","Noto Serif CJK SC","Songti SC",Georgia,serif;
+  --sans:var(--serif);
+  --mono:"JetBrains Mono","SF Mono",Consolas,"TsangerJinKai02",monospace;
+  --latin-ui:"PingFang SC",system-ui,-apple-system,sans-serif;
+  --shot-bg:#141318;
+}
+*{box-sizing:border-box} html,body{margin:0;padding:0}
+body{
+  background:radial-gradient(110% 70% at 50% 0%,rgba(255,255,255,0.62) 0%,transparent 58%),var(--parchment);
+  color:var(--near-black); font-family:var(--serif); font-size:15px; line-height:1.58; letter-spacing:0.3px;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--brand);text-decoration:none;transition:color .15s} a:hover{color:var(--brand-light)}
+.page{max-width:1120px;margin:0 auto;padding:56px 64px 96px}
+
+/* buttons */
+.btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--brand);color:var(--ivory);font-family:var(--latin-ui);font-weight:500;font-size:14px;letter-spacing:.2px;padding:12px 24px;border-radius:999px;border:1.5px solid var(--brand);transition:all .15s;cursor:pointer;min-width:148px}
+.btn-primary:hover{background:var(--brand-light);border-color:var(--brand-light);color:var(--ivory);transform:translateY(-1px);box-shadow:0 8px 20px -12px rgba(27,54,93,.35)}
+.btn-ghost{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-family:var(--latin-ui);font-weight:500;font-size:14px;color:var(--brand);background:var(--ivory);padding:12px 24px;border-radius:999px;border:1px solid var(--border);transition:all .15s;cursor:pointer;min-width:148px}
+.btn-ghost:hover{background:var(--brand-tint);border-color:#d8d5c8;transform:translateY(-1px)}
+
+/* hero */
+.hero{padding-bottom:40px;border-bottom:1px solid var(--border-soft);margin-bottom:56px}
+.eyebrow{display:flex;justify-content:space-between;align-items:center;gap:12px;font-family:var(--latin-ui);font-size:11px;font-weight:500;letter-spacing:.6px;text-transform:uppercase;color:var(--stone);margin:0 0 22px}
+.eyebrow-left{display:flex;align-items:center;gap:10px}
+.eyebrow-left::before{content:"";width:18px;height:1.8px;background:var(--brand);border-radius:999px;opacity:.9}
+.version-link{display:inline-flex;align-items:center;gap:6px;color:var(--brand);font-weight:600;background:var(--brand-tint);border-radius:999px;padding:4px 11px;font-size:11px;letter-spacing:.2px;border:1px solid #e4ecf5}
+.hero-links{display:flex;gap:16px;align-items:center}
+.hero-links a{color:var(--stone);font-size:12px;letter-spacing:.2px} .hero-links a:hover{color:var(--brand)}
+.hero h1{font-family:var(--serif);font-weight:500;font-size:86px;line-height:.96;letter-spacing:-1.2px;margin:0 0 14px;color:var(--near-black);opacity:0;transform:translateY(10px);filter:blur(6px);animation:hero-rise 900ms cubic-bezier(.16,1,.3,1) 120ms forwards}
+@keyframes hero-rise{to{opacity:1;transform:translateY(0);filter:blur(0)}}
+.tagline{font-size:19px;line-height:1.6;color:var(--olive);margin:0 0 22px;max-width:720px}
+.tagline b{color:var(--near-black);font-weight:500}
+.hero-tokens{display:flex;flex-wrap:wrap;gap:9px;margin:0 0 26px}
+.hero-tokens span{display:inline-flex;align-items:center;gap:6px;font-family:var(--latin-ui);font-size:11.5px;color:var(--stone);background:var(--ivory);border:1px solid var(--border-soft);border-radius:999px;padding:5px 11px}
+.hero-tokens b{color:var(--brand);font-weight:600}
+.hero-cta{display:flex;align-items:center;gap:12px;margin-top:8px;flex-wrap:wrap}
+.hero-cta .hint{font-family:var(--latin-ui);font-size:12px;color:var(--stone);margin-left:6px}
+
+/* section */
+section{margin-bottom:64px}
+.section-head{margin-bottom:20px}
+.section-num{display:inline-flex;align-items:center;gap:8px;font-family:var(--latin-ui);font-weight:500;font-size:11px;color:var(--brand);letter-spacing:.6px;text-transform:uppercase;margin:0 0 10px}
+.section-num::before{content:"";width:18px;height:1.5px;background:var(--brand);border-radius:999px}
+.section-title{font-weight:500;font-size:31px;line-height:1.18;color:var(--near-black);margin:0;letter-spacing:.4px;padding-left:12px;border-left:2.5px solid var(--brand);border-radius:1.5px}
+.section-lede{font-size:15.5px;line-height:1.62;color:var(--olive);margin:12px 0 0;max-width:760px}
+
+/* gallery */
+.gallery{--enter-from-x:36px;--exit-to-x:-28px;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:24px;align-items:baseline;margin:0;padding:0}
+.gallery-frame{grid-column:1/-1;position:relative;background:var(--ivory);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 14px 36px -20px rgba(20,19,19,.18),0 1px 3px rgba(20,19,19,.08);cursor:ew-resize}
+.gallery-panel{position:absolute;inset:0;margin:0;opacity:0;visibility:hidden;z-index:1;transform:translate3d(var(--enter-from-x),0,0) scale(.985);transition:opacity 560ms cubic-bezier(.22,1,.36,1),transform 820ms cubic-bezier(.22,1,.36,1),visibility 560ms;will-change:opacity,transform}
+.gallery-panel.is-active{opacity:1;visibility:visible;position:relative;z-index:2;transform:none}
+.gallery-panel.was-active{opacity:0;visibility:visible;position:absolute;inset:0;z-index:3;transform:translate3d(var(--exit-to-x),0,0) scale(.985);pointer-events:none}
+.gallery-caption{grid-column:1;grid-row:2;min-height:44px;padding:12px 2px 0;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.gallery-caption .title{font-weight:500;font-size:15px;color:var(--near-black);margin:0}
+.gallery-caption .line{font-size:13px;color:var(--olive);font-style:italic;letter-spacing:.2px;margin:0}
+.gallery-tabs{grid-column:2;grid-row:2;display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:flex-end}
+.gallery-tabs button{appearance:none;border:1px solid var(--border-soft);border-radius:999px;background:transparent;color:var(--olive);font-family:var(--latin-ui);font-size:11.5px;line-height:1;padding:7px 11px;cursor:pointer;transition:all .18s}
+.gallery-tabs button:hover{color:var(--brand);border-color:var(--line)}
+.gallery-tabs button.is-active{color:var(--brand);background:var(--brand-tint);border-color:var(--line)}
+
+/* mock internals */
+.mock{height:360px;display:grid;grid-template-columns:228px 1fr;background:var(--parchment)}
+.mock-sidebar{background:#f2f0e6;border-right:1px solid var(--border-soft);padding:10px 10px 8px;display:flex;flex-direction:column;gap:8px}
+.mock-sidebar-top{display:flex;align-items:center;gap:8px;padding:6px 4px 8px;border-bottom:1px solid var(--border-soft);margin-bottom:4px}
+.mock-logo{width:22px;height:22px;border-radius:6px;background:var(--ivory);border:1px solid var(--border);display:grid;place-items:center;font-size:10px;color:var(--brand);font-weight:600}
+.mock-app{font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--near-black)}
+.mock-search{height:28px;border-radius:7px;background:var(--ivory);border:1px solid var(--border);display:flex;align-items:center;gap:6px;padding:0 8px;font-size:11px;color:var(--stone)}
+.mock-search b{width:12px;height:12px;border:1.2px solid var(--stone);border-radius:50%;position:relative;display:inline-block}
+.mock-search b::after{content:"";position:absolute;right:-3px;bottom:-3px;width:5px;height:1.2px;background:var(--stone);transform:rotate(45deg);border-radius:999px}
+.mock-item{border-radius:8px;padding:8px 9px;background:transparent;border:1px solid transparent}
+.mock-item.active{background:var(--brand-tint);border-color:#e4ecf5}
+.mock-item-title{font-size:12px;font-weight:600;color:var(--near-black);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mock-item.active .mock-item-title{color:var(--brand)}
+.mock-item-preview{font-size:11px;color:var(--olive);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mock-main{padding:14px 16px;overflow:hidden;display:flex;flex-direction:column;gap:10px;background:var(--parchment)}
+.mock-bubble{max-width:78%;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.55}
+.mock-bubble.user{align-self:flex-end;background:var(--brand);color:var(--ivory);border-bottom-right-radius:4px}
+.mock-bubble.assist{align-self:flex-start;background:var(--ivory);border:1px solid var(--border);color:var(--dark-warm);border-bottom-left-radius:4px}
+.mock-reason{border-left:2px solid var(--brand);padding:6px 10px;background:rgba(27,54,93,.04);border-radius:0 8px 8px 0;font-size:11.5px;color:var(--olive);line-height:1.5}
+.mock-reason b{color:var(--brand);font-weight:600}
+.mock-code{border-radius:10px;overflow:hidden;border:1px solid #30302e;background:#141413}
+.mock-code-head{height:28px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;background:#1e1e1c;border-bottom:1px solid #30302e;font-family:var(--mono);font-size:11px;color:#b0aea5}
+.mock-code-body{padding:10px 12px;font-family:var(--mono);font-size:11.5px;line-height:1.5;color:#faf9f5;white-space:pre}
+.mock-attach{display:flex;align-items:center;gap:10px;border:1px solid var(--border);background:var(--ivory);border-radius:999px;padding:7px 10px 7px 8px;align-self:flex-start}
+.mock-attach-icon{width:28px;height:28px;border-radius:999px;background:var(--brand-tint);border:1px solid #e4ecf5;display:grid;place-items:center;color:var(--brand);font-size:13px}
+.mock-attach-meta{font-size:11.5px;line-height:1.3}
+.mock-attach-meta b{display:block;font-size:12px;color:var(--near-black);font-weight:600}
+
+/* features */
+.features{list-style:none;margin:0;padding:0;border:1px solid var(--border-soft);border-radius:12px;overflow:hidden;background:var(--ivory)}
+.features li{display:grid;grid-template-columns:220px 1fr;column-gap:24px;padding:22px 26px;border-bottom:1px solid var(--border-soft);align-items:baseline;transition:background .15s}
+.features li:last-child{border-bottom:none} .features li:hover{background:#fdfcf8}
+.features .name{font-weight:500;font-size:17px;color:var(--brand);margin:0;line-height:1.3}
+.features .name small{display:block;margin-top:4px;font-family:var(--latin-ui);font-size:11.5px;color:var(--olive);font-style:italic;line-height:1.5}
+.features .what{font-size:14px;line-height:1.6;color:var(--dark-warm);margin:0}
+
+/* principles */
+.principles{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.principles li{display:grid;grid-template-columns:28px 1fr;gap:10px;padding:16px 18px;border:1px solid var(--border-soft);border-radius:10px;background:var(--ivory);align-items:start}
+.principles .n{width:28px;height:28px;border-radius:999px;background:var(--brand-tint);border:1px solid var(--border);display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--brand);line-height:1}
+.principles .body b{display:block;font-weight:500;font-size:13.5px;color:var(--near-black);margin-bottom:3px}
+.principles .body span{font-size:12.5px;color:var(--olive);line-height:1.55}
+
+/* pricing */
+.price-card{max-width:920px;margin:0 auto;padding:42px 32px 36px;display:flex;flex-direction:column;align-items:center;text-align:center;border:1px solid var(--border);border-radius:14px;background:linear-gradient(180deg,var(--ivory) 0%,#fdfcf8 100%);box-shadow:0 8px 24px -16px rgba(20,19,19,.14)}
+.price-benefits{list-style:none;margin:0 0 28px;padding:0}
+.price-benefits li{font-size:15px;color:var(--dark-warm);line-height:1.6;padding:3px 0}
+.price-benefits li::before{content:"— ";color:var(--stone)}
+.price-amount{font-family:Georgia,Charter,serif;font-weight:500;font-size:26px;color:var(--near-black);margin:0 0 14px}
+.price-vs{font-size:14px;color:var(--dark-warm);margin:0 0 28px;line-height:1.6;max-width:560px}
+.price-vs s{color:var(--stone);text-decoration-thickness:1px;margin:0 2px} .price-vs .hl{color:var(--brand);font-weight:500}
+.price-trial{font-size:12.5px;color:var(--stone);margin:14px 0 0} .price-trial a{text-decoration:underline;text-underline-offset:3px}
+.price-terms{font-size:12px;color:var(--olive);margin:20px 0 0;max-width:640px;line-height:1.5;text-align:center}
+.price-terms .sep{color:var(--line);margin:0 4px}
+
+/* faq */
+.faq{display:grid;gap:10px} .faq-pair{margin:0;padding:16px 18px;border:1px solid var(--border-soft);border-radius:10px;background:var(--ivory)}
+.faq dt{font-weight:500;font-size:14.5px;color:var(--near-black);margin:0 0 6px}
+.faq dd{font-size:13.5px;line-height:1.6;color:var(--olive);margin:0}
+.faq code{font-family:var(--mono);font-size:11px;color:var(--brand);background:var(--brand-tint);padding:1px 6px;border-radius:4px;border:1px solid #E4ECF5}
+.faq-tail{font-size:12.5px;color:var(--stone);margin:16px 0 0}
+
+/* footer */
+footer.foot{margin-top:40px;padding:28px 26px;border:1px solid var(--border-soft);border-radius:12px;background:var(--ivory);display:flex;justify-content:space-between;align-items:flex-end;gap:32px;font-size:12.5px;color:var(--stone)}
+.foot .mark{display:grid;grid-template-columns:56px auto;column-gap:12px;align-items:start}
+.foot .mark img{width:56px;height:56px;border-radius:8px;object-fit:cover}
+.foot .wm-name{font-weight:500;font-size:22px;color:var(--near-black);line-height:1.1}
+.foot .wm-line{font-size:12px;color:var(--olive);margin-top:2px}
+.foot .colophon{text-align:right;max-width:480px} .foot .colophon .links{font-family:var(--latin-ui);color:var(--dark-warm);margin-bottom:10px} .foot .colophon .ethos{color:var(--olive);font-style:italic;line-height:1.55;max-width:360px;margin-left:auto}
+@media print{body{background:#f5f4ed;-webkit-print-color-adjust:exact;print-color-adjust:exact}.page{padding:0;max-width:100%}}
+@media (max-width:880px){
+  .page{padding:40px 20px 64px} .hero{margin-bottom:40px;padding-bottom:28px} .hero h1{font-size:52px} .tagline{font-size:16px}
+  section{margin-bottom:44px} .section-title{font-size:26px}
+  .gallery{grid-template-columns:1fr} .gallery-caption,.gallery-tabs{grid-column:1;grid-row:auto} .gallery-tabs{justify-content:flex-start}
+  .mock{height:320px;grid-template-columns:160px 1fr}
+  .features li{grid-template-columns:1fr;row-gap:8px;padding:18px 18px}
+  .principles{grid-template-columns:1fr}
+  .price-card{padding:32px 18px 28px}
+  footer.foot{flex-direction:column;align-items:flex-start;gap:20px} .foot .colophon{text-align:left;max-width:100%} .foot .colophon .ethos{margin-left:0}
+}
+@media (max-width:480px){
+  .hero h1{font-size:44px} .hero-cta{flex-direction:column;align-items:stretch} .btn-primary,.btn-ghost{width:100%}
+  .mock{grid-template-columns:1fr;height:auto} .mock-sidebar{display:none}
+  .gallery-caption{flex-direction:column;gap:4px}
+}
+@media (prefers-reduced-motion:reduce){.hero h1{animation:none;opacity:1;transform:none;filter:none}.gallery-panel{transition:none}}
+</style>
+</head>
+<body>
+<main class="page">
+<header class="hero">
+  <div class="eyebrow">
+    <div class="eyebrow-left">万象 wanxiang · 对等对话底座 · <a class="version-link" href="#pricing">v0.1.0</a></div>
+    <span class="hero-links"><a href="https://github.com/">GitHub</a><a href="#faq">文档</a></span>
+  </div>
+  <h1>万象</h1>
+  <p class="tagline">自己的服务，<b>自己的对话</b>。Linux 本地即服务端，浏览器即客户端；数据落 <b>NDJSON</b>，不寄放在别人家。</p>
+  <div class="hero-tokens"><span><b>Linux x64</b> C+S 对等</span><span><b>PWA</b> 纯前端</span><span><b>F# · Avalonia</b> 重写</span><span><b>Agent Framework</b> 执行</span></div>
+  <div class="hero-cta">
+    <a class="btn-ghost" href="#features">了解原理</a>
+    <a class="btn-primary" href="#pricing">开始使用</a>
+    <span class="hint">一条命令起服务 · 浏览器即开即用</span>
+  </div>
+</header>
+
+<section>
+  <div class="section-head"><p class="section-num">00 · 预览</p><h2 class="section-title">先看纸感，再看对话</h2><p class="section-lede">以应用内真实布局做占位，不用库存图。暖纸区分侧栏，墨蓝只出现在气泡与选中态；截图就位后直接替换同一圆角与阴影。</p></div>
+  <div class="gallery" data-gallery>
+    <div class="gallery-frame" aria-live="polite">
+      <figure class="gallery-panel is-active" data-title="会话 · 搜索 · 新建" data-line="侧栏暖纸区分，选中墨蓝 tag，纸感不靠描边">
+        <div class="mock">
+          <div class="mock-sidebar">
+            <div class="mock-sidebar-top"><div class="mock-logo">万</div><div class="mock-app">万象</div></div>
+            <div class="mock-search"><b></b> 搜索会话…</div>
+            <div class="mock-item active"><div class="mock-item-title">会话 3f8a · 正在生成</div><div class="mock-item-preview">把重活交给机器…</div></div>
+            <div class="mock-item"><div class="mock-item-title">会话 9c2e · 已归档</div><div class="mock-item-preview">一行一提交，NDJSON 落盘…</div></div>
+            <div class="mock-item"><div class="mock-item-title">会话 a1d4</div><div class="mock-item-preview">PWA 纯前端直连…</div></div>
+          </div>
+          <div class="mock-main">
+            <div class="mock-bubble user">帮我把这段日志按 NDJSON 重放，丢弃损坏行</div>
+            <div class="mock-bubble assist">已按 commitId 递增重放，空洞自动跳过。<br><span style="color:var(--brand)">2 行损坏已截尾</span> · 投影已重建</div>
+            <div class="mock-bubble assist" style="border-style:dashed;color:var(--stone)">输入消息… <span style="float:right;color:var(--stone);font-family:var(--mono);font-size:11px">Enter 发送</span></div>
+          </div>
+        </div>
+      </figure>
+      <figure class="gallery-panel" data-title="消息 · 推理 · 代码" data-line="气泡唯一用墨蓝，推理左侧竖线，代码落 deep-dark">
+        <div class="mock">
+          <div class="mock-sidebar">
+            <div class="mock-sidebar-top"><div class="mock-logo">万</div><div class="mock-app">万象</div></div>
+            <div class="mock-search"><b></b> 搜索会话…</div>
+            <div class="mock-item"><div class="mock-item-title">会话 3f8a</div><div class="mock-item-preview">帮我把这段日志…</div></div>
+            <div class="mock-item active"><div class="mock-item-title">会话 7b12 · 推理中</div><div class="mock-item-preview">▾ 思考过程 · 1.2s</div></div>
+          </div>
+          <div class="mock-main">
+            <div class="mock-reason"><b>思考过程 · 1.2s</b> — 先读 NDJSON 头，再做幂等去重，最后落 CQRS 投影</div>
+            <div class="mock-bubble assist">结论：<b style="color:var(--near-black)">用全局递增 id 即可</b>，跨 UTC 分文件不归零。</div>
+            <div class="mock-code"><div class="mock-code-head"><span>rust</span><span style="font-size:11px">复制</span></div><div class="mock-code-body">let id = commit_id.next(); // 全局递增
+writer.write_ndjson(&event)?;</div></div>
+          </div>
+        </div>
+      </figure>
+      <figure class="gallery-panel" data-title="附件 · 内容寻址" data-line="SHA-256 定址，分块 256 KiB，64 MiB 上限">
+        <div class="mock">
+          <div class="mock-sidebar">
+            <div class="mock-sidebar-top"><div class="mock-logo">万</div><div class="mock-app">万象</div></div>
+            <div class="mock-search"><b></b> 搜索会话…</div>
+            <div class="mock-item active"><div class="mock-item-title">会话 7b12</div><div class="mock-item-preview">附件已随消息记账…</div></div>
+            <div class="mock-item"><div class="mock-item-title">会话 3f8a</div><div class="mock-item-preview">下载走同一 WebSocket 面…</div></div>
+          </div>
+          <div class="mock-main">
+            <div class="mock-bubble user">上传这份 PDF，带上 SHA-256 校验</div>
+            <div class="mock-attach"><div class="mock-attach-icon">◐</div><div class="mock-attach-meta"><b>report-2026.pdf · 3.2 MiB</b>SHA-256 · 内容寻址 · tombstone 删除</div></div>
+            <div class="mock-bubble assist">已分块 256 KiB 上传完成，下载走同一 WebSocket 面，不另开通道。</div>
+          </div>
+        </div>
+      </figure>
+    </div>
+    <div class="gallery-caption"><p class="title" data-gallery-title></p><p class="line" data-gallery-line></p></div>
+    <div class="gallery-tabs" aria-label="选择截图"><button type="button" class="is-active" aria-pressed="true">会话</button><button type="button" aria-pressed="false">消息</button><button type="button" aria-pressed="false">附件</button></div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="section-head"><p class="section-num">01 · 能力</p><h2 class="section-title">把重活交给机器，把选择留给人</h2></div>
+  <ol class="features">
+    <li><p class="name">对等 C/S<small>自己指挥自己，也能指挥别人</small></p><p class="what">每个实例既是 C 又是 S。Linux 本地回环走同一条 muxed WebSocket，不开本地特权通道；远端 PWA 以同一协议直连。</p></li>
+    <li><p class="name">NDJSON + CQRS<small>一行一提交</small></p><p class="what">命令写 NDJSON，查询读内存投影。全局递增 id 跨 UTC 分文件不归零，空洞与损坏可截尾恢复。</p></li>
+    <li><p class="name">Agent 执行<small>可取消，可追踪</small></p><p class="what">基于 Agent Framework，消息记账、generationId 取消、推理过程分开展示；失败与取消分状态回显。</p></li>
+    <li><p class="name">PWA 纯前端<small>不持密钥，不跑模型</small></p><p class="what">浏览器只做界面与 WebSocket；IndexedDB 按 instanceId 存连接，Service Worker 仅缓存静态壳。</p></li>
+    <li><p class="name">内容寻址附件<small>SHA-256 定址</small></p><p class="what">分块上传、哈希校验、引用随消息入库；删除以 tombstone 记账，不改历史。</p></li>
+    <li><p class="name">TOML 唯一权威<small>热更新，冲突可判</small></p><p class="what">配置唯一来源为 TOML 明文，热更新与重写语义明确；监听端点与 TLS 边界收敛。</p></li>
+  </ol>
+</section>
+
+<section>
+  <div class="section-head"><p class="section-num">02 · 原则</p><h2 class="section-title">十二条第一性原理，十六条自动判断</h2></div>
+  <ol class="principles">
+    <li><span class="n">01</span><span class="body"><b>纸感优先</b><span>暖纸基底，墨蓝只点缀 5% 以内；分割靠 hairline，抬升靠 ivory。</span></span></li>
+    <li><span class="n">02</span><span class="body"><b>一色到底</b><span>全站单强调色 #1B365D；tag 仅两档 tint，不开第二彩色。</span></span></li>
+    <li><span class="n">03</span><span class="body"><b>字重克制</b><span>Serif 承重，400/500 两档；标题不加粗，靠字阶与留白分层。</span></span></li>
+    <li><span class="n">04</span><span class="body"><b>对话为王</b><span>会话与消息永远视觉主位；机制与设置退后，不抢焦点。</span></span></li>
+    <li><span class="n">05</span><span class="body"><b>同一协议</b><span>本机与远端走同一 WebSocket 面；不为本机开后门。</span></span></li>
+    <li><span class="n">06</span><span class="body"><b>一行一真相</b><span>NDJSON 一行一原子提交；内存投影可随时重建。</span></span></li>
+  </ol>
+</section>
+
+<section id="pricing">
+  <div class="section-head"><p class="section-num">03 · 获取</p><h2 class="section-title">本地运行，不设门槛</h2></div>
+  <div class="price-card">
+    <ul class="price-benefits"><li>Linux 一条命令起服务，浏览器即开即用</li><li>对话、附件、配置落本地，可备份可迁移</li><li>F# 重写，Avalonia 桌面与 PWA 同一套 UI</li><li>配对码与令牌直连，不经第三方中转</li></ul>
+    <p class="price-amount">开源 · 本地运行</p>
+    <p class="price-vs">对比 <s>云端托管的对话服务</s>，<span class="hl">你的 NDJSON 与附件目录就是全部真相</span></p>
+    <a class="btn-primary" href="#pricing">开始使用</a>
+    <p class="price-trial">以 <a href="#faq">TOML + NDJSON</a> 为唯一来源，重启即可恢复全部永久状态。</p>
+    <p class="price-terms">AGPL-3.0 启发，独立实现 <span class="sep">·</span> Linux x64 + PWA · F# / Avalonia / Agent Framework</p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="section-head"><p class="section-num">04 · 问答</p><h2 class="section-title">常见问题</h2></div>
+  <dl class="faq">
+    <div class="faq-pair"><dt>万象与 Kelivo 的关系？</dt><dd>Kelivo 为灵感来源，万象为 clean-room 独立实现。产品名、协议、配置与数据模型均不复用原文案与源码。</dd></div>
+    <div class="faq-pair"><dt>数据存在哪里？如何恢复？</dt><dd>三件套即全部真相：<code>TOML</code> 配置、<code>NDJSON</code> 事件日志、附件目录。重启后自动重建投影。</dd></div>
+    <div class="faq-pair"><dt>PWA 需要装什么？</dt><dd>不需要。现代浏览器打开即用；离线壳由 Service Worker 缓存静态资源，业务数据不缓存。</dd></div>
+    <div class="faq-pair"><dt>如何连接远端服务器？</dt><dd>输入地址与令牌直连；首次可走 6 位配对码，服务端终端输出，限流 5 次/分钟。</dd></div>
+  </dl>
+  <p class="faq-tail">更多细节见项目内 <code>skill://wanxiang</code> 决策记录。</p>
+</section>
+
+<footer class="foot">
+  <div class="mark"><img src="logo.png" alt="万象"><span class="wm-name">万象</span><span class="wm-line">对等对话底座 · Linux x64 + PWA</span></div>
+  <div class="colophon"><div class="links"><a href="#features">能力</a> &middot; <a href="#pricing">获取</a> &middot; <a href="#faq">问答</a> &middot; <a href="https://github.com/">GitHub</a></div><p class="ethos">纸感中性，墨蓝点缀。好内容值得好纸张 —— 也值得在你手里的数据。</p></div>
+</footer>
+</main>
+<script>
+(function(){
+  var gallery=document.querySelector('[data-gallery]'); if(!gallery) return;
+  var frame=gallery.querySelector('.gallery-frame');
+  var panels=Array.prototype.slice.call(gallery.querySelectorAll('.gallery-panel'));
+  var tabs=Array.prototype.slice.call(gallery.querySelectorAll('.gallery-tabs button'));
+  var title=gallery.querySelector('[data-gallery-title]'), line=gallery.querySelector('[data-gallery-line]');
+  var index=0, timer=null, tt=null, reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(panels.length===0) return;
+  if(title) title.textContent=panels[0].dataset.title||''; if(line) line.textContent=panels[0].dataset.line||'';
+  function activate(next){
+    if(next===index) return;
+    if(tt) clearTimeout(tt); panels.forEach(function(p){p.classList.remove('was-active')});
+    var out=panels[index]; if(out) out.classList.add('was-active');
+    gallery.classList.add('is-switching');
+    tt=setTimeout(function(){gallery.classList.remove('is-switching'); if(out) out.classList.remove('was-active'); tt=null},820);
+    index=next;
+    panels.forEach(function(p,i){var a=i===index; p.classList.toggle('is-active',a); p.setAttribute('aria-hidden',a?'false':'true')});
+    tabs.forEach(function(t,i){var a=i===index; t.classList.toggle('is-active',a); t.setAttribute('aria-pressed',a?'true':'false')});
+    if(title) title.textContent=panels[index].dataset.title||''; if(line) line.textContent=panels[index].dataset.line||'';
+  }
+  function start(){ if(reduce||timer) return; timer=setInterval(function(){activate((index+1)%panels.length)},4500)}
+  function stop(){ if(!timer) return; clearInterval(timer); timer=null}
+  tabs.forEach(function(tab,i){tab.addEventListener('click',function(){stop();activate(i);start()})});
+  if(frame) frame.addEventListener('click',function(e){var b=frame.getBoundingClientRect();var nxt=e.clientX < b.left+b.width/2 ? (index-1+panels.length)%panels.length : (index+1)%panels.length; stop();activate(nxt); start()});
+  gallery.addEventListener('mouseenter',stop); gallery.addEventListener('mouseleave',start); start();
+})();
+</script>
+</body>
+</html>

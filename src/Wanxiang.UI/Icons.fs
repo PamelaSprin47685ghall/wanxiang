@@ -61,6 +61,55 @@ module Icons =
             c.Children.Add(Line(StartPoint = Point(mid, top), EndPoint = Point(mid - wing, mid), Stroke = brush, StrokeThickness = stroke)) |> ignore
             c.Children.Add(Line(StartPoint = Point(mid, top), EndPoint = Point(mid + wing, mid), Stroke = brush, StrokeThickness = stroke)) |> ignore)
 
+    let copy (brush: IBrush) =
+        canvasIcon (fun c ->
+            // 前景矩形 + 背景矩形错位，线稿
+            let r1 = Rectangle(Width = 7.0, Height = 8.0, Stroke = brush, StrokeThickness = stroke, Fill = Brushes.Transparent, RadiusX = 1.2, RadiusY = 1.2)
+            Canvas.SetLeft(r1, 5.0)
+            Canvas.SetTop(r1, 3.0)
+            let r2 = Rectangle(Width = 7.0, Height = 8.0, Stroke = brush, StrokeThickness = stroke, Fill = Brushes.Transparent, RadiusX = 1.2, RadiusY = 1.2)
+            Canvas.SetLeft(r2, 2.0)
+            Canvas.SetTop(r2, 5.0)
+            // 遮挡处用 parchment 小块覆盖，避免双线重叠
+            c.Children.Add(r2) |> ignore
+            c.Children.Add(r1) |> ignore)
+
+    let forkIcon (brush: IBrush) =
+        canvasIcon (fun c ->
+            let p =
+                Path(
+                    Data = Geometry.Parse "M 7.0 2.2 C 7.0 2.2 7.0 6.0 3.8 7.4 M 7.0 11.8 C 7.0 11.8 7.0 8.0 10.2 6.6 M 7.0 2.2 L 7.0 11.8",
+                    Stroke = brush, StrokeThickness = stroke, Fill = Brushes.Transparent, Stretch = Stretch.None)
+            c.Children.Add(p) |> ignore
+            // 三个端点圆
+            for (x, y) in [ (7.0, 2.2); (3.8, 7.4); (10.2, 6.6) ] do
+                let dot = Ellipse(Width = 3.0, Height = 3.0, Stroke = brush, StrokeThickness = stroke, Fill = Brushes.Transparent)
+                Canvas.SetLeft(dot, x - 1.5)
+                Canvas.SetTop(dot, y - 1.5)
+                c.Children.Add(dot) |> ignore)
+
+    let gear (brush: IBrush) =
+        canvasIcon (fun c ->
+            let p =
+                Path(
+                    Data = Geometry.Parse "M 7 2.6 L 7 3.9 M 7 10.1 L 7 11.4 M 2.6 7 L 3.9 7 M 10.1 7 L 11.4 7 M 4.1 4.1 L 5.0 5.0 M 9.0 9.0 L 9.9 9.9 M 9.9 4.1 L 9.0 5.0 M 5.0 9.0 L 4.1 9.9",
+                    Stroke = brush, StrokeThickness = stroke, Fill = Brushes.Transparent, Stretch = Stretch.None, StrokeLineCap = PenLineCap.Round)
+            c.Children.Add(p) |> ignore
+            let ring = Ellipse(Width = 5.0, Height = 5.0, Stroke = brush, StrokeThickness = stroke, Fill = Brushes.Transparent)
+            Canvas.SetLeft(ring, 4.5)
+            Canvas.SetTop(ring, 4.5)
+            c.Children.Add(ring) |> ignore)
+
+    let xIcon (brush: IBrush) =
+        canvasIcon (fun c ->
+            c.Children.Add(Line(StartPoint = Point(inset, inset), EndPoint = Point(glyph - inset, glyph - inset), Stroke = brush, StrokeThickness = stroke)) |> ignore
+            c.Children.Add(Line(StartPoint = Point(glyph - inset, inset), EndPoint = Point(inset, glyph - inset), Stroke = brush, StrokeThickness = stroke)) |> ignore)
+
+    let check (brush: IBrush) =
+        canvasIcon (fun c ->
+            let p = Path(Data = Geometry.Parse "M 3.2 7.0 L 6.0 9.8 L 10.8 4.6", Stroke = brush, StrokeThickness = stroke, Fill = Brushes.Transparent, Stretch = Stretch.None, StrokeLineCap = PenLineCap.Round)
+            c.Children.Add(p) |> ignore)
+
     type IconBtnVariant =
         | Outline
         | Filled

@@ -4,8 +4,8 @@
   "description": "万象聊天客户端（PWA，纯前端）",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F5F4F1",
-  "theme_color": "#2E343E",
+  "background_color": "#f5f4ed",
+  "theme_color": "#1B365D",
   "icons": [
     {
       "src": "/logo.png",
