@@ -39,7 +39,9 @@ let testConfig () =
       instructions = None
       tools = []
       temperature = None
+      topP = None
       maxTokens = None
+      thinkingBudget = None
       extraJson = None }
 
 let newConversationId () = Guid.NewGuid()

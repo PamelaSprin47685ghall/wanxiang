@@ -37,6 +37,30 @@ module CommandEngine =
         | Some c when c.deleted -> Error(WanxiangError.ConversationDeleted id)
         | Some c -> Ok c
 
+    /// 从原始 payload 读 role。Core 不依赖 Agent Framework，
+    /// 因此直接读透明保存的 JSON 字段而不反序列化成 ChatMessage。
+    let private roleOfPayload (payload: System.Text.Json.Nodes.JsonNode) : string =
+        match payload with
+        | :? System.Text.Json.Nodes.JsonObject as o ->
+            let mutable n: System.Text.Json.Nodes.JsonNode = null
+            if o.TryGetPropertyValue("role", &n) && not (isNull n) && n.GetValueKind() = System.Text.Json.JsonValueKind.String then
+                n.GetValue<string>()
+            else
+                ""
+        | _ -> ""
+
+    /// 会话末尾连续的模型侧消息（assistant / tool）的提交 id，按原顺序。
+    /// 「重新生成」就是把这一段作废后重跑，因此遇到第一条用户消息即停止。
+    let trailingModelMessages (visible: MessageRecord list) : CommitId list =
+        visible
+        |> List.rev
+        |> List.takeWhile (fun m ->
+            match roleOfPayload m.payloadJson with
+            | "assistant" | "tool" -> true
+            | _ -> false)
+        |> List.rev
+        |> List.map (fun m -> m.commitId)
+
     /// 校验客户端游标并规划命令。纯函数，不执行副作用。
     /// clientCursor：该连接已确认应用的全局提交 id。
     let plan (proj: Projection) (clientCursor: CommitId) (cmd: ClientCommand) : PlanResult =
@@ -162,7 +186,7 @@ module CommandEngine =
 
         | UpdateConversationConfig d ->
             if not (SessionConfig.isValid d.config) then
-                Rejected(ValidationError "invalid session config")
+                Rejected(ValidationError(String.Join("; ", SessionConfig.validate d.config)))
             else
                 match convOrErr proj d.conversationId with
                 | Error e -> Rejected e
@@ -174,4 +198,37 @@ module CommandEngine =
                             [ ConversationConfigUpdated
                                 { conversationId = d.conversationId
                                   config = d.config } ]
+                    | r -> r
+
+        | SetConversationFlags d ->
+            match convOrErr proj d.conversationId with
+            | Error e -> Rejected e
+            | Ok conv ->
+                if conv.pinned = d.pinned && conv.archived = d.archived then
+                    Rejected(ValidationError "conversation flags unchanged")
+                else
+                    match checkStale clientCursor (conversationWatermark conv) commandId ctype canonicalHash with
+                    | Planned p ->
+                        plannedWith
+                            p
+                            [ ConversationFlagsChanged
+                                { conversationId = d.conversationId
+                                  pinned = d.pinned
+                                  archived = d.archived } ]
+                    | r -> r
+
+        | RegenerateResponse d ->
+            match convOrErr proj d.conversationId with
+            | Error e -> Rejected e
+            | Ok conv ->
+                let trailing = trailingModelMessages (Projection.effectiveMessages proj conv)
+                if List.isEmpty trailing then
+                    Rejected(ValidationError "no model response to regenerate")
+                else
+                    match checkStale clientCursor (conversationWatermark conv) commandId ctype canonicalHash with
+                    | Planned p ->
+                        plannedWith
+                            p
+                            [ for commitId in trailing ->
+                                  MessageDeleted { conversationId = d.conversationId; messageCommitId = commitId } ]
                     | r -> r

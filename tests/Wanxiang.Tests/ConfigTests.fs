@@ -7,7 +7,7 @@ open Wanxiang.Config
 
 let private sampleToml =
     """
-configVersion = 1
+configVersion = 2
 instanceId = "11111111-1111-1111-1111-111111111111"
 [runtime]
 server = true
@@ -18,15 +18,28 @@ fix = false
 listen = "127.0.0.1:9999"
 maxAttachmentBytes = 1048576
 chunkSizeBytes = 65536
+[generation]
+temperature = 0.7
+maxContextMessages = 120
+autoTitle = true
+maxToolRounds = 8
+[tools]
+callTimeoutSeconds = 20
 [providers.openai]
 kind = "openai"
+label = "OpenAI"
 baseUrl = "https://api.openai.com/v1"
 apiKey = "sk-test"
-model = "gpt-4o-mini"
+models = ["gpt-4o-mini", "gpt-4o"]
+defaultModel = "gpt-4o-mini"
+timeoutSeconds = 90
+maxRetries = 3
+enabled = true
 [mcp.fs]
 command = "npx"
 args = ["-y", "server"]
 maxConcurrency = 2
+callTimeoutSeconds = 45
 [[auth.clients]]
 tokenHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 name = "test"
@@ -35,7 +48,7 @@ revoked = false
 """
 
 [<Fact>]
-let ``test_42936`` () =
+let ``TOML parses every section and survives a serialize roundtrip`` () =
     match TomlCodec.tryParse sampleToml with
     | Error errs -> failwith (String.concat "; " errs)
     | Ok cfg ->
@@ -46,7 +59,17 @@ let ``test_42936`` () =
         Assert.True cfg.runtime.pwa
         Assert.Equal(1, cfg.providers.Count)
         Assert.Equal("sk-test", cfg.providers["openai"].apiKey |> Option.defaultValue "")
+        Assert.Equal<string list>([ "gpt-4o-mini"; "gpt-4o" ], cfg.providers["openai"].models)
+        Assert.Equal("gpt-4o-mini", cfg.providers["openai"].defaultModel)
+        Assert.Equal(90, cfg.providers["openai"].timeoutSeconds)
+        Assert.Equal(3, cfg.providers["openai"].maxRetries)
+        Assert.Equal("OpenAI", ProviderConfig.displayName cfg.providers["openai"])
+        Assert.Equal(Some 0.7, cfg.generation.temperature)
+        Assert.Equal(120, cfg.generation.maxContextMessages)
+        Assert.Equal(8, cfg.generation.maxToolRounds)
+        Assert.Equal(20, cfg.tools.callTimeoutSeconds)
         Assert.Equal(2, cfg.mcpServers["fs"].maxConcurrency |> Option.defaultValue 0)
+        Assert.Equal(45, cfg.mcpServers["fs"].callTimeoutSeconds)
         Assert.Equal(1, cfg.authClients.Length)
         // roundtrip
         let text = TomlCodec.serialize cfg
@@ -55,11 +78,15 @@ let ``test_42936`` () =
         | Ok cfg2 ->
             Assert.Equal(cfg.listen, cfg2.listen)
             Assert.Equal(cfg.providers.Count, cfg2.providers.Count)
+            Assert.Equal<string list>(cfg.providers["openai"].models, cfg2.providers["openai"].models)
+            Assert.Equal(cfg.generation, cfg2.generation)
+            Assert.Equal(cfg.tools, cfg2.tools)
+            Assert.Equal(cfg.mcpServers["fs"], cfg2.mcpServers["fs"])
             Assert.Equal(cfg.authClients.Length, cfg2.authClients.Length)
             Assert.Equal(cfg.instanceId, cfg2.instanceId)
 
 [<Fact>]
-let ``test_94616`` () =
+let ``unknown TOML field rejects the whole config`` () =
     let bad = sampleToml + "\n[network]\ntypo = true\n"
     // 注意：重复 [network] 表——TOML 允许合并；未知字段检查应命中
     match TomlCodec.tryParse (sampleToml.Replace("[network]\nlisten", "[network]\ntypo = 1\nlisten")) with
@@ -67,14 +94,14 @@ let ``test_94616`` () =
     | Ok _ -> failwith "unknown field should be rejected"
 
 [<Fact>]
-let ``test_90606`` () =
+let ``malformed token hash rejects the whole config`` () =
     let bad = sampleToml.Replace("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "short")
     match TomlCodec.tryParse bad with
     | Error errs -> Assert.Contains(errs, fun e -> e.Contains "tokenHash")
     | Ok _ -> failwith "invalid token hash should be rejected"
 
 [<Fact>]
-let ``test_81417`` () =
+let ``MCP id colliding with a provider id is rejected`` () =
     let bad = sampleToml.Replace("[mcp.fs]", "[mcp.openai]")
     match TomlCodec.tryParse bad with
     | Error errs -> Assert.Contains(errs, fun e -> e.Contains "conflicts")
@@ -93,7 +120,7 @@ let ``config store reload keeps last valid configuration on invalid file`` () =
             match ConfigStore.Open(path, ignore, rejected.Add) with
             | Ok value -> value
             | Error e -> failwith e
-        File.WriteAllText(path, "configVersion = 1\ninvalid = true\n")
+        File.WriteAllText(path, "configVersion = 2\ninvalid = true\n")
         store.TriggerReload()
         System.Threading.Thread.Sleep 250
         Assert.Equal(initial.instanceId, store.Current.instanceId)
@@ -154,7 +181,7 @@ let ``rewrite 在 reload 失败时返回 Error 并保留旧配置`` () =
         | Error e -> failwith e
         | Ok () -> Assert.Equal("127.0.0.1:12345", store.Current.listen)
         // 制造磁盘文件非法（reload 失败）：外部写入非法内容后 watcher 触发 reload，保留旧配置
-        File.WriteAllText(path, "configVersion = 1\ninstanceId = 1\n") // instanceId 非法 → reload 失败
+        File.WriteAllText(path, "configVersion = 2\ninstanceId = 1\n") // instanceId 非法 → reload 失败
         store.TriggerReload()
         System.Threading.Thread.Sleep 250
         Assert.Equal("127.0.0.1:12345", store.Current.listen) // 保留最后有效配置
@@ -205,3 +232,59 @@ let ``TOML 配置文件权限为 0600`` () =
             Assert.Equal(mode, mode2)
         finally
             if Directory.Exists dir then Directory.Delete(dir, true)
+
+// ---------------------------------------------------------------- TLS
+
+let private withNetwork (extra: string) =
+    sampleToml.Replace("listen = \"127.0.0.1:9999\"", "listen = \"0.0.0.0:9999\"\n" + extra)
+
+let private errorsOf (toml: string) =
+    match TomlCodec.tryParse toml with
+    | Ok _ -> []
+    | Error errors -> errors
+
+[<Fact>]
+let ``只填证书或只填私钥都被拒绝`` () =
+    // 半套配置会静默退回明文，而运维以为已经加密——必须在解析期就失败
+    let certOnly = errorsOf (withNetwork "tlsCertPath = \"/tmp/nonexistent-cert.pem\"")
+    Assert.Contains("network.tlsKeyPath: required when tlsCertPath is set", certOnly)
+    let keyOnly = errorsOf (withNetwork "tlsKeyPath = \"/tmp/nonexistent-key.pem\"")
+    Assert.Contains("network.tlsCertPath: required when tlsKeyPath is set", keyOnly)
+
+[<Fact>]
+let ``证书文件不存在时拒绝启动`` () =
+    let errors =
+        errorsOf (
+            withNetwork "tlsCertPath = \"/tmp/does-not-exist.pem\"\ntlsKeyPath = \"/tmp/also-missing.pem\"")
+    Assert.Contains("network.tlsCertPath: file not found: /tmp/does-not-exist.pem", errors)
+    Assert.Contains("network.tlsKeyPath: file not found: /tmp/also-missing.pem", errors)
+
+[<Fact>]
+let ``证书路径齐备时被接受并能往返 TOML`` () =
+    let dir = Path.Combine(Path.GetTempPath(), $"wanxiang-tls-{Guid.NewGuid():N}")
+    Directory.CreateDirectory dir |> ignore
+    try
+        let cert = Path.Combine(dir, "cert.pem")
+        let key = Path.Combine(dir, "key.pem")
+        File.WriteAllText(cert, "-----BEGIN CERTIFICATE-----")
+        File.WriteAllText(key, "-----BEGIN PRIVATE KEY-----")
+        match TomlCodec.tryParse (withNetwork $"tlsCertPath = \"{cert}\"\ntlsKeyPath = \"{key}\"") with
+        | Error errors -> failwith $"应当接受，却报错：{errors}"
+        | Ok cfg ->
+            Assert.Equal(cert, cfg.tlsCertPath)
+            Assert.Equal(key, cfg.tlsKeyPath)
+            match TomlCodec.tryParse (TomlCodec.serialize cfg) with
+            | Error errors -> failwith $"回写后无法重新解析：{errors}"
+            | Ok again ->
+                Assert.Equal(cfg.tlsCertPath, again.tlsCertPath)
+                Assert.Equal(cfg.tlsKeyPath, again.tlsKeyPath)
+    finally
+        Directory.Delete(dir, true)
+
+[<Fact>]
+let ``不配 TLS 时字段为空且配置合法`` () =
+    match TomlCodec.tryParse sampleToml with
+    | Error errors -> failwith $"{errors}"
+    | Ok cfg ->
+        Assert.Equal("", cfg.tlsCertPath)
+        Assert.Equal("", cfg.tlsKeyPath)

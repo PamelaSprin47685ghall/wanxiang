@@ -49,7 +49,9 @@ module CommitCodec =
         if not (List.isEmpty cfg.tools) then
             o["tools"] <- JsonArray([| for t in cfg.tools -> JsonNode.op_Implicit t |])
         match cfg.temperature with Some t -> o["temperature"] <- t | None -> ()
+        match cfg.topP with Some p -> o["topP"] <- p | None -> ()
         match cfg.maxTokens with Some m -> o["maxTokens"] <- m | None -> ()
+        match cfg.thinkingBudget with Some b -> o["thinkingBudget"] <- b | None -> ()
         match cfg.extraJson with Some n -> o["extra"] <- n.DeepClone() | None -> ()
         o
 
@@ -77,12 +79,14 @@ module CommitCodec =
             match tryGet o "extra" with
             | Some v -> Some(v.DeepClone())
             | _ -> None
-        { provider = getStr "provider" |> Option.defaultValue "openai"
+        { provider = getStr "provider" |> Option.defaultValue ""
           model = getStr "model" |> Option.defaultValue ""
           instructions = getStr "instructions"
           tools = getTools ()
           temperature = getFloat "temperature"
+          topP = getFloat "topP"
           maxTokens = getInt "maxTokens"
+          thinkingBudget = getInt "thinkingBudget"
           extraJson = extra }
 
     let eventDataToJson (ev: EventData) : JsonObject =
@@ -107,6 +111,10 @@ module CommitCodec =
             data["config"] <- configToJson d.config
         | ConversationDeleted d ->
             data["conversationId"] <- d.conversationId.ToString("D")
+        | ConversationFlagsChanged d ->
+            data["conversationId"] <- d.conversationId.ToString("D")
+            data["pinned"] <- d.pinned
+            data["archived"] <- d.archived
         | AgentMessageRecorded d ->
             data["conversationId"] <- d.conversationId.ToString("D")
             data["payload"] <- d.payloadJson.DeepClone()
@@ -179,6 +187,15 @@ module CommitCodec =
                 | Some "conversation.deleted" ->
                     match guid "conversationId" with
                     | Some cid -> Some(ConversationDeleted { conversationId = cid })
+                    | _ -> None
+                | Some "conversation.flags-changed" ->
+                    match guid "conversationId" with
+                    | Some cid ->
+                        let flag k =
+                            match tryGet data k with
+                            | Some v -> v.GetValueKind() = JsonValueKind.True
+                            | None -> false
+                        Some(ConversationFlagsChanged { conversationId = cid; pinned = flag "pinned"; archived = flag "archived" })
                     | _ -> None
                 | Some "agent-message-recorded" ->
                     match guid "conversationId" with

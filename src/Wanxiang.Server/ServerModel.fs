@@ -35,8 +35,7 @@ module ServerModel =
         | Some m ->
             let sb = System.Text.StringBuilder()
             messageTextOf m.payloadJson sb
-            let text = sb.ToString()
-            if text.Length > 100 then text.Substring(0, 100) + "…" else text
+            PlainText.summarize 100 (sb.ToString())
 
     /// 会话列表摘要（决策 125：含最后可见消息摘要、当前运行状态、有效配置摘要，不含完整消息正文）。
     let conversationListItems (proj: Projection) (runtimeStateOf: System.Guid -> string) : JsonArray =
@@ -47,6 +46,11 @@ module ServerModel =
             o["title"] <- c.title
             o["lastCommitId"] <- c.lastCommitId |> Option.defaultValue 0UL
             o["deleted"] <- c.deleted
+            o["pinned"] <- c.pinned
+            o["archived"] <- c.archived
+            o["createdAt"] <- c.createdAtUtc.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
+            o["messageCount"] <- (Projection.effectiveMessages proj c |> List.length)
+            o["isFork"] <- c.parent.IsSome
             o["lastMessage"] <- lastMessageText proj c
             o["runtimeState"] <- runtimeStateOf c.conversationId
             let cfg = JsonObject()
@@ -62,6 +66,7 @@ module ServerModel =
         for m in Projection.effectiveMessages proj conv do
             let o = JsonObject()
             o["commitId"] <- m.commitId
+            o["committedAt"] <- m.committedAtUtc.UtcDateTime.ToString("o", System.Globalization.CultureInfo.InvariantCulture)
             o["payload"] <- m.payloadJson.DeepClone()
             arr.Add o
         arr
@@ -97,12 +102,12 @@ module ServerModel =
         for m in page do
             let o = JsonObject()
             o["commitId"] <- m.commitId
+            o["committedAt"] <- m.committedAtUtc.UtcDateTime.ToString("o", System.Globalization.CultureInfo.InvariantCulture)
             o["payload"] <- m.payloadJson.DeepClone()
             items.Add o
         items, List.length msgs > limit
-
     /// 从消息 payload 提取附件引用（客户端写入消息 contents 的 `{"type":"attachment",...}` 项）。
-    /// 用于 doctor 可达性检查（Q179）与客户端展示。
+    /// 用于 doctor 可达性检查（Q179）、客户端展示与附件回收。
     let attachmentRefsOf (payload: JsonNode) : (string * string * string * int64) list =
         let results = System.Collections.Generic.List<string * string * string * int64>()
         let rec walk (node: JsonNode) =
@@ -130,3 +135,36 @@ module ServerModel =
             | _ -> ()
         walk payload
         List.ofSeq results
+
+    /// 仍需保留附件的会话集合。
+    ///
+    /// 「未删除的会话」不够：fork 只继承父会话在 forkBaseCommitId 时刻的消息，
+    /// 父会话被删后子分支照样展示那些消息，因此祖先链必须一并算作存活。
+    let private conversationsKeepingAttachments (proj: Projection) : Set<System.Guid> =
+        let rec walkUp (acc: Set<System.Guid>) (id: System.Guid) =
+            if acc.Contains id then acc
+            else
+                let acc = acc.Add id
+                match Projection.tryConversation proj id with
+                | Some conv ->
+                    match conv.parent with
+                    | Some (parentId, _) -> walkUp acc parentId
+                    | None -> acc
+                | None -> acc
+        proj.conversations
+        |> Map.toSeq
+        |> Seq.filter (fun (_, conv) -> not conv.deleted)
+        |> Seq.fold (fun acc (id, _) -> walkUp acc id) Set.empty
+
+    /// 仍被引用的附件 sha256（小写）。
+    ///
+    /// 刻意保守：连已被 tombstone 的消息也算引用。历史分页可以按更早的
+    /// commitId 回看那条消息，删了 blob 就会把历史变成「内容已丢失」。
+    let referencedAttachments (proj: Projection) : Set<string> =
+        conversationsKeepingAttachments proj
+        |> Seq.choose (Projection.tryConversation proj)
+        |> Seq.collect (fun conv -> conv.messages)
+        |> Seq.collect (fun message -> attachmentRefsOf message.payloadJson)
+        |> Seq.map (fun (sha, _, _, _) -> sha.ToLowerInvariant())
+        |> Seq.filter (System.String.IsNullOrWhiteSpace >> not)
+        |> Set.ofSeq

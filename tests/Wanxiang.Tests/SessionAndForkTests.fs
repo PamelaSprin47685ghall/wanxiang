@@ -21,7 +21,7 @@ let ``conversation list summary includes last message and runtime state`` () =
             commits
             |> List.fold (fun p c -> Projection.applyCommit p c |> function Ok p -> p | Error e -> failwith (WanxiangError.message e)) Projection.empty
         let items = ServerModel.conversationListItems proj (fun _ -> "idle")
-        Assert.Single items
+        Assert.Single items |> ignore
         let item = items[0].AsObject()
         // 决策 125：最后可见消息摘要
         Assert.Contains("最后一条消息", item["lastMessage"].GetValue<string>())
@@ -140,7 +140,7 @@ let ``fork with empty config succeeds and is idempotent`` () =
         let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
         use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
-        let emptyCfg = { provider = ""; model = ""; instructions = None; tools = []; temperature = None; maxTokens = None; extraJson = None }
+        let emptyCfg = { provider = ""; model = ""; instructions = None; tools = []; temperature = None; topP = None; maxTokens = None; thinkingBudget = None; extraJson = None }
         // 父会话 + 一条消息
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "P"; config = testConfig () } ] |> ignore
         coord.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m1" } ] |> ignore

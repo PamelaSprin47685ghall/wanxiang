@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="ReconnectBackoff.fs" />
     <Compile Include="WsClient.fs" />
   </ItemGroup>
 

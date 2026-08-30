@@ -47,6 +47,8 @@ type WsConnection(
     executeCommand: CommitId -> ClientCommand -> CommandExecutionResult,
     orchestrator: ChatOrchestrator,
     attachmentStore: AttachmentStore,
+    /// 当前可用工具的目录（内置 + MCP 发现）
+    toolDescriptors: unit -> JsonArray,
     getCommitsAfter: CommitId -> Events.Commit list,
     pairing: Auth.PairingState,
     failureTracker: Auth.FailureTracker,
@@ -170,7 +172,8 @@ type WsConnection(
                                             | ConversationForked d -> listObserved || observedSet.Contains d.conversationId
                                             | ConversationRenamed d -> listObserved || observedSet.Contains d.conversationId
                                             | EventData.ConversationDeleted d -> listObserved || observedSet.Contains d.conversationId
-                                            | ConversationConfigUpdated d -> listObserved || observedSet.Contains d.conversationId)
+                                            | ConversationConfigUpdated d -> listObserved || observedSet.Contains d.conversationId
+                                            | ConversationFlagsChanged d -> listObserved || observedSet.Contains d.conversationId)
                                     if relevant then
                                         items.Add(CommitCodec.commitToJsonLine commit)
                                         lastItemId <- commit.id
@@ -527,6 +530,7 @@ type WsConnection(
                             if failed then
                                 this.TrySend(ServerError {| message = "attachment download interrupted" |}) |> ignore
                         } |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | HistoryRequest d ->
                 // Q127/P1-2：按全局 commitID 反向分页；页边界用稳定 commitID（不用 offset）。
                 match handshakeState with
@@ -538,7 +542,107 @@ type WsConnection(
                         let items, hasMore = ServerModel.historyPageItems proj conv d.beforeCommitId d.limit
                         this.TrySend(HistoryPage {| conversationId = d.conversationId; beforeCommitId = d.beforeCommitId; items = items; hasMore = hasMore |}) |> ignore
                 | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
+            | CatalogRequest ->
+                match handshakeState with
+                | Authenticated -> this.SendCatalog()
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
+            | ProviderProbeRequest d ->
+                match handshakeState with
+                | Authenticated ->
+                    match AppConfig.tryProvider d.providerId (getConfig ()) with
+                    | None ->
+                        this.TrySend(
+                            ProviderProbeResult
+                                {| requestId = d.requestId
+                                   providerId = d.providerId
+                                   ok = false
+                                   models = JsonArray()
+                                   error = Some(sprintf "服务商 %s 不存在" d.providerId) |})
+                        |> ignore
+                    | Some provider ->
+                        // 探活可能等上十几秒，绝不阻塞接收循环
+                        task {
+                            let! result = ProviderCatalog.probeModels provider CancellationToken.None
+                            match result with
+                            | Ok models ->
+                                this.TrySend(
+                                    ProviderProbeResult
+                                        {| requestId = d.requestId
+                                           providerId = d.providerId
+                                           ok = true
+                                           models = JsonArray([| for m in models -> JsonNode.op_Implicit m |])
+                                           error = None |})
+                                |> ignore
+                            | Error e ->
+                                this.TrySend(
+                                    ProviderProbeResult
+                                        {| requestId = d.requestId
+                                           providerId = d.providerId
+                                           ok = false
+                                           models = JsonArray()
+                                           error = Some e |})
+                                |> ignore
+                        }
+                        |> this.Detach
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
+            | ConfigUpsertProvider d -> do! this.ApplyConfig(d.requestId, ConfigMutation.upsertProvider, d.provider)
+            | ConfigUpsertMcp d -> do! this.ApplyConfig(d.requestId, ConfigMutation.upsertMcp, d.server)
+            | ConfigUpdateGeneration d -> do! this.ApplyConfig(d.requestId, ConfigMutation.updateGeneration, d.generation)
+            | ConfigDeleteProvider d ->
+                do! this.ApplyConfigWith(d.requestId, fun cfg -> ConfigMutation.deleteProvider cfg d.providerId)
+            | ConfigDeleteMcp d ->
+                do! this.ApplyConfigWith(d.requestId, fun cfg -> ConfigMutation.deleteMcp cfg d.serverId)
             | _ -> ()
+        }
+
+    /// 下发目录快照（可用服务商 / 模型 / 工具 / 生成默认值）。
+    member private this.SendCatalog() : unit =
+        let cfg = getConfig ()
+        this.TrySend(
+            CatalogSnapshot
+                {| providers = ProviderCatalog.providers cfg
+                   tools = toolDescriptors ()
+                   generation = ProviderCatalog.generation cfg |})
+        |> ignore
+
+    /// 后台任务与连接生命周期解耦，同时不留未观察异常。
+    member private _.Detach(work: Task) : unit =
+        work.ContinueWith(fun (t: Task) ->
+            if not (isNull t.Exception) then
+                logInfo(sprintf "detached task failed: %s" (t.Exception.GetBaseException().Message)))
+        |> ignore
+
+    /// 配置写入的公共路径：解析 → 校验 → 原子重写 → 回执 + 广播新目录。
+    member private this.ApplyConfig(requestId: Guid, apply: AppConfig -> JsonObject -> Result<AppConfig, string list>, payload: JsonObject) : Task =
+        this.ApplyConfigWith(requestId, fun cfg -> apply cfg payload)
+
+    member private this.ApplyConfigWith(requestId: Guid, apply: AppConfig -> Result<AppConfig, string list>) : Task =
+        task {
+            match handshakeState with
+            | Authenticated ->
+                // 先在当前快照上校验，避免把非法配置塞进原子重写
+                match apply (getConfig ()) with
+                | Error errors ->
+                    this.TrySend(ConfigApplied {| requestId = requestId; ok = false; errors = errors |}) |> ignore
+                | Ok _ ->
+                    let mutable failure: string list = []
+                    let result =
+                        updateConfig (fun cfg ->
+                            match apply cfg with
+                            | Ok next -> next
+                            | Error errors ->
+                                failure <- errors
+                                cfg)
+                    if not (List.isEmpty failure) then
+                        this.TrySend(ConfigApplied {| requestId = requestId; ok = false; errors = failure |}) |> ignore
+                    else
+                        match result with
+                        | Ok () ->
+                            this.TrySend(ConfigApplied {| requestId = requestId; ok = true; errors = [] |}) |> ignore
+                            this.SendCatalog()
+                        | Error e ->
+                            this.TrySend(ConfigApplied {| requestId = requestId; ok = false; errors = [ e ] |}) |> ignore
+            | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
         }
 
     /// 连接主循环：先发 Hello，然后并行收发。
@@ -627,9 +731,18 @@ type ConnectionRegistry() =
     member _.All() : WsConnection list =
         connections.Values |> List.ofSeq
 
+    /// 广播一个与具体会话无关的事件（配置变更、目录快照）。
+    /// 只发给已认证连接：未认证连接不该看到服务商清单。
+    member this.BroadcastToAll(ev: WireEvent) : unit =
+        for conn in this.All() do
+            if conn.IsAuthenticated then conn.PushTransient ev
+
     /// 广播权威提交（coordinator.onCommitted 注入）。
     member this.BroadcastCommit(commit: Events.Commit) : unit =
         // 收集受影响会话与变更种类
+        // 每个 (会话, 变更种类) 只处理一次：下面的内层循环会重走整个 events 数组，
+        // 若 affected 里同一对出现 N 次，同一条消息就会被推送 N 次
+        // （一次提交含多条消息时必然发生，例如「重新生成」的批量作废）。
         let affected =
             [ for ev in commit.events do
                   match ev with
@@ -639,7 +752,9 @@ type ConnectionRegistry() =
                   | ConversationForked d -> yield d.conversationId, "list"
                   | ConversationRenamed d -> yield d.conversationId, "list"
                   | EventData.ConversationDeleted d -> yield d.conversationId, "list"
-                  | ConversationConfigUpdated d -> yield d.conversationId, "list" ]
+                  | ConversationConfigUpdated d -> yield d.conversationId, "list"
+                  | ConversationFlagsChanged d -> yield d.conversationId, "list" ]
+            |> List.distinct
         for (convId, kind) in affected do
             for conn in this.All() do
                 match kind with
@@ -648,7 +763,12 @@ type ConnectionRegistry() =
                         for ev in commit.events do
                             match ev with
                             | AgentMessageRecorded d when d.conversationId = convId ->
-                                conn.PushAuthority(MessageCommitted {| conversationId = convId; commitId = commit.id; payload = d.payloadJson |})
+                                conn.PushAuthority(
+                                    MessageCommitted
+                                        {| conversationId = convId
+                                           commitId = commit.id
+                                           committedAt = commit.committedAtUtc
+                                           payload = d.payloadJson |})
                             | MessageDeleted d when d.conversationId = convId ->
                                 let change = JsonObject()
                                 change["deletedMessage"] <- d.messageCommitId

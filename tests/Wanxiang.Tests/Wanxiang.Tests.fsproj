@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Headless.fs" />
     <Compile Include="Helpers.fs" />
     <Compile Include="StoreConsistencyTests.fs" />
     <Compile Include="ReplayTests.fs" />
@@ -18,12 +19,33 @@
     <Compile Include="AttachmentTests.fs" />
     <Compile Include="BugfixTests.fs" />
     <Compile Include="CodecTests.fs" />
+    <Compile Include="ProductizationTests.fs" />
+    <Compile Include="PolishTests.fs" />
+    <Compile Include="MathRenderTests.fs" />
+    <Compile Include="NativeTransportTests.fs" />
+    <Compile Include="ScrollLayoutTests.fs" />
+    <Compile Include="MathBaselineTests.fs" />
+    <Compile Include="RenderCostTests.fs" />
+    <Compile Include="IncrementalRenderTests.fs" />
+    <Compile Include="PathologicalRenderTests.fs" />
+    <Compile Include="AsyncHighlightTests.fs" />
+    <Compile Include="FocusRingTests.fs" />
+    <Compile Include="ReconnectBackoffTests.fs" />
+  </ItemGroup>
+
+  <!-- 真 KaTeX 生成的 HTML 夹具：公式排版测试不必带一个 JS 引擎 -->
+  <ItemGroup>
+    <Content Include="fixtures/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <!-- 无显示环境下也能跑真实的 Skia 文本整形：公式排版的字体度量必须在测试里可验，
+         否则每改一个数字都要重建 WASM 包再截图，一轮五分钟。 -->
+    <PackageReference Include="Avalonia.Headless" Version="12.0.0" />
+    <PackageReference Include="Avalonia.Skia" Version="12.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -32,6 +54,8 @@
     <ProjectReference Include="..\..\src\Wanxiang.Config\Wanxiang.Config.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Server\Wanxiang.Server.fsproj" />
+    <ProjectReference Include="..\..\src\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
+    <ProjectReference Include="..\..\src\Wanxiang.UI\Wanxiang.UI.fsproj" />
   </ItemGroup>
 
 </Project>

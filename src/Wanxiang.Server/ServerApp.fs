@@ -3,6 +3,9 @@ namespace Wanxiang.Server
 open System
 open System.IO
 open System.Net.WebSockets
+open System.Security.Cryptography.X509Certificates
+open System.Text.Json.Nodes
+open System.Threading
 open System.Threading.Tasks
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
@@ -52,6 +55,10 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
     let mutable registry: ConnectionRegistry option = None
     let mutable host: IHost option = None
     let mutable stopping = false
+    /// 附件仓库在协调器之后才构造，但提交回调需要引用它，故用可变持有。
+    let mutable attachments: AttachmentStore option = None
+    /// 附件回收进行中标记：批量删会话只该触发一次清扫。
+    let mutable sweeping = 0
 
     let pairing = Auth.PairingState()
     let mutable failureTracker = Auth.FailureTracker(TimeSpan.FromMinutes 1.0, 5, TimeSpan.FromMinutes 5.0)
@@ -94,6 +101,15 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             | None -> ()
             rebuildFailureTracker cfg
         with _ -> ()
+        // 配置变了必须告诉客户端：否则设置界面看到的服务商列表、
+        // 会话里的模型选择器都会停留在旧数据上（历史上这个事件从未被发出）。
+        // 只发信号，不塞目录——工具发现可能要连 MCP 服务器，
+        // 不该在配置回调里同步做；客户端收到后自行 catalog.request。
+        try
+            match registry with
+            | Some reg -> reg.BroadcastToAll(ConfigChanged {| reason = "reloaded" |})
+            | None -> ()
+        with _ -> ()
 
     let onConfigRejected (errs: string) =
         Stderr.write "config-rejected" [ "errors", errs ]
@@ -105,15 +121,25 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             | None -> failwith "coordinator not ready"
         try
             // 默认会话配置注入：客户端创建/修改会话时若未提供有效 provider+model
-            // （SessionConfig.empty 或硬编码过时值），用 TOML 第一个 provider 的 model 填充。
-            // 幂等性：注入是确定性的（同 TOML 下同输入同输出），commandId 基于注入后 cmd 计算，重试一致。
+            // （SessionConfig.empty 或已被删除的 provider），用第一个可用 provider 的默认模型填充。
+            // 幂等性：注入是确定性的（同配置下同输入同输出），commandId 基于注入后 cmd 计算，重试一致。
             let cmd =
                 let fill (cfg: SessionConfig) : SessionConfig =
-                    if SessionConfig.isValid cfg then cfg
+                    let appCfg = currentConfig ()
+                    let providerOk =
+                        match AppConfig.tryProvider cfg.provider appCfg with
+                        | Some p -> p.enabled && ProviderConfig.hasModel cfg.model p
+                        | None -> false
+                    if providerOk && SessionConfig.isValid cfg then cfg
                     else
-                        match (currentConfig ()).providers |> Map.toList |> List.tryHead with
-                        | None -> cfg // 无 provider 配置：保持原样，由 plan 的 isValid 拒绝并给出明确错误
-                        | Some (id, p) -> { cfg with provider = id; model = p.model }
+                        match AppConfig.defaultProvider appCfg with
+                        | None -> cfg // 无可用 provider：保持原样，由 plan 的 isValid 拒绝并给出明确错误
+                        | Some p ->
+                            // provider 存在但模型越界时只纠正模型，保留用户其余选择
+                            match AppConfig.tryProvider cfg.provider appCfg with
+                            | Some existing when existing.enabled ->
+                                { cfg with provider = existing.id; model = ProviderConfig.resolveModel cfg.model existing }
+                            | _ -> { cfg with provider = p.id; model = ProviderConfig.resolveModel cfg.model p }
                 match cmd with
                 | CreateConversation d -> CreateConversation {| d with config = fill d.config |}
                 // UpdateConversationConfig：仅当客户端 config 无效/为空时注入 TOML 默认 provider；
@@ -149,7 +175,16 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                           commandHash = Some plan.canonicalHash
                           nowUtc = None }
                     match coord.Submit submit with
-                    | SubmitResult.Committed c -> CommandExecutionResult.CommandCommitted c.id
+                    | SubmitResult.Committed c ->
+                        // 「重新生成」= 作废末尾模型消息 + 立刻重跑一次生成。
+                        // 作废已经落盘，此处只需触发生成；由编排层沿用会话当前配置。
+                        match cmd with
+                        | RegenerateResponse d ->
+                            match orchestrator with
+                            | Some o -> o.StartRegeneration d.conversationId
+                            | None -> ()
+                        | _ -> ()
+                        CommandExecutionResult.CommandCommitted c.id
                     | SubmitResult.IdempotentReplay c -> CommandExecutionResult.CommandIdempotent c.id
                     | SubmitResult.CommandIdRejected e ->
                         // Q145：同 commandId 不同 payload 的冲突（或幂等记录异常）走专用 stderr 事件
@@ -166,7 +201,29 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
     // P3-2：MCP 子进程 stderr 转发前对已知密钥值做精确替换（Q164）。
     let mcpLog (msg: string) = logInfo msg // Stderr.info 内部统一 redact（Q164）
 
-    let toolRegistry = ToolRegistry((fun () -> (currentConfig ()).mcpServers), mcpLog)
+    let toolRegistry = ToolRegistry(currentConfig, mcpLog)
+
+    /// 后台回收不再被引用的附件 blob。
+    ///
+    /// 单写者线程上不能读投影（会自锁），因此清扫整体挪到后台任务；
+    /// 同一时刻只允许一次，批量删会话不会叠成 N 次全盘扫描。
+    member private this.ScheduleAttachmentSweep() : unit =
+        if Interlocked.CompareExchange(&sweeping, 1, 0) = 0 then
+            Task.Run(fun () ->
+                try
+                    // 稍等一拍：让同一批删除全部落盘后只扫一次
+                    Thread.Sleep 1500
+                    match coordinator, attachments with
+                    | Some coord, Some store ->
+                        let referenced = ServerModel.referencedAttachments coord.Projection
+                        let removed, freed = store.CollectGarbage(referenced, TimeSpan.FromMinutes 10.0)
+                        if removed > 0 then
+                            logInfo(sprintf "attachment gc removed %d blob(s), freed %d bytes" removed freed)
+                    | _ -> ()
+                with ex ->
+                    Stderr.write "attachment-gc-failed" [ "message", ex.Message ]
+                Volatile.Write(&sweeping, 0))
+            |> ignore
 
     /// 启动服务器（server 开关）。
     member this.Start(servePwa: bool) : unit =
@@ -187,19 +244,51 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 | Some reg -> reg.BroadcastCommit commit
                 | None -> ()
             with _ -> ()
+            // 删会话会让它独占的附件失去引用。这里只做「是否需要清扫」的纯判断——
+            // 本回调运行在单写者线程上，读投影会自锁，清扫必须挪到后台。
+            let deletedSomething =
+                commit.events
+                |> List.exists (function EventData.ConversationDeleted _ -> true | _ -> false)
+            if deletedSomething then this.ScheduleAttachmentSweep()
         let onTruncated (commit: Events.Commit, err: WanxiangError, byteOffset: int64, file: string) =
             Stderr.truncated commit file byteOffset err
-        coordinator <- Some(CommitCoordinator(dataDir, replayOutcome, broadcastCommit, onTruncated))
+        coordinator <- Some(new CommitCoordinator(dataDir, replayOutcome, broadcastCommit, onTruncated))
         registry <- Some(ConnectionRegistry())
         let broadcastToConversation (convId: Guid) (ev: WireEvent) =
             match registry with
             | Some reg -> reg.BroadcastTransient(convId, ev)
             | None -> ()
-        orchestrator <-
-            Some(ChatOrchestrator(coordinator.Value, currentProjection, broadcastToConversation, toolRegistry, currentConfig, logInfo))
         let attachmentStore = AttachmentStore(dataDir, (currentConfig ()).maxAttachmentBytes, (currentConfig ()).chunkSizeBytes)
+        attachments <- Some attachmentStore
+        // 附件必须能被送进模型：编排层按 sha256 直接读 blob（决策 71-72 的内容寻址存储）
+        let loadBlob (sha256: string) : byte[] option =
+            try
+                match attachmentStore.OpenRead sha256 with
+                | Some (stream, size) ->
+                    use s = stream
+                    use ms = new MemoryStream(int (min size (int64 Int32.MaxValue)))
+                    s.CopyTo ms
+                    Some(ms.ToArray())
+                | None -> None
+            with _ -> None
+        orchestrator <-
+            Some(ChatOrchestrator(coordinator.Value, currentProjection, broadcastToConversation, toolRegistry, currentConfig, loadBlob, logInfo))
         let builder = WebApplication.CreateBuilder()
-        builder.WebHost.UseUrls(sprintf "http://%s" (currentConfig ()).listen)
+        let tlsEnabled =
+            let cfg = currentConfig ()
+            not (String.IsNullOrWhiteSpace cfg.tlsCertPath) && not (String.IsNullOrWhiteSpace cfg.tlsKeyPath)
+        builder.WebHost.UseUrls(sprintf "%s://%s" (if tlsEnabled then "https" else "http") (currentConfig ()).listen)
+        |> ignore
+        if tlsEnabled then
+            // 证书在启动时一次性读入。配置校验已确认两个文件都存在，
+            // 这里若还失败（口令、权限、格式），必须让启动失败而不是静默退回明文——
+            // 「以为开了 TLS 其实没开」比起不了服务危险得多。
+            let cfg = currentConfig ()
+            let certificate = X509Certificate2.CreateFromPemFile(cfg.tlsCertPath, cfg.tlsKeyPath)
+            builder.WebHost.ConfigureKestrel(fun options ->
+                options.ConfigureHttpsDefaults(fun https -> https.ServerCertificate <- certificate))
+            |> ignore
+
         let app = builder.Build()
         app.UseWebSockets() |> ignore
 
@@ -232,6 +321,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                                 executeCommand,
                                 orchestrator.Value,
                                 attachmentStore,
+                                toolRegistry.DescriptorsJson,
                                 (fun cursor -> coordinator.Value.CommitsAfter cursor),
                                 pairing,
                                 failureTracker,
@@ -251,6 +341,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                     else
                         ctx.Response.StatusCode <- 404
                 }))
+        |> ignore
 
         if servePwa then
             match pwaDir with
@@ -281,7 +372,41 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
 
         host <- Some app
         app.Start()
-        logInfo(sprintf "wanxiang server listening on http://%s (ws=%s pwa=%b)" (currentConfig ()).listen Constants.WsPath servePwa)
+        logInfo (
+            sprintf
+                "wanxiang server listening on %s://%s (ws=%s pwa=%b)"
+                (if tlsEnabled then "https" else "http")
+                (currentConfig ()).listen
+                Constants.WsPath
+                servePwa)
+        if not tlsEnabled then this.WarnIfExposedWithoutTls((currentConfig ()).listen)
+
+    /// 监听非回环地址、又没配证书时告警：令牌会明文过网。
+    ///
+    /// 这条必须在启动路径上喊出来。把它只写在文档里，等价于让不读文档的人
+    /// 在局域网上裸奔发送长期凭据。
+    member private _.WarnIfExposedWithoutTls(listen: string) : unit =
+        let host =
+            let trimmed = if isNull listen then "" else listen.Trim()
+            match trimmed.LastIndexOf ':' with
+            | -1 -> trimmed
+            | index -> trimmed.Substring(0, index)
+        let loopback =
+            let bare = host.Trim('[', ']')
+            bare = "127.0.0.1"
+            || bare = "::1"
+            || bare.StartsWith("127.", StringComparison.Ordinal)
+            || bare.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+        if not loopback then
+            Stderr.write
+                "insecure-listen"
+                [ "listen", box listen
+                  "message",
+                  box (
+                      "监听地址不是回环地址，且未配置 TLS：访问令牌会以明文经过网络。"
+                      + "请设置 network.tlsCertPath 与 network.tlsKeyPath，"
+                      + "或置于提供 HTTPS/WSS 的反向代理之后，或改回 127.0.0.1。"
+                  ) ]
 
     /// 优雅关闭：停止接收新工作、取消生成、排空单写者并 flush（决策 101）。
     /// Q102：不设置内部固定超时——先关闭全部 WebSocket 连接让 Kestrel 排空完成；

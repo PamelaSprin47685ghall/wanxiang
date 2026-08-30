@@ -7,7 +7,7 @@ open Wanxiang.Protocol
 open Wanxiang.Tests.Helpers
 
 [<Fact>]
-let ``test_13241`` () =
+let ``commit line survives a serialize roundtrip`` () =
     let convId = newConversationId ()
     let commit =
         Events.Commit.create 1UL DateTimeOffset.UtcNow
@@ -23,7 +23,7 @@ let ``test_13241`` () =
         Assert.Equal("cmd-1", decoded.commandId |> Option.defaultValue "")
 
 [<Fact>]
-let ``test_93037`` () =
+let ``wire event survives a serialize roundtrip`` () =
     let payload1 = """{"b":2,"a":{"c":1},"arr":[1,2]}"""
     let payload2 = """{ "arr" : [1,2], "a": { "c" : 1 }, "b" : 2 }"""
     let n1 = CanonicalJson.tryNormalize payload1
@@ -38,18 +38,25 @@ let ``test_93037`` () =
     Assert.NotEqual<string>(id1, id3)
 
 [<Fact>]
-let ``test_9659`` () =
+let ``malformed commit line is rejected`` () =
     let convId = newConversationId ()
-    let ev = MessageCommitted {| conversationId = convId; commitId = 42UL; payload = userMessageJson "hi" |}
+    let committedAt = DateTimeOffset(2026, 8, 30, 1, 2, 3, TimeSpan.Zero)
+    let ev =
+        MessageCommitted
+            {| conversationId = convId
+               commitId = 42UL
+               committedAt = committedAt
+               payload = userMessageJson "hi" |}
     let json = WireCodec.encode ev
     match WireCodec.tryDecode json with
     | Ok (MessageCommitted d) ->
         Assert.Equal(convId, d.conversationId)
         Assert.Equal(42UL, d.commitId)
+        Assert.Equal(committedAt.UtcDateTime, d.committedAt.UtcDateTime)
     | _ -> failwith "decode mismatch"
 
 [<Fact>]
-let ``test_18323`` () =
+let ``command event survives a serialize roundtrip`` () =
     let convId = newConversationId ()
     let cmd = SendUserMessage {| invocationId = Guid.NewGuid(); conversationId = convId; messageJson = userMessageJson "hello" |}
     let json = WireCodec.encodeCommand cmd
@@ -67,7 +74,8 @@ let ``test_authority_catch_up_roundtrip`` () =
     | Ok (AuthorityCatchUp d) ->
         Assert.Equal(0UL, d.fromCursor)
         Assert.Equal(1UL, d.toCommitId)
-        Assert.Single(d.items)
+        Assert.Single(d.items) |> ignore
+    | other -> failwithf "expected authority.catch-up, got %A" other
 [<Fact>]
 let ``attachment download events roundtrip in order`` () =
     let hash = "a".PadRight(64, 'a')
@@ -83,8 +91,9 @@ let ``attachment download events roundtrip in order`` () =
         Assert.Equal(3L, b.size)
         Assert.Equal(0, c.index)
         Assert.Equal(hash, e.sha256)
+    | other -> failwithf "attachment download events decoded out of shape: %A" other
 [<Fact>]
-let ``test_11279`` () =
+let ``unknown event type decodes to an error`` () =
     // MAF ChatMessage 序列化后应能原样 roundtrip（结构不被万象解释）
     let original = """{"role":"user","contents":[{"$type":"text","text":"你好"}]}"""
     let node = System.Text.Json.Nodes.JsonNode.Parse original

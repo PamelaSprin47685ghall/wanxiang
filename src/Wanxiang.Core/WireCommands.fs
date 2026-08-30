@@ -13,6 +13,9 @@ type ClientCommand =
     | DeleteConversation of {| invocationId: Guid; conversationId: Guid |}
     | DeleteMessage of {| invocationId: Guid; conversationId: Guid; messageCommitId: CommitId |}
     | UpdateConversationConfig of {| invocationId: Guid; conversationId: Guid; config: SessionConfig |}
+    | SetConversationFlags of {| invocationId: Guid; conversationId: Guid; pinned: bool; archived: bool |}
+    /// 重新生成：删除末尾的助手/工具消息（tombstone），再对同一批用户消息重跑一次生成。
+    | RegenerateResponse of {| invocationId: Guid; conversationId: Guid |}
 
 module ClientCommand =
 
@@ -25,6 +28,8 @@ module ClientCommand =
         | DeleteConversation _ -> "conversation.delete"
         | DeleteMessage _ -> "message.delete"
         | UpdateConversationConfig _ -> "conversation.config-update"
+        | SetConversationFlags _ -> "conversation.flags-set"
+        | RegenerateResponse _ -> "chat.regenerate"
 
     let invocationId (cmd: ClientCommand) : Guid =
         match cmd with
@@ -35,6 +40,21 @@ module ClientCommand =
         | DeleteConversation d -> d.invocationId
         | DeleteMessage d -> d.invocationId
         | UpdateConversationConfig d -> d.invocationId
+        | SetConversationFlags d -> d.invocationId
+        | RegenerateResponse d -> d.invocationId
+
+    /// 命令针对的会话（写权限水位与广播目标）。
+    let conversationId (cmd: ClientCommand) : Guid =
+        match cmd with
+        | CreateConversation d -> d.conversationId
+        | ForkConversation d -> d.conversationId
+        | SendUserMessage d -> d.conversationId
+        | RenameConversation d -> d.conversationId
+        | DeleteConversation d -> d.conversationId
+        | DeleteMessage d -> d.conversationId
+        | UpdateConversationConfig d -> d.conversationId
+        | SetConversationFlags d -> d.conversationId
+        | RegenerateResponse d -> d.conversationId
 
     /// 规范化业务载荷（不含传输元数据），用于 commandId 计算。
     let canonicalPayload (cmd: ClientCommand) : string =
@@ -64,4 +84,10 @@ module ClientCommand =
         | UpdateConversationConfig d ->
             o["conversationId"] <- d.conversationId.ToString("D")
             o["config"] <- Wanxiang.Core.CommitCodec.configToJson d.config
+        | SetConversationFlags d ->
+            o["conversationId"] <- d.conversationId.ToString("D")
+            o["pinned"] <- d.pinned
+            o["archived"] <- d.archived
+        | RegenerateResponse d ->
+            o["conversationId"] <- d.conversationId.ToString("D")
         CanonicalJson.serialize o

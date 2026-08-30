@@ -1,79 +1,85 @@
 namespace Wanxiang.UI
 
-open System
 open Avalonia
 open Avalonia.Controls
 open Avalonia.Controls.ApplicationLifetimes
 open Avalonia.Controls.Primitives
-open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Styling
-open Avalonia.Threading
 open Avalonia.Themes.Fluent
 
-/// 万象桌面应用（clean-room：仅以原项目为灵感，UI 独立设计）。
+/// 万象应用（clean-room：仅以原项目为灵感，UI 独立设计）。
+///
+/// 视觉体系完全由 `Tokens` 决定，Fluent 只提供控件模板。
+/// 因此这里做两件事：把 Fluent 的强调色与选中色压成万象自己的，
+/// 以及把 TextBox 模板那圈默认描边彻底去掉——万象的输入框描边由外层承担。
 type App() =
     inherit Application()
 
+    /// Fluent 的 TextBox 在各状态下用主题资源画自己的底色和描边，
+    /// 与万象「外壳负责描边、输入框自身透明」的结构冲突。
+    /// 压模板 Border 只在名字对得上时有效，因此这里同时改写资源键——
+    /// 少了这一步，输入框会在浅纸背景上呈现一块更深的灰板。
+    member private this.FlattenTextBoxChrome() =
+        let transparent = Brushes.Transparent :> IBrush
+        for key in
+            [ "TextControlBackground"
+              "TextControlBackgroundPointerOver"
+              "TextControlBackgroundFocused"
+              "TextControlBackgroundDisabled"
+              "TextControlBorderBrush"
+              "TextControlBorderBrushPointerOver"
+              "TextControlBorderBrushFocused"
+              "TextControlBorderBrushDisabled" ] do
+            this.Resources[key] <- transparent
+        this.Resources["TextControlBorderThemeThickness"] <- Thickness 0.0
+        this.Resources["TextControlBorderThemeThicknessFocused"] <- Thickness 0.0
+        this.Resources["TextControlThemePadding"] <- Thickness 0.0
+        this.Resources["TextControlForeground"] <- Tokens.text
+        this.Resources["TextControlForegroundPointerOver"] <- Tokens.text
+        this.Resources["TextControlForegroundFocused"] <- Tokens.text
+        this.Resources["TextControlPlaceholderForeground"] <- Tokens.textFaint
+        this.Resources["TextControlPlaceholderForegroundPointerOver"] <- Tokens.textFaint
+        this.Resources["TextControlPlaceholderForegroundFocused"] <- Tokens.textFaint
+        this.Resources["TextControlSelectionHighlightColor"] <- Tokens.accentSoft
+        for pseudo in [ ""; ":focus"; ":pointerover"; ":disabled" ] do
+            let style =
+                Style(fun selector ->
+                    let baseSelector = selector.OfType<TextBox>()
+                    let stated = if pseudo = "" then baseSelector else baseSelector.Class pseudo
+                    stated.Template().OfType<Border>().Name "PART_BorderElement")
+            style.Setters.Add(Setter(Border.BorderThicknessProperty, Thickness 0.0))
+            style.Setters.Add(Setter(Border.BorderBrushProperty, transparent))
+            style.Setters.Add(Setter(Border.BackgroundProperty, transparent))
+            this.Styles.Add style
+
     override this.Initialize() =
         this.Styles.Add(FluentTheme())
-        // 固定浅色（与 Theme.fs 纸感中性板一致）。桌面端不做 prefers-color-scheme 自动切。
-        // PWA 端 Avalonia RequestedThemeVariant 同样保持 Light，避免 Fluent 整套画布误切深色；
-        // 深色壳层对比度（html/body、splash、toast、滚动条）由 wwwroot/app.css 的
-        // @media (prefers-color-scheme: dark) 承担。
+        // 画布主题固定为浅色变体：万象自己的深色由 Tokens 提供，
+        // 若让 Fluent 也切深色，两套配色会互相打架。
         this.RequestedThemeVariant <- ThemeVariant.Light
-        // 压过 Fluent 默认强调色：Kami 唯一墨蓝 #1B365D，避免糖果靛蓝
-        this.Resources["SystemAccentColor"] <- Color.Parse "#1B365D"
-        this.Resources["SystemAccentColorDark1"] <- Color.Parse "#1B365D"
-        this.Resources["SystemAccentColorLight1"] <- Color.Parse "#E4ECF5"
-        // 会话列表：暖灰选中态 + 克制圆角（覆盖 Fluent 高亮资源，作用域仅本应用）
-        this.Resources["ListBoxItemPadding"] <- Thickness(Theme.space2, 7.0)
-        this.Resources["SystemControlHighlightListAccentLowBrush"] <- Theme.primaryContainer
-        this.Resources["SystemControlHighlightListAccentMediumBrush"] <- Theme.selectedHover
-        this.Resources["SystemControlHighlightListAccentHighBrush"] <- Theme.selectedPressed
-        this.Resources["SystemControlHighlightListLowBrush"] <- Theme.hover
-        this.Resources["SystemControlHighlightListMediumBrush"] <- Theme.pressed
-        let itemStyle = Style(Selector = Selectors.Is<ListBoxItem>(null))
-        itemStyle.Setters.Add(Setter(Control.MarginProperty, Thickness(Theme.sidebarInset, 1.0)))
-        itemStyle.Setters.Add(Setter(ContentControl.CornerRadiusProperty, CornerRadius(Theme.radiusMd)))
-        itemStyle.Setters.Add(Setter(ListBoxItem.MinHeightProperty, 52.0))
-        this.Styles.Add(itemStyle)
-        // 选中：墨蓝左侧 2.5pt 标记（Kami 结构分量），配合 ivory→tint 背景区分
-        let selectedBar = Style(Selector = Selectors.Is<ListBoxItem>(null).Class(":selected"))
-        selectedBar.Setters.Add(Setter(ListBoxItem.BorderBrushProperty, Theme.brandLine))
-        selectedBar.Setters.Add(Setter(ListBoxItem.BorderThicknessProperty, Thickness(2.5, 0.0, 0.0, 0.0)))
-        this.Styles.Add(selectedBar)
-        // wx-input：统一压过 Fluent TextBox 模板 focus/hover 大黑边（PART_BorderElement）
-        let wxInputCtrl = Style(fun s -> s.OfType<TextBox>().Class("wx-input"))
-        wxInputCtrl.Setters.Add(Setter(TemplatedControl.BorderThicknessProperty, Thickness(0.0)))
-        wxInputCtrl.Setters.Add(Setter(TextBox.BorderBrushProperty, Brushes.Transparent))
-        this.Styles.Add(wxInputCtrl)
-        let addWxInputTplStyles (variantClass: string) (borderBrush: IBrush) (thickness: Thickness) (background: IBrush) =
-            for pseudo in [| ""; ":focus"; ":pointerover" |] do
-                let style =
-                    Style(fun s ->
-                        let sel = s.OfType<TextBox>().Class("wx-input").Class(variantClass)
-                        let sel' = if pseudo = "" then sel else sel.Class(pseudo)
-                        sel'.Template().OfType<Border>().Name("PART_BorderElement"))
-                style.Setters.Add(Setter(Border.BorderBrushProperty, borderBrush))
-                style.Setters.Add(Setter(Border.BorderThicknessProperty, thickness))
-                style.Setters.Add(Setter(Border.BackgroundProperty, background))
-                this.Styles.Add(style)
-        // 壳内输入：描边由外层 Border 承担；focus 时外层已由 MainWindow 切换为 brandLine
-        addWxInputTplStyles "wx-input-shell" Brushes.Transparent (Thickness(0.0)) Brushes.Transparent
-        // 独立字段（侧栏搜索等）：浅描边，各态同色，不叠 Fluent 强调环；focus 时墨蓝 1pt
-        addWxInputTplStyles "wx-input-field" Theme.outlineVariant (Thickness(1.0)) Theme.panel
-        let focusedField = Style(fun s -> s.OfType<TextBox>().Class("wx-input").Class("wx-input-field").Class(":focus").Template().OfType<Border>().Name("PART_BorderElement"))
-        focusedField.Setters.Add(Setter(Border.BorderBrushProperty, Theme.brandLine :> IBrush))
-        focusedField.Setters.Add(Setter(Border.BorderThicknessProperty, Thickness(1.0)))
-        this.Styles.Add(focusedField)
+
+        let colors = Palette.light
+        this.Resources["SystemAccentColor"] <- colors.accent
+        this.Resources["SystemAccentColorDark1"] <- colors.accentHover
+        this.Resources["SystemAccentColorLight1"] <- colors.accentSoft
+
+        this.FlattenTextBoxChrome()
+
+        // 选中/悬停一律走万象的强调浅底与暖灰，不用 Fluent 的糖果蓝
+        this.Resources["SystemControlHighlightListAccentLowBrush"] <- Tokens.accentSoft
+        this.Resources["SystemControlHighlightListAccentMediumBrush"] <- Tokens.accentSoft
+        this.Resources["SystemControlHighlightListAccentHighBrush"] <- Tokens.accentSoft
+        this.Resources["SystemControlHighlightListLowBrush"] <- Tokens.hover
+        this.Resources["SystemControlHighlightListMediumBrush"] <- Tokens.pressed
 
     override this.OnFrameworkInitializationCompleted() =
         match this.ApplicationLifetime with
-        | :? IClassicDesktopStyleApplicationLifetime as desktop ->
-            desktop.MainWindow <- MainWindow()
+        | :? IClassicDesktopStyleApplicationLifetime as desktop -> desktop.MainWindow <- MainWindow()
         | :? ISingleViewApplicationLifetime as singleView ->
-            // PWA（决策 48：Linux C 与 PWA 共用同一套 F# UI 代码；browser 不支持 Window，根视图必须是 Control）
-            singleView.MainView <- MainView()
+            // PWA：browser 没有 Window，根视图必须是 Control（决策 48）
+            let view = MainView()
+            singleView.MainView <- view
+            view.Build()
         | _ -> ()
         base.OnFrameworkInitializationCompleted()

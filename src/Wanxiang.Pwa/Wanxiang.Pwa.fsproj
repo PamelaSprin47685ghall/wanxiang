@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="RichBrowser.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

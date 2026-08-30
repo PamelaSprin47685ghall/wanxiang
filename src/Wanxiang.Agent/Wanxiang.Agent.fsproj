@@ -6,7 +6,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="ProviderSse.fs" />
+    <Compile Include="AnthropicRequest.fs" />
+    <Compile Include="AnthropicTransport.fs" />
+    <Compile Include="GeminiRequest.fs" />
+    <Compile Include="GeminiTransport.fs" />
     <Compile Include="MessageSerde.fs" />
+    <Compile Include="AttachmentContent.fs" />
     <Compile Include="HistoryProvider.fs" />
     <Compile Include="AgentRuntime.fs" />
   </ItemGroup>

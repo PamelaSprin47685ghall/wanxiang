@@ -233,11 +233,25 @@ type ClientState() =
         | MessageCommitted d ->
             match conversations.TryFind d.conversationId with
             | Some v ->
-                let o = System.Text.Json.Nodes.JsonObject()
-                o["commitId"] <- d.commitId
-                o["payload"] <- d.payload.DeepClone()
-                v.messages.Add o
-                v.lastCommitId <- d.commitId
+                // commitId 是消息的唯一标识：重复推送、快照与 catch-up 交叠时
+                // 必须按它去重，否则同一条回复会在界面上出现两次。
+                let alreadyApplied =
+                    v.messages
+                    |> Seq.exists (fun m ->
+                        match m with
+                        | :? System.Text.Json.Nodes.JsonObject as o ->
+                            let mutable c: System.Text.Json.Nodes.JsonNode = null
+                            o.TryGetPropertyValue("commitId", &c)
+                            && not (isNull c)
+                            && c.GetValue<uint64>() = d.commitId
+                        | _ -> false)
+                if not alreadyApplied then
+                    let o = System.Text.Json.Nodes.JsonObject()
+                    o["commitId"] <- d.commitId
+                    o["committedAt"] <- d.committedAt.UtcDateTime.ToString("o", System.Globalization.CultureInfo.InvariantCulture)
+                    o["payload"] <- d.payload.DeepClone()
+                    v.messages.Add o
+                v.lastCommitId <- max v.lastCommitId d.commitId
                 latestCommitId <- max latestCommitId d.commitId
                 convChanged.Trigger d.conversationId
             | None -> ()
@@ -245,7 +259,10 @@ type ClientState() =
             latestCommitId <- max latestCommitId d.commitId
             match conversations.TryFind d.conversationId with
             | Some v ->
-                v.lastCommitId <- d.commitId
+                // 水位只能单调上升：generation 状态变化推来的 conversation.updated
+                // 携带 commitId = 0，直接赋值会把水位清零，
+                // 于是 catch-up 把整段历史当成未应用重放一遍，界面出现重复消息。
+                v.lastCommitId <- max v.lastCommitId d.commitId
                 convChanged.Trigger d.conversationId
             | None -> ()
         | AuthorityCatchUp d ->
@@ -258,14 +275,26 @@ type ClientState() =
                         match ev with
                         | AgentMessageRecorded m when conversations.ContainsKey m.conversationId ->
                             match conversations.TryFind m.conversationId with
-                            | Some v when commit.id > v.lastCommitId ->
-                                // 去重：实时 MessageCommitted 已应用过的 commit 不重复添加
-                                let o = System.Text.Json.Nodes.JsonObject()
-                                o["commitId"] <- commit.id
-                                o["payload"] <- m.payloadJson.DeepClone()
-                                v.messages.Add o
-                                v.lastCommitId <- max v.lastCommitId commit.id
-                                convChanged.Trigger m.conversationId
+                            | Some v ->
+                                // 按 commitId 精确去重：水位比较不足以防重放
+                                let alreadyApplied =
+                                    v.messages
+                                    |> Seq.exists (fun existing ->
+                                        match existing with
+                                        | :? System.Text.Json.Nodes.JsonObject as o ->
+                                            let mutable c: System.Text.Json.Nodes.JsonNode = null
+                                            o.TryGetPropertyValue("commitId", &c)
+                                            && not (isNull c)
+                                            && c.GetValue<uint64>() = commit.id
+                                        | _ -> false)
+                                if not alreadyApplied then
+                                    let o = System.Text.Json.Nodes.JsonObject()
+                                    o["commitId"] <- commit.id
+                                    o["committedAt"] <- commit.committedAtUtc.UtcDateTime.ToString("o", System.Globalization.CultureInfo.InvariantCulture)
+                                    o["payload"] <- m.payloadJson.DeepClone()
+                                    v.messages.Add o
+                                    v.lastCommitId <- max v.lastCommitId commit.id
+                                    convChanged.Trigger m.conversationId
                             | _ -> ()
                         | _ -> ()
                     maxApplied <- max maxApplied commit.id

@@ -18,7 +18,7 @@ let ``test_cursor_catch_up_commits_replayed`` () =
         match result with
         | Committed c ->
             let commits = coord.CommitsAfter 0UL
-            Assert.Single(commits)
+            Assert.Single(commits) |> ignore
             Assert.Equal(c.id, commits.Head.id)
         | _ -> failwith "expected commit"
     finally

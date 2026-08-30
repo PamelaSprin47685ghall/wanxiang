@@ -279,6 +279,54 @@ type AttachmentStore(dataDir: string, maxBytes: int64, ?chunkSizeBytes: int) =
             with _ -> None
         | Some _ -> None
 
+    /// 回收不再被任何会话引用的 blob。
+    ///
+    /// `referenced` 必须是**保守**的引用集：只要还有任何存活会话（含其祖先链）
+    /// 可能展示某个附件，它就得留下。删错一个 blob 意味着历史消息永久变成
+    /// 「内容已丢失」，代价远高于多占一点磁盘。
+    ///
+    /// `grace` 保护刚落盘但还没被消息引用的上传：分块上传完成与消息提交之间
+    /// 存在窗口，此时 blob 是合法的孤儿。
+    member _.CollectGarbage(referenced: Set<string>, grace: TimeSpan) : int * int64 =
+        let cutoff = DateTime.UtcNow - grace
+        let mutable removed = 0
+        let mutable freed = 0L
+        try
+            for shardOuter in Directory.EnumerateDirectories attachmentsDir do
+                // .tmp 存放在途上传，绝不参与回收
+                if Path.GetFileName shardOuter <> ".tmp" then
+                    for shardInner in Directory.EnumerateDirectories shardOuter do
+                        for path in Directory.EnumerateFiles shardInner do
+                            let name = Path.GetFileName path
+                            // 只按裸 hash 文件判定；.meta 跟随其 blob 一起删
+                            if not (name.EndsWith(".meta", StringComparison.Ordinal)) then
+                                let hash = name.ToLowerInvariant()
+                                if not (referenced.Contains hash) then
+                                    try
+                                        let info = FileInfo path
+                                        if info.LastWriteTimeUtc < cutoff then
+                                            let size = info.Length
+                                            File.Delete path
+                                            let meta = path + ".meta"
+                                            if File.Exists meta then File.Delete meta
+                                            removed <- removed + 1
+                                            freed <- freed + size
+                                    with _ -> ()
+            // 清掉空分片目录，避免目录树无限膨胀
+            for shardOuter in Directory.EnumerateDirectories attachmentsDir do
+                if Path.GetFileName shardOuter <> ".tmp" then
+                    for shardInner in Directory.EnumerateDirectories shardOuter do
+                        try
+                            if Directory.EnumerateFileSystemEntries shardInner |> Seq.isEmpty then
+                                Directory.Delete shardInner
+                        with _ -> ()
+                    try
+                        if Directory.EnumerateFileSystemEntries shardOuter |> Seq.isEmpty then
+                            Directory.Delete shardOuter
+                    with _ -> ()
+        with _ -> ()
+        removed, freed
+
     member _.Dispose() =
         for kv in uploads do
             try kv.Value.stream.Dispose() with _ -> ()

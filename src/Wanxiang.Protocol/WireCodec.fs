@@ -1,6 +1,7 @@
 namespace Wanxiang.Protocol
 
 open System
+open System.Globalization
 open System.Text.Json
 open System.Text.Json.Nodes
 open Wanxiang.Core
@@ -54,6 +55,60 @@ module WireCodec =
                   totalTokens = tryInt uo "totalTokens"
                   durationMs = tryInt64 uo "durationMs" }
         | _ -> None
+
+    let private encodeGenerationError (e: GenerationError) : JsonObject =
+        let o = JsonObject()
+        o["code"] <- GenerationErrorKind.code e.kind
+        o["message"] <- e.message
+        match e.detail with Some d -> o["detail"] <- d | None -> ()
+        o["retryable"] <- e.retryable
+        match e.retryAfterSeconds with Some s -> o["retryAfterSeconds"] <- s | None -> ()
+        o
+
+    let private parseGenerationError (p: JsonObject) : GenerationError option =
+        match tryGet p "error" with
+        | Some (:? JsonObject as eo) ->
+            let kind = tryString eo "code" |> Option.map GenerationErrorKind.ofCode |> Option.defaultValue UnknownFailure
+            Some
+                { kind = kind
+                  message = tryString eo "message" |> Option.defaultValue "生成失败。"
+                  detail = tryString eo "detail"
+                  retryable =
+                    (match tryGet eo "retryable" with
+                     | Some v -> v.GetValueKind() = JsonValueKind.True
+                     | None -> false)
+                  retryAfterSeconds = tryInt eo "retryAfterSeconds" }
+        | Some v when v.GetValueKind() = JsonValueKind.String ->
+            // 兼容旧式纯文本 error（开发期日志/手写帧）
+            Some(GenerationError.create UnknownFailure (v.GetValue<string>()))
+        | _ -> None
+
+    let private tryArray (o: JsonObject) (k: string) : JsonArray =
+        match tryGet o k with
+        | Some (:? JsonArray as a) -> a.DeepClone() :?> JsonArray
+        | _ -> JsonArray()
+
+    let private tryObject (o: JsonObject) (k: string) : JsonObject =
+        match tryGet o k with
+        | Some (:? JsonObject as jo) -> jo.DeepClone() :?> JsonObject
+        | _ -> JsonObject()
+
+    let private tryStringList (o: JsonObject) (k: string) : string list =
+        match tryGet o k with
+        | Some (:? JsonArray as a) ->
+            [ for item in a do
+                  if not (isNull item) && item.GetValueKind() = JsonValueKind.String then item.GetValue<string>() ]
+        | _ -> []
+
+    /// 时间戳解析。缺失或非法时回落到当前时刻——界面宁可显示一个近似时间，
+    /// 也不该因为一个展示字段而丢掉整条消息。
+    let private tryTimestamp (o: JsonObject) (k: string) : DateTimeOffset =
+        match tryString o k with
+        | Some raw ->
+            match DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, Globalization.DateTimeStyles.RoundtripKind) with
+            | true, value -> value
+            | _ -> DateTimeOffset.UtcNow
+        | None -> DateTimeOffset.UtcNow
 
     let private tryGuid (o: JsonObject) (k: string) : Guid option =
         match tryString o k with
@@ -115,6 +170,7 @@ module WireCodec =
         | MessageCommitted d ->
             putGuid p "conversationId" d.conversationId
             p["commitId"] <- d.commitId
+            p["committedAt"] <- d.committedAt.UtcDateTime.ToString("o", CultureInfo.InvariantCulture)
             p["payload"] <- d.payload.DeepClone()
         | HistoryRequest d ->
             putGuid p "conversationId" d.conversationId
@@ -151,11 +207,13 @@ module WireCodec =
         | GenerationStarted d ->
             putGuid p "conversationId" d.conversationId
             putGuid p "generationId" d.generationId
+            p["providerId"] <- d.providerId
+            p["model"] <- d.model
         | GenerationFinished d ->
             putGuid p "conversationId" d.conversationId
             putGuid p "generationId" d.generationId
             p["status"] <- d.status
-            match d.error with Some e -> p["error"] <- e | None -> ()
+            match d.error with Some e -> p["error"] <- encodeGenerationError e | None -> ()
             match d.usage with
             | Some u ->
                 let uo = JsonObject()
@@ -200,6 +258,40 @@ module WireCodec =
             p["index"] <- d.index
             p["data"] <- d.dataBase64
         | AttachmentDownloadComplete d -> p["sha256"] <- d.sha256
+        | CatalogRequest -> ()
+        | CatalogSnapshot d ->
+            p["providers"] <- d.providers.DeepClone()
+            p["tools"] <- d.tools.DeepClone()
+            p["generation"] <- d.generation.DeepClone()
+        | ProviderProbeRequest d ->
+            putGuid p "requestId" d.requestId
+            p["providerId"] <- d.providerId
+        | ProviderProbeResult d ->
+            putGuid p "requestId" d.requestId
+            p["providerId"] <- d.providerId
+            p["ok"] <- d.ok
+            p["models"] <- d.models.DeepClone()
+            match d.error with Some e -> p["error"] <- e | None -> ()
+        | ConfigUpsertProvider d ->
+            putGuid p "requestId" d.requestId
+            p["provider"] <- d.provider.DeepClone()
+        | ConfigDeleteProvider d ->
+            putGuid p "requestId" d.requestId
+            p["providerId"] <- d.providerId
+        | ConfigUpsertMcp d ->
+            putGuid p "requestId" d.requestId
+            p["server"] <- d.server.DeepClone()
+        | ConfigDeleteMcp d ->
+            putGuid p "requestId" d.requestId
+            p["serverId"] <- d.serverId
+        | ConfigUpdateGeneration d ->
+            putGuid p "requestId" d.requestId
+            p["generation"] <- d.generation.DeepClone()
+        | ConfigApplied d ->
+            putGuid p "requestId" d.requestId
+            p["ok"] <- d.ok
+            if not (List.isEmpty d.errors) then
+                p["errors"] <- JsonArray([| for e in d.errors -> JsonNode.op_Implicit e |])
         | ConfigChanged d -> p["reason"] <- d.reason
         | ServerError d -> p["message"] <- d.message
         | Ping -> ()
@@ -239,6 +331,11 @@ module WireCodec =
         | UpdateConversationConfig d ->
             putGuid p "conversationId" d.conversationId
             p["config"] <- CommitCodec.configToJson d.config
+        | SetConversationFlags d ->
+            putGuid p "conversationId" d.conversationId
+            p["pinned"] <- d.pinned
+            p["archived"] <- d.archived
+        | RegenerateResponse d -> putGuid p "conversationId" d.conversationId
         o["payload"] <- p
         o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General))
 
@@ -324,6 +421,25 @@ module WireCodec =
                             Ok(UpdateConversationConfig {| invocationId = inv; conversationId = cid; config = cfg |})
                         | _ -> Error "conversation.config-update: missing invocationId/conversationId"
                     | _ -> Error "conversation.config-update: missing payload"
+                | Some "conversation.flags-set" ->
+                    match tryGet o "payload" with
+                    | Some (:? JsonObject as p) ->
+                        match tryGuid p "invocationId", tryGuid p "conversationId" with
+                        | Some inv, Some cid ->
+                            let flag k =
+                                match tryGet p k with
+                                | Some v -> v.GetValueKind() = JsonValueKind.True
+                                | None -> false
+                            Ok(SetConversationFlags {| invocationId = inv; conversationId = cid; pinned = flag "pinned"; archived = flag "archived" |})
+                        | _ -> Error "conversation.flags-set: missing invocationId/conversationId"
+                    | _ -> Error "conversation.flags-set: missing payload"
+                | Some "chat.regenerate" ->
+                    match tryGet o "payload" with
+                    | Some (:? JsonObject as p) ->
+                        match tryGuid p "invocationId", tryGuid p "conversationId" with
+                        | Some inv, Some cid -> Ok(RegenerateResponse {| invocationId = inv; conversationId = cid |})
+                        | _ -> Error "chat.regenerate: missing invocationId/conversationId"
+                    | _ -> Error "chat.regenerate: missing payload"
                 | _ -> Error "not a command event"
             | _ -> Error "not a JSON object"
         with e ->
@@ -391,7 +507,12 @@ module WireCodec =
                     match tryGuid p "conversationId" with
                     | Some cid ->
                         match tryGet p "payload" with
-                        | Some payload -> Ok(MessageCommitted {| conversationId = cid; commitId = tryUInt64 p "commitId" |> Option.defaultValue 0UL; payload = payload |})
+                        | Some payload ->
+                            Ok(MessageCommitted
+                                {| conversationId = cid
+                                   commitId = tryUInt64 p "commitId" |> Option.defaultValue 0UL
+                                   committedAt = tryTimestamp p "committedAt"
+                                   payload = payload |})
                         | None -> Error "conversation.message-committed: missing payload"
                     | None -> Error "conversation.message-committed: missing conversationId"
                 | Some "history.request" ->
@@ -437,12 +558,17 @@ module WireCodec =
                     | _ -> Error "generation.delta: missing conversationId/generationId"
                 | Some "generation.started" ->
                     match tryGuid p "conversationId", tryGuid p "generationId" with
-                    | Some cid, Some gid -> Ok(GenerationStarted {| conversationId = cid; generationId = gid |})
+                    | Some cid, Some gid ->
+                        Ok(GenerationStarted
+                            {| conversationId = cid
+                               generationId = gid
+                               providerId = tryString p "providerId" |> Option.defaultValue ""
+                               model = tryString p "model" |> Option.defaultValue "" |})
                     | _ -> Error "generation.started: missing conversationId/generationId"
                 | Some "generation.finished" ->
                     match tryGuid p "conversationId", tryGuid p "generationId" with
                     | Some cid, Some gid ->
-                        Ok(GenerationFinished {| conversationId = cid; generationId = gid; status = tryString p "status" |> Option.defaultValue "completed"; error = tryString p "error"; usage = parseUsage p |})
+                        Ok(GenerationFinished {| conversationId = cid; generationId = gid; status = tryString p "status" |> Option.defaultValue "completed"; error = parseGenerationError p; usage = parseUsage p |})
                     | _ -> Error "generation.finished: missing conversationId/generationId"
                 | Some "generation.cancel" ->
                     match tryGuid p "conversationId", tryGuid p "generationId" with
@@ -474,6 +600,51 @@ module WireCodec =
                 | Some "attachment.download-begin" -> Ok(AttachmentDownloadBegin {| sha256 = tryString p "sha256" |> Option.defaultValue ""; size = tryInt64 p "size" |> Option.defaultValue 0L; mediaType = tryString p "mediaType" |> Option.defaultValue ""; fileName = tryString p "fileName" |> Option.defaultValue "" |})
                 | Some "attachment.download-chunk" -> Ok(AttachmentDownloadChunk {| sha256 = tryString p "sha256" |> Option.defaultValue ""; index = tryInt p "index" |> Option.defaultValue 0; dataBase64 = tryString p "data" |> Option.defaultValue "" |})
                 | Some "attachment.download-complete" -> Ok(AttachmentDownloadComplete {| sha256 = tryString p "sha256" |> Option.defaultValue "" |})
+                | Some "catalog.request" -> Ok CatalogRequest
+                | Some "catalog.snapshot" ->
+                    Ok(CatalogSnapshot {| providers = tryArray p "providers"; tools = tryArray p "tools"; generation = tryObject p "generation" |})
+                | Some "provider.probe" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(ProviderProbeRequest {| requestId = rid; providerId = tryString p "providerId" |> Option.defaultValue "" |})
+                    | None -> Error "provider.probe: missing requestId"
+                | Some "provider.probe-result" ->
+                    match tryGuid p "requestId" with
+                    | Some rid ->
+                        Ok(ProviderProbeResult
+                            {| requestId = rid
+                               providerId = tryString p "providerId" |> Option.defaultValue ""
+                               ok = (match tryGet p "ok" with Some v -> v.GetValueKind() = JsonValueKind.True | None -> false)
+                               models = tryArray p "models"
+                               error = tryString p "error" |})
+                    | None -> Error "provider.probe-result: missing requestId"
+                | Some "config.provider-upsert" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(ConfigUpsertProvider {| requestId = rid; provider = tryObject p "provider" |})
+                    | None -> Error "config.provider-upsert: missing requestId"
+                | Some "config.provider-delete" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(ConfigDeleteProvider {| requestId = rid; providerId = tryString p "providerId" |> Option.defaultValue "" |})
+                    | None -> Error "config.provider-delete: missing requestId"
+                | Some "config.mcp-upsert" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(ConfigUpsertMcp {| requestId = rid; server = tryObject p "server" |})
+                    | None -> Error "config.mcp-upsert: missing requestId"
+                | Some "config.mcp-delete" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(ConfigDeleteMcp {| requestId = rid; serverId = tryString p "serverId" |> Option.defaultValue "" |})
+                    | None -> Error "config.mcp-delete: missing requestId"
+                | Some "config.generation-update" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(ConfigUpdateGeneration {| requestId = rid; generation = tryObject p "generation" |})
+                    | None -> Error "config.generation-update: missing requestId"
+                | Some "config.applied" ->
+                    match tryGuid p "requestId" with
+                    | Some rid ->
+                        Ok(ConfigApplied
+                            {| requestId = rid
+                               ok = (match tryGet p "ok" with Some v -> v.GetValueKind() = JsonValueKind.True | None -> false)
+                               errors = tryStringList p "errors" |})
+                    | None -> Error "config.applied: missing requestId"
                 | Some "config.changed" -> Ok(ConfigChanged {| reason = tryString p "reason" |> Option.defaultValue "" |})
                 | Some "server.error" -> Ok(ServerError {| message = tryString p "message" |> Option.defaultValue "" |})
                 | Some "protocol.ping" -> Ok Ping

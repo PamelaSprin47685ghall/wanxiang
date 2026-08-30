@@ -10,7 +10,7 @@ let private projWith (commits: Events.Commit list) : Projection =
     |> List.fold (fun p c -> Projection.applyCommit p c |> function Ok p -> p | Error e -> failwith (WanxiangError.message e)) Projection.empty
 
 [<Fact>]
-let ``test_41581`` () =
+let ``fork inherits parent prefix up to the fork point`` () =
     let convId = newConversationId ()
     let msg1 = Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ]
     let msg2 = Events.Commit.create 2UL DateTimeOffset.UtcNow [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m1" } ]
@@ -39,7 +39,7 @@ let ``test_41581`` () =
     Assert.Equal<CommitId list>([ 2UL; 5UL ], forkMsgs)
 
 [<Fact>]
-let ``test_14283`` () =
+let ``fork point outside the parent prefix is rejected`` () =
     let a = newConversationId ()
     let b = newConversationId ()
     let c = newConversationId ()
@@ -57,7 +57,7 @@ let ``test_14283`` () =
     Assert.Equal<CommitId list>([ 2UL; 4UL; 6UL ], msgs)
 
 [<Fact>]
-let ``test_86547`` () =
+let ``deleting a parent message leaves the fork untouched`` () =
     let parentId = newConversationId ()
     let commits =
         [ Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = parentId; title = "A"; config = testConfig () } ]
@@ -73,7 +73,7 @@ let ``test_86547`` () =
     | Ok _ -> failwith "invalid fork point should be rejected"
 
 [<Fact>]
-let ``test_9264`` () =
+let ``nested forks stay reachable through structural sharing`` () =
     let a = newConversationId ()
     let b = newConversationId ()
     let commits =

@@ -31,6 +31,14 @@ type ConversationDeletedData = {
     conversationId: Guid
 }
 
+/// 会话标记（置顶 / 归档）。与 SessionConfig 一样是**整体快照**而非 patch：
+/// 重放时不需要考虑事件先后组合，读一条就知道当前状态。
+type ConversationFlagsChangedData = {
+    conversationId: Guid
+    pinned: bool
+    archived: bool
+}
+
 /// Agent Framework 完整消息：payload 原样透明保存（MAF schema 的 ChatMessage JSON）。
 type AgentMessageRecordedData = {
     conversationId: Guid
@@ -49,6 +57,7 @@ type EventData =
     | ConversationRenamed of ConversationRenamedData
     | ConversationConfigUpdated of ConversationConfigUpdatedData
     | ConversationDeleted of ConversationDeletedData
+    | ConversationFlagsChanged of ConversationFlagsChangedData
     | AgentMessageRecorded of AgentMessageRecordedData
     | MessageDeleted of MessageDeletedData
 
@@ -61,6 +70,7 @@ module Events =
         | ConversationRenamed _ -> "conversation.renamed"
         | ConversationConfigUpdated _ -> "conversation.config-updated"
         | ConversationDeleted _ -> "conversation.deleted"
+        | ConversationFlagsChanged _ -> "conversation.flags-changed"
         | AgentMessageRecorded _ -> "agent-message-recorded"
         | MessageDeleted _ -> "message.deleted"
 

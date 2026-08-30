@@ -26,7 +26,7 @@ type WireEvent =
     | UnobserveConversation of {| conversationId: Guid |}
     | ConversationSnapshot of {| conversationId: Guid; title: string; lastCommitId: CommitId; runtimeState: string; messages: JsonArray; snapshotEarliestCommitId: CommitId; snapshotHasMore: bool; config: SessionConfig |}
     | ConversationUpdated of {| conversationId: Guid; commitId: CommitId; change: JsonObject |}
-    | MessageCommitted of {| conversationId: Guid; commitId: CommitId; payload: JsonNode |}
+    | MessageCommitted of {| conversationId: Guid; commitId: CommitId; committedAt: DateTimeOffset; payload: JsonNode |}
     // ---- 历史分页（Q127：按 commitID 反向分页，稳定 ID 作页边界）----
     | HistoryRequest of {| conversationId: Guid; beforeCommitId: CommitId; limit: int |}
     | HistoryPage of {| conversationId: Guid; beforeCommitId: CommitId; items: JsonArray; hasMore: bool |}
@@ -39,8 +39,8 @@ type WireEvent =
     | AuthorityCatchUp of {| fromCursor: CommitId; toCommitId: CommitId; items: JsonArray |}
     // ---- 生成 ----
     | GenerationDelta of {| conversationId: Guid; generationId: Guid; payload: JsonNode |}
-    | GenerationStarted of {| conversationId: Guid; generationId: Guid |}
-    | GenerationFinished of {| conversationId: Guid; generationId: Guid; status: string; error: string option; usage: GenerationUsage option |}
+    | GenerationStarted of {| conversationId: Guid; generationId: Guid; providerId: string; model: string |}
+    | GenerationFinished of {| conversationId: Guid; generationId: Guid; status: string; error: GenerationError option; usage: GenerationUsage option |}
     | GenerationCancel of {| conversationId: Guid; generationId: Guid |}
     // ---- 附件 ----
     | AttachmentBegin of {| attachmentId: Guid; totalBytes: int64; sha256: string; mediaType: string; fileName: string |}
@@ -52,6 +52,18 @@ type WireEvent =
     | AttachmentDownloadBegin of {| sha256: string; size: int64; mediaType: string; fileName: string |}
     | AttachmentDownloadChunk of {| sha256: string; index: int; dataBase64: string |}
     | AttachmentDownloadComplete of {| sha256: string |}
+    // ---- 目录：可用 provider / 模型 / 工具（客户端选择器的数据源）----
+    | CatalogRequest
+    | CatalogSnapshot of {| providers: JsonArray; tools: JsonArray; generation: JsonObject |}
+    | ProviderProbeRequest of {| requestId: Guid; providerId: string |}
+    | ProviderProbeResult of {| requestId: Guid; providerId: string; ok: bool; models: JsonArray; error: string option |}
+    // ---- 配置写入（TOML 是权威；这些请求由服务端原子重写配置文件）----
+    | ConfigUpsertProvider of {| requestId: Guid; provider: JsonObject |}
+    | ConfigDeleteProvider of {| requestId: Guid; providerId: string |}
+    | ConfigUpsertMcp of {| requestId: Guid; server: JsonObject |}
+    | ConfigDeleteMcp of {| requestId: Guid; serverId: string |}
+    | ConfigUpdateGeneration of {| requestId: Guid; generation: JsonObject |}
+    | ConfigApplied of {| requestId: Guid; ok: bool; errors: string list |}
     // ---- 配置与系统 ----
     | ConfigChanged of {| reason: string |}
     | ServerError of {| message: string |}
@@ -101,6 +113,16 @@ module WireEvent =
         | AttachmentDownloadBegin _ -> "attachment.download-begin"
         | AttachmentDownloadChunk _ -> "attachment.download-chunk"
         | AttachmentDownloadComplete _ -> "attachment.download-complete"
+        | CatalogRequest -> "catalog.request"
+        | CatalogSnapshot _ -> "catalog.snapshot"
+        | ProviderProbeRequest _ -> "provider.probe"
+        | ProviderProbeResult _ -> "provider.probe-result"
+        | ConfigUpsertProvider _ -> "config.provider-upsert"
+        | ConfigDeleteProvider _ -> "config.provider-delete"
+        | ConfigUpsertMcp _ -> "config.mcp-upsert"
+        | ConfigDeleteMcp _ -> "config.mcp-delete"
+        | ConfigUpdateGeneration _ -> "config.generation-update"
+        | ConfigApplied _ -> "config.applied"
         | ConfigChanged _ -> "config.changed"
         | ServerError _ -> "server.error"
         | Ping -> "protocol.ping"

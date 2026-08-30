@@ -7,6 +7,8 @@ type MessageRecord = {
     commitId: CommitId
     conversationId: Guid
     payloadJson: System.Text.Json.Nodes.JsonNode
+    /// 该消息落盘时刻。界面要显示时间，而 commitId 只是序号推不出时间。
+    committedAtUtc: DateTimeOffset
     /// tombstone：删除事件发生时的提交 id（None = 未删除）
     deletedAtCommitId: CommitId option
 }
@@ -17,6 +19,10 @@ type Conversation = {
     title: string
     createdAtUtc: DateTimeOffset
     deleted: bool
+    /// 置顶：侧栏排在最前
+    pinned: bool
+    /// 归档：默认从侧栏隐藏
+    archived: bool
     /// (parentConversationId, forkAfterId)；None = 根会话
     parent: (Guid * CommitId option) option
     /// 创建该 fork 的提交 id（快照边界，由提交外壳决定）
@@ -83,10 +89,12 @@ module Projection =
     let effectiveMessages (proj: Projection) (conv: Conversation) : MessageRecord list =
         effectiveMessagesAt proj conv.conversationId proj.latestCommitId
 
+    /// 侧栏会话列表：置顶优先，其次按最近活动倒序。归档会话仍在列表中，
+    /// 由客户端决定是否折叠（服务端不隐藏数据）。
     let conversationList (proj: Projection) : Conversation list =
         proj.conversations.Values
         |> Seq.filter (fun c -> not c.deleted)
-        |> Seq.sortByDescending (fun c -> c.lastCommitId)
+        |> Seq.sortByDescending (fun c -> (c.pinned, c.lastCommitId))
         |> List.ofSeq
 
     /// 应用一条提交（纯函数）。投影失败返回错误，由 Store 层决定截尾/poison 策略。
@@ -111,6 +119,8 @@ module Projection =
                                   title = d.title
                                   createdAtUtc = commit.committedAtUtc
                                   deleted = false
+                                  pinned = false
+                                  archived = false
                                   parent = None
                                   forkBaseCommitId = None
                                   config = d.config
@@ -141,6 +151,8 @@ module Projection =
                                           title = parent.title + " (fork)"
                                           createdAtUtc = commit.committedAtUtc
                                           deleted = false
+                                          pinned = false
+                                          archived = false
                                           parent = Some(d.parentConversationId, d.forkAfterId)
                                           forkBaseCommitId = Some commit.id
                                           config = parent.config
@@ -159,6 +171,14 @@ module Projection =
                         match conversations.TryFind d.conversationId with
                         | None -> failed <- Some(ValidationError(sprintf "conversation %O not found" d.conversationId))
                         | Some conv -> conversations <- conversations.Add(d.conversationId, { conv with deleted = true; lastCommitId = Some commit.id })
+                    | ConversationFlagsChanged d ->
+                        match conversations.TryFind d.conversationId with
+                        | None -> failed <- Some(ValidationError(sprintf "conversation %O not found" d.conversationId))
+                        | Some conv ->
+                            conversations <-
+                                conversations.Add(
+                                    d.conversationId,
+                                    { conv with pinned = d.pinned; archived = d.archived; lastCommitId = Some commit.id })
                     | AgentMessageRecorded d ->
                         match conversations.TryFind d.conversationId with
                         | None -> failed <- Some(ValidationError(sprintf "conversation %O not found" d.conversationId))
@@ -167,6 +187,7 @@ module Projection =
                                 { commitId = commit.id
                                   conversationId = d.conversationId
                                   payloadJson = d.payloadJson
+                                  committedAtUtc = commit.committedAtUtc
                                   deletedAtCommitId = None }
                             conversations <- conversations.Add(d.conversationId, { conv with messages = conv.messages @ [ msg ]; lastCommitId = Some commit.id })
                     | MessageDeleted d ->

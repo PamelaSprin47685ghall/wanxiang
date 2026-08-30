@@ -26,6 +26,10 @@ module Program =
                            BrowserRenderingMode.WebGL1 |],
                     FrameworkAssetPathResolver = fun fileName -> $"./{fileName}?v=20260810m"
                 )
+            // 代码着色与公式排版交给浏览器自带的 JS 引擎；脚本正文仍是 .NET 侧的内嵌资源
+            let rich = BrowserRichBackend()
+            RichBackend.install rich
+            rich.Warmup()
             do!
                 AppBuilder
                     .Configure<App>()

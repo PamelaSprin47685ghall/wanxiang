@@ -364,7 +364,7 @@ module Program =
                                     let dev = Path.Combine(baseDir, "Wanxiang.Pwa", "wwwroot")
                                     if Directory.Exists dev then Some dev else None
                         else None
-                    let app = Wanxiang.Server.ServerApp(dataDir, configPath, false, pwaDir, logInfo, ?startupOutcome = startupReplayOutcome)
+                    let app = new Wanxiang.Server.ServerApp(dataDir, configPath, false, pwaDir, logInfo, ?startupOutcome = startupReplayOutcome)
                     app.Start(switches.pwa)
                     Some app
                 else
@@ -404,6 +404,11 @@ module Program =
                     with _ -> None
                 // 桌面 UI 入口（决策 48：本机客户端也必须走真实 WebSocket，入口仅负责 AppBuilder 平台启动）
                 let runDesktopUi (argv: string array) : int =
+                    // 代码着色与公式排版跑在进程内的 JS 引擎上。基座脚本解析要几百毫秒，
+                    // 放到后台线程先付掉；没预热完也只是第一次渲染慢，不影响正确性。
+                    let rich = JintRichBackend()
+                    Wanxiang.UI.RichBackend.install rich
+                    Task.Run(fun () -> rich.Warmup()) |> ignore
                     AppBuilder
                         .Configure<Wanxiang.UI.App>()
                         .UsePlatformDetect()

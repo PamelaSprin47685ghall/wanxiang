@@ -19,7 +19,7 @@ open Wanxiang.Tests.Helpers
 /// 验证 P0-1 修复：观察快照 → cursor.advanced → 写命令不再被 stale-projection 拒绝。
 module private E2e =
 
-    type ServerHandle(port: int, token: string) as this =
+    type ServerHandle(port: int, token: string) =
         let dir = tempDir ()
         let configPath = Path.Combine(dir, "config.toml")
         let mutable server: Wanxiang.Server.ServerApp option = None
@@ -34,9 +34,16 @@ module private E2e =
                             [ "test-provider",
                               { id = "test-provider"
                                 kind = "openai"
+                                label = "Test Provider"
                                 baseUrl = "http://127.0.0.1:1/v1"
                                 apiKey = None
-                                model = "test-model"
+                                models = [ "test-model" ]
+                                defaultModel = "test-model"
+                                timeoutSeconds = ProviderConfig.defaultTimeoutSeconds
+                                maxRetries = 0
+                                enabled = true
+                                promptCaching = false
+                                headers = Map.empty
                                 extraJson = None } ]
                     authClients =
                         [ { tokenHash = hash
@@ -45,7 +52,7 @@ module private E2e =
                             lastSeenUtc = None
                             revoked = false } ] }
             File.WriteAllText(configPath, TomlCodec.serialize cfg)
-            let app = Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
+            let app = new Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
             app.Start(false)
             server <- Some app
         member _.Dispose() =
@@ -175,7 +182,7 @@ let ``e2e observe advance cursor then enqueue gets response and push`` () =
         let commits =
             [ Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = convId; title = "A"; config = Helpers.testConfig () } ] ]
         File.WriteAllLines(eventsFile, commits |> List.map CommitCodec.commitToJsonLine)
-        let app = Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
+        let app = new Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
         app.Start(false)
         try
             use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
@@ -254,7 +261,7 @@ let ``e2e history paging slices by commit id`` () =
               Events.Commit.create 5UL DateTimeOffset.UtcNow [ AgentMessageRecorded { conversationId = convId; payloadJson = Helpers.assistantMessageJson "m4" } ]
               Events.Commit.create 6UL DateTimeOffset.UtcNow [ AgentMessageRecorded { conversationId = convId; payloadJson = Helpers.userMessageJson "m5" } ] ]
         File.WriteAllLines(eventsFile, commits |> List.map CommitCodec.commitToJsonLine)
-        let app = Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
+        let app = new Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
         app.Start(false)
         try
             use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)

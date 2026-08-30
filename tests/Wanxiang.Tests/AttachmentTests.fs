@@ -10,7 +10,7 @@ open Wanxiang.Store
 open Wanxiang.Tests.Helpers
 
 [<Fact>]
-let ``test_18639`` () =
+let ``attachment upload verifies hash and stores content addressed blob`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
@@ -42,7 +42,7 @@ let ``test_18639`` () =
         cleanup dir
 
 [<Fact>]
-let ``test_59388`` () =
+let ``attachment upload rejects oversized and mismatched payloads`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir

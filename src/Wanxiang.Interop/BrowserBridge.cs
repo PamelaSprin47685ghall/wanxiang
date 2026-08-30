@@ -26,4 +26,16 @@ public static partial class BrowserBridge
     /// <summary>当前页面 URL（用于推导同源 ws(s) 连接地址）。</summary>
     [JSImport("pageUrl", "wanxiang")]
     public static partial string PageUrl();
+
+    /// <summary>在全局作用域执行一段脚本（highlight.js / KaTeX 的加载）。</summary>
+    [JSImport("richLoad", "wanxiang")]
+    public static partial void RichLoad(string source);
+
+    /// <summary>highlight.js 着色，返回带 span 的 HTML；失败返回空串。</summary>
+    [JSImport("richHighlight", "wanxiang")]
+    public static partial string RichHighlight(string code, string language);
+
+    /// <summary>KaTeX 排版，返回 HTML；失败返回空串。</summary>
+    [JSImport("richMath", "wanxiang")]
+    public static partial string RichMath(string tex, bool displayMode);
 }

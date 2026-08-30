@@ -103,7 +103,7 @@ module Replay =
                     use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
                     let buf = Array.zeroCreate<byte> (64 * 1024)
                     // 当前行字节缓冲（行结束时用 Encoding.UTF8 整体解码，避免逐字节当 char 拼出乱码）
-                    let lineBytes = System.IO.MemoryStream()
+                    let lineBytes = new System.IO.MemoryStream()
                     let mutable lineNumber = 0
                     let mutable bytesRead = 0L
                     let mutable lineStartOffset = 0L

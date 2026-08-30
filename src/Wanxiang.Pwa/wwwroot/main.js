@@ -55,6 +55,34 @@ export function pageUrl() {
     return globalThis.location.href;
 }
 
+// ---- 富文本引擎（highlight.js / KaTeX）----
+// 脚本正文由 .NET 侧作为清单资源持有并传进来，浏览器这边只负责执行与调用：
+// 一份资源同时服务桌面（Jint）与浏览器（本地 JS 引擎），不会两边各存一套。
+
+// 必须用 <script> 注入而不是 new Function：hljs 的打包体以顶层 `var hljs=…` 收尾，
+// 放进函数体里那个 var 就成了局部变量，全局上永远拿不到 hljs。
+export function richLoad(source) {
+    const el = document.createElement("script");
+    el.textContent = source;
+    document.head.appendChild(el);
+}
+
+export function richHighlight(code, language) {
+    try {
+        return globalThis.hljs.highlight(code, { language, ignoreIllegals: true }).value;
+    } catch (_) {
+        return "";
+    }
+}
+
+export function richMath(tex, displayMode) {
+    try {
+        return globalThis.katex.renderToString(tex, { displayMode, throwOnError: false, strict: false });
+    } catch (_) {
+        return "";
+    }
+}
+
 // ---- Service Worker 注册与新版本提示（Q192/Q193：提示刷新，不强制 reload）----
 async function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
@@ -91,7 +119,10 @@ const dotnetRuntime = await dotnet
     .withApplicationArgumentsFromQuery()
     .create();
 
-dotnetRuntime.setModuleImports("wanxiang", { credList, credPut, credDelete, pageUrl });
+dotnetRuntime.setModuleImports("wanxiang", {
+    credList, credPut, credDelete, pageUrl,
+    richLoad, richHighlight, richMath,
+});
 
 const config = dotnetRuntime.getConfig();
 

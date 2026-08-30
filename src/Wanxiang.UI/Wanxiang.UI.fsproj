@@ -7,11 +7,38 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Theme.fs" />
-    <Compile Include="Icons.fs" />
-    <Compile Include="UiPrefs.fs" />
+    <Compile Include="Design/Palette.fs" />
+    <Compile Include="Design/Tokens.fs" />
+    <Compile Include="Design/Icons.fs" />
+    <Compile Include="Model/UiPrefs.fs" />
+    <Compile Include="Model/MediaTypes.fs" />
+    <Compile Include="Rich/RichBackend.fs" />
+    <Compile Include="Rich/Highlight.fs" />
+    <Compile Include="Rich/KatexHtml.fs" />
+    <Compile Include="Rich/MathLayout.fs" />
+    <Compile Include="Rich/MathVisual.fs" />
+    <Compile Include="Model/Markdown.fs" />
+    <Compile Include="Model/MessageModel.fs" />
+    <Compile Include="Model/Catalog.fs" />
+    <Compile Include="Model/ConversationSummary.fs" />
+    <Compile Include="Model/ProviderPresets.fs" />
+    <Compile Include="Controls/Primitives.fs" />
+    <Compile Include="Controls/OverlayHost.fs" />
+    <Compile Include="Controls/Menu.fs" />
+    <Compile Include="Controls/MarkdownRenderer.fs" />
     <Compile Include="CredentialStore.fs" />
-    <Compile Include="MainWindow.fs" />
+    <Compile Include="Views/Brand.fs" />
+    <Compile Include="Views/MessageCard.fs" />
+    <Compile Include="Views/ChatView.fs" />
+    <Compile Include="Views/Composer.fs" />
+    <Compile Include="Views/Sidebar.fs" />
+    <Compile Include="Views/SettingsProviders.fs" />
+    <Compile Include="Views/SettingsTools.fs" />
+    <Compile Include="Views/SettingsGeneral.fs" />
+    <Compile Include="Views/SettingsView.fs" />
+    <Compile Include="Views/Dialogs.fs" />
+    <Compile Include="AppShell.fs" />
+    <Compile Include="Views/MainWindow.fs" />
     <Compile Include="App.fs" />
   </ItemGroup>
 
@@ -20,6 +47,17 @@
   <ItemGroup>
     <AvaloniaResource Include="Assets/Fonts/**" />
     <AvaloniaResource Include="Assets/logo.png" />
+  </ItemGroup>
+
+  <!-- highlight.js（BSD-3-Clause）与 KaTeX（MIT）由 tools/build_webassets.js 装配。
+       脚本走**清单资源**而不是 AvaloniaResource：avares 只有在 Avalonia 初始化之后
+       才可读，而脚本要在后台预热线程里、以及单元测试里读，那时框架还没起来。
+       KaTeX 字体反过来是真正的视觉资源，与正文字体同放 Assets/Fonts，
+       由上面那条 AvaloniaResource 一并打包。 -->
+  <ItemGroup>
+    <EmbeddedResource Include="Assets/Js/**">
+      <LogicalName>js/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>

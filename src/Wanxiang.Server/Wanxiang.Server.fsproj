@@ -13,7 +13,14 @@
     <Compile Include="Stderr.fs" />
     <Compile Include="ServerModel.fs" />
     <Compile Include="AttachmentStore.fs" />
+    <Compile Include="ProviderCatalog.fs" />
+    <Compile Include="ConfigMutation.fs" />
+    <Compile Include="GenerationContext.fs" />
+    <Compile Include="BuiltinTools.fs" />
+    <Compile Include="McpTransport.fs" />
+    <Compile Include="McpClient.fs" />
     <Compile Include="ToolRegistry.fs" />
+    <Compile Include="TitleGenerator.fs" />
     <Compile Include="ChatOrchestrator.fs" />
     <Compile Include="WsConnection.fs" />
     <Compile Include="ServerApp.fs" />

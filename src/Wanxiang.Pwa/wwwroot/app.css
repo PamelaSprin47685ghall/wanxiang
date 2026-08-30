@@ -23,9 +23,8 @@
 
     /* 字体栈：PWA 走 Sarasa Term SC 内嵌 + 平替；行高取 Kami 1.55 阅读档 */
     --wx-font:
-        "Sarasa Term SC", "TsangerJinKai02", "Source Han Serif SC",
-        "PingFang SC", "Microsoft YaHei",
-        -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Georgia, serif;
+        "Sarasa Gothic SC", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
+        -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     --wx-mono:
         "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
