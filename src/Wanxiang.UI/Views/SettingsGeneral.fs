@@ -6,6 +6,7 @@ open System.Text.Json.Nodes
 open Avalonia
 open Avalonia.Controls
 open Avalonia.Input
+open Avalonia.Input.Platform
 open Avalonia.Layout
 open Avalonia.Media
 open Wanxiang.Core
@@ -165,13 +166,9 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                 fontSizeCaption.Text <- sprintf "%.1f pt" next
                 onPrefsChanged prefs
         let smaller = Ui.iconButton Icons.minus "更小"
-        smaller.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            adjust -0.5)
+        Ui.onClick smaller (fun () -> adjust -0.5)
         let larger = Ui.iconButton Icons.plus "更大"
-        larger.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            adjust 0.5)
+        Ui.onClick larger (fun () -> adjust 0.5)
         let fontRow =
             let controls = Ui.hstack Tokens.space1 [ smaller :> Control; fontSizeCaption :> Control; larger :> Control ]
             let column = Ui.vstack 1.0 [ Ui.label "消息字号" :> Control; Ui.caption "影响对话正文与代码块。" :> Control ]
@@ -226,16 +223,40 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                     TextWrapping = TextWrapping.Wrap,
                     SelectionBrush = Tokens.accentSoft)
             Ui.hstack Tokens.space3 [ k :> Control; v :> Control ] :> Control
+        let platformDesc = if OperatingSystem.IsBrowser() then "WebAssembly (PWA)" else sprintf "Desktop (.NET %s)" (Environment.Version.ToString())
+        let osDesc = Environment.OSVersion.ToString()
+        let copyDiagButton = Ui.button Ui.Secondary "复制诊断报告" (fun () ->
+            let diag =
+                sprintf "万象系统诊断报告\n- 协议版本: %d\n- 日志格式: %d\n- 运行环境: %s\n- 操作系统: %s\n- 实例标识: %s\n- 连接端点: %s\n- 报告时间: %s"
+                    Constants.ProtocolVersion
+                    Constants.FormatVersion
+                    platformDesc
+                    osDesc
+                    (if String.IsNullOrWhiteSpace instanceId then "未连接" else instanceId)
+                    (if String.IsNullOrWhiteSpace serverUrl then "未连接" else serverUrl)
+                    (DateTimeOffset.UtcNow.ToString("O"))
+            actions.toast "诊断报告已生成" Success
+            match TopLevel.GetTopLevel overlay.Root with
+            | null -> ()
+            | top ->
+                match top.Clipboard with
+                | null -> ()
+                | clip -> clip.SetTextAsync diag |> ignore)
+        copyDiagButton.HorizontalAlignment <- HorizontalAlignment.Left
         Ui.vstack
             Tokens.space4
-            [ Ui.vstack Tokens.space1 [ Ui.heading "关于万象" :> Control ] :> Control
+            [ Ui.vstack Tokens.space1 [ Ui.heading "关于与系统诊断" :> Control ] :> Control
               Ui.card(
                   Ui.vstack
                       Tokens.space2
                       [ row "协议版本" (string Constants.ProtocolVersion)
                         row "日志格式版本" (string Constants.FormatVersion)
+                        row "客户端平台" platformDesc
+                        row "操作系统" osDesc
                         row "服务器实例" (if String.IsNullOrWhiteSpace instanceId then "未连接" else instanceId)
-                        row "连接地址" (if String.IsNullOrWhiteSpace serverUrl then "未连接" else serverUrl) ])
+                        row "连接地址" (if String.IsNullOrWhiteSpace serverUrl then "未连接" else serverUrl)
+                        Border(Height = Tokens.space2) :> Control
+                        copyDiagButton :> Control ])
               :> Control
               Ui.card(
                   Ui.vstack

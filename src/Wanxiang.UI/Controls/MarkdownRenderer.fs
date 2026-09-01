@@ -8,6 +8,7 @@ open Avalonia.Controls.Primitives
 open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Threading
 
 /// Markdown 块模型 → Avalonia 控件。
 ///
@@ -184,9 +185,23 @@ type MarkdownRenderer(
             button
 
         let copyButton = headerButton Icons.copy "复制代码"
+        let doCopy () =
+            copyText code
+            Ui.setIcon copyButton Icons.check Tokens.success
+            ToolTip.SetTip(copyButton, "已复制！")
+            let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 1500.0)
+            timer.Tick.Add(fun _ ->
+                timer.Stop()
+                Ui.setIcon copyButton Icons.copy Tokens.codeMuted
+                ToolTip.SetTip(copyButton, "复制代码"))
+            timer.Start()
         copyButton.PointerReleased.Add(fun e ->
             e.Handled <- true
-            copyText code)
+            doCopy ())
+        copyButton.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                doCopy ())
 
         // 长行原来只能横向滚动：一行长命令要么看不全，要么读一行拖一次。
         // 折行是逐块开关，初值取自 UI 偏好。
@@ -197,11 +212,17 @@ type MarkdownRenderer(
             scroll.HorizontalScrollBarVisibility <-
                 (if wrapped then ScrollBarVisibility.Disabled else ScrollBarVisibility.Auto)
             Ui.setIcon wrapButton Icons.textWrap (if wrapped then Tokens.accent else Tokens.codeMuted)
-        wrapButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
+        let toggleWrap () =
             wrapped <- not wrapped
             MarkdownRenderer.DefaultCodeWrap <- wrapped
-            applyWrap ())
+            applyWrap ()
+        wrapButton.PointerReleased.Add(fun e ->
+            e.Handled <- true
+            toggleWrap ())
+        wrapButton.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                toggleWrap ())
         applyWrap ()
 
         let header =

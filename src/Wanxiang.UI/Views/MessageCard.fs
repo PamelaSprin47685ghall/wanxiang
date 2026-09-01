@@ -7,6 +7,7 @@ open Avalonia.Controls.Primitives
 open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Threading
 open Wanxiang.Core
 
 /// 消息级操作，由 AppShell 注入。
@@ -256,25 +257,48 @@ module MessageCard =
 
     /// 消息操作按钮。放在脚注行里随文档流排布——
     /// 早先做成浮在消息上方的悬浮条，常驻显示后就会压住头像和气泡边角。
-    let private actionButtons (message: MessageView) (ctx: MessageContext) (actions: MessageActions) : StackPanel =
+    let private actionButtons (message: MessageView) (ctx: MessageContext) (actions: MessageActions) (toggleRaw: (unit -> unit) option) : StackPanel =
         let row =
             StackPanel(
                 Orientation = Orientation.Horizontal,
                 Spacing = 0.0,
                 Opacity = idleActionOpacity,
                 VerticalAlignment = VerticalAlignment.Center)
+        let transitions = Avalonia.Animation.Transitions()
+        transitions.Add(Avalonia.Animation.DoubleTransition(Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds 150.0))
+        row.Transitions <- transitions
         let addButton (icon: IBrush -> Control) (tip: string) (action: unit -> unit) =
             let button = Ui.iconButton icon tip
             button.Width <- 24.0
             button.Height <- 24.0
             button.MinWidth <- 24.0
             button.MinHeight <- 24.0
-            button.PointerReleased.Add(fun e ->
-                e.Handled <- true
-                action ())
+            Ui.onClick button action
+            row.Children.Add button
+        let addCopyButton (text: string) =
+            let button = Ui.iconButton Icons.copy "复制"
+            button.Width <- 24.0
+            button.Height <- 24.0
+            button.MinWidth <- 24.0
+            button.MinHeight <- 24.0
+            let doCopy () =
+                actions.copyText text
+                Ui.setIcon button Icons.check Tokens.success
+                ToolTip.SetTip(button, "已复制！")
+                let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 1500.0)
+                timer.Tick.Add(fun _ ->
+                    timer.Stop()
+                    Ui.setIcon button Icons.copy Tokens.textMuted
+                    ToolTip.SetTip(button, "复制"))
+                timer.Start()
+            Ui.onClick button doCopy
             row.Children.Add button
         if not (String.IsNullOrWhiteSpace message.text) then
-            addButton Icons.copy "复制" (fun () -> actions.copyText message.text)
+            addCopyButton message.text
+        match toggleRaw with
+        | Some toggleAction ->
+            addButton Icons.file "切换原始 Markdown / 渲染视图" toggleAction
+        | None -> ()
         if MessageView.isUser message && not ctx.streaming then
             addButton Icons.pencil "编辑并分叉" (fun () -> actions.editAndFork message)
         if not (MessageView.isUser message) && ctx.isLastAssistant && not ctx.streaming then
@@ -399,6 +423,7 @@ module MessageCard =
         for call in message.toolCalls do
             body.Children.Add(toolCallCard ctx call)
 
+        let mutable rawToggleAction: (unit -> unit) option = None
         if not (String.IsNullOrWhiteSpace message.text) then
             if MessageView.isUser message then
                 body.Children.Add(
@@ -410,7 +435,25 @@ module MessageCard =
                         LineHeight = ctx.fontSize * 1.6,
                         SelectionBrush = Tokens.accentHover))
             else
-                body.Children.Add(renderer.RenderText message.text)
+                let rendered = renderer.RenderText message.text
+                let raw =
+                    SelectableTextBlock(
+                        Text = message.text,
+                        TextWrapping = TextWrapping.Wrap,
+                        FontFamily = Tokens.monoFontFamily,
+                        FontSize = ctx.fontSize - 1.0,
+                        Foreground = Tokens.textMuted,
+                        LineHeight = (ctx.fontSize - 1.0) * 1.5,
+                        SelectionBrush = Tokens.accentSoft,
+                        IsVisible = false)
+                let textHost = Grid()
+                textHost.Children.Add rendered
+                textHost.Children.Add raw
+                body.Children.Add textHost
+                if not ctx.streaming then
+                    rawToggleAction <- Some (fun () ->
+                        raw.IsVisible <- not raw.IsVisible
+                        rendered.IsVisible <- not raw.IsVisible)
 
         for attachment in message.attachments do
             body.Children.Add(attachmentRow ctx actions attachment)
@@ -490,7 +533,7 @@ module MessageCard =
         // 脚注行：时间 + 操作按钮，随文档流排在消息下方。
         // 头像占了 26pt 加 12pt 间距，脚注缩进同样的量才能与正文左缘对齐。
         let gutter = Tokens.logoAvatar + Tokens.space3
-        let buttons = actionButtons message ctx actions
+        let buttons = actionButtons message ctx actions rawToggleAction
         let metaText =
             if ctx.streaming then None
             else footer message (if ctx.isLastAssistant then ctx.usage else None)

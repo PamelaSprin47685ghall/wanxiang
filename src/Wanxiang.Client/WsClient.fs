@@ -259,6 +259,24 @@ type ClientState() =
             latestCommitId <- max latestCommitId d.commitId
             match conversations.TryFind d.conversationId with
             | Some v ->
+                if not (isNull d.change) then
+                    let mutable delNode: System.Text.Json.Nodes.JsonNode = null
+                    if d.change.TryGetPropertyValue("deletedMessage", &delNode) && not (isNull delNode) then
+                        let delId = delNode.GetValue<uint64>()
+                        let remaining = JsonArray()
+                        for m in v.messages do
+                            match m with
+                            | :? System.Text.Json.Nodes.JsonObject as o ->
+                                let mutable c: System.Text.Json.Nodes.JsonNode = null
+                                if o.TryGetPropertyValue("commitId", &c) && not (isNull c) && c.GetValue<uint64>() = delId then
+                                    ()
+                                else
+                                    remaining.Add(m.DeepClone())
+                            | _ -> remaining.Add(m.DeepClone())
+                        v.messages <- remaining
+                    let mutable titleNode: System.Text.Json.Nodes.JsonNode = null
+                    if d.change.TryGetPropertyValue("title", &titleNode) && not (isNull titleNode) then
+                        v.title <- titleNode.GetValue<string>()
                 // 水位只能单调上升：generation 状态变化推来的 conversation.updated
                 // 携带 commitId = 0，直接赋值会把水位清零，
                 // 于是 catch-up 把整段历史当成未应用重放一遍，界面出现重复消息。
@@ -295,6 +313,23 @@ type ClientState() =
                                     v.messages.Add o
                                     v.lastCommitId <- max v.lastCommitId commit.id
                                     convChanged.Trigger m.conversationId
+                            | _ -> ()
+                        | MessageDeleted m when conversations.ContainsKey m.conversationId ->
+                            match conversations.TryFind m.conversationId with
+                            | Some v ->
+                                let remaining = JsonArray()
+                                for item in v.messages do
+                                    match item with
+                                    | :? System.Text.Json.Nodes.JsonObject as o ->
+                                        let mutable c: System.Text.Json.Nodes.JsonNode = null
+                                        if o.TryGetPropertyValue("commitId", &c) && not (isNull c) && c.GetValue<uint64>() = m.messageCommitId then
+                                            ()
+                                        else
+                                            remaining.Add(item.DeepClone())
+                                    | _ -> remaining.Add(item.DeepClone())
+                                v.messages <- remaining
+                                v.lastCommitId <- max v.lastCommitId commit.id
+                                convChanged.Trigger m.conversationId
                             | _ -> ()
                         | _ -> ()
                     maxApplied <- max maxApplied commit.id

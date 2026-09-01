@@ -47,7 +47,12 @@ module ProviderSse =
                             name <- text.Substring(6).Trim()
                         | text when text.StartsWith("data:", StringComparison.Ordinal) ->
                             if data.Length > 0 then data.Append '\n' |> ignore
-                            data.Append(text.Substring(5).Trim()) |> ignore
+                            // W3C SSE 规范：仅剥离冒号后紧跟的一个空格；保留数据正文里的缩进
+                            let payload =
+                                if text.Length > 5 && text[5] = ' ' then text.Substring 6
+                                elif text.Length > 5 then text.Substring 5
+                                else ""
+                            data.Append payload |> ignore
                         | _ -> ()
                     channel.Writer.Complete()
                 with ex -> channel.Writer.Complete ex
@@ -130,13 +135,27 @@ module ProviderSse =
 
     let tryInt (node: JsonNode) (key: string) : int option =
         property node key
-        |> Option.bind (fun value -> try Some(value.GetValue<int>()) with _ -> None)
+        |> Option.bind (fun value ->
+            try
+                match value.GetValueKind() with
+                | System.Text.Json.JsonValueKind.Number ->
+                    let mutable i = 0
+                    if value.AsValue().TryGetValue<int>(&i) then Some i
+                    else
+                        let mutable l = 0L
+                        if value.AsValue().TryGetValue<int64>(&l) then Some(int l)
+                        else None
+                | _ -> None
+            with _ -> None)
 
     let tryBool (node: JsonNode) (key: string) : bool option =
         property node key
         |> Option.bind (fun value -> try Some(value.GetValue<bool>()) with _ -> None)
 
-    let tryObject (node: JsonNode) (key: string) : JsonNode option = property node key
+    let tryObject (node: JsonNode) (key: string) : JsonNode option =
+        match property node key with
+        | Some(:? JsonObject as o) -> Some(o :> JsonNode)
+        | _ -> None
 
     let tryArray (node: JsonNode) (key: string) : JsonArray option =
         match property node key with

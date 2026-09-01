@@ -43,7 +43,22 @@ module Ui =
             | _ -> ())
         host.LostFocus.Add(fun _ -> host.BoxShadow <- saved)
 
+    /// 统一点击与键盘激活绑定（支持鼠标释放与键盘 Enter/Space）。
+    let onClick (host: Border) (action: unit -> unit) =
+        host.PointerReleased.Add(fun e ->
+            if host.IsHitTestVisible then
+                e.Handled <- true
+                action ())
+        host.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                action ())
+
     let private attachSurfaceFeedback (host: Border) (idle: unit -> IBrush) (over: unit -> IBrush) =
+        let transitions = Transitions()
+        transitions.Add(DoubleTransition(Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds 120.0))
+        transitions.Add(BrushTransition(Property = Border.BackgroundProperty, Duration = TimeSpan.FromMilliseconds 120.0))
+        host.Transitions <- transitions
         let mutable isOver = false
         let refresh () = host.Background <- (if isOver then over () else idle ())
         host.PointerEntered.Add(fun _ ->
@@ -272,7 +287,7 @@ module Ui =
         | Danger -> Tokens.dangerSoft :> IBrush, Tokens.danger :> IBrush, null, overlay Tokens.dangerSoft Tokens.hover
 
     /// 文字按钮。`onClick` 直接绑定，避免调用方重复处理指针事件。
-    let button (tone: ButtonTone) (text: string) (onClick: unit -> unit) : Border =
+    let button (tone: ButtonTone) (text: string) (action: unit -> unit) : Border =
         let bg, fg, stroke, hoverBg = toneBrushes tone
         let host =
             Border(
@@ -294,15 +309,7 @@ module Ui =
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center))
         attachSurfaceFeedback host (fun () -> bg) (fun () -> hoverBg)
-        let activate () = onClick ()
-        host.PointerReleased.Add(fun e ->
-            if host.IsHitTestVisible then
-                e.Handled <- true
-                activate ())
-        host.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                activate ())
+        onClick host action
         Avalonia.Automation.AutomationProperties.SetName(host, text)
         host
 
@@ -334,12 +341,15 @@ module Ui =
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 Padding = Thickness(Tokens.space3, 8.0),
                 Child = box)
+        let transitions = Transitions()
+        transitions.Add(BrushTransition(Property = Border.BorderBrushProperty, Duration = TimeSpan.FromMilliseconds 120.0))
+        shell.Transitions <- transitions
         box.GotFocus.Add(fun _ ->
             shell.BorderBrush <- Tokens.accent
-            shell.BorderThickness <- Thickness 1.4)
+            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color)))
         box.LostFocus.Add(fun _ ->
             shell.BorderBrush <- Tokens.border
-            shell.BorderThickness <- Thickness 1.0)
+            shell.BoxShadow <- BoxShadows())
         shell, box
 
     /// 带标签的输入行。
@@ -378,6 +388,9 @@ module Ui =
                 Focusable = true,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = knob)
+        let transitions = Transitions()
+        transitions.Add(BrushTransition(Property = Border.BackgroundProperty, Duration = TimeSpan.FromMilliseconds 150.0))
+        track.Transitions <- transitions
         let render () =
             track.Background <- if value then Tokens.accent :> IBrush else Tokens.line :> IBrush
             knob.HorizontalAlignment <- if value then HorizontalAlignment.Right else HorizontalAlignment.Left

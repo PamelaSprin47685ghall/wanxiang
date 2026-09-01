@@ -185,12 +185,9 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 TextTrimming = TextTrimming.CharacterEllipsis)
         let column = Ui.vstack 2.0 [ titleRow :> Control; meta :> Control ]
         let editButton = Ui.iconButton Icons.pencil "编辑"
-        editButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            this.ShowEditor(Some server))
+        Ui.onClick editButton (fun () -> this.ShowEditor(Some server))
         let moreButton = Ui.iconButton Icons.more "更多"
-        moreButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
+        Ui.onClick moreButton (fun () ->
             Menu.show
                 overlay
                 (moreButton :> Control)

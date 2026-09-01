@@ -20,6 +20,8 @@ type ChatActions = {
     stopGeneration: unit -> unit
     requestOlderHistory: unit -> unit
     retryLast: unit -> unit
+    sendPrompt: string -> unit
+    toggleSidebar: unit -> unit
     message: MessageActions
 }
 
@@ -103,6 +105,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let stopButton = Ui.iconButton Icons.stop "停止生成"
     let forkButton = Ui.iconButton Icons.fork "从当前分叉"
     let sessionSettingsButton = Ui.iconButton Icons.sliders "会话设置"
+    let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl+B / ⌘B）"
 
     let messagePanel =
         StackPanel(
@@ -146,6 +149,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             TextWrapping = TextWrapping.Wrap,
             LineHeight = 21.0)
     let emptyActions = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Center)
+    let mutable lastEmptyState: (ChatEmptyState * string option) option = None
 
     /// 已渲染的卡片，按身份缓存。
     ///
@@ -203,33 +207,84 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         generatingCaption.Text <- if String.IsNullOrWhiteSpace statusText then "生成中" else statusText
         stopButton.IsVisible <- generating
 
-    /// 无会话时整条顶栏收起：一条只有分割线、没有内容的空栏比没有更糟。
+    /// 会话状态变化时同步顶栏功能按钮的可用性。
     member this.SetConversationChrome(hasConversation: bool) =
         forkButton.IsVisible <- hasConversation
         sessionSettingsButton.IsVisible <- hasConversation
-        if not (isNull (box headerBar)) then headerBar.IsVisible <- hasConversation
+        if not (isNull (box headerBar)) then headerBar.IsVisible <- true
 
     member this.ShowEmpty(state: ChatEmptyState, onPrimary: (string * (unit -> unit)) option) =
-        emptyActions.Children.Clear()
-        let title, hint =
+        let primaryLabel = onPrimary |> Option.map fst
+        let currentStateKey = (state, primaryLabel)
+        if lastEmptyState <> Some currentStateKey then
+            lastEmptyState <- Some currentStateKey
+            emptyActions.Children.Clear()
+            let title, hint =
+                match state with
+                | NotConnected -> "先连接一台万象服务器", "服务端负责运行模型与保存会话；客户端只是它的一个视图。"
+                | NoProvider -> "还没有可用的模型", "添加一个服务商并填入密钥，就可以开始对话了。"
+                | NoConversation -> "开始一次新对话", "左侧新建会话，或从历史里挑一个继续。"
+                | EmptyConversation -> "说点什么吧", "这个会话还是空的。你的第一句话会决定它的标题。"
+            emptyTitle.Text <- title
+            emptyHint.Text <- hint
+            match onPrimary with
+            | Some(label, action) ->
+                let button = Ui.button Ui.Primary label action
+                button.HorizontalAlignment <- HorizontalAlignment.Center
+                emptyActions.Children.Add button
+            | None -> ()
             match state with
-            | NotConnected -> "先连接一台万象服务器", "服务端负责运行模型与保存会话；客户端只是它的一个视图。"
-            | NoProvider -> "还没有可用的模型", "添加一个服务商并填入密钥，就可以开始对话了。"
-            | NoConversation -> "开始一次新对话", "左侧新建会话，或从历史里挑一个继续。"
-            | EmptyConversation -> "说点什么吧", "这个会话还是空的。你的第一句话会决定它的标题。"
-        emptyTitle.Text <- title
-        emptyHint.Text <- hint
-        match onPrimary with
-        | Some(label, action) ->
-            let button = Ui.button Ui.Primary label action
-            button.HorizontalAlignment <- HorizontalAlignment.Center
-            emptyActions.Children.Add button
-        | None -> ()
+            | EmptyConversation
+            | NoConversation ->
+                let starters =
+                    [ "💡 编写代码", "实现一个功能模块或算法实现", "请帮我编写一个规范的模块实现，包含类型定义与错误处理。"
+                      "🔍 解析原理", "深入剖析系统架构与设计模式", "请帮我详细解释分布式系统中的 CQRS 与事件溯源架构原理。"
+                      "✍️ 润色总结", "重构和润色技术文档与草案", "请帮我润色以下技术方案，提高表述的准确性与专业度："
+                      "🚀 创意发散", "头脑风暴产品方案与交付要点", "请针对现代企业级桌面与 Web 混合架构，提供一套设计与交付方案。" ]
+                let grid = Grid(Margin = Thickness(0.0, Tokens.space3, 0.0, 0.0))
+                grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
+                grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
+                grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
+                grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
+                starters |> List.iteri (fun idx (label, desc, prompt) ->
+                    let titleBlock = TextBlock(Text = label, FontSize = Tokens.fontSmall, FontWeight = FontWeight.Medium, Foreground = Tokens.text)
+                    let descBlock = TextBlock(Text = desc, FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted, TextWrapping = TextWrapping.Wrap, Margin = Thickness(0.0, 2.0, 0.0, 0.0))
+                    let cardContent = StackPanel(Orientation = Orientation.Vertical, Spacing = 2.0)
+                    cardContent.Children.Add titleBlock
+                    cardContent.Children.Add descBlock
+                    let card =
+                        Border(
+                            Background = Tokens.surface,
+                            BorderBrush = Tokens.border,
+                            BorderThickness = Thickness 1.0,
+                            CornerRadius = CornerRadius Tokens.radiusMd,
+                            Padding = Thickness(Tokens.space3, Tokens.space2),
+                            Margin = Thickness 3.0,
+                            Cursor = new Cursor(StandardCursorType.Hand),
+                            Focusable = true,
+                            Child = cardContent)
+                    card.PointerEntered.Add(fun _ ->
+                        card.Background <- Tokens.hover
+                        card.BorderBrush <- Tokens.accent)
+                    card.PointerExited.Add(fun _ ->
+                        card.Background <- Tokens.surface
+                        card.BorderBrush <- Tokens.border)
+                    Ui.onClick card (fun () -> actions.sendPrompt prompt)
+                    let row = idx / 2
+                    let col = idx % 2
+                    Grid.SetRow(card, row)
+                    Grid.SetColumn(card, col)
+                    grid.Children.Add card)
+                emptyActions.Children.Add grid
+            | _ -> ()
         emptyPanel.IsVisible <- true
+        scroller.IsVisible <- false
         messagePanel.IsVisible <- false
 
     member this.HideEmpty() =
+        lastEmptyState <- None
         emptyPanel.IsVisible <- false
+        scroller.IsVisible <- true
         messagePanel.IsVisible <- true
 
     /// 重绘全部消息。流式期间由 `streamingMessage` 追加一条临时消息。
@@ -359,6 +414,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleText.PointerReleased.Add(fun e ->
             e.Handled <- true
             this.BeginTitleEdit())
+        titleText.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                this.BeginTitleEdit())
         titleEditBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
@@ -369,23 +428,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 titleText.IsVisible <- true)
         titleEditBox.LostFocus.Add(fun _ -> if titleEditShell.IsVisible then this.CommitTitle())
 
-        modelChip.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            actions.openModelPicker(modelChip :> Control))
-        stopButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            actions.stopGeneration ())
-        forkButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            actions.forkFromHere ())
-        sessionSettingsButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            actions.openSessionSettings ())
+        Ui.onClick modelChip (fun () -> actions.openModelPicker(modelChip :> Control))
+        Ui.onClick stopButton (fun () -> actions.stopGeneration ())
+        Ui.onClick forkButton (fun () -> actions.forkFromHere ())
+        Ui.onClick sessionSettingsButton (fun () -> actions.openSessionSettings ())
+        Ui.onClick sidebarToggleButton (fun () -> actions.toggleSidebar ())
         stopButton.IsVisible <- false
         forkButton.IsVisible <- false
         sessionSettingsButton.IsVisible <- false
 
-        let leftGroup = Ui.hstack Tokens.space3 [ titleHost :> Control; generatingChip :> Control ]
+        let leftGroup = Ui.hstack Tokens.space2 [ sidebarToggleButton :> Control; titleHost :> Control; modelChip :> Control; generatingChip :> Control ]
         let rightGroup = Ui.hstack Tokens.space1 [ stopButton :> Control; forkButton :> Control; sessionSettingsButton :> Control ]
         let headerDock = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
         DockPanel.SetDock(rightGroup, Dock.Right)
@@ -429,9 +481,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         scrollToBottomButton.HorizontalAlignment <- HorizontalAlignment.Right
         scrollToBottomButton.VerticalAlignment <- VerticalAlignment.Bottom
         scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Tokens.space5, Tokens.space4)
-        scrollToBottomButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            scroller.ScrollToEnd())
+        let doScrollToBottom () =
+            atBottom <- true
+            scroller.ScrollToEnd()
+        Ui.onClick scrollToBottomButton doScrollToBottom
 
         let body = Grid()
         body.Children.Add scroller

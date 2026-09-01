@@ -72,6 +72,9 @@ type OverlayHost(root: Grid) =
     do
         dialogCard.BoxShadow <- Tokens.shadowDialog ()
         popupCard.BoxShadow <- Tokens.shadowPopup ()
+        Tokens.Changed.Publish.Add(fun _ ->
+            dialogCard.BoxShadow <- Tokens.shadowDialog ()
+            popupCard.BoxShadow <- Tokens.shadowPopup ())
         for layer in [ scrim :> Control; dialogCard :> Control; popupCatcher :> Control; popupCard :> Control; toastStack :> Control ] do
             Grid.SetColumnSpan(layer, 8)
             Grid.SetRowSpan(layer, 8)
@@ -81,6 +84,8 @@ type OverlayHost(root: Grid) =
         scrim.IsVisible <- false
         dialogCard.IsVisible <- false
         dialogCard.Child <- null
+
+    member _.Root = root
 
     member this.CloseDialog() =
         let callback = onDialogClosed

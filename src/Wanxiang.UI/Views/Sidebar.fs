@@ -35,6 +35,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let handCursor = new Cursor(StandardCursorType.Hand)
 
     let searchShell, searchBox = Ui.textField "搜索会话"
+    let clearSearchButton = Ui.iconButton Icons.close "清空搜索"
     let listPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = 1.0)
     let listScroller =
         ScrollViewer(
@@ -75,6 +76,25 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let mutable connected = false
 
     do
+        clearSearchButton.Width <- 18.0
+        clearSearchButton.Height <- 18.0
+        clearSearchButton.MinWidth <- 18.0
+        clearSearchButton.MinHeight <- 18.0
+        clearSearchButton.IsVisible <- false
+        Ui.onClick clearSearchButton (fun () ->
+            searchBox.Text <- ""
+            searchBox.Focus() |> ignore)
+        let searchIcon = Icons.search Tokens.textFaint
+        searchIcon.VerticalAlignment <- VerticalAlignment.Center
+        searchIcon.Margin <- Thickness(0.0, 0.0, Tokens.space2, 0.0)
+        let searchRow = DockPanel(LastChildFill = true)
+        DockPanel.SetDock(searchIcon, Dock.Left)
+        DockPanel.SetDock(clearSearchButton, Dock.Right)
+        searchRow.Children.Add searchIcon
+        searchRow.Children.Add clearSearchButton
+        searchRow.Children.Add searchBox
+        searchShell.Child <- searchRow
+
         emptyState.Children.Add emptyTitle
         emptyState.Children.Add emptyHint
 
@@ -121,6 +141,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             pin.Margin <- Thickness(0.0, 0.0, Tokens.space2, 0.0)
             DockPanel.SetDock(pin, Dock.Left)
             titleRow.Children.Add pin
+        let moreButton = Ui.iconButton Icons.more "操作菜单"
+        moreButton.Width <- 22.0
+        moreButton.Height <- 22.0
+        moreButton.MinWidth <- 22.0
+        moreButton.MinHeight <- 22.0
+        moreButton.IsVisible <- false
+        DockPanel.SetDock(moreButton, Dock.Right)
+        titleRow.Children.Add moreButton
         titleRow.Children.Add title
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         column.Children.Add titleRow
@@ -136,17 +164,6 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 Focusable = true,
                 MinHeight = 44.0,
                 Child = column)
-        if not isActive then
-            host.PointerEntered.Add(fun _ -> host.Background <- Tokens.hover)
-            host.PointerExited.Add(fun _ -> host.Background <- Brushes.Transparent)
-        host.PointerReleased.Add(fun e ->
-            if e.InitialPressMouseButton = MouseButton.Left then
-                e.Handled <- true
-                actions.openConversation summary.id)
-        host.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                actions.openConversation summary.id)
         let openMenu () =
             Menu.show
                 overlay
@@ -162,6 +179,27 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                   MenuEntry.create "删除" (fun () -> actions.deleteConversation summary)
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ]
+        Ui.onClick moreButton (fun () -> openMenu ())
+        if not isActive then
+            host.PointerEntered.Add(fun _ ->
+                host.Background <- Tokens.hover
+                moreButton.IsVisible <- true)
+            host.PointerExited.Add(fun _ ->
+                host.Background <- Brushes.Transparent
+                if not moreButton.IsFocused then moreButton.IsVisible <- false)
+        else
+            host.PointerEntered.Add(fun _ -> moreButton.IsVisible <- true)
+            host.PointerExited.Add(fun _ -> if not moreButton.IsFocused then moreButton.IsVisible <- false)
+        host.GotFocus.Add(fun _ -> moreButton.IsVisible <- true)
+        host.LostFocus.Add(fun _ -> if not moreButton.IsFocused then moreButton.IsVisible <- false)
+        host.PointerReleased.Add(fun e ->
+            if e.InitialPressMouseButton = MouseButton.Left then
+                e.Handled <- true
+                actions.openConversation summary.id)
+        host.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                actions.openConversation summary.id)
         host.PointerReleased.Add(fun e ->
             if e.InitialPressMouseButton = MouseButton.Right then
                 e.Handled <- true
@@ -249,9 +287,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 VerticalAlignment = VerticalAlignment.Center)
         let brandRow = Ui.hstack Tokens.space2 [ brand; wordmark :> Control ]
         let newButton = Ui.iconButtonAccent Icons.plus "新建会话（Ctrl+N）"
-        newButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            actions.newConversation ())
+        Ui.onClick newButton actions.newConversation
         let header =
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(brandRow, Dock.Left)
@@ -267,19 +303,24 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             if e.Key = Key.Escape then
                 e.Handled <- true
                 searchBox.Text <- "")
-        searchBox.TextChanged.Add(fun _ -> this.Rebuild())
+        searchBox.TextChanged.Add(fun _ ->
+            clearSearchButton.IsVisible <- not (String.IsNullOrWhiteSpace searchBox.Text)
+            this.Rebuild())
         let searchArea = Border(Padding = Thickness(Tokens.space3, 0.0, Tokens.space3, Tokens.space2), Child = searchShell)
 
         let settingsButton = Ui.iconButton Icons.gear "设置（Ctrl+,）"
-        settingsButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            actions.openSettings ())
+        Ui.onClick settingsButton actions.openSettings
         let statusRow = Ui.hstack Tokens.space2 [ statusDot :> Control; statusText :> Control ]
         statusRow.Cursor <- handCursor
+        statusRow.Focusable <- true
         ToolTip.SetTip(statusRow, "点击重新连接")
         statusRow.PointerReleased.Add(fun e ->
             e.Handled <- true
             actions.reconnect ())
+        statusRow.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                actions.reconnect ())
         let footer =
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(statusRow, Dock.Left)

@@ -266,12 +266,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         titleRow.Children.Add(Ui.tag stateLabel)
         let column = Ui.vstack 2.0 [ titleRow :> Control; meta :> Control ]
         let editButton = Ui.iconButton Icons.pencil "编辑"
-        editButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            this.ShowEditor(Some provider))
+        Ui.onClick editButton (fun () -> this.ShowEditor(Some provider))
         let moreButton = Ui.iconButton Icons.more "更多"
-        moreButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
+        Ui.onClick moreButton (fun () ->
             Menu.show
                 overlay
                 (moreButton :> Control)

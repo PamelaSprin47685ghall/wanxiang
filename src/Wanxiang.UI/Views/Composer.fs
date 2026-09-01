@@ -2,6 +2,7 @@ namespace Wanxiang.UI
 
 open System
 open Avalonia
+open Avalonia.Animation
 open Avalonia.Controls
 open Avalonia.Input
 open Avalonia.Interactivity
@@ -25,6 +26,7 @@ type ComposerActions = {
     pickAttachment: unit -> unit
     removeAttachment: string -> unit
     openModelPicker: Control -> unit
+    dropFiles: (string * byte[]) list -> unit
 }
 
 /// 消息输入区。
@@ -83,6 +85,13 @@ type Composer(actions: ComposerActions) as this =
             FontSize = Tokens.fontMicro,
             Foreground = Tokens.textFaint,
             VerticalAlignment = VerticalAlignment.Center)
+    let counterText =
+        TextBlock(
+            Text = "",
+            FontSize = Tokens.fontMicro,
+            Foreground = Tokens.textFaint,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsVisible = false)
 
     let shell =
         Border(
@@ -105,9 +114,27 @@ type Composer(actions: ComposerActions) as this =
     let mutable enabled = false
     let mutable attachments: PendingAttachment list = []
 
+    let estimateTokens (text: string) : int =
+        if String.IsNullOrEmpty text then 0
+        else
+            let mutable cjk = 0
+            let mutable other = 0
+            for ch in text do
+                if int ch >= 0x4e00 && int ch <= 0x9fa5 then cjk <- cjk + 1
+                elif not (Char.IsWhiteSpace ch) then other <- other + 1
+            int (Math.Ceiling(float cjk * 0.7 + float other * 0.3))
+
     let refreshSendState () =
-        let hasText = not (String.IsNullOrWhiteSpace input.Text)
+        let rawText = if isNull input.Text then "" else input.Text
+        let hasText = not (String.IsNullOrWhiteSpace rawText)
         let hasAttachment = attachments |> List.exists (fun a -> a.ready)
+        if rawText.Length > 0 then
+            let tokens = estimateTokens rawText
+            counterText.Text <- sprintf "%d 字 · ~%d tok" rawText.Length (max 1 tokens)
+            counterText.IsVisible <- true
+        else
+            counterText.Text <- ""
+            counterText.IsVisible <- false
         Ui.setEnabled sendButton (generating || (enabled && (hasText || hasAttachment)))
 
     do
@@ -123,17 +150,12 @@ type Composer(actions: ComposerActions) as this =
             row
         modelChip.PointerEntered.Add(fun _ -> modelChip.Background <- Tokens.hover)
         modelChip.PointerExited.Add(fun _ -> modelChip.Background <- Brushes.Transparent)
-        modelChip.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            actions.openModelPicker(modelChip :> Control))
+        Ui.onClick modelChip (fun () -> actions.openModelPicker(modelChip :> Control))
         ToolTip.SetTip(modelChip, "切换本会话使用的模型")
 
-        attachButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            actions.pickAttachment ())
+        Ui.onClick attachButton (fun () -> actions.pickAttachment ())
 
-        sendButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
+        Ui.onClick sendButton (fun () ->
             if generating then actions.stopGeneration () else this.Submit())
 
         input.TextChanged.Add(fun _ -> refreshSendState ())
@@ -144,12 +166,64 @@ type Composer(actions: ComposerActions) as this =
             EventHandler<KeyEventArgs>(fun _ e ->
                 if e.Key = Key.Enter then
                     let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
-                    let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control
+                    let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
                     if shift then ()
                     elif enterSends || ctrl then
                         e.Handled <- true
                         this.Submit()),
             RoutingStrategies.Tunnel)
+
+        let transitions = Transitions()
+        transitions.Add(BrushTransition(Property = Border.BorderBrushProperty, Duration = TimeSpan.FromMilliseconds 120.0))
+        shell.Transitions <- transitions
+
+        DragDrop.SetAllowDrop(shell, true)
+        shell.AddHandler(
+            DragDrop.DragEnterEvent,
+            EventHandler<DragEventArgs>(fun _ e ->
+                let files = e.DataTransfer.TryGetFiles()
+                if not (isNull files) && files.Length > 0 then
+                    shell.BorderBrush <- Tokens.accent
+                    shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 2.0, Color = Tokens.accent.Color))),
+            RoutingStrategies.Bubble)
+        shell.AddHandler(
+            DragDrop.DragLeaveEvent,
+            EventHandler<RoutedEventArgs>(fun _ _ ->
+                if not input.IsFocused then
+                    shell.BorderBrush <- Tokens.border
+                    shell.BoxShadow <- Tokens.shadowSoft ()),
+            RoutingStrategies.Bubble)
+        shell.AddHandler(
+            DragDrop.DragOverEvent,
+            EventHandler<DragEventArgs>(fun _ e ->
+                let files = e.DataTransfer.TryGetFiles()
+                if not (isNull files) && files.Length > 0 then
+                    e.DragEffects <- DragDropEffects.Copy
+                else
+                    e.DragEffects <- DragDropEffects.None),
+            RoutingStrategies.Bubble)
+        shell.AddHandler(
+            DragDrop.DropEvent,
+            EventHandler<DragEventArgs>(fun _ e ->
+                if not input.IsFocused then
+                    shell.BorderBrush <- Tokens.border
+                    shell.BoxShadow <- Tokens.shadowSoft ()
+                let files = e.DataTransfer.TryGetFiles()
+                if not (isNull files) && files.Length > 0 then
+                    let list = ResizeArray<string * byte[]>()
+                    for item in files do
+                        match item with
+                        | :? Avalonia.Platform.Storage.IStorageFile as file ->
+                            try
+                                use stream = file.OpenReadAsync().GetAwaiter().GetResult()
+                                use ms = new System.IO.MemoryStream()
+                                stream.CopyTo(ms :> System.IO.Stream)
+                                list.Add(file.Name, ms.ToArray())
+                            with _ -> ()
+                        | _ -> ()
+                    if list.Count > 0 then
+                        actions.dropFiles (List.ofSeq list)),
+            RoutingStrategies.Bubble)
 
     member private this.Submit() =
         if enabled && not generating then
@@ -189,9 +263,7 @@ type Composer(actions: ComposerActions) as this =
             remove.Height <- 20.0
             remove.MinWidth <- 20.0
             remove.MinHeight <- 20.0
-            remove.PointerReleased.Add(fun e ->
-                e.Handled <- true
-                actions.removeAttachment attachment.sha256)
+            Ui.onClick remove (fun () -> actions.removeAttachment attachment.sha256)
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1, VerticalAlignment = VerticalAlignment.Center)
             row.Children.Add icon
             row.Children.Add name
@@ -260,11 +332,12 @@ type Composer(actions: ComposerActions) as this =
         inputRow.Children.Add actionRow
         inputRow.Children.Add input
 
+        let rightMeta = Ui.hstack Tokens.space2 [ counterText :> Control; hintText :> Control ]
         let footerRow = DockPanel(LastChildFill = false)
         DockPanel.SetDock(modelChip, Dock.Left)
-        DockPanel.SetDock(hintText, Dock.Right)
+        DockPanel.SetDock(rightMeta, Dock.Right)
         footerRow.Children.Add modelChip
-        footerRow.Children.Add hintText
+        footerRow.Children.Add rightMeta
 
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
         column.Children.Add attachmentStrip
@@ -278,10 +351,10 @@ type Composer(actions: ComposerActions) as this =
 
         input.GotFocus.Add(fun _ ->
             shell.BorderBrush <- Tokens.accent
-            shell.BorderThickness <- Thickness 1.4)
+            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color)))
         input.LostFocus.Add(fun _ ->
             shell.BorderBrush <- Tokens.border
-            shell.BorderThickness <- Thickness 1.0)
+            shell.BoxShadow <- Tokens.shadowSoft ())
 
         let outer = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, MaxWidth = Tokens.readingWidth)
         outer.Children.Add disabledNotice

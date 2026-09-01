@@ -74,13 +74,21 @@ module Menu =
                 CornerRadius = CornerRadius Tokens.radiusSm,
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
+                Focusable = true,
                 Child = dock)
         host.PointerEntered.Add(fun _ -> host.Background <- Tokens.hover)
         host.PointerExited.Add(fun _ -> host.Background <- Brushes.Transparent)
+        host.GotFocus.Add(fun _ -> host.Background <- Tokens.hover)
+        host.LostFocus.Add(fun _ -> host.Background <- Brushes.Transparent)
         host.PointerReleased.Add(fun e ->
             e.Handled <- true
             overlay.ClosePopup()
             entry.action ())
+        host.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                overlay.ClosePopup()
+                entry.action ())
         host :> Control
 
     /// 打开一个菜单。`entries` 为空时不打开。

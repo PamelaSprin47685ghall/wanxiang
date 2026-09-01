@@ -143,6 +143,10 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         closeButton.PointerReleased.Add(fun e ->
             e.Handled <- true
             onClose ())
+        closeButton.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                onClose ())
         let header =
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             let caption = Ui.title "设置"

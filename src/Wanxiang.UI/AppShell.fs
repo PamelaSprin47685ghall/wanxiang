@@ -92,6 +92,8 @@ type MainView() as this =
     let mutable chat: ChatView = Unchecked.defaultof<ChatView>
     let mutable composer: Composer = Unchecked.defaultof<Composer>
     let mutable settings: SettingsView = Unchecked.defaultof<SettingsView>
+    let mutable splitLayout: Grid = Unchecked.defaultof<Grid>
+    let mutable sidebarCollapsed = false
     let workspace = Grid()
     let settingsHost = Grid(IsVisible = false)
 
@@ -530,23 +532,55 @@ type MainView() as this =
             let markdown = Export.toMarkdown summary.title (messagesOf view)
             this.SaveDownload(summary.title + ".md", Text.Encoding.UTF8.GetBytes markdown)
 
+    member this.ToggleSidebar() =
+        sidebarCollapsed <- not sidebarCollapsed
+        sidebar.IsVisible <- not sidebarCollapsed
+        if not (isNull (box splitLayout)) && splitLayout.ColumnDefinitions.Count > 0 then
+            splitLayout.ColumnDefinitions.[0].Width <- if sidebarCollapsed then GridLength(0.0) else GridLength prefs.sidebarWidth
+
     member this.HandleShortcut(e: KeyEventArgs) =
-        let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control
+        let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
+        let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
         if e.Key = Key.Escape then
             if overlay.HandleEscape() then e.Handled <- true
             elif settingsHost.IsVisible then
                 e.Handled <- true
                 this.CloseSettings()
+            elif activeGenerationId.IsSome then
+                e.Handled <- true
+                this.StopGeneration()
+        elif ctrl && e.Key = Key.B then
+            e.Handled <- true
+            this.ToggleSidebar()
         elif ctrl && e.Key = Key.N then
             e.Handled <- true
             this.CreateConversation() |> ignore
         elif ctrl && e.Key = Key.K then
             e.Handled <- true
+            if sidebarCollapsed then this.ToggleSidebar()
             sidebar.FocusSearch()
         elif ctrl && (e.Key = Key.OemComma) then
             e.Handled <- true
             this.ShowSettings()
+        elif ctrl && shift && e.Key = Key.S then
+            e.Handled <- true
+            let nextTheme = if Tokens.isDark() then AlwaysLight else AlwaysDark
+            this.SavePrefs { prefs with theme = nextTheme }
+            toast (if nextTheme = AlwaysDark then "已切换为深色主题" else "已切换为浅色主题") Neutral
+        elif ctrl && shift && e.Key = Key.E then
+            e.Handled <- true
+            match activeSummary() with
+            | Some summary -> this.ExportConversation summary
+            | None -> toast "没有打开的会话可导出" Warning
+        elif ctrl && not shift && e.Key >= Key.D1 && e.Key <= Key.D9 then
+            let index = int e.Key - int Key.D1
+            if index < summaries.Length then
+                e.Handled <- true
+                this.OpenConversation summaries[index].id
         elif ctrl && (e.Key = Key.OemQuestion || e.Key = Key.Divide) then
+            e.Handled <- true
+            Dialogs.shortcuts overlay
+        elif e.Key = Key.F1 then
             e.Handled <- true
             Dialogs.shortcuts overlay
 
@@ -650,6 +684,8 @@ type MainView() as this =
             state.Handle ev
             state.AdvanceCursor()
             send ObserveConversationList
+            if activeConvId = Some d.conversationId then
+                this.Render()
         | AuthorityCatchUp _ -> state.Handle ev
         | HistoryPage d ->
             state.Handle ev
@@ -702,6 +738,7 @@ type MainView() as this =
                     pendingAttachments
                     |> List.map (fun a -> if a.sha256 = upload.sha256 then { a with ready = true; size = d.size } else a)
                 composer.SetAttachments pendingAttachments
+                toast (sprintf "附件「%s」上传完成" upload.fileName) Success
             | _ -> ()
         | AttachmentAborted d ->
             match uploadsInFlight.TryGetValue d.attachmentId with
@@ -773,7 +810,8 @@ type MainView() as this =
                             if activeConvId = Some summary.id then
                                 activeConvId <- None
                                 sidebar.SetActive None
-                                this.Render())
+                                this.Render()
+                            toast (sprintf "会话「%s」已删除" summary.title) Neutral)
               setPinned =
                 fun summary pinned ->
                     sendCommand (
@@ -782,6 +820,7 @@ type MainView() as this =
                                conversationId = summary.id
                                pinned = pinned
                                archived = summary.archived |})
+                    toast (if pinned then sprintf "已置顶「%s」" summary.title else sprintf "已取消置顶「%s」" summary.title) Neutral
               setArchived =
                 fun summary archived ->
                     sendCommand (
@@ -790,6 +829,7 @@ type MainView() as this =
                                conversationId = summary.id
                                pinned = summary.pinned
                                archived = archived |})
+                    toast (if archived then sprintf "已归档「%s」" summary.title else sprintf "已取消归档「%s」" summary.title) Neutral
               duplicateAsFork =
                 fun summary ->
                     this.OpenConversation summary.id
@@ -820,7 +860,8 @@ type MainView() as this =
                                 DeleteMessage
                                     {| invocationId = newInvocation ()
                                        conversationId = convId
-                                       messageCommitId = commitId |}))
+                                       messageCommitId = commitId |})
+                            toast "消息已删除" Success)
                     | None -> ()
               downloadAttachment = fun sha -> send (AttachmentDownloadRequest {| sha256 = sha |})
               openLink = openLink }
@@ -859,6 +900,8 @@ type MainView() as this =
               stopGeneration = fun () -> this.StopGeneration()
               requestOlderHistory = fun () -> this.RequestOlderHistory()
               retryLast = fun () -> this.Regenerate()
+              sendPrompt = fun prompt -> this.SendMessage prompt
+              toggleSidebar = fun () -> this.ToggleSidebar()
               message = messageActions }
         chat <- ChatView(chatActions, Brand.logo)
         chat.Build()
@@ -883,7 +926,12 @@ type MainView() as this =
                 fun sha ->
                     pendingAttachments <- pendingAttachments |> List.filter (fun a -> a.sha256 <> sha)
                     composer.SetAttachments pendingAttachments
-              openModelPicker = fun anchor -> this.ShowModelPicker anchor }
+              openModelPicker = fun anchor -> this.ShowModelPicker anchor
+              dropFiles = fun files ->
+                  for (name, bytes) in files do
+                      this.BeginUpload(name, bytes)
+                  if files.Length > 0 then
+                      toast (sprintf "已添加 %d 个文件附件" files.Length) Neutral }
         composer <- Composer(actions)
         composer.Build()
         composer.SetEnterSends prefs.enterSends
@@ -930,6 +978,7 @@ type MainView() as this =
         Grid.SetColumn(chatColumn, 1)
         split.Children.Add sidebar
         split.Children.Add chatColumn
+        splitLayout <- split
         workspace.Children.Add split
 
         settingsHost.Children.Add settings

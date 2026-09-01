@@ -541,8 +541,16 @@ type ChatOrchestrator(
             // 同一批调用使用同一工具快照
             let allTools = toolRegistry.BuildTools g.agentConfig
             let findTool (call: FunctionCallContent) : AITool option =
-                // M.E.AI 生成的函数名与注册名一致；先尝试直接匹配
-                allTools |> List.tryFind (fun t -> t.Name = call.Name || t.Name = sprintf "builtin_%s" (call.Name.Replace("builtin:", "").Replace(".", "_")))
+                let normalize (name: string) =
+                    if String.IsNullOrWhiteSpace name then ""
+                    elif name.StartsWith("builtin:", StringComparison.Ordinal) then
+                        "builtin_" + name.Substring("builtin:".Length).Replace(".", "_")
+                    elif name.StartsWith("mcp:", StringComparison.Ordinal) then
+                        "mcp_" + name.Substring("mcp:".Length).Replace("/", "_").Replace("-", "_")
+                    else name
+                let target = normalize call.Name
+                allTools |> List.tryFind (fun t ->
+                    t.Name = call.Name || t.Name = target || normalize t.Name = target)
             let runOne (call: FunctionCallContent) : Task<(FunctionCallContent * ToolOutcome)> =
                 task {
                     match findTool call with
@@ -554,7 +562,7 @@ type ChatOrchestrator(
                         try
                             match tool with
                             | :? AIFunction as f ->
-                                let args = AIFunctionArguments(call.Arguments)
+                                let args = if isNull call.Arguments then AIFunctionArguments() else AIFunctionArguments(call.Arguments)
                                 let! result = f.InvokeAsync(args, g.cts.Token)
                                 let text =
                                     match result with

@@ -8,30 +8,12 @@ open System.Threading.Tasks
 open Microsoft.Extensions.AI
 open Wanxiang.Config
 
-/// 内置工具（决策 95：随万象编译发布，由代码注册）。
-///
-/// 稳定标识：`builtin:echo` / `builtin:time` / `builtin:file.read` /
-/// `builtin:file.list`。
-///
-/// `file.read` / `file.list` **必须**配置沙箱根目录才可用
-/// （`[tools] fileReadRoots`）。没有沙箱时它们等于把整台机器的文件
-/// （包括存着 apiKey 的 config.toml）交给模型，因此默认完全不注册。
-module BuiltinTools =
+/// 路径解析与文件读取工具核心实现。
+module BuiltinToolsCore =
 
-    /// 单文件读取上限。
     let maxReadBytes = 1024L * 1024L
-
-    /// 目录列举条目上限。
     let maxListEntries = 500
 
-    /// 稳定标识 ↔ 函数名：`builtin:file.read` ↔ `builtin_file_read`。
-    let functionName (stableId: string) : string =
-        "builtin_" + stableId.Substring("builtin:".Length).Replace(".", "_")
-
-    let stableId (functionName: string) : string =
-        "builtin:" + functionName.Substring("builtin_".Length).Replace("_", ".")
-
-    /// 路径是否落在任一沙箱根内（解析符号链接后比较，避免 `..` 与软链穿越）。
     let resolveInRoots (roots: string list) (path: string) : Result<string, string> =
         if List.isEmpty roots then
             Error "文件工具未启用：服务端未配置 tools.fileReadRoots 沙箱根目录。"
@@ -51,7 +33,7 @@ module BuiltinTools =
             with ex ->
                 Error(sprintf "路径无效：%s" ex.Message)
 
-    let private readFile (roots: string list) (path: string) : string =
+    let readFile (roots: string list) (path: string) : string =
         match resolveInRoots roots path with
         | Error e -> sprintf "error: %s" e
         | Ok real ->
@@ -63,7 +45,7 @@ module BuiltinTools =
             with ex ->
                 sprintf "error: %s" ex.Message
 
-    let private listDirectory (roots: string list) (path: string) : string =
+    let listDirectory (roots: string list) (path: string) : string =
         match resolveInRoots roots path with
         | Error e -> sprintf "error: %s" e
         | Ok real ->
@@ -85,40 +67,98 @@ module BuiltinTools =
             with ex ->
                 sprintf "error: %s" ex.Message
 
-    /// 构建全部内置工具。`roots` 为空时不注册文件类工具。
+type BuiltinEchoFunction() =
+    inherit AIFunction()
+    static let schema = System.Text.Json.JsonDocument.Parse("""{"type":"object","properties":{"text":{"type":"string","description":"要原样返回的文本"}},"required":["text"]}""").RootElement.Clone()
+    override _.Name = "builtin_echo"
+    override _.Description = "把输入原样返回。用于验证工具调用链路是否通畅。"
+    override _.JsonSchema = schema
+    override _.InvokeCoreAsync(args: AIFunctionArguments, _ct: CancellationToken) =
+        let mutable text = ""
+        if not (isNull args) then
+            for KeyValue(k, v) in args do
+                if not (isNull v) then
+                    let s = string v
+                    if text = "" || k.ToLowerInvariant().Contains "text" || k.ToLowerInvariant().Contains "input" || k.ToLowerInvariant().Contains "msg" then
+                        text <- s
+        ValueTask<obj>(box text)
+
+type BuiltinTimeFunction() =
+    inherit AIFunction()
+    static let schema = System.Text.Json.JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement.Clone()
+    override _.Name = "builtin_time"
+    override _.Description = "返回当前 UTC 时间（ISO 8601）。"
+    override _.JsonSchema = schema
+    override _.InvokeCoreAsync(_args: AIFunctionArguments, _ct: CancellationToken) =
+        ValueTask<obj>(box (DateTimeOffset.UtcNow.ToString "o"))
+
+type BuiltinFileReadFunction(roots: string list) =
+    inherit AIFunction()
+    static let schema = System.Text.Json.JsonDocument.Parse("""{"type":"object","properties":{"path":{"type":"string","description":"要读取的文件绝对路径"}},"required":["path"]}""").RootElement.Clone()
+    override _.Name = "builtin_file_read"
+    override _.Description =
+        sprintf "读取沙箱内的文本文件（最多 %d KiB）。允许的根目录：%s。path 需为绝对路径。"
+            (BuiltinToolsCore.maxReadBytes / 1024L) (String.Join("、", roots))
+    override _.JsonSchema = schema
+    override _.InvokeCoreAsync(args: AIFunctionArguments, _ct: CancellationToken) =
+        let mutable path = ""
+        if not (isNull args) then
+            for KeyValue(k, v) in args do
+                if not (isNull v) then
+                    let s = string v
+                    if not (String.IsNullOrWhiteSpace s) && (path = "" || k.ToLowerInvariant().Contains "path" || k.ToLowerInvariant().Contains "file") then
+                        path <- s
+        ValueTask<obj>(box (BuiltinToolsCore.readFile roots path))
+
+type BuiltinFileListFunction(roots: string list) =
+    inherit AIFunction()
+    static let schema = System.Text.Json.JsonDocument.Parse("""{"type":"object","properties":{"path":{"type":"string","description":"要列出条目的目录绝对路径"}},"required":["path"]}""").RootElement.Clone()
+    override _.Name = "builtin_file_list"
+    override _.Description =
+        sprintf "列出沙箱内目录的条目（最多 %d 项）。允许的根目录：%s。"
+            BuiltinToolsCore.maxListEntries (String.Join("、", roots))
+    override _.JsonSchema = schema
+    override _.InvokeCoreAsync(args: AIFunctionArguments, _ct: CancellationToken) =
+        let mutable path = ""
+        if not (isNull args) then
+            for KeyValue(k, v) in args do
+                if not (isNull v) then
+                    let s = string v
+                    if not (String.IsNullOrWhiteSpace s) && (path = "" || k.ToLowerInvariant().Contains "path" || k.ToLowerInvariant().Contains "dir") then
+                        path <- s
+        ValueTask<obj>(box (BuiltinToolsCore.listDirectory roots path))
+
+/// 内置工具公开接口与元数据。
+module BuiltinTools =
+
+    let maxReadBytes = BuiltinToolsCore.maxReadBytes
+    let maxListEntries = BuiltinToolsCore.maxListEntries
+
+    let functionName (stableId: string) : string =
+        "builtin_" + stableId.Substring("builtin:".Length).Replace(".", "_")
+
+    let stableId (functionName: string) : string =
+        "builtin:" + functionName.Substring("builtin_".Length).Replace("_", ".")
+
+    let resolveInRoots (roots: string list) (path: string) : Result<string, string> =
+        BuiltinToolsCore.resolveInRoots roots path
+
+    let readFile (roots: string list) (path: string) : string =
+        BuiltinToolsCore.readFile roots path
+
+    let listDirectory (roots: string list) (path: string) : string =
+        BuiltinToolsCore.listDirectory roots path
+
     let all (cfg: ToolsConfig) : AITool list =
-        let echo =
-            AIFunctionFactory.Create(
-                Func<string, string>(fun text -> text),
-                name = "builtin_echo",
-                description = "把输入原样返回。用于验证工具调用链路是否通畅。")
-        let time =
-            AIFunctionFactory.Create(
-                Func<string>(fun () -> DateTimeOffset.UtcNow.ToString "o"),
-                name = "builtin_time",
-                description = "返回当前 UTC 时间（ISO 8601）。")
+        let echo = BuiltinEchoFunction() :> AITool
+        let time = BuiltinTimeFunction() :> AITool
         let fileTools =
             if List.isEmpty cfg.fileReadRoots then []
             else
-                let rootHint = String.Join("、", cfg.fileReadRoots)
-                let fileRead =
-                    AIFunctionFactory.Create(
-                        Func<string, string>(readFile cfg.fileReadRoots),
-                        name = "builtin_file_read",
-                        description =
-                            sprintf
-                                "读取沙箱内的文本文件（最多 %d KiB）。允许的根目录：%s。path 需为绝对路径。"
-                                (maxReadBytes / 1024L)
-                                rootHint)
-                let fileList =
-                    AIFunctionFactory.Create(
-                        Func<string, string>(listDirectory cfg.fileReadRoots),
-                        name = "builtin_file_list",
-                        description = sprintf "列出沙箱内目录的条目（最多 %d 项）。允许的根目录：%s。" maxListEntries rootHint)
-                [ fileRead :> AITool; fileList :> AITool ]
-        [ echo :> AITool; time :> AITool ] @ fileTools
+                [ BuiltinFileReadFunction(cfg.fileReadRoots) :> AITool
+                  BuiltinFileListFunction(cfg.fileReadRoots) :> AITool ]
+        [ echo; time ] @ fileTools
 
-    /// 工具描述（用于目录快照：客户端据此渲染可勾选的工具清单）。
     let descriptors (cfg: ToolsConfig) : (string * string * string) list =
         all cfg
         |> List.map (fun t -> stableId t.Name, t.Name, (if isNull t.Description then "" else t.Description))

@@ -213,8 +213,15 @@ module Dialogs =
             match current.temperature with
             | Some t -> t.ToString("0.##", Globalization.CultureInfo.InvariantCulture)
             | None -> ""
+        let topPShell, topPBox = Ui.textField "0–1，留空跟随默认"
+        topPBox.Text <-
+            match current.topP with
+            | Some p -> p.ToString("0.##", Globalization.CultureInfo.InvariantCulture)
+            | None -> ""
         let maxTokensShell, maxTokensBox = Ui.textField "留空不限制"
         maxTokensBox.Text <- (match current.maxTokens with Some m -> string m | None -> "")
+        let thinkingBudgetShell, thinkingBudgetBox = Ui.textField "留空跟随默认；0 关闭思维链"
+        thinkingBudgetBox.Text <- (match current.thinkingBudget with Some b -> string b | None -> "")
 
         let selectedTools = System.Collections.Generic.HashSet<string>(current.tools)
         let toolsPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
@@ -263,19 +270,28 @@ module Dialogs =
                     model = model
                     instructions = instructions
                     temperature = parseFloat temperatureBox.Text
+                    topP = parseFloat topPBox.Text
                     maxTokens = parseInt maxTokensBox.Text
+                    thinkingBudget = parseInt thinkingBudgetBox.Text
                     tools = List.ofSeq selectedTools }
 
-        let paramGrid = Grid(ColumnSpacing = Tokens.space3)
+        let paramGrid = Grid(ColumnSpacing = Tokens.space3, RowSpacing = Tokens.space3)
         paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         paramGrid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
+        paramGrid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
         let temperatureColumn = Ui.vstack 0.0 [ Ui.fieldLabel "Temperature" :> Control; temperatureShell :> Control ]
+        let topPColumn = Ui.vstack 0.0 [ Ui.fieldLabel "Top P" :> Control; topPShell :> Control ]
         let maxTokensColumn = Ui.vstack 0.0 [ Ui.fieldLabel "最大输出 token" :> Control; maxTokensShell :> Control ]
-        Grid.SetColumn(temperatureColumn, 0)
-        Grid.SetColumn(maxTokensColumn, 1)
+        let thinkingBudgetColumn = Ui.vstack 0.0 [ Ui.fieldLabel "思维链预算（token）" :> Control; thinkingBudgetShell :> Control ]
+        Grid.SetRow(temperatureColumn, 0); Grid.SetColumn(temperatureColumn, 0)
+        Grid.SetRow(topPColumn, 0); Grid.SetColumn(topPColumn, 1)
+        Grid.SetRow(maxTokensColumn, 1); Grid.SetColumn(maxTokensColumn, 0)
+        Grid.SetRow(thinkingBudgetColumn, 1); Grid.SetColumn(thinkingBudgetColumn, 1)
         paramGrid.Children.Add temperatureColumn
+        paramGrid.Children.Add topPColumn
         paramGrid.Children.Add maxTokensColumn
+        paramGrid.Children.Add thinkingBudgetColumn
 
         let content =
             Ui.vstack
@@ -296,34 +312,57 @@ module Dialogs =
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
         overlay.ShowDialog(scroller :> Control, 520.0)
 
-    /// 快捷键帮助。
+    /// 快捷键帮助（分类清晰、对标桌面端成熟软件）。
     let shortcuts (overlay: OverlayHost) =
-        let entries =
-            [ "Ctrl + N", "新建会话"
-              "Ctrl + K", "搜索会话"
-              "Ctrl + ,", "打开设置"
-              "Ctrl + Enter", "发送（当 Enter 用于换行时）"
-              "Shift + Enter", "换行"
-              "Esc", "关闭弹层 / 取消编辑"
-              "Ctrl + /", "显示这份快捷键列表" ]
-        let rows = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
-        for (keys, description) in entries do
-            let key =
-                Border(
-                    Background = Tokens.surface,
-                    BorderBrush = Tokens.border,
-                    BorderThickness = Thickness 1.0,
-                    CornerRadius = CornerRadius Tokens.radiusSm,
-                    Padding = Thickness(Tokens.space2, 2.0),
-                    MinWidth = 116.0,
-                    Child =
-                        TextBlock(
-                            Text = keys,
-                            FontSize = Tokens.fontMicro,
-                            FontFamily = Tokens.monoFontFamily,
-                            Foreground = Tokens.textMuted,
-                            HorizontalAlignment = HorizontalAlignment.Center))
-            let caption = Ui.label description
-            rows.Children.Add(Ui.hstack Tokens.space3 [ key :> Control; caption :> Control ])
-        let content = Ui.vstack Tokens.space4 [ Ui.title "键盘快捷键" :> Control; rows :> Control ]
-        overlay.ShowDialog(content :> Control, 420.0)
+        let sections =
+            [ "全局与导航",
+              [ "Ctrl / ⌘ + N", "新建会话"
+                "Ctrl / ⌘ + B", "切换侧边栏展开 / 折叠"
+                "Ctrl / ⌘ + K", "快速聚焦搜索栏"
+                "Ctrl / ⌘ + 1 ~ 9", "快速跳转至对应会话"
+                "Ctrl / ⌘ + ,", "打开全局设置"
+                "Ctrl / ⌘ + Shift + S", "切换深色 / 浅色主题"
+                "Ctrl / ⌘ + /", "显示快捷键帮助" ]
+              "输入与会话",
+              [ "Enter", "发送消息（或换行，按偏好）"
+                "Shift + Enter", "换行输入"
+                "Ctrl / ⌘ + Enter", "强制发送消息"
+                "Ctrl / ⌘ + Shift + E", "导出当前会话为 Markdown"
+                "Esc", "关闭弹层 / 取消编辑 / 停止生成" ] ]
+        let contentPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space3)
+        for (category, items) in sections do
+            contentPanel.Children.Add(Ui.sectionLabel category :> Control)
+            let groupRows = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
+            for (keys, description) in items do
+                let key =
+                    Border(
+                        Background = Tokens.surface,
+                        BorderBrush = Tokens.border,
+                        BorderThickness = Thickness 1.0,
+                        CornerRadius = CornerRadius Tokens.radiusSm,
+                        Padding = Thickness(Tokens.space2, 2.0),
+                        MinWidth = 136.0,
+                        Child =
+                            TextBlock(
+                                Text = keys,
+                                FontSize = Tokens.fontMicro,
+                                FontFamily = Tokens.monoFontFamily,
+                                Foreground = Tokens.textMuted,
+                                HorizontalAlignment = HorizontalAlignment.Center))
+                let caption =
+                    TextBlock(
+                        Text = description,
+                        FontSize = Tokens.fontSmall,
+                        Foreground = Tokens.text,
+                        VerticalAlignment = VerticalAlignment.Center)
+                groupRows.Children.Add(Ui.hstack Tokens.space3 [ key :> Control; caption :> Control ])
+            contentPanel.Children.Add groupRows
+        let closeBtn = Ui.button Ui.Primary "关闭" (fun () -> overlay.CloseDialog())
+        closeBtn.HorizontalAlignment <- HorizontalAlignment.Right
+        let scroller =
+            ScrollViewer(
+                Content = Ui.vstack Tokens.space4 [ Ui.title "键盘快捷键" :> Control; contentPanel :> Control; closeBtn :> Control ],
+                MaxHeight = 520.0,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
+        overlay.ShowDialog(scroller :> Control, 460.0)

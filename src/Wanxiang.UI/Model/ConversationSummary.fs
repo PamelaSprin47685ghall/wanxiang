@@ -96,13 +96,16 @@ module ConversationSummary =
                   | None -> ()
               | _ -> () ]
 
-    /// 搜索过滤：标题与预览都参与，不区分大小写。
+    /// 搜索过滤：标题、预览、模型与服务商均参与匹配，支持多关键词空格分词。
     let matches (query: string) (summary: ConversationSummary) =
         if String.IsNullOrWhiteSpace query then true
         else
-            let q = query.Trim()
-            summary.title.Contains(q, StringComparison.OrdinalIgnoreCase)
-            || summary.preview.Contains(q, StringComparison.OrdinalIgnoreCase)
+            let terms = query.Trim().Split([| ' '; '\t' |], StringSplitOptions.RemoveEmptyEntries)
+            terms |> Array.forall (fun term ->
+                summary.title.Contains(term, StringComparison.OrdinalIgnoreCase)
+                || summary.preview.Contains(term, StringComparison.OrdinalIgnoreCase)
+                || summary.model.Contains(term, StringComparison.OrdinalIgnoreCase)
+                || summary.providerId.Contains(term, StringComparison.OrdinalIgnoreCase))
 
     /// 一次活动落在哪个时间桶。用最近活动而非创建时间，符合「最近用过的排前面」直觉。
     let private bucketOf (now: DateTimeOffset) (summary: ConversationSummary) =
