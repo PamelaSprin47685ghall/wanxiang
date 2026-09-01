@@ -288,3 +288,88 @@ let ``不配 TLS 时字段为空且配置合法`` () =
     | Ok cfg ->
         Assert.Equal("", cfg.tlsCertPath)
         Assert.Equal("", cfg.tlsKeyPath)
+
+// ---------------------------------------------------------------- 版本升级（决策 184）
+
+let private sampleTomlV1 =
+    """
+configVersion = 1
+instanceId = "22222222-2222-2222-2222-222222222222"
+[runtime]
+server = true
+client = true
+pwa = true
+fix = false
+[network]
+listen = "127.0.0.1:8765"
+maxAttachmentBytes = 67108864
+chunkSizeBytes = 262144
+[pairing]
+failureWindowMinutes = 1
+maxFailures = 5
+freezeMinutes = 5
+[providers.openai]
+kind = "openai"
+baseUrl = "https://api.openai.com/v1"
+apiKey = "sk-v1-key"
+model = "gpt-4o"
+[mcp.fs]
+command = "node"
+args = ["fs-server.js"]
+maxConcurrency = 4
+[[auth.clients]]
+tokenHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+name = "v1-client"
+createdAt = "2026-01-01T00:00:00Z"
+revoked = false
+"""
+
+[<Fact>]
+let ``configVersion 1 配置能够成功解析并显式升级到当前模型`` () =
+    match TomlCodec.tryParse sampleTomlV1 with
+    | Error errs -> failwith (String.concat "; " errs)
+    | Ok cfg ->
+        // 升级后版本号为当前版本（2）
+        Assert.Equal(AppConfig.CurrentVersion, cfg.configVersion)
+        Assert.Equal(Guid.Parse "22222222-2222-2222-2222-222222222222", cfg.instanceId)
+        Assert.Equal("127.0.0.1:8765", cfg.listen)
+        Assert.Equal("", cfg.tlsCertPath)
+        Assert.Equal("", cfg.tlsKeyPath)
+        // v1 单 model 映射到 models 列表与 defaultModel
+        Assert.True(cfg.providers.ContainsKey "openai")
+        let p = cfg.providers["openai"]
+        Assert.Equal<string list>([ "gpt-4o" ], p.models)
+        Assert.Equal("gpt-4o", p.defaultModel)
+        Assert.Equal(ProviderConfig.defaultTimeoutSeconds, p.timeoutSeconds)
+        Assert.Equal(ProviderConfig.defaultMaxRetries, p.maxRetries)
+        Assert.True p.enabled
+        // v1 未配 generation 与 tools 时注入默认值
+        Assert.Equal(GenerationDefaults.defaults, cfg.generation)
+        Assert.Equal(ToolsConfig.defaults, cfg.tools)
+        // v1 mcp 正确升级
+        Assert.True(cfg.mcpServers.ContainsKey "fs")
+        let m = cfg.mcpServers["fs"]
+        Assert.Equal(Some "node", m.command)
+        Assert.Equal(Some 4, m.maxConcurrency)
+        Assert.Equal(McpServerConfig.defaultCallTimeoutSeconds, m.callTimeoutSeconds)
+        Assert.True m.enabled
+        // 写回统一输出当前版本
+        let serialized = TomlCodec.serialize cfg
+        Assert.Contains("configVersion = 2", serialized)
+        match TomlCodec.tryParse serialized with
+        | Error errs -> failwith (String.concat "; " errs)
+        | Ok cfg2 ->
+            Assert.Equal(cfg.instanceId, cfg2.instanceId)
+            Assert.Equal(cfg.providers.Count, cfg2.providers.Count)
+
+[<Fact>]
+let ``不支持的 configVersion 返回明确错误`` () =
+    let v0 = sampleToml.Replace("configVersion = 2", "configVersion = 0")
+    match TomlCodec.tryParse v0 with
+    | Error errs -> Assert.Contains(errs, fun e -> e.Contains "configVersion 0 not supported")
+    | Ok _ -> failwith "version 0 should be rejected"
+
+    let v99 = sampleToml.Replace("configVersion = 2", "configVersion = 99")
+    match TomlCodec.tryParse v99 with
+    | Error errs -> Assert.Contains(errs, fun e -> e.Contains "configVersion 99 not supported")
+    | Ok _ -> failwith "version 99 should be rejected"
