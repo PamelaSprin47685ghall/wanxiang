@@ -52,6 +52,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     let mutable instanceId = ""
     let mutable serverUrl = ""
     let navButtons = System.Collections.Generic.Dictionary<SettingsSection, Border>()
+    let mutable responsiveCompact: bool option = None
 
     /// 每个分区只构建一次并缓存。
     /// 面板内部复用同一批输入控件实例，重复 Build 会把它们挂到第二个父级上，
@@ -163,13 +164,18 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
 
         for section in SettingsSection.all do
             navPanel.Children.Add(this.NavButton section)
+        let navScroll =
+            ScrollViewer(
+                Content = navPanel,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Hidden)
         let nav =
             Border(
                 Width = 196.0,
                 Padding = Thickness(Tokens.space3, Tokens.space4),
                 BorderBrush = Tokens.borderSoft,
                 BorderThickness = Thickness(0.0, 0.0, 1.0, 0.0),
-                Child = navPanel)
+                Child = navScroll)
 
         let contentFrame =
             Border(
@@ -193,9 +199,36 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         split.Children.Add nav
         split.Children.Add content
 
+        let applyResponsive width =
+            if width > 0.0 then
+                let compact = width < 720.0
+                if responsiveCompact <> Some compact then
+                    responsiveCompact <- Some compact
+                    if compact then
+                        DockPanel.SetDock(nav, Dock.Top)
+                        nav.Width <- Double.NaN
+                        nav.Height <- 58.0
+                        nav.Padding <- Thickness(Tokens.space2, Tokens.space2)
+                        nav.BorderThickness <- Thickness(0.0, 0.0, 0.0, 1.0)
+                        navPanel.Orientation <- Orientation.Horizontal
+                        navScroll.HorizontalScrollBarVisibility <- ScrollBarVisibility.Auto
+                        contentFrame.Padding <- Thickness(Tokens.space4, Tokens.space4, Tokens.space4, Tokens.space8)
+                    else
+                        DockPanel.SetDock(nav, Dock.Left)
+                        nav.Width <- 196.0
+                        nav.Height <- Double.NaN
+                        nav.Padding <- Thickness(Tokens.space3, Tokens.space4)
+                        nav.BorderThickness <- Thickness(0.0, 0.0, 1.0, 0.0)
+                        navPanel.Orientation <- Orientation.Vertical
+                        navScroll.HorizontalScrollBarVisibility <- ScrollBarVisibility.Hidden
+                        contentFrame.Padding <- Thickness(Tokens.space8, Tokens.space6, Tokens.space8, Tokens.space10)
+
         let layout = DockPanel()
         DockPanel.SetDock(header, Dock.Top)
         layout.Children.Add header
         layout.Children.Add split
         this.Child <- layout
+        this.PropertyChanged.Add(fun args ->
+            if args.Property = Visual.BoundsProperty then applyResponsive this.Bounds.Width)
+        applyResponsive this.Bounds.Width
         this.Select Providers

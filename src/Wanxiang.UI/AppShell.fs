@@ -96,6 +96,11 @@ type MainView() as this =
     let mutable sidebarCollapsed = false
     let workspace = Grid()
     let settingsHost = Grid(IsVisible = false)
+    let mutable shellGrid: Grid = Unchecked.defaultof<Grid>
+    let mutable chatColumn: DockPanel = Unchecked.defaultof<DockPanel>
+    let mutable compactMode = false
+    let mutable compactNavigationOpen = false
+    let mutable responsiveLayoutApplied = false
 
     let send (ev: WireEvent) = client.SendAsync ev |> ignore
     let sendCommand (cmd: ClientCommand) = client.SendCommandAsync cmd |> ignore
@@ -112,6 +117,37 @@ type MainView() as this =
 
     let messagesOf (view: ConversationView) =
         view.messages |> Seq.cast<JsonNode> |> Seq.map MessageView.ofSnapshotItem |> List.ofSeq
+
+    member private this.SetCompactNavigation(opened: bool) =
+        if compactMode then
+            compactNavigationOpen <- opened
+            sidebar.IsVisible <- opened
+
+    member private this.ApplyResponsiveLayout(width: float) =
+        if width > 0.0 && not (isNull (box shellGrid)) then
+            let nextCompact = width < 720.0
+            let changed = nextCompact <> compactMode
+            if changed || not responsiveLayoutApplied then
+                responsiveLayoutApplied <- true
+                compactMode <- nextCompact
+                composer.SetCompactMode compactMode
+                if compactMode then
+                    shellGrid.ColumnDefinitions[0].Width <- GridLength.Star
+                    shellGrid.ColumnDefinitions[1].Width <- GridLength(0.0)
+                    Grid.SetColumn(sidebar, 0)
+                    Grid.SetColumn(chatColumn, 0)
+                    compactNavigationOpen <- if changed then activeConvId.IsNone else compactNavigationOpen
+                    sidebar.IsVisible <- compactNavigationOpen
+                    sidebar.ZIndex <- 2
+                else
+                    compactNavigationOpen <- false
+                    shellGrid.ColumnDefinitions[0].Width <-
+                        if sidebarCollapsed then GridLength(0.0) else GridLength prefs.sidebarWidth
+                    shellGrid.ColumnDefinitions[1].Width <- GridLength.Star
+                    Grid.SetColumn(sidebar, 0)
+                    Grid.SetColumn(chatColumn, 1)
+                    sidebar.IsVisible <- not sidebarCollapsed
+                    sidebar.ZIndex <- 0
 
     member private _.StreamingMessage() : MessageView option =
         if streamText.Length = 0 && streamReasoning.Length = 0 && List.isEmpty streamToolCalls then None
@@ -293,6 +329,7 @@ type MainView() as this =
                        title = "新会话"
                        config = config |})
             activeConvId <- Some conversationId
+            this.SetCompactNavigation false
             sidebar.SetActive activeConvId
             async {
                 do! Async.Sleep 250
@@ -304,6 +341,7 @@ type MainView() as this =
             Some conversationId
 
     member private this.OpenConversation(id: Guid) =
+        this.SetCompactNavigation false
         if activeConvId <> Some id then
             activeConvId <- Some id
             lastError <- None
@@ -533,10 +571,14 @@ type MainView() as this =
             this.SaveDownload(summary.title + ".md", Text.Encoding.UTF8.GetBytes markdown)
 
     member this.ToggleSidebar() =
-        sidebarCollapsed <- not sidebarCollapsed
-        sidebar.IsVisible <- not sidebarCollapsed
-        if not (isNull (box splitLayout)) && splitLayout.ColumnDefinitions.Count > 0 then
-            splitLayout.ColumnDefinitions.[0].Width <- if sidebarCollapsed then GridLength(0.0) else GridLength prefs.sidebarWidth
+        if compactMode then
+            compactNavigationOpen <- not compactNavigationOpen
+            sidebar.IsVisible <- compactNavigationOpen
+        else
+            sidebarCollapsed <- not sidebarCollapsed
+            sidebar.IsVisible <- not sidebarCollapsed
+            if not (isNull (box splitLayout)) && splitLayout.ColumnDefinitions.Count > 0 then
+                splitLayout.ColumnDefinitions.[0].Width <- if sidebarCollapsed then GridLength(0.0) else GridLength prefs.sidebarWidth
 
     member this.HandleShortcut(e: KeyEventArgs) =
         let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
@@ -557,7 +599,10 @@ type MainView() as this =
             this.CreateConversation() |> ignore
         elif ctrl && e.Key = Key.K then
             e.Handled <- true
-            if sidebarCollapsed then this.ToggleSidebar()
+            if compactMode then
+                if not compactNavigationOpen then this.ToggleSidebar()
+            elif sidebarCollapsed then
+                this.ToggleSidebar()
             sidebar.FocusSearch()
         elif ctrl && (e.Key = Key.OemComma) then
             e.Handled <- true
@@ -966,20 +1011,20 @@ type MainView() as this =
         this.BuildComposer()
         this.BuildSettings()
 
-        let chatColumn = DockPanel()
+        chatColumn <- DockPanel()
         DockPanel.SetDock(composer, Dock.Bottom)
         chatColumn.Children.Add composer
         chatColumn.Children.Add chat
 
-        let split = Grid()
-        split.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength prefs.sidebarWidth))
-        split.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+        shellGrid <- Grid()
+        shellGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength prefs.sidebarWidth))
+        shellGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
         Grid.SetColumn(sidebar, 0)
         Grid.SetColumn(chatColumn, 1)
-        split.Children.Add sidebar
-        split.Children.Add chatColumn
-        splitLayout <- split
-        workspace.Children.Add split
+        shellGrid.Children.Add sidebar
+        shellGrid.Children.Add chatColumn
+        splitLayout <- shellGrid
+        workspace.Children.Add shellGrid
 
         settingsHost.Children.Add settings
 
@@ -1017,8 +1062,12 @@ type MainView() as this =
                     if prefs.theme = FollowSystem then
                         Dispatcher.UIThread.Post(fun () -> this.ApplyTheme()))
         this.KeyDown.Add(fun e -> this.HandleShortcut e)
+        this.PropertyChanged.Add(fun args ->
+            if args.Property = Visual.BoundsProperty then
+                this.ApplyResponsiveLayout this.Bounds.Width)
 
         this.Render()
+        this.ApplyResponsiveLayout this.Bounds.Width
         this.AutoConnect()
 
     /// 已有凭据时自动连接：桌面读 client.toml，PWA 读 IndexedDB（决策 52/53、Q191）。

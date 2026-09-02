@@ -140,9 +140,15 @@ function dismissSplash() {
 // 注意：切勿在此调用 canvas.getContext —— 会抢在 Avalonia 之前占用 WebGL 上下文，导致启动后白屏。
 async function dismissSplashWhenPainted() {
     const deadline = performance.now() + 20000;
+    // 不能用固定的 640×400 判断：手机画布本来就只有约 390px 宽，
+    // 会因此无条件等满 20 秒才收启动画面。阈值跟随当前物理视口，
+    // 同时保留桌面端 640×400 的“已完成真实 resize”门槛。
+    const dpr = Math.max(1, globalThis.devicePixelRatio || 1);
+    const minWidth = Math.min(640, Math.max(240, Math.floor(globalThis.innerWidth * dpr * 0.8)));
+    const minHeight = Math.min(400, Math.max(320, Math.floor(globalThis.innerHeight * dpr * 0.8)));
     while (performance.now() < deadline) {
         const c = document.querySelector("#out canvas");
-        if (c && c.width >= 640 && c.height >= 400) {
+        if (c && c.width >= minWidth && c.height >= minHeight) {
             await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
             dismissSplash();
             return;

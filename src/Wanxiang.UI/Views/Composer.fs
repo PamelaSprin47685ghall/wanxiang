@@ -310,6 +310,14 @@ type Composer(actions: ComposerActions) as this =
         enterSends <- value
         hintText.Text <- if value then "Enter 发送 · Shift+Enter 换行" else "Ctrl+Enter 发送 · Enter 换行"
 
+    /// 窄屏只收紧已有控件，不增加第二套输入逻辑：隐藏键盘提示、压缩边距与模型标签。
+    member this.SetCompactMode(value: bool) =
+        hintText.IsVisible <- not value
+        modelCaption.MaxWidth <- if value then 150.0 else 240.0
+        this.Padding <-
+            if value then Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space2)
+            else Thickness(Tokens.shellInset, Tokens.space4, Tokens.shellInset, Tokens.space3)
+
     member _.Focus() = input.Focus() |> ignore
 
     /// 把文本塞进输入框（编辑重发、提示词模板）。
@@ -361,4 +369,5 @@ type Composer(actions: ComposerActions) as this =
         outer.Children.Add shell
         this.Child <- outer
         this.SetEnterSends true
+        this.SetCompactMode false
         refreshSendState ()

@@ -10,7 +10,9 @@ open System.Threading.Tasks
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
+open Microsoft.AspNetCore.ResponseCompression
 open Microsoft.AspNetCore.StaticFiles
+open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.FileProviders
 open Microsoft.Extensions.Hosting
 open Wanxiang.Config
@@ -274,6 +276,11 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         orchestrator <-
             Some(ChatOrchestrator(coordinator.Value, currentProjection, broadcastToConversation, toolRegistry, currentConfig, loadBlob, logInfo))
         let builder = WebApplication.CreateBuilder()
+        if servePwa then
+            builder.Services.AddResponseCompression(fun options ->
+                options.EnableForHttps <- true
+                options.Providers.Add<BrotliCompressionProvider>())
+            |> ignore
         let tlsEnabled =
             let cfg = currentConfig ()
             not (String.IsNullOrWhiteSpace cfg.tlsCertPath) && not (String.IsNullOrWhiteSpace cfg.tlsKeyPath)
@@ -290,6 +297,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             |> ignore
 
         let app = builder.Build()
+        if servePwa then app.UseResponseCompression() |> ignore
         app.UseWebSockets() |> ignore
 
         app.Map(
