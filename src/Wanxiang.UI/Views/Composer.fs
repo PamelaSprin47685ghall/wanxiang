@@ -26,7 +26,6 @@ type ComposerActions = {
     pickAttachment: unit -> unit
     removeAttachment: string -> unit
     openModelPicker: Control -> unit
-    dropFiles: (string * byte[]) list -> unit
 }
 
 /// 消息输入区。
@@ -85,14 +84,6 @@ type Composer(actions: ComposerActions) as this =
             FontSize = Tokens.fontMicro,
             Foreground = Tokens.textFaint,
             VerticalAlignment = VerticalAlignment.Center)
-    let counterText =
-        TextBlock(
-            Text = "",
-            FontSize = Tokens.fontMicro,
-            Foreground = Tokens.textFaint,
-            VerticalAlignment = VerticalAlignment.Center,
-            IsVisible = false)
-
     let shell =
         Border(
             Background = Tokens.surface,
@@ -114,27 +105,9 @@ type Composer(actions: ComposerActions) as this =
     let mutable enabled = false
     let mutable attachments: PendingAttachment list = []
 
-    let estimateTokens (text: string) : int =
-        if String.IsNullOrEmpty text then 0
-        else
-            let mutable cjk = 0
-            let mutable other = 0
-            for ch in text do
-                if int ch >= 0x4e00 && int ch <= 0x9fa5 then cjk <- cjk + 1
-                elif not (Char.IsWhiteSpace ch) then other <- other + 1
-            int (Math.Ceiling(float cjk * 0.7 + float other * 0.3))
-
     let refreshSendState () =
-        let rawText = if isNull input.Text then "" else input.Text
-        let hasText = not (String.IsNullOrWhiteSpace rawText)
+        let hasText = not (String.IsNullOrWhiteSpace input.Text)
         let hasAttachment = attachments |> List.exists (fun a -> a.ready)
-        if rawText.Length > 0 then
-            let tokens = estimateTokens rawText
-            counterText.Text <- sprintf "%d 字 · ~%d tok" rawText.Length (max 1 tokens)
-            counterText.IsVisible <- true
-        else
-            counterText.Text <- ""
-            counterText.IsVisible <- false
         Ui.setEnabled sendButton (generating || (enabled && (hasText || hasAttachment)))
 
     do
@@ -177,54 +150,6 @@ type Composer(actions: ComposerActions) as this =
         transitions.Add(BrushTransition(Property = Border.BorderBrushProperty, Duration = TimeSpan.FromMilliseconds 120.0))
         shell.Transitions <- transitions
 
-        DragDrop.SetAllowDrop(shell, true)
-        shell.AddHandler(
-            DragDrop.DragEnterEvent,
-            EventHandler<DragEventArgs>(fun _ e ->
-                let files = e.DataTransfer.TryGetFiles()
-                if not (isNull files) && files.Length > 0 then
-                    shell.BorderBrush <- Tokens.accent
-                    shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 2.0, Color = Tokens.accent.Color))),
-            RoutingStrategies.Bubble)
-        shell.AddHandler(
-            DragDrop.DragLeaveEvent,
-            EventHandler<RoutedEventArgs>(fun _ _ ->
-                if not input.IsFocused then
-                    shell.BorderBrush <- Tokens.border
-                    shell.BoxShadow <- Tokens.shadowSoft ()),
-            RoutingStrategies.Bubble)
-        shell.AddHandler(
-            DragDrop.DragOverEvent,
-            EventHandler<DragEventArgs>(fun _ e ->
-                let files = e.DataTransfer.TryGetFiles()
-                if not (isNull files) && files.Length > 0 then
-                    e.DragEffects <- DragDropEffects.Copy
-                else
-                    e.DragEffects <- DragDropEffects.None),
-            RoutingStrategies.Bubble)
-        shell.AddHandler(
-            DragDrop.DropEvent,
-            EventHandler<DragEventArgs>(fun _ e ->
-                if not input.IsFocused then
-                    shell.BorderBrush <- Tokens.border
-                    shell.BoxShadow <- Tokens.shadowSoft ()
-                let files = e.DataTransfer.TryGetFiles()
-                if not (isNull files) && files.Length > 0 then
-                    let list = ResizeArray<string * byte[]>()
-                    for item in files do
-                        match item with
-                        | :? Avalonia.Platform.Storage.IStorageFile as file ->
-                            try
-                                use stream = file.OpenReadAsync().GetAwaiter().GetResult()
-                                use ms = new System.IO.MemoryStream()
-                                stream.CopyTo(ms :> System.IO.Stream)
-                                list.Add(file.Name, ms.ToArray())
-                            with _ -> ()
-                        | _ -> ()
-                    if list.Count > 0 then
-                        actions.dropFiles (List.ofSeq list)),
-            RoutingStrategies.Bubble)
-
     member private this.Submit() =
         if enabled && not generating then
             let text = if isNull input.Text then "" else input.Text
@@ -259,10 +184,6 @@ type Composer(actions: ComposerActions) as this =
                     Foreground = Tokens.textFaint,
                     VerticalAlignment = VerticalAlignment.Center)
             let remove = Ui.iconButton Icons.close "移除"
-            remove.Width <- 20.0
-            remove.Height <- 20.0
-            remove.MinWidth <- 20.0
-            remove.MinHeight <- 20.0
             Ui.onClick remove (fun () -> actions.removeAttachment attachment.sha256)
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1, VerticalAlignment = VerticalAlignment.Center)
             row.Children.Add icon
@@ -340,12 +261,11 @@ type Composer(actions: ComposerActions) as this =
         inputRow.Children.Add actionRow
         inputRow.Children.Add input
 
-        let rightMeta = Ui.hstack Tokens.space2 [ counterText :> Control; hintText :> Control ]
         let footerRow = DockPanel(LastChildFill = false)
         DockPanel.SetDock(modelChip, Dock.Left)
-        DockPanel.SetDock(rightMeta, Dock.Right)
+        DockPanel.SetDock(hintText, Dock.Right)
         footerRow.Children.Add modelChip
-        footerRow.Children.Add rightMeta
+        footerRow.Children.Add hintText
 
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
         column.Children.Add attachmentStrip

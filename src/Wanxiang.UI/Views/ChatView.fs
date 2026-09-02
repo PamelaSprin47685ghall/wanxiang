@@ -14,13 +14,11 @@ open Wanxiang.Core
 /// 聊天区对外暴露的动作。
 type ChatActions = {
     renameTitle: string -> unit
-    openModelPicker: Control -> unit
     openSessionSettings: unit -> unit
     forkFromHere: unit -> unit
     stopGeneration: unit -> unit
     requestOlderHistory: unit -> unit
     retryLast: unit -> unit
-    sendPrompt: string -> unit
     toggleSidebar: unit -> unit
     message: MessageActions
 }
@@ -69,24 +67,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             TextTrimming = TextTrimming.CharacterEllipsis)
     let titleEditShell, titleEditBox = Ui.textField "会话标题"
     let titleHost = Grid()
-
-    let modelChipCaption =
-        TextBlock(
-            Text = "",
-            FontSize = Tokens.fontMicro,
-            Foreground = Tokens.accent,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 220.0)
-    let modelChip =
-        Border(
-            Background = Tokens.accentSoft,
-            CornerRadius = CornerRadius Tokens.radiusPill,
-            Padding = Thickness(Tokens.space3, 3.0),
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Focusable = true,
-            VerticalAlignment = VerticalAlignment.Center,
-            IsVisible = false)
 
     let generatingChip =
         Border(
@@ -165,10 +145,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable headerBar: Border = Unchecked.defaultof<Border>
 
     do
-        modelChip.Child <-
-            let row = Ui.hstack Tokens.space1 [ Icons.sparkle Tokens.accent; modelChipCaption :> Control ]
-            row.Children.Add(Icons.chevronDown Tokens.accent)
-            row
         generatingChip.Child <-
             let row = Ui.hstack Tokens.space2 [ Ui.spinner 12.0; generatingCaption :> Control ]
             row
@@ -197,10 +173,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleText.Foreground <- if editable then Tokens.text else Tokens.textFaint
         titleText.Cursor <- if editable then new Cursor(StandardCursorType.Hand) else null
         ToolTip.SetTip(titleText, if editable then "点击重命名" else null)
-
-    member this.SetModel(label: string, visible: bool) =
-        modelChipCaption.Text <- label
-        modelChip.IsVisible <- visible
 
     member this.SetGenerating(generating: bool, statusText: string) =
         generatingChip.IsVisible <- generating
@@ -233,50 +205,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 button.HorizontalAlignment <- HorizontalAlignment.Center
                 emptyActions.Children.Add button
             | None -> ()
-            match state with
-            | EmptyConversation
-            | NoConversation ->
-                let starters =
-                    [ "💡 编写代码", "实现一个功能模块或算法实现", "请帮我编写一个规范的模块实现，包含类型定义与错误处理。"
-                      "🔍 解析原理", "深入剖析系统架构与设计模式", "请帮我详细解释分布式系统中的 CQRS 与事件溯源架构原理。"
-                      "✍️ 润色总结", "重构和润色技术文档与草案", "请帮我润色以下技术方案，提高表述的准确性与专业度："
-                      "🚀 创意发散", "头脑风暴产品方案与交付要点", "请针对现代企业级桌面与 Web 混合架构，提供一套设计与交付方案。" ]
-                let grid = Grid(Margin = Thickness(0.0, Tokens.space3, 0.0, 0.0))
-                grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-                grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-                grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-                grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-                starters |> List.iteri (fun idx (label, desc, prompt) ->
-                    let titleBlock = TextBlock(Text = label, FontSize = Tokens.fontSmall, FontWeight = FontWeight.Medium, Foreground = Tokens.text)
-                    let descBlock = TextBlock(Text = desc, FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted, TextWrapping = TextWrapping.Wrap, Margin = Thickness(0.0, 2.0, 0.0, 0.0))
-                    let cardContent = StackPanel(Orientation = Orientation.Vertical, Spacing = 2.0)
-                    cardContent.Children.Add titleBlock
-                    cardContent.Children.Add descBlock
-                    let card =
-                        Border(
-                            Background = Tokens.surface,
-                            BorderBrush = Tokens.border,
-                            BorderThickness = Thickness 1.0,
-                            CornerRadius = CornerRadius Tokens.radiusMd,
-                            Padding = Thickness(Tokens.space3, Tokens.space2),
-                            Margin = Thickness 3.0,
-                            Cursor = new Cursor(StandardCursorType.Hand),
-                            Focusable = true,
-                            Child = cardContent)
-                    card.PointerEntered.Add(fun _ ->
-                        card.Background <- Tokens.hover
-                        card.BorderBrush <- Tokens.accent)
-                    card.PointerExited.Add(fun _ ->
-                        card.Background <- Tokens.surface
-                        card.BorderBrush <- Tokens.border)
-                    Ui.onClick card (fun () -> actions.sendPrompt prompt)
-                    let row = idx / 2
-                    let col = idx % 2
-                    Grid.SetRow(card, row)
-                    Grid.SetColumn(card, col)
-                    grid.Children.Add card)
-                emptyActions.Children.Add grid
-            | _ -> ()
         emptyPanel.IsVisible <- true
         scroller.IsVisible <- false
         messagePanel.IsVisible <- false
@@ -428,7 +356,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 titleText.IsVisible <- true)
         titleEditBox.LostFocus.Add(fun _ -> if titleEditShell.IsVisible then this.CommitTitle())
 
-        Ui.onClick modelChip (fun () -> actions.openModelPicker(modelChip :> Control))
         Ui.onClick stopButton (fun () -> actions.stopGeneration ())
         Ui.onClick forkButton (fun () -> actions.forkFromHere ())
         Ui.onClick sessionSettingsButton (fun () -> actions.openSessionSettings ())
@@ -437,7 +364,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         forkButton.IsVisible <- false
         sessionSettingsButton.IsVisible <- false
 
-        let leftGroup = Ui.hstack Tokens.space2 [ sidebarToggleButton :> Control; titleHost :> Control; modelChip :> Control; generatingChip :> Control ]
+        let leftGroup = Ui.hstack Tokens.space2 [ sidebarToggleButton :> Control; titleHost :> Control; generatingChip :> Control ]
         let rightGroup = Ui.hstack Tokens.space1 [ stopButton :> Control; forkButton :> Control; sessionSettingsButton :> Control ]
         let headerDock = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
         DockPanel.SetDock(rightGroup, Dock.Right)

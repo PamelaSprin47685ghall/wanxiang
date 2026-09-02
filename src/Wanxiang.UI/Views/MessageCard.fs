@@ -257,7 +257,7 @@ module MessageCard =
 
     /// 消息操作按钮。放在脚注行里随文档流排布——
     /// 早先做成浮在消息上方的悬浮条，常驻显示后就会压住头像和气泡边角。
-    let private actionButtons (message: MessageView) (ctx: MessageContext) (actions: MessageActions) (toggleRaw: (unit -> unit) option) : StackPanel =
+    let private actionButtons (message: MessageView) (ctx: MessageContext) (actions: MessageActions) : StackPanel =
         let row =
             StackPanel(
                 Orientation = Orientation.Horizontal,
@@ -295,10 +295,6 @@ module MessageCard =
             row.Children.Add button
         if not (String.IsNullOrWhiteSpace message.text) then
             addCopyButton message.text
-        match toggleRaw with
-        | Some toggleAction ->
-            addButton Icons.file "切换原始 Markdown / 渲染视图" toggleAction
-        | None -> ()
         if MessageView.isUser message && not ctx.streaming then
             addButton Icons.pencil "编辑并分叉" (fun () -> actions.editAndFork message)
         if not (MessageView.isUser message) && ctx.isLastAssistant && not ctx.streaming then
@@ -423,7 +419,6 @@ module MessageCard =
         for call in message.toolCalls do
             body.Children.Add(toolCallCard ctx call)
 
-        let mutable rawToggleAction: (unit -> unit) option = None
         if not (String.IsNullOrWhiteSpace message.text) then
             if MessageView.isUser message then
                 body.Children.Add(
@@ -435,25 +430,7 @@ module MessageCard =
                         LineHeight = ctx.fontSize * 1.6,
                         SelectionBrush = Tokens.accentHover))
             else
-                let rendered = renderer.RenderText message.text
-                let raw =
-                    SelectableTextBlock(
-                        Text = message.text,
-                        TextWrapping = TextWrapping.Wrap,
-                        FontFamily = Tokens.monoFontFamily,
-                        FontSize = ctx.fontSize - 1.0,
-                        Foreground = Tokens.textMuted,
-                        LineHeight = (ctx.fontSize - 1.0) * 1.5,
-                        SelectionBrush = Tokens.accentSoft,
-                        IsVisible = false)
-                let textHost = Grid()
-                textHost.Children.Add rendered
-                textHost.Children.Add raw
-                body.Children.Add textHost
-                if not ctx.streaming then
-                    rawToggleAction <- Some (fun () ->
-                        raw.IsVisible <- not raw.IsVisible
-                        rendered.IsVisible <- not raw.IsVisible)
+                body.Children.Add(renderer.RenderText message.text)
 
         for attachment in message.attachments do
             body.Children.Add(attachmentRow ctx actions attachment)
@@ -533,7 +510,7 @@ module MessageCard =
         // 脚注行：时间 + 操作按钮，随文档流排在消息下方。
         // 头像占了 26pt 加 12pt 间距，脚注缩进同样的量才能与正文左缘对齐。
         let gutter = Tokens.logoAvatar + Tokens.space3
-        let buttons = actionButtons message ctx actions rawToggleAction
+        let buttons = actionButtons message ctx actions
         let metaText =
             if ctx.streaming then None
             else footer message (if ctx.isLastAssistant then ctx.usage else None)

@@ -389,19 +389,16 @@ let ``error card toggles technical detail and triggers retry action`` () =
     Assert.NotNull card
 
 [<Fact>]
-let ``chat view renders empty state prompt starters and triggers sendPrompt on click`` () =
+let ``chat view renders a focused empty state without extra actions`` () =
     Headless.ensure ()
-    let mutable promptedText = ""
     let mutable sidebarToggled = false
     let chatActions: ChatActions =
         { renameTitle = ignore
-          openModelPicker = ignore
           openSessionSettings = ignore
           forkFromHere = ignore
           stopGeneration = ignore
           requestOlderHistory = ignore
           retryLast = ignore
-          sendPrompt = fun p -> promptedText <- p
           toggleSidebar = fun () -> sidebarToggled <- true
           message =
             { copyText = ignore
@@ -416,15 +413,14 @@ let ``chat view renders empty state prompt starters and triggers sendPrompt on c
     Assert.True(chat.IsVisible)
 
 [<Fact>]
-let ``composer calculates live character and estimated token count accurately`` () =
+let ``composer accepts text without introducing extra send modes`` () =
     Headless.ensure ()
     let actions: ComposerActions =
         { submit = ignore
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore
-          openModelPicker = ignore
-          dropFiles = ignore }
+          openModelPicker = ignore }
     let comp = Composer(actions)
     comp.Build()
     comp.SetEnabled(true, "")
@@ -433,7 +429,7 @@ let ``composer calculates live character and estimated token count accurately`` 
     Assert.True(comp.IsVisible)
 
 [<Fact>]
-let ``message card creates raw markdown toggle for assistant messages`` () =
+let ``message card renders assistant markdown without extra view mode`` () =
     Headless.ensure ()
     let msg: MessageView =
         { commitId = Some 10UL
@@ -461,3 +457,21 @@ let ``message card creates raw markdown toggle for assistant messages`` () =
           openLink = ignore }
     let card = MessageCard.render msg ctx actions
     Assert.NotNull card
+
+[<Fact>]
+let ``main view build mounts a non-empty root visual tree`` () =
+    Headless.ensure ()
+    let oldHome = Environment.GetEnvironmentVariable "WANXIANG_HOME"
+    let home = tempDir ()
+    try
+        // 避免开发机已有 client.toml 让这个纯 UI 装配测试意外发起网络连接。
+        Environment.SetEnvironmentVariable("WANXIANG_HOME", home)
+        let view = MainView()
+        view.Build()
+        Assert.NotNull view.Content
+        match view.Content with
+        | :? Avalonia.Controls.Grid as root -> Assert.True(root.Children.Count >= 2)
+        | other -> Assert.Fail($"Expected Grid root, got {other.GetType().FullName}")
+    finally
+        Environment.SetEnvironmentVariable("WANXIANG_HOME", oldHome)
+        cleanup home

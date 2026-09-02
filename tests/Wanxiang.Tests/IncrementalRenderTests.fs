@@ -38,13 +38,11 @@ type Incremental(output: ITestOutputHelper) =
 
     let noopActions: ChatActions =
         { renameTitle = ignore
-          openModelPicker = ignore
           openSessionSettings = ignore
           forkFromHere = ignore
           stopGeneration = ignore
           requestOlderHistory = ignore
           retryLast = ignore
-          sendPrompt = ignore
           toggleSidebar = ignore
           message = noopMessageActions }
 

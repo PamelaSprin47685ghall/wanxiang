@@ -76,14 +76,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let mutable connected = false
 
     do
-        clearSearchButton.Width <- 18.0
-        clearSearchButton.Height <- 18.0
-        clearSearchButton.MinWidth <- 18.0
-        clearSearchButton.MinHeight <- 18.0
         clearSearchButton.IsVisible <- false
         Ui.onClick clearSearchButton (fun () ->
             searchBox.Text <- ""
             searchBox.Focus() |> ignore)
+        // `Ui.textField` 创建时 TextBox 已挂在 shell 下。这里要把图标和清空按钮
+        // 合进同一输入壳，必须先解除原父子关系，否则 Avalonia 会因重复视觉父级
+        // 在 MainView.Build 阶段直接抛异常，浏览器表现为整页白屏。
+        searchShell.Child <- null
         let searchIcon = Icons.search Tokens.textFaint
         searchIcon.VerticalAlignment <- VerticalAlignment.Center
         searchIcon.Margin <- Thickness(0.0, 0.0, Tokens.space2, 0.0)
@@ -142,10 +142,6 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             DockPanel.SetDock(pin, Dock.Left)
             titleRow.Children.Add pin
         let moreButton = Ui.iconButton Icons.more "操作菜单"
-        moreButton.Width <- 22.0
-        moreButton.Height <- 22.0
-        moreButton.MinWidth <- 22.0
-        moreButton.MinHeight <- 22.0
         moreButton.IsVisible <- false
         DockPanel.SetDock(moreButton, Dock.Right)
         titleRow.Children.Add moreButton

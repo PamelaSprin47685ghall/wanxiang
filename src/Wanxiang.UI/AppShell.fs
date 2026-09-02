@@ -165,7 +165,6 @@ type MainView() as this =
         | None, _ ->
             chat.SetConversationChrome false
             chat.SetTitle("", false)
-            chat.SetModel("", false)
             if not authenticated then
                 chat.ShowEmpty(NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
                 composer.SetEnabled(false, "连接服务器后即可开始对话。")
@@ -194,7 +193,6 @@ type MainView() as this =
             let summary = activeSummary ()
             chat.SetConversationChrome true
             chat.SetTitle((summary |> Option.map (fun s -> s.title) |> Option.defaultValue "会话"), true)
-            chat.SetModel(Catalog.describeModel view.config.provider view.config.model catalog, Catalog.isReady catalog)
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
             if List.isEmpty messages && streaming.IsNone && lastError.IsNone then
                 chat.ShowEmpty(EmptyConversation, None)
@@ -918,7 +916,6 @@ type MainView() as this =
                         sendCommand (
                             RenameConversation {| invocationId = newInvocation (); conversationId = convId; title = title |})
                     | None -> ()
-              openModelPicker = fun anchor -> this.ShowModelPicker anchor
               openSessionSettings =
                 fun () ->
                     match activeConvId with
@@ -945,7 +942,6 @@ type MainView() as this =
               stopGeneration = fun () -> this.StopGeneration()
               requestOlderHistory = fun () -> this.RequestOlderHistory()
               retryLast = fun () -> this.Regenerate()
-              sendPrompt = fun prompt -> this.SendMessage prompt
               toggleSidebar = fun () -> this.ToggleSidebar()
               message = messageActions }
         chat <- ChatView(chatActions, Brand.logo)
@@ -971,12 +967,7 @@ type MainView() as this =
                 fun sha ->
                     pendingAttachments <- pendingAttachments |> List.filter (fun a -> a.sha256 <> sha)
                     composer.SetAttachments pendingAttachments
-              openModelPicker = fun anchor -> this.ShowModelPicker anchor
-              dropFiles = fun files ->
-                  for (name, bytes) in files do
-                      this.BeginUpload(name, bytes)
-                  if files.Length > 0 then
-                      toast (sprintf "已添加 %d 个文件附件" files.Length) Neutral }
+              openModelPicker = fun anchor -> this.ShowModelPicker anchor }
         composer <- Composer(actions)
         composer.Build()
         composer.SetEnterSends prefs.enterSends
