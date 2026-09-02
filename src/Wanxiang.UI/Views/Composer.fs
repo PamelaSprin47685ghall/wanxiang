@@ -2,29 +2,19 @@ namespace Wanxiang.UI
 
 open System
 open Avalonia
-open Avalonia.Animation
 open Avalonia.Controls
+open Avalonia.Controls.Primitives
 open Avalonia.Input
 open Avalonia.Interactivity
 open Avalonia.Layout
 open Avalonia.Media
-
-/// 待发送的附件（已上传并拿到 sha256）。
-type PendingAttachment = {
-    sha256: string
-    size: int64
-    mediaType: string
-    fileName: string
-    /// 上传中时为 false
-    ready: bool
-}
 
 /// 输入区对外暴露的动作。
 type ComposerActions = {
     submit: string -> unit
     stopGeneration: unit -> unit
     pickAttachment: unit -> unit
-    removeAttachment: string -> unit
+    removeAttachment: Guid -> unit
     openModelPicker: Control -> unit
 }
 
@@ -54,9 +44,16 @@ type Composer(actions: ComposerActions) as this =
             VerticalContentAlignment = VerticalAlignment.Center)
 
     let attachmentStrip =
-        StackPanel(
+        WrapPanel(
             Orientation = Orientation.Horizontal,
-            Spacing = Tokens.space2,
+            ItemSpacing = Tokens.space2,
+            LineSpacing = Tokens.space2)
+    let attachmentScroller =
+        ScrollViewer(
+            Content = attachmentStrip,
+            MaxHeight = LayoutPolicy.attachmentDraftMaxHeight,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             IsVisible = false,
             Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2))
 
@@ -71,7 +68,7 @@ type Composer(actions: ComposerActions) as this =
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxWidth = 240.0)
     let modelChip =
-        Border(
+        ActionBorder(
             Background = Brushes.Transparent,
             CornerRadius = CornerRadius Tokens.radiusSm,
             Padding = Thickness(Tokens.space2, 3.0),
@@ -108,7 +105,9 @@ type Composer(actions: ComposerActions) as this =
     let refreshSendState () =
         let hasText = not (String.IsNullOrWhiteSpace input.Text)
         let hasAttachment = attachments |> List.exists (fun a -> a.ready)
-        Ui.setEnabled sendButton (generating || (enabled && (hasText || hasAttachment)))
+        let uploading = attachments |> List.exists (fun a -> not a.ready)
+        Ui.setEnabled sendButton (generating || (enabled && not uploading && (hasText || hasAttachment)))
+        ToolTip.SetTip(sendButton, if generating then "停止生成" elif uploading then "等待附件上传完成" else "发送")
 
     do
         modelChip.Child <-
@@ -125,6 +124,7 @@ type Composer(actions: ComposerActions) as this =
         modelChip.PointerExited.Add(fun _ -> modelChip.Background <- Brushes.Transparent)
         Ui.onClick modelChip (fun () -> actions.openModelPicker(modelChip :> Control))
         ToolTip.SetTip(modelChip, "切换本会话使用的模型")
+        Avalonia.Automation.AutomationProperties.SetName(modelChip, "切换本会话使用的模型")
 
         Ui.onClick attachButton (fun () -> actions.pickAttachment ())
 
@@ -146,12 +146,9 @@ type Composer(actions: ComposerActions) as this =
                         this.Submit()),
             RoutingStrategies.Tunnel)
 
-        let transitions = Transitions()
-        transitions.Add(BrushTransition(Property = Border.BorderBrushProperty, Duration = TimeSpan.FromMilliseconds 120.0))
-        shell.Transitions <- transitions
-
     member private this.Submit() =
-        if enabled && not generating then
+        let uploading = attachments |> List.exists (fun a -> not a.ready)
+        if enabled && not generating && not uploading then
             let text = if isNull input.Text then "" else input.Text
             if not (String.IsNullOrWhiteSpace text) || attachments |> List.exists (fun a -> a.ready) then
                 input.Text <- ""
@@ -184,7 +181,7 @@ type Composer(actions: ComposerActions) as this =
                     Foreground = Tokens.textFaint,
                     VerticalAlignment = VerticalAlignment.Center)
             let remove = Ui.iconButton Icons.close "移除"
-            Ui.onClick remove (fun () -> actions.removeAttachment attachment.sha256)
+            Ui.onClick remove (fun () -> actions.removeAttachment attachment.attachmentId)
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1, VerticalAlignment = VerticalAlignment.Center)
             row.Children.Add icon
             row.Children.Add name
@@ -198,7 +195,7 @@ type Composer(actions: ComposerActions) as this =
                     CornerRadius = CornerRadius Tokens.radiusSm,
                     Padding = Thickness(Tokens.space2, 3.0),
                     Child = row))
-        attachmentStrip.IsVisible <- not (List.isEmpty attachments)
+        attachmentScroller.IsVisible <- not (List.isEmpty attachments)
 
     member this.SetAttachments(items: PendingAttachment list) =
         attachments <- items
@@ -210,9 +207,11 @@ type Composer(actions: ComposerActions) as this =
         if value then
             Ui.setIcon sendButton Icons.stop Tokens.textOnAccent
             ToolTip.SetTip(sendButton, "停止生成")
+            Avalonia.Automation.AutomationProperties.SetName(sendButton, "停止生成")
         else
             Ui.setIcon sendButton Icons.send Tokens.textOnAccent
             ToolTip.SetTip(sendButton, "发送")
+            Avalonia.Automation.AutomationProperties.SetName(sendButton, "发送")
         refreshSendState ()
 
     /// 启用输入。`reason` 在禁用时说明为什么不能发。
@@ -235,6 +234,10 @@ type Composer(actions: ComposerActions) as this =
     member this.SetCompactMode(value: bool) =
         hintText.IsVisible <- not value
         modelCaption.MaxWidth <- if value then 150.0 else 240.0
+        let actionSize = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
+        Ui.setSquareTarget attachButton actionSize
+        Ui.setSquareTarget sendButton actionSize
+        modelChip.MinHeight <- if value then LayoutPolicy.compactActionTarget else 0.0
         this.Padding <-
             if value then Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space2)
             else Thickness(Tokens.shellInset, Tokens.space4, Tokens.shellInset, Tokens.space3)
@@ -268,7 +271,7 @@ type Composer(actions: ComposerActions) as this =
         footerRow.Children.Add hintText
 
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
-        column.Children.Add attachmentStrip
+        column.Children.Add attachmentScroller
         column.Children.Add inputRow
         column.Children.Add(Border(Height = 1.0, Background = Tokens.borderSoft))
         column.Children.Add footerRow

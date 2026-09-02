@@ -95,6 +95,7 @@ module Dialogs =
         let urlField, urlBox = Ui.labeledField "服务器地址" "ws://127.0.0.1:8765/ws"
         urlBox.Text <- defaultUrl
         let tokenField, tokenBox = Ui.labeledField "访问令牌" "有令牌就粘贴，没有就用配对码"
+        tokenBox.PasswordChar <- '●'
 
         let codeShell, codeBox = Ui.textField "6 位配对码"
         codeBox.MaxLength <- 6
@@ -229,10 +230,11 @@ module Dialogs =
             toolsPanel.Children.Add(Ui.caption "服务端当前没有可用工具。")
         else
             for tool in catalog.tools do
-                let toggle, _, _ =
+                let toggle, _, _, _ =
                     Ui.toggle
                         (selectedTools.Contains tool.id)
                         (fun value -> if value then selectedTools.Add tool.id |> ignore else selectedTools.Remove tool.id |> ignore)
+                Avalonia.Automation.AutomationProperties.SetName(toggle, sprintf "启用工具 %s" tool.label)
                 let caption =
                     TextBlock(
                         Text = tool.label,
@@ -248,50 +250,86 @@ module Dialogs =
                 toolsPanel.Children.Add row
 
         let save () =
-            let parseFloat (raw: string) =
+            for box in [ temperatureBox; topPBox; maxTokensBox; thinkingBudgetBox ] do Ui.clearFieldError box
+            let mutable firstInvalid: TextBox option = None
+            let invalid (box: TextBox) message =
+                Ui.setFieldError box message
+                if firstInvalid.IsNone then firstInvalid <- Some box
+            let parseFloat (box: TextBox) (valid: float -> bool) message =
+                let raw = if isNull box.Text then "" else box.Text.Trim()
                 if String.IsNullOrWhiteSpace raw then None
                 else
-                    match Double.TryParse(raw.Trim(), Globalization.NumberStyles.Float, Globalization.CultureInfo.InvariantCulture) with
-                    | true, v -> Some v
-                    | _ -> None
-            let parseInt (raw: string) =
+                    match Double.TryParse(raw, Globalization.NumberStyles.Float, Globalization.CultureInfo.InvariantCulture) with
+                    | true, value when valid value -> Some value
+                    | _ ->
+                        invalid box message
+                        None
+            let parseInt (box: TextBox) (valid: int -> bool) message =
+                let raw = if isNull box.Text then "" else box.Text.Trim()
                 if String.IsNullOrWhiteSpace raw then None
                 else
-                    match Int32.TryParse(raw.Trim()) with
-                    | true, v -> Some v
-                    | _ -> None
+                    match Int32.TryParse raw with
+                    | true, value when valid value -> Some value
+                    | _ ->
+                        invalid box message
+                        None
+            let temperature = parseFloat temperatureBox (fun v -> v >= 0.0 && v <= 2.0) "请输入 0–2 之间的数字。"
+            let topP = parseFloat topPBox (fun v -> v >= 0.0 && v <= 1.0) "请输入 0–1 之间的数字。"
+            let maxTokens = parseInt maxTokensBox (fun v -> v > 0) "请输入正整数。"
+            let thinkingBudget = parseInt thinkingBudgetBox (fun v -> v >= 0) "请输入 0 或正整数。"
             let instructions =
                 let text = if isNull instructionsBox.Text then "" else instructionsBox.Text.Trim()
                 if String.IsNullOrWhiteSpace text then None else Some text
-            overlay.CloseDialog()
-            onSave
-                { current with
-                    provider = providerId
-                    model = model
-                    instructions = instructions
-                    temperature = parseFloat temperatureBox.Text
-                    topP = parseFloat topPBox.Text
-                    maxTokens = parseInt maxTokensBox.Text
-                    thinkingBudget = parseInt thinkingBudgetBox.Text
-                    tools = List.ofSeq selectedTools }
+            match firstInvalid with
+            | Some box -> box.Focus() |> ignore
+            | None ->
+                overlay.CloseDialog()
+                onSave
+                    { current with
+                        provider = providerId
+                        model = model
+                        instructions = instructions
+                        temperature = temperature
+                        topP = topP
+                        maxTokens = maxTokens
+                        thinkingBudget = thinkingBudget
+                        tools = List.ofSeq selectedTools }
 
         let paramGrid = Grid(ColumnSpacing = Tokens.space3, RowSpacing = Tokens.space3)
         paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-        paramGrid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-        paramGrid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-        let temperatureColumn = Ui.vstack 0.0 [ Ui.fieldLabel "Temperature" :> Control; temperatureShell :> Control ]
-        let topPColumn = Ui.vstack 0.0 [ Ui.fieldLabel "Top P" :> Control; topPShell :> Control ]
-        let maxTokensColumn = Ui.vstack 0.0 [ Ui.fieldLabel "最大输出 token" :> Control; maxTokensShell :> Control ]
-        let thinkingBudgetColumn = Ui.vstack 0.0 [ Ui.fieldLabel "思维链预算（token）" :> Control; thinkingBudgetShell :> Control ]
-        Grid.SetRow(temperatureColumn, 0); Grid.SetColumn(temperatureColumn, 0)
-        Grid.SetRow(topPColumn, 0); Grid.SetColumn(topPColumn, 1)
-        Grid.SetRow(maxTokensColumn, 1); Grid.SetColumn(maxTokensColumn, 0)
-        Grid.SetRow(thinkingBudgetColumn, 1); Grid.SetColumn(thinkingBudgetColumn, 1)
+        for _ in 1 .. 4 do paramGrid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
+        let temperatureColumn =
+            Ui.vstack 0.0 [ Ui.fieldLabel "Temperature" :> Control; temperatureShell :> Control; Ui.fieldValidationMessage temperatureBox :> Control ]
+        let topPColumn =
+            Ui.vstack 0.0 [ Ui.fieldLabel "Top P" :> Control; topPShell :> Control; Ui.fieldValidationMessage topPBox :> Control ]
+        let maxTokensColumn =
+            Ui.vstack 0.0 [ Ui.fieldLabel "最大输出 token" :> Control; maxTokensShell :> Control; Ui.fieldValidationMessage maxTokensBox :> Control ]
+        let thinkingBudgetColumn =
+            Ui.vstack 0.0 [ Ui.fieldLabel "思维链预算（token）" :> Control; thinkingBudgetShell :> Control; Ui.fieldValidationMessage thinkingBudgetBox :> Control ]
         paramGrid.Children.Add temperatureColumn
         paramGrid.Children.Add topPColumn
         paramGrid.Children.Add maxTokensColumn
         paramGrid.Children.Add thinkingBudgetColumn
+        let applyParamLayout width =
+            let single = width > 0.0 && width < LayoutPolicy.formSingleColumnBreakpoint
+            paramGrid.ColumnDefinitions[1].Width <-
+                if single then GridLength(0.0) else GridLength(1.0, GridUnitType.Star)
+            let place (control: Control) row column =
+                Grid.SetRow(control, row)
+                Grid.SetColumn(control, column)
+            if single then
+                place temperatureColumn 0 0
+                place topPColumn 1 0
+                place maxTokensColumn 2 0
+                place thinkingBudgetColumn 3 0
+            else
+                place temperatureColumn 0 0
+                place topPColumn 0 1
+                place maxTokensColumn 1 0
+                place thinkingBudgetColumn 1 1
+        paramGrid.PropertyChanged.Add(fun args ->
+            if args.Property = Visual.BoundsProperty then applyParamLayout paramGrid.Bounds.Width)
 
         let content =
             Ui.vstack
@@ -307,9 +345,10 @@ module Dialogs =
         let scroller =
             ScrollViewer(
                 Content = content,
-                MaxHeight = 560.0,
+                MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
+        applyParamLayout paramGrid.Bounds.Width
         overlay.ShowDialog(scroller :> Control, 520.0)
 
     /// 快捷键帮助（分类清晰、对标桌面端成熟软件）。

@@ -34,7 +34,9 @@ type MainView() as this =
 
     let mutable prefs = UiPrefs.load ()
     // 启动就把折行默认值交给渲染器：它是渲染期读的静态值，不走构造参数
-    do MarkdownRenderer.DefaultCodeWrap <- prefs.codeWrap
+    do
+        MarkdownRenderer.DefaultCodeWrap <- prefs.codeWrap
+        MotionPolicy.setReduced prefs.reduceMotion
     let mutable catalog = Catalog.empty
     let mutable authenticated = false
     let mutable instanceId = ""
@@ -52,8 +54,7 @@ type MainView() as this =
     /// 无会话时输入的第一条消息：先建会话，快照到达后再发出。
     /// 让用户「打开就能打字」，而不是先被要求点一次新建。
     let mutable pendingFirstMessage: (Guid * string) option = None
-    let mutable pendingAttachments: PendingAttachment list = []
-    let uploadsInFlight = System.Collections.Generic.Dictionary<Guid, AttachmentUpload>()
+    let attachmentDraft = AttachmentDraftController()
     let downloadBuffers = System.Collections.Generic.Dictionary<string, MemoryStream>()
     let mutable downloadMeta: Map<string, string> = Map.empty
     let mutable missingAttachments: Set<string> = Set.empty
@@ -66,6 +67,7 @@ type MainView() as this =
     let mutable pairingRequested = false
     let mutable setConnectStatus: string -> unit = ignore
     let mutable pageLoading = false
+    let commandFeedback = CommandFeedbackTracker()
 
     let toast message tone = overlay.Toast(message, tone)
     let topLevel () = TopLevel.GetTopLevel this
@@ -92,18 +94,19 @@ type MainView() as this =
     let mutable chat: ChatView = Unchecked.defaultof<ChatView>
     let mutable composer: Composer = Unchecked.defaultof<Composer>
     let mutable settings: SettingsView = Unchecked.defaultof<SettingsView>
-    let mutable splitLayout: Grid = Unchecked.defaultof<Grid>
-    let mutable sidebarCollapsed = false
+    let mutable sidebarSplitter: GridSplitter = Unchecked.defaultof<GridSplitter>
+    let mutable mainLayout: MainLayoutController = Unchecked.defaultof<MainLayoutController>
+    let navigation = NavigationController(prefs.sidebarCollapsed)
     let workspace = Grid()
     let settingsHost = Grid(IsVisible = false)
     let mutable shellGrid: Grid = Unchecked.defaultof<Grid>
     let mutable chatColumn: DockPanel = Unchecked.defaultof<DockPanel>
-    let mutable compactMode = false
-    let mutable compactNavigationOpen = false
-    let mutable responsiveLayoutApplied = false
 
     let send (ev: WireEvent) = client.SendAsync ev |> ignore
     let sendCommand (cmd: ClientCommand) = client.SendCommandAsync cmd |> ignore
+    let sendCommandWithFeedback (cmd: ClientCommand) (successMessage: string option) (onCommitted: unit -> unit) =
+        commandFeedback.Track(cmd, successMessage, onCommitted)
+        sendCommand cmd
     let newInvocation () = Guid.CreateVersion7()
 
     let activeConversation () =
@@ -119,35 +122,13 @@ type MainView() as this =
         view.messages |> Seq.cast<JsonNode> |> Seq.map MessageView.ofSnapshotItem |> List.ofSeq
 
     member private this.SetCompactNavigation(opened: bool) =
-        if compactMode then
-            compactNavigationOpen <- opened
-            sidebar.IsVisible <- opened
+        let state = navigation.SetCompactNavigation opened
+        if state.compactMode && not (isNull (box mainLayout)) then mainLayout.Apply state
 
     member private this.ApplyResponsiveLayout(width: float) =
-        if width > 0.0 && not (isNull (box shellGrid)) then
-            let nextCompact = width < 720.0
-            let changed = nextCompact <> compactMode
-            if changed || not responsiveLayoutApplied then
-                responsiveLayoutApplied <- true
-                compactMode <- nextCompact
-                composer.SetCompactMode compactMode
-                if compactMode then
-                    shellGrid.ColumnDefinitions[0].Width <- GridLength.Star
-                    shellGrid.ColumnDefinitions[1].Width <- GridLength(0.0)
-                    Grid.SetColumn(sidebar, 0)
-                    Grid.SetColumn(chatColumn, 0)
-                    compactNavigationOpen <- if changed then activeConvId.IsNone else compactNavigationOpen
-                    sidebar.IsVisible <- compactNavigationOpen
-                    sidebar.ZIndex <- 2
-                else
-                    compactNavigationOpen <- false
-                    shellGrid.ColumnDefinitions[0].Width <-
-                        if sidebarCollapsed then GridLength(0.0) else GridLength prefs.sidebarWidth
-                    shellGrid.ColumnDefinitions[1].Width <- GridLength.Star
-                    Grid.SetColumn(sidebar, 0)
-                    Grid.SetColumn(chatColumn, 1)
-                    sidebar.IsVisible <- not sidebarCollapsed
-                    sidebar.ZIndex <- 0
+        if width > 0.0 && not (isNull (box mainLayout)) then
+            let needsApply, state = navigation.ApplyViewport(width, activeConvId.IsSome)
+            if needsApply then mainLayout.Apply state
 
     member private _.StreamingMessage() : MessageView option =
         if streamText.Length = 0 && streamReasoning.Length = 0 && List.isEmpty streamToolCalls then None
@@ -229,9 +210,11 @@ type MainView() as this =
 
     member private this.SavePrefs(next: UiPrefs) =
         let themeChanged = next.theme <> prefs.theme
+        let motionChanged = next.reduceMotion <> prefs.reduceMotion
         prefs <- next
         UiPrefs.save prefs
         if themeChanged then this.ApplyTheme()
+        if motionChanged then MotionPolicy.setReduced prefs.reduceMotion
         sidebar.SetShowArchived prefs.showArchived
         // 代码块折行是渲染期读取的默认值，改完要立刻生效
         MarkdownRenderer.DefaultCodeWrap <- prefs.codeWrap
@@ -340,6 +323,7 @@ type MainView() as this =
 
     member private this.OpenConversation(id: Guid) =
         this.SetCompactNavigation false
+        chat.CancelHistoryPrependAnchor()
         if activeConvId <> Some id then
             activeConvId <- Some id
             lastError <- None
@@ -352,29 +336,34 @@ type MainView() as this =
         send (ObserveConversation {| conversationId = id |})
 
     member private this.SendMessage(text: string) =
-        match activeConvId with
-        | None ->
-            if String.IsNullOrWhiteSpace text then ()
-            elif not (Catalog.isReady catalog) then
-                toast "还没有可用的模型，先在设置里添加一个服务商。" Warning
-                this.ShowSettings()
-            else
-                match this.CreateConversation() with
-                | Some conversationId -> pendingFirstMessage <- Some(conversationId, text)
-                | None -> ()
-        | Some convId ->
-            if not client.IsConnected then
-                toast "连接已断开，消息未发送。" Failure
-            else
-                let message = JsonObject()
-                message["role"] <- "user"
-                let contents = JsonArray()
-                if not (String.IsNullOrWhiteSpace text) then
-                    let textContent = JsonObject()
-                    textContent["text"] <- text
-                    contents.Add textContent
-                for attachment in pendingAttachments do
-                    if attachment.ready then
+        let hasReadyAttachment = attachmentDraft.HasReady
+        let hasUploadingAttachment = attachmentDraft.HasUploading
+        if hasUploadingAttachment then
+            toast "附件仍在上传，请等待上传完成后再发送。" Warning
+        else
+            match activeConvId with
+            | None ->
+                if String.IsNullOrWhiteSpace text && not hasReadyAttachment then ()
+                elif not (Catalog.isReady catalog) then
+                    toast "还没有可用的模型，先在设置里添加一个服务商。" Warning
+                    this.ShowSettings()
+                else
+                    match this.CreateConversation() with
+                    | Some conversationId -> pendingFirstMessage <- Some(conversationId, text)
+                    | None -> ()
+            | Some convId ->
+                if not client.IsConnected then
+                    toast "连接已断开，消息未发送。" Failure
+                else
+                    let attachments = attachmentDraft.TryConsumeReady() |> Option.defaultValue []
+                    let message = JsonObject()
+                    message["role"] <- "user"
+                    let contents = JsonArray()
+                    if not (String.IsNullOrWhiteSpace text) then
+                        let textContent = JsonObject()
+                        textContent["text"] <- text
+                        contents.Add textContent
+                    for attachment in attachments do
                         let node = JsonObject()
                         node["type"] <- "attachment"
                         node["sha256"] <- attachment.sha256
@@ -382,15 +371,14 @@ type MainView() as this =
                         node["mediaType"] <- attachment.mediaType
                         node["fileName"] <- attachment.fileName
                         contents.Add node
-                message["contents"] <- contents
-                pendingAttachments <- []
-                composer.SetAttachments []
-                lastError <- None
-                sendCommand (
-                    SendUserMessage
-                        {| invocationId = newInvocation ()
-                           conversationId = convId
-                           messageJson = message |})
+                    message["contents"] <- contents
+                    composer.SetAttachments attachmentDraft.Items
+                    lastError <- None
+                    sendCommand (
+                        SendUserMessage
+                            {| invocationId = newInvocation ()
+                               conversationId = convId
+                               messageJson = message |})
 
     member private this.Regenerate() =
         match activeConvId with
@@ -508,20 +496,13 @@ type MainView() as this =
             let sha = Convert.ToHexString(SHA256.HashData bytes).ToLowerInvariant()
             let mediaType = MediaTypes.ofFileName fileName
             let attachmentId = Guid.CreateVersion7()
-            uploadsInFlight[attachmentId] <-
+            let upload =
                 { attachmentId = attachmentId
                   fileName = fileName
                   mediaType = mediaType
                   size = int64 bytes.Length
                   sha256 = sha }
-            pendingAttachments <-
-                pendingAttachments
-                @ [ { sha256 = sha
-                      size = int64 bytes.Length
-                      mediaType = mediaType
-                      fileName = fileName
-                      ready = false } ]
-            composer.SetAttachments pendingAttachments
+            attachmentDraft.Begin upload |> composer.SetAttachments
             send (
                 AttachmentBegin
                     {| attachmentId = attachmentId
@@ -569,19 +550,15 @@ type MainView() as this =
             this.SaveDownload(summary.title + ".md", Text.Encoding.UTF8.GetBytes markdown)
 
     member this.ToggleSidebar() =
-        if compactMode then
-            compactNavigationOpen <- not compactNavigationOpen
-            sidebar.IsVisible <- compactNavigationOpen
-        else
-            sidebarCollapsed <- not sidebarCollapsed
-            sidebar.IsVisible <- not sidebarCollapsed
-            if not (isNull (box splitLayout)) && splitLayout.ColumnDefinitions.Count > 0 then
-                splitLayout.ColumnDefinitions.[0].Width <- if sidebarCollapsed then GridLength(0.0) else GridLength prefs.sidebarWidth
+        let state = navigation.ToggleSidebar()
+        mainLayout.Apply state
+        if not state.compactMode then
+            prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
+            UiPrefs.save prefs
 
     member this.HandleShortcut(e: KeyEventArgs) =
-        let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
-        let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
-        if e.Key = Key.Escape then
+        match ShortcutRouter.resolve e with
+        | Escape ->
             if overlay.HandleEscape() then e.Handled <- true
             elif settingsHost.IsVisible then
                 e.Handled <- true
@@ -589,43 +566,34 @@ type MainView() as this =
             elif activeGenerationId.IsSome then
                 e.Handled <- true
                 this.StopGeneration()
-        elif ctrl && e.Key = Key.B then
+        | NoShortcut -> ()
+        | _ when overlay.IsDialogOpen || overlay.IsPopupOpen -> ()
+        | ToggleSidebar -> e.Handled <- true; this.ToggleSidebar()
+        | NewConversation -> e.Handled <- true; this.CreateConversation() |> ignore
+        | FocusSearch ->
             e.Handled <- true
-            this.ToggleSidebar()
-        elif ctrl && e.Key = Key.N then
-            e.Handled <- true
-            this.CreateConversation() |> ignore
-        elif ctrl && e.Key = Key.K then
-            e.Handled <- true
-            if compactMode then
-                if not compactNavigationOpen then this.ToggleSidebar()
-            elif sidebarCollapsed then
-                this.ToggleSidebar()
+            let state = navigation.EnsureSearchVisible()
+            mainLayout.Apply state
+            if not state.compactMode && prefs.sidebarCollapsed then
+                prefs <- { prefs with sidebarCollapsed = false }
+                UiPrefs.save prefs
             sidebar.FocusSearch()
-        elif ctrl && (e.Key = Key.OemComma) then
-            e.Handled <- true
-            this.ShowSettings()
-        elif ctrl && shift && e.Key = Key.S then
+        | OpenSettings -> e.Handled <- true; this.ShowSettings()
+        | ToggleTheme ->
             e.Handled <- true
             let nextTheme = if Tokens.isDark() then AlwaysLight else AlwaysDark
             this.SavePrefs { prefs with theme = nextTheme }
             toast (if nextTheme = AlwaysDark then "已切换为深色主题" else "已切换为浅色主题") Neutral
-        elif ctrl && shift && e.Key = Key.E then
+        | ExportConversation ->
             e.Handled <- true
             match activeSummary() with
             | Some summary -> this.ExportConversation summary
             | None -> toast "没有打开的会话可导出" Warning
-        elif ctrl && not shift && e.Key >= Key.D1 && e.Key <= Key.D9 then
-            let index = int e.Key - int Key.D1
+        | OpenConversationAt index ->
             if index < summaries.Length then
                 e.Handled <- true
                 this.OpenConversation summaries[index].id
-        elif ctrl && (e.Key = Key.OemQuestion || e.Key = Key.Divide) then
-            e.Handled <- true
-            Dialogs.shortcuts overlay
-        elif e.Key = Key.F1 then
-            e.Handled <- true
-            Dialogs.shortcuts overlay
+        | ShowShortcuts -> e.Handled <- true; Dialogs.shortcuts overlay
 
     // ---- 协议事件 ----
 
@@ -733,7 +701,11 @@ type MainView() as this =
         | HistoryPage d ->
             state.Handle ev
             pageLoading <- false
-            if activeConvId = Some d.conversationId then this.Render()
+            if activeConvId = Some d.conversationId then
+                this.Render()
+                chat.RestoreHistoryPrependAnchorDeferred()
+            else
+                chat.CancelHistoryPrependAnchor()
         | GenerationStarted d ->
             state.Handle ev
             activeGenerationId <- Some d.generationId
@@ -774,23 +746,17 @@ type MainView() as this =
             | _ -> lastError <- None
             this.Render()
         | AttachmentCommitted d ->
-            match uploadsInFlight.TryGetValue d.attachmentId with
-            | true, upload ->
-                uploadsInFlight.Remove d.attachmentId |> ignore
-                pendingAttachments <-
-                    pendingAttachments
-                    |> List.map (fun a -> if a.sha256 = upload.sha256 then { a with ready = true; size = d.size } else a)
-                composer.SetAttachments pendingAttachments
-                toast (sprintf "附件「%s」上传完成" upload.fileName) Success
-            | _ -> ()
+            match attachmentDraft.Complete(d.attachmentId, d.size) with
+            | Some(upload, stillDrafted) ->
+                composer.SetAttachments attachmentDraft.Items
+                if stillDrafted then toast (sprintf "附件「%s」上传完成" upload.fileName) Success
+            | None -> ()
         | AttachmentAborted d ->
-            match uploadsInFlight.TryGetValue d.attachmentId with
-            | true, upload ->
-                uploadsInFlight.Remove d.attachmentId |> ignore
-                pendingAttachments <- pendingAttachments |> List.filter (fun a -> a.sha256 <> upload.sha256)
-                composer.SetAttachments pendingAttachments
-            | _ -> ()
-            toast (sprintf "附件上传失败：%s" d.reason) Failure
+            match attachmentDraft.Abort d.attachmentId with
+            | Some(_, stillDrafted) ->
+                composer.SetAttachments attachmentDraft.Items
+                if stillDrafted then toast (sprintf "附件上传失败：%s" d.reason) Failure
+            | None -> ()
         | AttachmentDownloadBegin d ->
             let key = d.sha256.ToLowerInvariant()
             downloadBuffers[key] <- new MemoryStream()
@@ -813,7 +779,14 @@ type MainView() as this =
                 downloadBuffers.Remove key |> ignore
                 this.SaveDownload(fileName, bytes)
             | _ -> ()
+        | CommandCommitted d ->
+            match commandFeedback.Commit d.invocationId with
+            | Some feedback ->
+                feedback.onCommitted ()
+                feedback.successMessage |> Option.iter (fun message -> toast message Success)
+            | None -> ()
         | CommandRejected d ->
+            commandFeedback.Reject d.invocationId
             match d.requiredCommitId with
             | Some _ -> toast "本地数据不是最新，已自动追赶，请重试。" Warning
             | None -> toast (sprintf "操作被拒绝：%s" d.message) Failure
@@ -848,31 +821,40 @@ type MainView() as this =
                         (sprintf "「%s」及其消息将不再出现在列表里。此操作无法撤销。" summary.title)
                         "删除"
                         (fun () ->
-                            sendCommand (
-                                DeleteConversation {| invocationId = newInvocation (); conversationId = summary.id |})
-                            if activeConvId = Some summary.id then
-                                activeConvId <- None
-                                sidebar.SetActive None
-                                this.Render()
-                            toast (sprintf "会话「%s」已删除" summary.title) Neutral)
+                            let command =
+                                DeleteConversation {| invocationId = newInvocation (); conversationId = summary.id |}
+                            sendCommandWithFeedback
+                                command
+                                (Some(sprintf "会话「%s」已删除" summary.title))
+                                (fun () ->
+                                    if activeConvId = Some summary.id then
+                                        activeConvId <- None
+                                        sidebar.SetActive None
+                                        this.Render()))
               setPinned =
                 fun summary pinned ->
-                    sendCommand (
+                    let command =
                         SetConversationFlags
                             {| invocationId = newInvocation ()
                                conversationId = summary.id
                                pinned = pinned
-                               archived = summary.archived |})
-                    toast (if pinned then sprintf "已置顶「%s」" summary.title else sprintf "已取消置顶「%s」" summary.title) Neutral
+                               archived = summary.archived |}
+                    sendCommandWithFeedback
+                        command
+                        (Some(if pinned then sprintf "已置顶「%s」" summary.title else sprintf "已取消置顶「%s」" summary.title))
+                        ignore
               setArchived =
                 fun summary archived ->
-                    sendCommand (
+                    let command =
                         SetConversationFlags
                             {| invocationId = newInvocation ()
                                conversationId = summary.id
                                pinned = summary.pinned
-                               archived = archived |})
-                    toast (if archived then sprintf "已归档「%s」" summary.title else sprintf "已取消归档「%s」" summary.title) Neutral
+                               archived = archived |}
+                    sendCommandWithFeedback
+                        command
+                        (Some(if archived then sprintf "已归档「%s」" summary.title else sprintf "已取消归档「%s」" summary.title))
+                        ignore
               duplicateAsFork =
                 fun summary ->
                     this.OpenConversation summary.id
@@ -884,7 +866,8 @@ type MainView() as this =
                     if authenticated then toast "已连接" Neutral
                     elif lastToken.IsSome then this.Connect()
                     else this.ShowConnectDialog()
-              toggleArchivedVisibility = fun () -> this.SavePrefs { prefs with showArchived = not prefs.showArchived } }
+              toggleArchivedVisibility = fun () -> this.SavePrefs { prefs with showArchived = not prefs.showArchived }
+              closeNavigation = fun () -> this.SetCompactNavigation false }
         sidebar <- Sidebar(overlay, actions, Brand.logo)
         sidebar.Build()
         sidebar.SetShowArchived prefs.showArchived
@@ -899,12 +882,12 @@ type MainView() as this =
                     match activeConvId with
                     | Some convId ->
                         Dialogs.confirm overlay "删除消息" "这条消息会从会话中移除，后续生成不再看到它。" "删除" (fun () ->
-                            sendCommand (
+                            let command =
                                 DeleteMessage
                                     {| invocationId = newInvocation ()
                                        conversationId = convId
-                                       messageCommitId = commitId |})
-                            toast "消息已删除" Success)
+                                       messageCommitId = commitId |}
+                            sendCommandWithFeedback command (Some "消息已删除") ignore)
                     | None -> ()
               downloadAttachment = fun sha -> send (AttachmentDownloadRequest {| sha256 = sha |})
               openLink = openLink }
@@ -921,10 +904,10 @@ type MainView() as this =
                     match activeConvId with
                     | Some convId ->
                         Dialogs.sessionSettings overlay catalog (activeConfig ()) (fun config ->
-                            sendCommand (
+                            let command =
                                 UpdateConversationConfig
-                                    {| invocationId = newInvocation (); conversationId = convId; config = config |})
-                            toast "会话设置已更新" Success)
+                                    {| invocationId = newInvocation (); conversationId = convId; config = config |}
+                            sendCommandWithFeedback command (Some "会话设置已更新") ignore)
                     | None -> toast "先选择一个会话。" Warning
               forkFromHere =
                 fun () ->
@@ -950,6 +933,7 @@ type MainView() as this =
     member private this.RequestOlderHistory() =
         match activeConvId, activeConversation () with
         | Some convId, Some view when view.pageHasMore && not pageLoading ->
+            chat.BeginHistoryPrependAnchor()
             pageLoading <- true
             send (
                 HistoryRequest
@@ -964,9 +948,8 @@ type MainView() as this =
               stopGeneration = fun () -> this.StopGeneration()
               pickAttachment = fun () -> this.PickAttachment()
               removeAttachment =
-                fun sha ->
-                    pendingAttachments <- pendingAttachments |> List.filter (fun a -> a.sha256 <> sha)
-                    composer.SetAttachments pendingAttachments
+                fun attachmentId ->
+                    attachmentDraft.Remove attachmentId |> composer.SetAttachments
               openModelPicker = fun anchor -> this.ShowModelPicker anchor }
         composer <- Composer(actions)
         composer.Build()
@@ -1007,14 +990,45 @@ type MainView() as this =
         chatColumn.Children.Add composer
         chatColumn.Children.Add chat
 
+        let initialNavigation = navigation.State
         shellGrid <- Grid()
-        shellGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength prefs.sidebarWidth))
+        shellGrid.ColumnDefinitions.Add(
+            ColumnDefinition(
+                Width = (if initialNavigation.sidebarCollapsed then GridLength(0.0) else GridLength prefs.sidebarWidth),
+                MinWidth = (if initialNavigation.sidebarCollapsed then 0.0 else Tokens.sidebarMinWidth),
+                MaxWidth = Tokens.sidebarMaxWidth))
+        shellGrid.ColumnDefinitions.Add(
+            ColumnDefinition(
+                Width = (if initialNavigation.sidebarCollapsed then GridLength(0.0) else GridLength LayoutPolicy.sidebarSplitterWidth)))
         shellGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+        sidebarSplitter <-
+            GridSplitter(
+                Background = Brushes.Transparent,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                ResizeDirection = GridResizeDirection.Columns,
+                ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+                KeyboardIncrement = 8.0,
+                DragIncrement = 1.0,
+                Focusable = true,
+                Cursor = new Cursor(StandardCursorType.SizeWestEast),
+                IsVisible = not initialNavigation.sidebarCollapsed)
+        Avalonia.Automation.AutomationProperties.SetName(sidebarSplitter, "调整侧边栏宽度")
+        sidebarSplitter.DragCompleted.Add(fun _ ->
+            let nav = navigation.State
+            if not nav.compactMode && not nav.sidebarCollapsed then
+                let width = Math.Clamp(shellGrid.ColumnDefinitions[0].ActualWidth, Tokens.sidebarMinWidth, Tokens.sidebarMaxWidth)
+                shellGrid.ColumnDefinitions[0].Width <- GridLength width
+                prefs <- { prefs with sidebarWidth = width }
+                UiPrefs.save prefs)
         Grid.SetColumn(sidebar, 0)
-        Grid.SetColumn(chatColumn, 1)
+        Grid.SetColumn(sidebarSplitter, 1)
+        Grid.SetColumn(chatColumn, 2)
         shellGrid.Children.Add sidebar
+        shellGrid.Children.Add sidebarSplitter
         shellGrid.Children.Add chatColumn
-        splitLayout <- shellGrid
+        mainLayout <- MainLayoutController(shellGrid, sidebar, sidebarSplitter, chatColumn, composer, chat, fun () -> prefs.sidebarWidth)
+        mainLayout.Apply initialNavigation
         workspace.Children.Add shellGrid
 
         settingsHost.Children.Add settings
@@ -1031,6 +1045,7 @@ type MainView() as this =
             Dispatcher.UIThread.Post(fun () ->
                 authenticated <- false
                 activeGenerationId <- None
+                commandFeedback.Clear()
                 let detail = match error with Some e -> e.Message | None -> ""
                 sidebar.SetConnection(false, "连接已断开")
                 if not (String.IsNullOrWhiteSpace detail) then toast (sprintf "连接断开：%s" detail) Warning

@@ -1,6 +1,6 @@
 /* ============================================================
  * wanxiang PWA · Kami 纸感体系（warm parchment + ink-blue）
- * Tokens 对齐 kami/references/tokens.json；SSOT 在 Theme.fs
+ * Tokens 对齐 kami/references/tokens.json；运行时视觉 SSOT 在 Palette.fs / Tokens.fs
  * 规则：单墨蓝强调 ≤5%，暖灰四阶，hairline 分割，whisper 阴影
  * ============================================================ */
 

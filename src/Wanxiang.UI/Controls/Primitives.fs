@@ -1,8 +1,11 @@
 namespace Wanxiang.UI
 
 open System
+open System.Runtime.CompilerServices
 open Avalonia
-open Avalonia.Animation
+open Avalonia.Automation
+open Avalonia.Automation.Peers
+open Avalonia.Automation.Provider
 open Avalonia.Controls
 open Avalonia.Controls.Primitives
 open Avalonia.Controls.Shapes
@@ -11,9 +14,121 @@ open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Threading
 
+/// 保留万象自绘 Border 的几何与视觉，但把“按钮”语义暴露给自动化层。
+/// 这样屏幕阅读器得到真正的 Invoke pattern，而不是只看到一个可聚焦容器。
+type internal ActionBorder() as this =
+    inherit Border()
+
+    let mutable invokeAction: unit -> unit = ignore
+    let mutable savedShadow = BoxShadows()
+    let mutable keyboardFocusRing = false
+
+    do
+        this.GotFocus.Add(fun e ->
+            match e.NavigationMethod with
+            | NavigationMethod.Tab
+            | NavigationMethod.Directional ->
+                savedShadow <- this.BoxShadow
+                keyboardFocusRing <- true
+                this.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
+            | _ -> ())
+        this.LostFocus.Add(fun _ ->
+            if keyboardFocusRing then
+                keyboardFocusRing <- false
+                this.BoxShadow <- savedShadow)
+
+    member _.SetInvokeAction(action: unit -> unit) = invokeAction <- action
+
+    member internal _.InvokeFromAutomation() =
+        if this.IsEnabled then invokeAction ()
+
+    override _.OnCreateAutomationPeer() = ActionBorderAutomationPeer(this) :> AutomationPeer
+
+and internal ActionBorderAutomationPeer(owner: ActionBorder) =
+    inherit ControlAutomationPeer(owner)
+
+    override _.GetAutomationControlTypeCore() = AutomationControlType.Button
+
+    interface IInvokeProvider with
+        member _.Invoke() = Dispatcher.UIThread.Post(fun () -> owner.InvokeFromAutomation())
+
+/// Toggle 同理：视觉仍使用现有 track/knob，但自动化层得到 CheckBox + Toggle pattern。
+type internal ToggleBorder() as this =
+    inherit Border()
+
+    let mutable toggleAction: unit -> unit = ignore
+    let mutable value = false
+    let mutable savedShadow = BoxShadows()
+    let mutable keyboardFocusRing = false
+
+    let stateOf v = if v then ToggleState.On else ToggleState.Off
+
+    do
+        this.GotFocus.Add(fun e ->
+            match e.NavigationMethod with
+            | NavigationMethod.Tab
+            | NavigationMethod.Directional ->
+                savedShadow <- this.BoxShadow
+                keyboardFocusRing <- true
+                this.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
+            | _ -> ())
+        this.LostFocus.Add(fun _ ->
+            if keyboardFocusRing then
+                keyboardFocusRing <- false
+                this.BoxShadow <- savedShadow)
+
+    member _.SetToggleAction(action: unit -> unit) = toggleAction <- action
+    member _.AutomationValue = value
+
+    member _.SetAutomationValue(next: bool) =
+        if value <> next then
+            let previous = stateOf value
+            value <- next
+            match ControlAutomationPeer.FromElement(this) with
+            | null -> ()
+            | peer ->
+                peer.RaisePropertyChangedEvent(TogglePatternIdentifiers.ToggleStateProperty, previous, stateOf next)
+
+    member internal _.ToggleFromAutomation() =
+        if this.IsEnabled then toggleAction ()
+
+    override _.OnCreateAutomationPeer() = ToggleBorderAutomationPeer(this) :> AutomationPeer
+
+and internal ToggleBorderAutomationPeer(owner: ToggleBorder) =
+    inherit ControlAutomationPeer(owner)
+
+    override _.GetAutomationControlTypeCore() = AutomationControlType.CheckBox
+
+    interface IToggleProvider with
+        member _.ToggleState = if owner.AutomationValue then ToggleState.On else ToggleState.Off
+        member _.Toggle() = Dispatcher.UIThread.Post(fun () -> owner.ToggleFromAutomation())
+
 /// 基础控件工厂：全应用的按钮、输入、标签、徽标都从这里出，
 /// 保证同一种语义在任何界面里长得一样、反馈一样。
 module Ui =
+
+    let private validationMessages = ConditionalWeakTable<TextBox, TextBlock>()
+
+    let private validationMessageFor (box: TextBox) =
+        match validationMessages.TryGetValue box with
+        | true, message -> message
+        | _ ->
+            let message =
+                TextBlock(
+                    Text = "",
+                    FontSize = Tokens.fontMicro,
+                    Foreground = Tokens.danger,
+                    TextWrapping = TextWrapping.Wrap,
+                    LineHeight = 16.0,
+                    IsVisible = false,
+                    Margin = Thickness(2.0, 3.0, 0.0, 0.0))
+            validationMessages.Add(box, message)
+            message
+
+    let private isInvalid (box: TextBox) =
+        match validationMessages.TryGetValue box with
+        | true, message -> message.IsVisible
+        | _ -> false
 
     /// 文字按钮的语义层级。层级决定视觉重量，不由调用方自由涂色。
     type ButtonTone =
@@ -28,37 +143,23 @@ module Ui =
 
     let private handCursor = new Cursor(StandardCursorType.Hand)
 
-    /// 给任意 Border 加上「悬停变亮、按下回弹」的即时反馈。
-    /// 键盘焦点环。
-    ///
-    /// 用外阴影而不是改边框粗细：后者会让按钮内容跳一下，而焦点提示不该有位移。
-    /// 只在**键盘**导航时出现——鼠标点完还留着一圈框是视觉噪音。
-    let private attachFocusRing (host: Border) =
-        let saved = host.BoxShadow
-        let ring () = BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
-        host.GotFocus.Add(fun e ->
-            match e.NavigationMethod with
-            | NavigationMethod.Tab
-            | NavigationMethod.Directional -> host.BoxShadow <- ring ()
-            | _ -> ())
-        host.LostFocus.Add(fun _ -> host.BoxShadow <- saved)
-
     /// 统一点击与键盘激活绑定（支持鼠标释放与键盘 Enter/Space）。
     let onClick (host: Border) (action: unit -> unit) =
+        match host with
+        | :? ActionBorder as semantic -> semantic.SetInvokeAction action
+        | _ -> ()
         host.PointerReleased.Add(fun e ->
-            if host.IsHitTestVisible then
+            if host.IsEnabled && host.IsHitTestVisible && e.InitialPressMouseButton = MouseButton.Left then
                 e.Handled <- true
                 action ())
         host.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
+            if host.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
                 e.Handled <- true
                 action ())
 
     let private attachSurfaceFeedback (host: Border) (idle: unit -> IBrush) (over: unit -> IBrush) =
-        let transitions = Transitions()
-        transitions.Add(DoubleTransition(Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds 120.0))
-        transitions.Add(BrushTransition(Property = Border.BackgroundProperty, Duration = TimeSpan.FromMilliseconds 120.0))
-        host.Transitions <- transitions
+        // 装饰性 hover/press 直接切状态，不做缓动；减少动态效果时无需额外分支，
+        // 正常模式本身也保持低动态。持续运动只保留在真正等待的 spinner。
         let mutable isOver = false
         let refresh () = host.Background <- (if isOver then over () else idle ())
         host.PointerEntered.Add(fun _ ->
@@ -70,7 +171,6 @@ module Ui =
             refresh ())
         host.PointerPressed.Add(fun _ -> host.Opacity <- 0.78)
         host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
-        attachFocusRing host
         refresh ()
 
     let private overlay (baseBrush: IBrush) (overlayBrush: IBrush) : IBrush =
@@ -205,11 +305,30 @@ module Ui =
                 RenderTransformOrigin = RelativePoint.Center)
         let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 40.0)
         let mutable angle = 0.0
+        let mutable attached = false
+        let mutable motionSubscription: IDisposable option = None
+        let refreshMotion () =
+            if MotionPolicy.isReduced () then
+                timer.Stop()
+                angle <- 0.0
+                view.RenderTransform <- RotateTransform 0.0
+            elif attached then
+                timer.Start()
+            else
+                timer.Stop()
         timer.Tick.Add(fun _ ->
             angle <- (angle + 18.0) % 360.0
             view.RenderTransform <- RotateTransform angle)
-        view.AttachedToVisualTree.Add(fun _ -> timer.Start())
-        view.DetachedFromVisualTree.Add(fun _ -> timer.Stop())
+        view.AttachedToVisualTree.Add(fun _ ->
+            attached <- true
+            motionSubscription |> Option.iter (fun subscription -> subscription.Dispose())
+            motionSubscription <- Some(MotionPolicy.Changed.Publish.Subscribe(fun _ -> refreshMotion ()))
+            refreshMotion ())
+        view.DetachedFromVisualTree.Add(fun _ ->
+            attached <- false
+            timer.Stop()
+            motionSubscription |> Option.iter (fun subscription -> subscription.Dispose())
+            motionSubscription <- None)
         view :> Control
 
     // ---------- 图标按钮 ----------
@@ -217,7 +336,7 @@ module Ui =
     /// 图标按钮。`size` 默认 `Tokens.iconButton`；`tip` 为空则不挂提示。
     let iconButton (icon: IBrush -> Control) (tip: string) : Border =
         let host =
-            Border(
+            ActionBorder(
                 Width = Tokens.iconButton,
                 Height = Tokens.iconButton,
                 MinWidth = Tokens.iconButton,
@@ -241,7 +360,7 @@ module Ui =
     /// 强调色实心图标按钮（发送等主操作）。
     let iconButtonAccent (icon: IBrush -> Control) (tip: string) : Border =
         let host =
-            Border(
+            ActionBorder(
                 Width = Tokens.iconButton,
                 Height = Tokens.iconButton,
                 MinWidth = Tokens.iconButton,
@@ -264,8 +383,17 @@ module Ui =
     /// 禁用态保留足够对比度：过低的不透明度会让实心按钮上的图标彻底消失，
     /// 用户分不清「不可用」和「渲染坏了」。
     let setEnabled (host: Border) (enabled: bool) =
+        host.IsEnabled <- enabled
         host.Opacity <- if enabled then 1.0 else 0.5
         host.IsHitTestVisible <- enabled
+        host.Focusable <- enabled
+
+    /// 只调整 hit surface，不改变内部 glyph 尺寸。
+    let setSquareTarget (host: Border) (size: float) =
+        host.Width <- size
+        host.Height <- size
+        host.MinWidth <- size
+        host.MinHeight <- size
 
     let setToggled (host: Border) (active: bool) =
         host.Background <- if active then Tokens.accentSoft :> IBrush else Brushes.Transparent :> IBrush
@@ -290,7 +418,7 @@ module Ui =
     let button (tone: ButtonTone) (text: string) (action: unit -> unit) : Border =
         let bg, fg, stroke, hoverBg = toneBrushes tone
         let host =
-            Border(
+            ActionBorder(
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 Padding = Thickness(Tokens.space4, 7.0),
                 Background = bg,
@@ -315,7 +443,9 @@ module Ui =
 
     let setButtonText (host: Border) (text: string) =
         match host.Child with
-        | :? TextBlock as tb -> tb.Text <- text
+        | :? TextBlock as tb ->
+            tb.Text <- text
+            Avalonia.Automation.AutomationProperties.SetName(host, text)
         | _ -> ()
 
     // ---------- 输入 ----------
@@ -341,21 +471,40 @@ module Ui =
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 Padding = Thickness(Tokens.space3, 8.0),
                 Child = box)
-        let transitions = Transitions()
-        transitions.Add(BrushTransition(Property = Border.BorderBrushProperty, Duration = TimeSpan.FromMilliseconds 120.0))
-        shell.Transitions <- transitions
         box.GotFocus.Add(fun _ ->
             shell.BorderBrush <- Tokens.accent
             shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color)))
         box.LostFocus.Add(fun _ ->
-            shell.BorderBrush <- Tokens.border
+            shell.BorderBrush <- if isInvalid box then Tokens.danger else Tokens.border
             shell.BoxShadow <- BoxShadows())
         shell, box
+
+    /// 为任意输入框创建/取得字段级错误行。调用方把它放在对应 field group 内即可。
+    let fieldValidationMessage (box: TextBox) : TextBlock = validationMessageFor box
+
+    /// 字段级验证状态：不改 padding / border thickness，因此出现错误时不会横向漂移。
+    let setFieldError (box: TextBox) (message: string) =
+        let validation = validationMessageFor box
+        validation.Text <- message
+        validation.IsVisible <- not (String.IsNullOrWhiteSpace message)
+        match box.Parent with
+        | :? Border as shell when not box.IsFocused -> shell.BorderBrush <- Tokens.danger
+        | _ -> ()
+        Avalonia.Automation.AutomationProperties.SetHelpText(box, message)
+
+    let clearFieldError (box: TextBox) =
+        let validation = validationMessageFor box
+        validation.Text <- ""
+        validation.IsVisible <- false
+        match box.Parent with
+        | :? Border as shell when not box.IsFocused -> shell.BorderBrush <- Tokens.border
+        | _ -> ()
+        Avalonia.Automation.AutomationProperties.SetHelpText(box, "")
 
     /// 带标签的输入行。
     let labeledField (labelText: string) (placeholder: string) : Control * TextBox =
         let shell, box = textField placeholder
-        let column = vstack 0.0 [ fieldLabel labelText; shell ]
+        let column = vstack 0.0 [ fieldLabel labelText; shell; fieldValidationMessage box ]
         column :> Control, box
 
     /// 多行输入。
@@ -368,7 +517,7 @@ module Ui =
         shell, box
 
     /// 开关。返回容器与「读取/设置」访问器。
-    let toggle (initial: bool) (onChanged: bool -> unit) : Control * (unit -> bool) * (bool -> unit) =
+    let toggle (initial: bool) (onChanged: bool -> unit) : Control * (unit -> bool) * (bool -> unit) * (unit -> unit) =
         let mutable value = initial
         let knob =
             Border(
@@ -378,7 +527,7 @@ module Ui =
                 Background = Tokens.surfaceRaised,
                 VerticalAlignment = VerticalAlignment.Center)
         let track =
-            Border(
+            ToggleBorder(
                 Width = 34.0,
                 Height = 20.0,
                 CornerRadius = CornerRadius Tokens.radiusPill,
@@ -388,24 +537,27 @@ module Ui =
                 Focusable = true,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = knob)
-        let transitions = Transitions()
-        transitions.Add(BrushTransition(Property = Border.BackgroundProperty, Duration = TimeSpan.FromMilliseconds 150.0))
-        track.Transitions <- transitions
         let render () =
             track.Background <- if value then Tokens.accent :> IBrush else Tokens.line :> IBrush
             knob.HorizontalAlignment <- if value then HorizontalAlignment.Right else HorizontalAlignment.Left
+            track.SetAutomationValue value
         let flip () =
             value <- not value
             render ()
             onChanged value
+        track.SetToggleAction flip
         track.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            flip ())
+            if e.InitialPressMouseButton = MouseButton.Left then
+                e.Handled <- true
+                flip ())
         track.KeyDown.Add(fun e ->
             if e.Key = Key.Enter || e.Key = Key.Space then
                 e.Handled <- true
                 flip ())
         render ()
-        track :> Control, (fun () -> value), (fun v ->
+        track :> Control,
+        (fun () -> value),
+        (fun v ->
             value <- v
-            render ())
+            render ()),
+        flip

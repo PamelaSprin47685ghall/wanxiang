@@ -46,8 +46,6 @@ module Tokens =
     /// 页面主标题
     let fontDisplay = 25.0
 
-    let lineHeightReading = 24.0
-
     /// 键盘焦点环的外扩宽度。用外阴影画而不是加边框：
     /// 改边框粗细会让按钮内容跳一下，而焦点本该是「无位移的提示」。
     let focusRingSpread = 2.0
@@ -56,7 +54,6 @@ module Tokens =
     /// 各自取值会让左缘差几个像素，读起来像没对齐的两张卡片。
     let blockPaddingX = space3
     let blockPaddingY = space2
-    let lineHeightBody = 20.0
 
     // ---- 结构尺寸 ----
     let sidebarWidth = 284.0
@@ -69,7 +66,6 @@ module Tokens =
     let iconGlyph = 15.0
     let iconStroke = 1.6
     let shellInset = space4
-    let shellGap = space3
 
     // ---- 品牌 ----
     let logoSplash = 76.0
@@ -77,17 +73,6 @@ module Tokens =
     let logoSidebar = 26.0
     let logoEmpty = 68.0
     let logoAvatar = 26.0
-
-    // ---- 动效（毫秒）----
-    /// 悬停/按下等即时反馈
-    let motionFast = 120
-    /// 展开、淡入
-    let motionBase = 180
-    /// 大面积转场
-    let motionSlow = 260
-
-    let easeStandard = Animation.Easings.CubicEaseOut() :> Animation.Easings.Easing
-    let easeEmphasis = Animation.Easings.QuadraticEaseOut() :> Animation.Easings.Easing
 
     let mutable private palette = Palette.light
     let mutable private mode = Light

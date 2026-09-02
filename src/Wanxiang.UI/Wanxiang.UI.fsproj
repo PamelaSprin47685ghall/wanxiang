@@ -9,9 +9,12 @@
   <ItemGroup>
     <Compile Include="Design/Palette.fs" />
     <Compile Include="Design/Tokens.fs" />
+    <Compile Include="Design/LayoutPolicy.fs" />
+    <Compile Include="Design/MotionPolicy.fs" />
     <Compile Include="Design/Icons.fs" />
     <Compile Include="Model/UiPrefs.fs" />
     <Compile Include="Model/MediaTypes.fs" />
+    <Compile Include="Model/UiControllers.fs" />
     <Compile Include="Rich/RichBackend.fs" />
     <Compile Include="Rich/Highlight.fs" />
     <Compile Include="Rich/KatexHtml.fs" />
@@ -37,6 +40,7 @@
     <Compile Include="Views/SettingsGeneral.fs" />
     <Compile Include="Views/SettingsView.fs" />
     <Compile Include="Views/Dialogs.fs" />
+    <Compile Include="Views/MainLayout.fs" />
     <Compile Include="AppShell.fs" />
     <Compile Include="Views/MainWindow.fs" />
     <Compile Include="App.fs" />

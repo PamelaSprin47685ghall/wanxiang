@@ -42,22 +42,62 @@ module MessageCard =
 
     let private handCursor = new Cursor(StandardCursorType.Hand)
 
+    /// 大段详情统一使用“限高阅读窗 → 主动展开全文”的二阶段 contract。
+    /// 首次展开不会把当前阅读位置瞬间推走数屏；需要全文时用户仍有明确入口。
+    let private detailViewport (content: Control) (initiallyVisible: bool) : Control * (bool -> unit) =
+        let scroller =
+            ScrollViewer(
+                Content = content,
+                MaxHeight = LayoutPolicy.expandedDetailMaxHeight,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                IsVisible = initiallyVisible)
+        let mutable visible = initiallyVisible
+        let mutable full = false
+        let mutable toggleFull: unit -> unit = ignore
+        let expandButton = Ui.button Ui.Ghost "展开全部" (fun () -> toggleFull ())
+        expandButton.HorizontalAlignment <- HorizontalAlignment.Left
+        expandButton.IsVisible <- false
+        let refreshButton () =
+            let clipped = scroller.Extent.Height > scroller.Viewport.Height + 1.0
+            expandButton.IsVisible <- visible && (full || clipped)
+        toggleFull <- fun () ->
+            full <- not full
+            scroller.MaxHeight <- if full then Double.PositiveInfinity else LayoutPolicy.expandedDetailMaxHeight
+            Ui.setButtonText expandButton (if full then "收回限高" else "展开全部")
+            Dispatcher.UIThread.Post refreshButton
+        scroller.PropertyChanged.Add(fun args ->
+            if args.Property = ScrollViewer.ExtentProperty || args.Property = ScrollViewer.ViewportProperty then
+                refreshButton ())
+        let host = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
+        host.Children.Add scroller
+        host.Children.Add expandButton
+        let setVisible value =
+            visible <- value
+            scroller.IsVisible <- value
+            if not value && full then
+                full <- false
+                scroller.MaxHeight <- LayoutPolicy.expandedDetailMaxHeight
+                Ui.setButtonText expandButton "展开全部"
+            Dispatcher.UIThread.Post refreshButton
+        host :> Control, setVisible
+
     let private formatDuration (ms: int64) =
         if ms >= 1000L then sprintf "%.1f 秒" (float ms / 1000.0) else sprintf "%d 毫秒" (int ms)
 
     /// 思考过程：左缘竖线 + 可折叠。流式期间默认展开，让人看到模型在动。
     let private reasoningBlock (ctx: MessageContext) (reasoning: string) (durationMs: int64 option) : Control =
         let collapsed = not ctx.streaming && ctx.autoCollapseReasoning
-        let body =
+        let bodyText =
             SelectableTextBlock(
                 Text = reasoning,
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = ctx.fontSize - 1.5,
                 Foreground = Tokens.textMuted,
                 LineHeight = (ctx.fontSize - 1.5) * 1.6,
-                IsVisible = not collapsed,
-                Margin = Thickness(0.0, Tokens.space2, 0.0, 0.0),
                 SelectionBrush = Tokens.accentSoft)
+        let body, setBodyVisible = detailViewport (bodyText :> Control) (not collapsed)
+        body.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
         let chevron = Icons.chevronRight Tokens.textFaint
         let chevronDown = Icons.chevronDown Tokens.textFaint
         let chevronHost = Border(Child = (if collapsed then chevron else chevronDown), VerticalAlignment = VerticalAlignment.Center)
@@ -72,23 +112,22 @@ module MessageCard =
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.textMuted,
                 VerticalAlignment = VerticalAlignment.Center)
+        let headerRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1)
+        headerRow.Children.Add chevronHost
+        headerRow.Children.Add caption
         let header =
-            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1, Cursor = handCursor)
-            row.Children.Add chevronHost
-            row.Children.Add caption
-            row.Focusable <- true
-            Avalonia.Automation.AutomationProperties.SetName(row, "切换思考过程")
-            row
+            ActionBorder(
+                Background = Brushes.Transparent,
+                Cursor = handCursor,
+                Focusable = true,
+                Child = headerRow)
+        Avalonia.Automation.AutomationProperties.SetName(header, "切换思考过程")
+        let mutable bodyVisible = not collapsed
         let toggle () =
-            body.IsVisible <- not body.IsVisible
-            chevronHost.Child <- if body.IsVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
-        header.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            toggle ())
-        header.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                toggle ())
+            bodyVisible <- not bodyVisible
+            setBodyVisible bodyVisible
+            chevronHost.Child <- if bodyVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
+        Ui.onClick header toggle
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         stack.Children.Add header
         stack.Children.Add body
@@ -145,7 +184,7 @@ module MessageCard =
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 IsVisible = not (String.IsNullOrWhiteSpace summaryText),
                 Margin = Thickness(0.0, 3.0, 0.0, 0.0))
-        let detail =
+        let detailText =
             let text =
                 [ if not (String.IsNullOrWhiteSpace call.argumentsJson) then "参数\n" + call.argumentsJson
                   match call.result with
@@ -159,9 +198,9 @@ module MessageCard =
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = 17.0,
-                IsVisible = false,
-                Margin = Thickness(0.0, Tokens.space2, 0.0, 0.0),
                 SelectionBrush = Tokens.accentSoft)
+        let detail, setDetailVisible = detailViewport (detailText :> Control) false
+        detail.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
         let chevronHost = Border(Child = Icons.chevronDown Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
         let headerRow = DockPanel(LastChildFill = false)
         let left = Ui.hstack Tokens.space2 [ icon; name :> Control; state :> Control ]
@@ -174,7 +213,7 @@ module MessageCard =
         stack.Children.Add summary
         stack.Children.Add detail
         let host =
-            Border(
+            ActionBorder(
                 Background = Tokens.surface,
                 BorderBrush = Tokens.border,
                 BorderThickness = Thickness 1.0,
@@ -184,18 +223,15 @@ module MessageCard =
                 Cursor = handCursor,
                 Focusable = true,
                 Child = stack)
+        let mutable detailVisible = false
         let toggle () =
-            detail.IsVisible <- not detail.IsVisible
-            summary.IsVisible <- not detail.IsVisible && not (String.IsNullOrWhiteSpace summaryText)
+            detailVisible <- not detailVisible
+            setDetailVisible detailVisible
+            summary.IsVisible <- not detailVisible && not (String.IsNullOrWhiteSpace summaryText)
             chevronHost.Child <-
-                if detail.IsVisible then Icons.chevronUp Tokens.textFaint else Icons.chevronDown Tokens.textFaint
-        host.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            toggle ())
-        host.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                toggle ())
+                if detailVisible then Icons.chevronUp Tokens.textFaint else Icons.chevronDown Tokens.textFaint
+        Ui.onClick host toggle
+        Avalonia.Automation.AutomationProperties.SetName(host, sprintf "展开工具调用 %s" call.name)
         ToolTip.SetTip(host, "点击展开参数与结果")
         host :> Control
 
@@ -227,24 +263,35 @@ module MessageCard =
             let download = Icons.download Tokens.textFaint
             download.VerticalAlignment <- VerticalAlignment.Center
             row.Children.Add download
-        let host =
-            Border(
-                Background = Tokens.surface,
-                BorderBrush = Tokens.border,
-                BorderThickness = Thickness 1.0,
-                CornerRadius = CornerRadius Tokens.radiusMd,
-                Padding = Thickness(Tokens.space3, 6.0),
-                Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Cursor = (if missing then null else handCursor),
-                Child = row)
+        let host: Border =
+            if missing then
+                Border(
+                    Background = Tokens.surface,
+                    BorderBrush = Tokens.border,
+                    BorderThickness = Thickness 1.0,
+                    CornerRadius = CornerRadius Tokens.radiusMd,
+                    Padding = Thickness(Tokens.space3, 6.0),
+                    Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Child = row)
+            else
+                ActionBorder(
+                    Background = Tokens.surface,
+                    BorderBrush = Tokens.border,
+                    BorderThickness = Thickness 1.0,
+                    CornerRadius = CornerRadius Tokens.radiusMd,
+                    Padding = Thickness(Tokens.space3, 6.0),
+                    Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Cursor = handCursor,
+                    Focusable = true,
+                    Child = row)
         if not missing then
             ToolTip.SetTip(host, "下载附件")
+            Avalonia.Automation.AutomationProperties.SetName(host, sprintf "下载附件 %s" attachment.fileName)
             host.PointerEntered.Add(fun _ -> host.Background <- Tokens.surfaceRaised)
             host.PointerExited.Add(fun _ -> host.Background <- Tokens.surface)
-            host.PointerReleased.Add(fun e ->
-                e.Handled <- true
-                actions.downloadAttachment attachment.sha256)
+            Ui.onClick host (fun () -> actions.downloadAttachment attachment.sha256)
         host :> Control
 
     /// 悬停操作条。绝对不占文档流，否则每次悬停都会推动整段排版。
@@ -264,23 +311,20 @@ module MessageCard =
                 Spacing = 0.0,
                 Opacity = idleActionOpacity,
                 VerticalAlignment = VerticalAlignment.Center)
-        let transitions = Avalonia.Animation.Transitions()
-        transitions.Add(Avalonia.Animation.DoubleTransition(Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds 150.0))
-        row.Transitions <- transitions
         let addButton (icon: IBrush -> Control) (tip: string) (action: unit -> unit) =
             let button = Ui.iconButton icon tip
-            button.Width <- 24.0
-            button.Height <- 24.0
-            button.MinWidth <- 24.0
-            button.MinHeight <- 24.0
+            button.Width <- Tokens.iconButton
+            button.Height <- Tokens.iconButton
+            button.MinWidth <- Tokens.iconButton
+            button.MinHeight <- Tokens.iconButton
             Ui.onClick button action
             row.Children.Add button
         let addCopyButton (text: string) =
             let button = Ui.iconButton Icons.copy "复制"
-            button.Width <- 24.0
-            button.Height <- 24.0
-            button.MinWidth <- 24.0
-            button.MinHeight <- 24.0
+            button.Width <- Tokens.iconButton
+            button.Height <- Tokens.iconButton
+            button.MinWidth <- Tokens.iconButton
+            button.MinHeight <- Tokens.iconButton
             let doCopy () =
                 actions.copyText text
                 Ui.setIcon button Icons.check Tokens.success
@@ -353,12 +397,16 @@ module MessageCard =
                     FontSize = Tokens.fontMicro,
                     Foreground = Tokens.textFaint,
                     TextWrapping = TextWrapping.Wrap,
-                    IsVisible = false,
-                    Margin = Thickness(0.0, Tokens.space2, 0.0, 0.0),
                     SelectionBrush = Tokens.accentSoft)
-            actionRow.Children.Add(Ui.button Ui.Ghost "技术细节" (fun () -> detailText.IsVisible <- not detailText.IsVisible))
+            let detailHost, setDetailVisible = detailViewport (detailText :> Control) false
+            detailHost.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
+            let mutable visible = false
+            actionRow.Children.Add(
+                Ui.button Ui.Ghost "技术细节" (fun () ->
+                    visible <- not visible
+                    setDetailVisible visible))
             if actionRow.Children.Count > 0 then column.Children.Add actionRow
-            column.Children.Add detailText
+            column.Children.Add detailHost
         | None -> if actionRow.Children.Count > 0 then column.Children.Add actionRow
         let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)
         row.Children.Add icon
@@ -453,7 +501,7 @@ module MessageCard =
                     Background = Tokens.userBubble,
                     CornerRadius = CornerRadius(Tokens.radiusLg, Tokens.radiusLg, Tokens.radiusSm, Tokens.radiusLg),
                     Padding = Thickness(Tokens.space4, Tokens.space3),
-                    MaxWidth = 560.0,
+                    MaxWidth = LayoutPolicy.userMessageMaxWidth,
                     HorizontalAlignment = HorizontalAlignment.Right,
                     Child = body)
             else

@@ -70,6 +70,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let labelField, labelBox = Ui.labeledField "显示名称" "在界面上怎么称呼它"
         let urlField, urlBox = Ui.labeledField "端点地址" "https://api.openai.com/v1"
         let keyField, keyBox = Ui.labeledField "API Key" "粘贴密钥"
+        keyBox.PasswordChar <- '●'
         let modelsField, modelsBox = Ui.labeledField "模型列表" "每行一个模型名"
         modelsBox.AcceptsReturn <- true
         modelsBox.TextWrapping <- TextWrapping.Wrap
@@ -134,8 +135,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                     actions.probeProvider id
                     actions.toast "正在向服务商请求模型列表…" Neutral)
 
-        let enabledToggle, readEnabled, _ =
+        let enabledToggle, readEnabled, _, _ =
             Ui.toggle (existing |> Option.map (fun p -> p.enabled) |> Option.defaultValue true) ignore
+        Avalonia.Automation.AutomationProperties.SetName(enabledToggle, "启用这个服务商")
         let enabledRow =
             let row = DockPanel(LastChildFill = false)
             let caption = Ui.label "启用这个服务商"
@@ -146,6 +148,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             row
 
         let save () =
+            for box in [ idBox; urlBox; modelsBox ] do Ui.clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
             let models =
                 (if isNull modelsBox.Text then "" else modelsBox.Text)
@@ -154,9 +157,15 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 |> Array.filter (String.IsNullOrWhiteSpace >> not)
                 |> Array.distinct
                 |> List.ofArray
-            if String.IsNullOrWhiteSpace id then actions.toast "稳定标识不能为空。" Warning
-            elif String.IsNullOrWhiteSpace urlBox.Text then actions.toast "端点地址不能为空。" Warning
-            elif List.isEmpty models then actions.toast "至少填写一个模型名。" Warning
+            if String.IsNullOrWhiteSpace id then
+                Ui.setFieldError idBox "稳定标识不能为空。"
+                idBox.Focus() |> ignore
+            elif String.IsNullOrWhiteSpace urlBox.Text then
+                Ui.setFieldError urlBox "端点地址不能为空。"
+                urlBox.Focus() |> ignore
+            elif List.isEmpty models then
+                Ui.setFieldError modelsBox "至少填写一个模型名。"
+                modelsBox.Focus() |> ignore
             else
                 let defaultModel =
                     match existing with
@@ -201,7 +210,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let scroller =
             ScrollViewer(
                 Content = form,
-                MaxHeight = 560.0,
+                MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
         overlay.ShowDialog(scroller :> Control, 520.0)
@@ -327,7 +336,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             [ Ui.vstack
                   Tokens.space1
                   [ Ui.heading "服务商" :> Control
-                    Ui.caption "万象通过 OpenAI 兼容接口访问模型。密钥保存在服务端配置里，界面不会回显。" :> Control ]
+                    Ui.caption "万象通过服务商原生协议或 OpenAI 兼容接口访问模型。密钥保存在服务端配置里，界面不会回显。" :> Control ]
               :> Control
               addButton :> Control
               listPanel :> Control ]

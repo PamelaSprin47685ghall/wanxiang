@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // 万象 PWA 视觉 QA：驱动真实交互并逐态截图。
-// 用法：node tools/qa_shot.js --tag <name> [--theme dark] [--width 1440] [--height 900]
+// 用法：node tools/qa_shot.js --tag <name> [--theme dark] [--width 1440] [--height 900] [--scale 1.25]
 // 依赖：puppeteer-core + 本机 google-chrome；服务端需在 127.0.0.1:8765 运行。
 
-import puppeteer from 'puppeteer-core';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+const puppeteer = require('puppeteer-core');
+const { existsSync, mkdirSync, readFileSync } = require('node:fs');
+const { join } = require('node:path');
 
 const argv = process.argv.slice(2);
 const arg = (k, d) => {
@@ -18,6 +18,7 @@ const BASE = arg('base', 'http://127.0.0.1:8765');
 const LOG = arg('log', '/tmp/wanxiang.log');
 const WIDTH = Number(arg('width', 1440));
 const HEIGHT = Number(arg('height', 900));
+const SCALE = Number(arg('scale', 1));
 const TAG = arg('tag', 'run');
 const THEME = arg('theme', 'light');
 
@@ -41,22 +42,23 @@ function latestPairingCode() {
 
 const shots = [];
 
-const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: true,
-    args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--use-gl=angle',
-        '--use-angle=swiftshader',
-        '--enable-unsafe-swiftshader',
-        '--disable-dev-shm-usage',
-        `--window-size=${WIDTH},${HEIGHT}`,
-    ],
-    defaultViewport: { width: WIDTH, height: HEIGHT },
-});
+async function main() {
+    const browser = await puppeteer.launch({
+        executablePath: CHROME,
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--use-gl=angle',
+            '--use-angle=swiftshader',
+            '--enable-unsafe-swiftshader',
+            '--disable-dev-shm-usage',
+            `--window-size=${WIDTH},${HEIGHT}`,
+        ],
+        defaultViewport: { width: WIDTH, height: HEIGHT, deviceScaleFactor: SCALE },
+    });
 
-try {
+    try {
     const page = await browser.newPage();
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: THEME }]);
 
@@ -144,12 +146,16 @@ try {
     );
 
     await page.reload({ waitUntil: 'domcontentloaded' });
+    const minCanvasWidth = Math.max(200, Math.min(600, WIDTH * 0.75));
+    const minCanvasHeight = Math.max(200, Math.min(400, HEIGHT * 0.75));
     await page.waitForFunction(
-        () => {
+        (minW, minH) => {
             const c = document.querySelector('#out canvas');
-            return c && c.width > 600 && c.height > 400;
+            return c && c.width >= minW && c.height >= minH;
         },
         { timeout: 120000, polling: 250 },
+        minCanvasWidth,
+        minCanvasHeight,
     );
     await sleep(4500);
 
@@ -173,12 +179,15 @@ try {
         await page.keyboard.type(text, { delay: 8 });
         await sleep(250);
     };
+    const compact = geo.w < 720;
+    const sidebarActionX = compact ? geo.w - 26 : 258;
+    const settingsX = compact ? geo.w - 26 : 264;
     const composerY = geo.h - 70;
 
     await shot('01-connected');
 
-    // 侧栏右上角「新建会话」
-    await click(258, 26, 1800);
+    // 侧栏右上角「新建会话」。compact 下侧栏占满 viewport，动作贴右。
+    await click(sidebarActionX, 26, 1800);
     await shot('02-new-conversation');
 
     await click(geo.w / 2, composerY);
@@ -201,11 +210,29 @@ try {
     await sleep(4000);
     await shot('06-error-card');
 
-    // 侧栏右下角齿轮 → 设置
-    await click(geo.w - 1440 + 264, geo.h - 26, 1600);
+    // 侧栏右下角齿轮 → 设置。compact 对话态先显式打开侧栏。
+    if (compact) {
+        await click(20, 26, 450);
+    }
+    await click(settingsX, geo.h - 26, 1600);
     await shot('07-settings');
 
-    console.log(JSON.stringify({ shots, errors: errors.slice(0, 12) }, null, 2));
-} finally {
-    await browser.close();
+    const layout = await page.evaluate(() => {
+        const canvas = document.querySelector('#out canvas');
+        const rect = canvas?.getBoundingClientRect();
+        return {
+            canvas: rect ? [rect.width, rect.height] : null,
+            body: [document.body.scrollWidth, document.body.scrollHeight],
+            devicePixelRatio: window.devicePixelRatio,
+        };
+    });
+    console.log(JSON.stringify({ shots, layout, errors: errors.slice(0, 12) }, null, 2));
+    } finally {
+        await browser.close();
+    }
 }
+
+main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+});

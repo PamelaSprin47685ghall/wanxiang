@@ -67,6 +67,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             TextTrimming = TextTrimming.CharacterEllipsis)
     let titleEditShell, titleEditBox = Ui.textField "会话标题"
     let titleHost = Grid()
+    let titleAction =
+        ActionBorder(
+            Background = Brushes.Transparent,
+            Focusable = true,
+            Child = titleText)
 
     let generatingChip =
         Border(
@@ -143,26 +148,30 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     let mutable atBottom = true
     let mutable headerBar: Border = Unchecked.defaultof<Border>
+    let mutable pendingHistoryAnchor: (float * float) option = None
+    let mutable compactMode = false
+    let mutable hasConversationChrome = false
+    let mutable isGenerating = false
 
     do
         generatingChip.Child <-
             let row = Ui.hstack Tokens.space2 [ Ui.spinner 12.0; generatingCaption :> Control ]
             row
-        titleHost.Children.Add titleText
+        titleHost.Children.Add titleAction
         titleHost.Children.Add titleEditShell
         titleEditShell.IsVisible <- false
 
     member private this.CommitTitle() =
         let next = if isNull titleEditBox.Text then "" else titleEditBox.Text.Trim()
         titleEditShell.IsVisible <- false
-        titleText.IsVisible <- true
+        titleAction.IsVisible <- true
         if not (String.IsNullOrWhiteSpace next) && next <> titleText.Text then
             actions.renameTitle next
 
     member private this.BeginTitleEdit() =
-        if titleText.IsVisible && not (String.IsNullOrWhiteSpace titleText.Text) then
+        if titleAction.IsVisible && titleAction.Focusable && not (String.IsNullOrWhiteSpace titleText.Text) then
             titleEditBox.Text <- titleText.Text
-            titleText.IsVisible <- false
+            titleAction.IsVisible <- false
             titleEditShell.IsVisible <- true
             Dispatcher.UIThread.Post(fun () ->
                 titleEditBox.Focus() |> ignore
@@ -171,19 +180,33 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.SetTitle(text: string, editable: bool) =
         titleText.Text <- text
         titleText.Foreground <- if editable then Tokens.text else Tokens.textFaint
-        titleText.Cursor <- if editable then new Cursor(StandardCursorType.Hand) else null
-        ToolTip.SetTip(titleText, if editable then "点击重命名" else null)
+        titleAction.Focusable <- editable
+        titleAction.Cursor <- if editable then new Cursor(StandardCursorType.Hand) else null
+        ToolTip.SetTip(titleAction, if editable then "点击重命名" else null)
+        Avalonia.Automation.AutomationProperties.SetName(
+            titleAction,
+            if editable then sprintf "重命名会话：%s" text else text)
 
     member this.SetGenerating(generating: bool, statusText: string) =
-        generatingChip.IsVisible <- generating
+        isGenerating <- generating
+        generatingChip.IsVisible <- generating && not compactMode
         generatingCaption.Text <- if String.IsNullOrWhiteSpace statusText then "生成中" else statusText
         stopButton.IsVisible <- generating
 
     /// 会话状态变化时同步顶栏功能按钮的可用性。
     member this.SetConversationChrome(hasConversation: bool) =
-        forkButton.IsVisible <- hasConversation
+        hasConversationChrome <- hasConversation
+        forkButton.IsVisible <- hasConversation && not compactMode
         sessionSettingsButton.IsVisible <- hasConversation
         if not (isNull (box headerBar)) then headerBar.IsVisible <- true
+
+    member _.SetCompactMode(value: bool) =
+        compactMode <- value
+        let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
+        for button in [ sidebarToggleButton; stopButton; forkButton; sessionSettingsButton; scrollToBottomButton ] do
+            Ui.setSquareTarget button size
+        generatingChip.IsVisible <- isGenerating && not value
+        forkButton.IsVisible <- hasConversationChrome && not value
 
     member this.ShowEmpty(state: ChatEmptyState, onPrimary: (string * (unit -> unit)) option) =
         let primaryLabel = onPrimary |> Option.map fst
@@ -336,16 +359,31 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member this.ScrollToEnd() = this.ScrollToEndDeferred()
 
+    /// 加载更早历史前记录当前滚动几何。分页是 prepend，不保留 anchor 的话
+    /// 新内容一插到顶部，用户正在读的那条消息会瞬间跳出视口。
+    member _.BeginHistoryPrependAnchor() =
+        pendingHistoryAnchor <- Some(scroller.Extent.Height, scroller.Offset.Y)
+
+    /// HistoryPage 已写入 state 并完成 RenderMessages 后调用。用 extent 增量补偿
+    /// prepend 的新增高度，让原先 viewport 内的内容保持在原来的屏幕位置。
+    member _.RestoreHistoryPrependAnchorDeferred() =
+        match pendingHistoryAnchor with
+        | None -> ()
+        | Some(oldExtent, oldOffset) ->
+            pendingHistoryAnchor <- None
+            Dispatcher.UIThread.Post(
+                (fun () ->
+                    let delta = max 0.0 (scroller.Extent.Height - oldExtent)
+                    let target = max 0.0 (oldOffset + delta)
+                    scroller.Offset <- Vector(scroller.Offset.X, target)),
+                DispatcherPriority.Background)
+
+    member _.CancelHistoryPrependAnchor() = pendingHistoryAnchor <- None
+
     member this.Build() =
         this.Background <- Tokens.canvas
 
-        titleText.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            this.BeginTitleEdit())
-        titleText.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                this.BeginTitleEdit())
+        Ui.onClick titleAction (fun () -> this.BeginTitleEdit())
         titleEditBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
@@ -353,7 +391,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             elif e.Key = Key.Escape then
                 e.Handled <- true
                 titleEditShell.IsVisible <- false
-                titleText.IsVisible <- true)
+                titleAction.IsVisible <- true)
         titleEditBox.LostFocus.Add(fun _ -> if titleEditShell.IsVisible then this.CommitTitle())
 
         Ui.onClick stopButton (fun () -> actions.stopGeneration ())
@@ -364,7 +402,22 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         forkButton.IsVisible <- false
         sessionSettingsButton.IsVisible <- false
 
-        let leftGroup = Ui.hstack Tokens.space2 [ sidebarToggleButton :> Control; titleHost :> Control; generatingChip :> Control ]
+        // 顶栏左组不能用横向 StackPanel：它会用无限宽测量标题，长标题不会真正
+        // 进入 ellipsis，而是去挤右侧动作。Grid 把标题放进唯一可 shrink 的 Star 列。
+        let leftGroup = Grid(ColumnSpacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
+        leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+        leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
+        titleHost.MinWidth <- 0.0
+        titleHost.HorizontalAlignment <- HorizontalAlignment.Stretch
+        titleText.HorizontalAlignment <- HorizontalAlignment.Stretch
+        titleEditShell.HorizontalAlignment <- HorizontalAlignment.Stretch
+        Grid.SetColumn(sidebarToggleButton, 0)
+        Grid.SetColumn(titleHost, 1)
+        Grid.SetColumn(generatingChip, 2)
+        leftGroup.Children.Add sidebarToggleButton
+        leftGroup.Children.Add titleHost
+        leftGroup.Children.Add generatingChip
         let rightGroup = Ui.hstack Tokens.space1 [ stopButton :> Control; forkButton :> Control; sessionSettingsButton :> Control ]
         let headerDock = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
         DockPanel.SetDock(rightGroup, Dock.Right)

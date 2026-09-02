@@ -57,15 +57,6 @@ module Brand =
                     VerticalAlignment = VerticalAlignment.Center)
         tile :> Control
 
-/// 附件上传状态机所需的一点点状态。
-type AttachmentUpload = {
-    attachmentId: Guid
-    fileName: string
-    mediaType: string
-    size: int64
-    sha256: string
-}
-
 /// 导出会话为 Markdown。
 module Export =
 

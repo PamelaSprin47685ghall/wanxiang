@@ -69,26 +69,24 @@ module Menu =
             DockPanel.SetDock(hint, Dock.Right)
             dock.Children.Add hint
         let host =
-            Border(
+            ActionBorder(
                 Padding = Thickness(Tokens.space3, 7.0),
                 CornerRadius = CornerRadius Tokens.radiusSm,
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
                 Focusable = true,
                 Child = dock)
+        Avalonia.Automation.AutomationProperties.SetName(host, entry.label)
+        Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
+            host,
+            Nullable Avalonia.Automation.Peers.AutomationControlType.MenuItem)
         host.PointerEntered.Add(fun _ -> host.Background <- Tokens.hover)
         host.PointerExited.Add(fun _ -> host.Background <- Brushes.Transparent)
         host.GotFocus.Add(fun _ -> host.Background <- Tokens.hover)
         host.LostFocus.Add(fun _ -> host.Background <- Brushes.Transparent)
-        host.PointerReleased.Add(fun e ->
-            e.Handled <- true
+        Ui.onClick host (fun () ->
             overlay.ClosePopup()
             entry.action ())
-        host.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                overlay.ClosePopup()
-                entry.action ())
         host :> Control
 
     /// 打开一个菜单。`entries` 为空时不打开。
@@ -97,7 +95,12 @@ module Menu =
             let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = 1.0)
             for entry in entries do
                 panel.Children.Add(renderEntry overlay entry)
-            overlay.ShowPopup(anchor, panel :> Control, alignRight, 200.0)
+            let scroller =
+                ScrollViewer(
+                    Content = panel,
+                    HorizontalScrollBarVisibility = Primitives.ScrollBarVisibility.Disabled,
+                    VerticalScrollBarVisibility = Primitives.ScrollBarVisibility.Auto)
+            overlay.ShowPopup(anchor, scroller :> Control, alignRight, 200.0)
 
     /// 带分组标题的菜单（模型选择器：按服务商分组）。
     let showGrouped (overlay: OverlayHost) (anchor: Control) (alignRight: bool) (groups: (string * MenuEntry list) list) =
@@ -144,7 +147,7 @@ module Menu =
         row.Children.Add caption
         row.Children.Add chevron
         let host =
-            Border(
+            ActionBorder(
                 Background = Tokens.surface,
                 BorderBrush = Tokens.border,
                 BorderThickness = Thickness 1.0,
@@ -154,14 +157,15 @@ module Menu =
                 Focusable = true,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = row)
+        Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
+            host,
+            Nullable Avalonia.Automation.Peers.AutomationControlType.ComboBox)
         host.PointerEntered.Add(fun _ -> host.BorderBrush <- Tokens.line)
         host.PointerExited.Add(fun _ -> host.BorderBrush <- Tokens.border)
         let openMenu () = showGrouped overlay (host :> Control) false (optionsOf ())
-        host.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            openMenu ())
+        Ui.onClick host openMenu
         host.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space || e.Key = Key.Down then
+            if e.Key = Key.Down then
                 e.Handled <- true
                 openMenu ())
         host, (fun text -> caption.Text <- text)

@@ -60,8 +60,9 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             timeoutBox.Text <- string server.callTimeoutSeconds
         | None -> timeoutBox.Text <- "60"
 
-        let enabledToggle, readEnabled, _ =
+        let enabledToggle, readEnabled, _, _ =
             Ui.toggle (existing |> Option.map (fun s -> s.enabled) |> Option.defaultValue true) ignore
+        Avalonia.Automation.AutomationProperties.SetName(enabledToggle, "启用这个服务器")
         let enabledRow =
             let row = DockPanel(LastChildFill = false)
             let caption = Ui.label "启用这个服务器"
@@ -72,6 +73,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             row
 
         let save () =
+            for box in [ idBox; commandBox; urlBox; timeoutBox ] do Ui.clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
             let command = if isNull commandBox.Text then "" else commandBox.Text.Trim()
             let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
@@ -81,16 +83,23 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 |> Array.map (fun s -> s.Trim())
                 |> Array.filter (String.IsNullOrWhiteSpace >> not)
                 |> List.ofArray
-            let timeout =
-                match Int32.TryParse(if isNull timeoutBox.Text then "" else timeoutBox.Text.Trim()) with
-                | true, value when value > 0 -> value
-                | _ -> 60
-            if String.IsNullOrWhiteSpace id then actions.toast "稳定标识不能为空。" Warning
+            let timeoutResult = Int32.TryParse(if isNull timeoutBox.Text then "" else timeoutBox.Text.Trim())
+            if String.IsNullOrWhiteSpace id then
+                Ui.setFieldError idBox "稳定标识不能为空。"
+                idBox.Focus() |> ignore
             elif String.IsNullOrWhiteSpace command && String.IsNullOrWhiteSpace url then
-                actions.toast "本地命令与远程端点至少填一个。" Warning
+                Ui.setFieldError commandBox "本地命令与远程端点至少填一个。"
+                Ui.setFieldError urlBox "本地命令与远程端点至少填一个。"
+                commandBox.Focus() |> ignore
             elif not (String.IsNullOrWhiteSpace command) && not (String.IsNullOrWhiteSpace url) then
-                actions.toast "本地命令与远程端点只能填一个。" Warning
+                Ui.setFieldError commandBox "与远程端点只能填写一个。"
+                Ui.setFieldError urlBox "与本地命令只能填写一个。"
+                commandBox.Focus() |> ignore
+            elif not (fst timeoutResult) || snd timeoutResult <= 0 then
+                Ui.setFieldError timeoutBox "请输入大于 0 的秒数。"
+                timeoutBox.Focus() |> ignore
             else
+                let timeout = snd timeoutResult
                 actions.upsertMcp(
                     mcpPayload id (if isNull labelBox.Text then "" else labelBox.Text.Trim()) command args url timeout (readEnabled ()))
                 overlay.CloseDialog()
@@ -118,7 +127,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let scroller =
             ScrollViewer(
                 Content = form,
-                MaxHeight = 560.0,
+                MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
         overlay.ShowDialog(scroller :> Control, 520.0)

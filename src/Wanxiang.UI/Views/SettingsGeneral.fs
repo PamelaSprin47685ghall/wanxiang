@@ -29,6 +29,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
 
     let mutable readAutoTitle: unit -> bool = fun () -> true
     let mutable setAutoTitle: bool -> unit = ignore
+    let mutable syncAppearance: UiPrefs -> unit = ignore
 
     let floatText (value: float option) =
         match value with
@@ -58,8 +59,14 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             column.Children.Add note
             column :> Control
 
+    let labeledInput (text: string) (hint: string) (box: TextBox) : Control =
+        let column = labeled text hint (box.Parent :?> Control) :?> StackPanel
+        column.Children.Add(Ui.fieldValidationMessage box)
+        column :> Control
+
     let switchRow (title: string) (hint: string) (initial: bool) (onChanged: bool -> unit) : Control * (unit -> bool) * (bool -> unit) =
-        let toggle, read, write = Ui.toggle initial onChanged
+        let toggle, read, write, flip = Ui.toggle initial onChanged
+        Avalonia.Automation.AutomationProperties.SetName(toggle, title)
         let caption = Ui.label title
         let note = Ui.caption hint
         let column = Ui.vstack 1.0 [ caption :> Control; note :> Control ]
@@ -67,6 +74,12 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         DockPanel.SetDock(toggle, Dock.Right)
         row.Children.Add toggle
         row.Children.Add column
+        row.MinHeight <- 40.0
+        row.Cursor <- new Cursor(StandardCursorType.Hand)
+        row.PointerReleased.Add(fun e ->
+            if e.InitialPressMouseButton = MouseButton.Left then
+                e.Handled <- true
+                flip ())
         row :> Control, read, write
 
     member this.SetCatalog(next: Catalog) =
@@ -80,25 +93,64 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         instructionsBox.Text <- g.instructions |> Option.defaultValue ""
         setAutoTitle g.autoTitle
 
-    member this.SetPrefs(next: UiPrefs) = prefs <- next
+    member this.SetPrefs(next: UiPrefs) =
+        prefs <- next
+        syncAppearance next
 
     member private this.SaveGeneration() =
-        let payload = JsonObject()
-        match parseFloatOpt temperatureBox.Text with
-        | Some v -> payload["temperature"] <- v
-        | None -> payload["temperature"] <- null
-        match parseFloatOpt topPBox.Text with
-        | Some v -> payload["topP"] <- v
-        | None -> payload["topP"] <- null
-        match parseIntOpt maxTokensBox.Text with
-        | Some v -> payload["maxTokens"] <- v
-        | None -> payload["maxTokens"] <- null
-        let instructions = if isNull instructionsBox.Text then "" else instructionsBox.Text.Trim()
-        payload["instructions"] <- if String.IsNullOrWhiteSpace instructions then null else JsonNode.op_Implicit instructions
-        payload["maxContextMessages"] <- (parseIntOpt contextBox.Text |> Option.defaultValue catalog.generation.maxContextMessages)
-        payload["maxToolRounds"] <- (parseIntOpt toolRoundsBox.Text |> Option.defaultValue catalog.generation.maxToolRounds)
-        payload["autoTitle"] <- readAutoTitle ()
-        actions.updateGeneration payload
+        let fields = [ temperatureBox; topPBox; maxTokensBox; contextBox; toolRoundsBox ]
+        for box in fields do Ui.clearFieldError box
+        let mutable firstInvalid: TextBox option = None
+        let fail box message =
+            Ui.setFieldError box message
+            if firstInvalid.IsNone then firstInvalid <- Some box
+        let raw (box: TextBox) = if isNull box.Text then "" else box.Text.Trim()
+        let parseOptionalFloat box valid message =
+            let text = raw box
+            if String.IsNullOrWhiteSpace text then None
+            else
+                match Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
+                | true, value when valid value -> Some value
+                | _ ->
+                    fail box message
+                    None
+        let parseOptionalPositiveInt box =
+            let text = raw box
+            if String.IsNullOrWhiteSpace text then None
+            else
+                match Int32.TryParse text with
+                | true, value when value > 0 -> Some value
+                | _ ->
+                    fail box "请输入大于 0 的整数，或留空。"
+                    None
+        let parseRequiredInt box valid message =
+            match Int32.TryParse(raw box) with
+            | true, value when valid value -> Some value
+            | _ ->
+                fail box message
+                None
+
+        let temperature =
+            parseOptionalFloat temperatureBox (fun value -> value >= 0.0 && value <= 2.0) "请输入 0–2 之间的数字，或留空。"
+        let topP =
+            parseOptionalFloat topPBox (fun value -> value > 0.0 && value <= 1.0) "请输入大于 0 且不超过 1 的数字，或留空。"
+        let maxTokens = parseOptionalPositiveInt maxTokensBox
+        let contextMessages = parseRequiredInt contextBox (fun value -> value >= 0) "请输入 0 或正整数。"
+        let toolRounds = parseRequiredInt toolRoundsBox (fun value -> value > 0) "请输入大于 0 的整数。"
+
+        match firstInvalid with
+        | Some box -> box.Focus() |> ignore
+        | None ->
+            let payload = JsonObject()
+            match temperature with Some v -> payload["temperature"] <- v | None -> payload["temperature"] <- null
+            match topP with Some v -> payload["topP"] <- v | None -> payload["topP"] <- null
+            match maxTokens with Some v -> payload["maxTokens"] <- v | None -> payload["maxTokens"] <- null
+            let instructions = if isNull instructionsBox.Text then "" else instructionsBox.Text.Trim()
+            payload["instructions"] <- if String.IsNullOrWhiteSpace instructions then null else JsonNode.op_Implicit instructions
+            payload["maxContextMessages"] <- contextMessages.Value
+            payload["maxToolRounds"] <- toolRounds.Value
+            payload["autoTitle"] <- readAutoTitle ()
+            actions.updateGeneration payload
 
     member this.BuildGeneration() : Control =
         let autoTitleRow, readAuto, writeAuto =
@@ -110,18 +162,32 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         let grid = Grid(ColumnSpacing = Tokens.space3, RowSpacing = Tokens.space3)
         grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-        let add (control: Control) (row: int) (column: int) =
-            Grid.SetRow(control, row)
-            Grid.SetColumn(control, column)
-            grid.Children.Add control
-        grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-        grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-        grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-        add (labeled "Temperature" "越高越发散。留空则用服务商默认值。" (temperatureBox.Parent :?> Control)) 0 0
-        add (labeled "Top P" "核采样阈值，0–1。" (topPBox.Parent :?> Control)) 0 1
-        add (labeled "最大输出 token" "限制单次回复长度。" (maxTokensBox.Parent :?> Control)) 1 0
-        add (labeled "上下文消息上限" "每次请求最多携带多少条历史，防止长会话撞上模型上限。" (contextBox.Parent :?> Control)) 1 1
-        add (labeled "工具调用轮数上限" "模型连续调用工具超过这个轮数就中止本次生成。" (toolRoundsBox.Parent :?> Control)) 2 0
+        for _ in 1 .. 5 do grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
+        let temperatureField = labeledInput "Temperature" "越高越发散。留空则用服务商默认值。" temperatureBox
+        let topPField = labeledInput "Top P" "核采样阈值，0–1。" topPBox
+        let maxTokensField = labeledInput "最大输出 token" "限制单次回复长度。" maxTokensBox
+        let contextField = labeledInput "上下文消息上限" "每次请求最多携带多少条历史，防止长会话撞上模型上限。" contextBox
+        let toolRoundsField = labeledInput "工具调用轮数上限" "模型连续调用工具超过这个轮数就中止本次生成。" toolRoundsBox
+        for control in [ temperatureField; topPField; maxTokensField; contextField; toolRoundsField ] do grid.Children.Add control
+        let applyGridLayout width =
+            let single = width > 0.0 && width < LayoutPolicy.formSingleColumnBreakpoint
+            grid.ColumnDefinitions[1].Width <-
+                if single then GridLength(0.0) else GridLength(1.0, GridUnitType.Star)
+            let place (control: Control) row column =
+                Grid.SetRow(control, row)
+                Grid.SetColumn(control, column)
+            if single then
+                [ temperatureField; topPField; maxTokensField; contextField; toolRoundsField ]
+                |> List.iteri (fun row control -> place control row 0)
+            else
+                place temperatureField 0 0
+                place topPField 0 1
+                place maxTokensField 1 0
+                place contextField 1 1
+                place toolRoundsField 2 0
+        grid.PropertyChanged.Add(fun args ->
+            if args.Property = Visual.BoundsProperty then applyGridLayout grid.Bounds.Width)
+        applyGridLayout grid.Bounds.Width
         Ui.vstack
             Tokens.space4
             [ Ui.vstack
@@ -178,22 +244,36 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             row.Children.Add column
             row :> Control
 
-        let enterRow, _, _ =
+        let enterRow, _, setEnterSends =
             switchRow "Enter 直接发送" "关闭后用 Ctrl+Enter 发送，Enter 换行。" prefs.enterSends (fun value ->
                 prefs <- { prefs with enterSends = value }
                 onPrefsChanged prefs)
-        let collapseRow, _, _ =
+        let collapseRow, _, setCollapseReasoning =
             switchRow "完成后收起思考过程" "生成结束时自动折叠模型的思维链。" prefs.autoCollapseReasoning (fun value ->
                 prefs <- { prefs with autoCollapseReasoning = value }
                 onPrefsChanged prefs)
-        let codeWrapRow, _, _ =
+        let codeWrapRow, _, setCodeWrap =
             switchRow "代码块长行折行" "关闭时长行横向滚动；开启后折行显示，一屏读完。" prefs.codeWrap (fun value ->
                 prefs <- { prefs with codeWrap = value }
                 onPrefsChanged prefs)
-        let archivedRow, _, _ =
+        let archivedRow, _, setArchived =
             switchRow "在侧栏显示已归档会话" "归档会话默认收起，避免长列表。" prefs.showArchived (fun value ->
                 prefs <- { prefs with showArchived = value }
                 onPrefsChanged prefs)
+        let motionRow, _, setReduceMotion =
+            switchRow "减少动态效果" "停止加载指示器等持续旋转；状态变化仍会即时显示。" prefs.reduceMotion (fun value ->
+                prefs <- { prefs with reduceMotion = value }
+                onPrefsChanged prefs)
+
+        syncAppearance <- fun next ->
+            setThemeText (ThemePreference.label next.theme)
+            fontSizeCaption.Text <- sprintf "%.1f pt" next.fontScale
+            setEnterSends next.enterSends
+            setCollapseReasoning next.autoCollapseReasoning
+            setCodeWrap next.codeWrap
+            setArchived next.showArchived
+            setReduceMotion next.reduceMotion
+        syncAppearance prefs
 
         Ui.vstack
             Tokens.space4
@@ -208,7 +288,8 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
               enterRow
               collapseRow
               codeWrapRow
-              archivedRow ]
+              archivedRow
+              motionRow ]
         :> Control
 
     member this.BuildAbout(instanceId: string, serverUrl: string) : Control =

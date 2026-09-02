@@ -97,20 +97,18 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 Foreground = Tokens.text,
                 VerticalAlignment = VerticalAlignment.Center)
         let host =
-            Border(
+            ActionBorder(
                 Padding = Thickness(Tokens.space3, 8.0),
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 Background = Brushes.Transparent,
                 Cursor = new Cursor(StandardCursorType.Hand),
                 Focusable = true,
                 Child = Ui.hstack Tokens.space2 [ glyph; caption :> Control ])
-        host.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            this.Select section)
-        host.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                this.Select section)
+        Avalonia.Automation.AutomationProperties.SetName(host, SettingsSection.label section)
+        Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
+            host,
+            Nullable Avalonia.Automation.Peers.AutomationControlType.ListItem)
+        Ui.onClick host (fun () -> this.Select section)
         navButtons[section] <- host
         host
 
@@ -125,8 +123,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
 
     member this.SetPrefs(prefs: UiPrefs) =
         generalPanel.SetPrefs prefs
-        invalidate [ Appearance ]
-        if current = Appearance then contentHost.Content <- renderSection current
+        // Appearance 面板不能在用户点一次开关/字号后把自己销毁再重建：
+        // 那会丢焦点、重置滚动位置，并重复注册主题事件。面板内部通过 SetPrefs
+        // 同步现有控件；只有尚未构建时才在首次进入时读取最新 prefs。
 
     member this.SetConnection(instance: string, url: string) =
         instanceId <- instance
@@ -201,7 +200,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
 
         let applyResponsive width =
             if width > 0.0 then
-                let compact = width < 720.0
+                let compact = width < LayoutPolicy.compactBreakpoint
                 if responsiveCompact <> Some compact then
                     responsiveCompact <- Some compact
                     if compact then

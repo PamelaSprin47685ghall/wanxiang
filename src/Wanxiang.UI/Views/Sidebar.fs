@@ -5,9 +5,11 @@ open Avalonia
 open Avalonia.Controls
 open Avalonia.Controls.Shapes
 open Avalonia.Controls.Primitives
+open Avalonia.Controls.Templates
 open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Threading
 
 /// 侧栏对外暴露的动作。
 type SidebarActions = {
@@ -22,7 +24,13 @@ type SidebarActions = {
     openSettings: unit -> unit
     reconnect: unit -> unit
     toggleArchivedVisibility: unit -> unit
+    closeNavigation: unit -> unit
 }
+
+type private SidebarListItem =
+    | SectionHeader of string
+    | ConversationRow of ConversationSummary
+    | ArchivedToggle
 
 /// 会话侧栏。
 ///
@@ -36,13 +44,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
     let searchShell, searchBox = Ui.textField "搜索会话"
     let clearSearchButton = Ui.iconButton Icons.close "清空搜索"
-    let listPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = 1.0)
-    let listScroller =
-        ScrollViewer(
-            Content = listPanel,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Padding = Thickness(Tokens.space2, 0.0, Tokens.space2, Tokens.space2))
+    let compactBackButton = Ui.iconButton Icons.arrowLeft "返回对话"
+    let newConversationButton = Ui.iconButtonAccent Icons.plus "新建会话（Ctrl+N）"
+    let settingsButton = Ui.iconButton Icons.gear "设置（Ctrl+,）"
+    let conversationList =
+        ListBox(
+            Background = Brushes.Transparent,
+            BorderThickness = Thickness 0.0,
+            Focusable = false)
     let emptyState = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, IsVisible = false, Margin = Thickness(Tokens.space5, Tokens.space8, Tokens.space5, 0.0))
     let emptyTitle =
         TextBlock(
@@ -74,9 +83,16 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let mutable activeId: Guid option = None
     let mutable showArchived = false
     let mutable connected = false
+    let rowHosts = System.Collections.Generic.Dictionary<Guid, Border>()
+    let mutable visibleRowIds: Guid array = [||]
+    let flatIndexByConversation = System.Collections.Generic.Dictionary<Guid, int>()
 
     do
         clearSearchButton.IsVisible <- false
+        compactBackButton.IsVisible <- false
+        Ui.onClick compactBackButton actions.closeNavigation
+        Ui.onClick newConversationButton actions.newConversation
+        Ui.onClick settingsButton actions.openSettings
         Ui.onClick clearSearchButton (fun () ->
             searchBox.Text <- ""
             searchBox.Focus() |> ignore)
@@ -98,14 +114,35 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         emptyState.Children.Add emptyTitle
         emptyState.Children.Add emptyHint
 
+    member private _.ApplyRowState(id: Guid, host: Border) =
+        let isActive = activeId = Some id
+        host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
+        host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
+
+    member private _.FocusRowAt(index: int) =
+        if index >= 0 && index < visibleRowIds.Length then
+            let id = visibleRowIds[index]
+            match flatIndexByConversation.TryGetValue id with
+            | true, flatIndex ->
+                conversationList.ScrollIntoView flatIndex
+                Dispatcher.UIThread.Post(fun () ->
+                    match rowHosts.TryGetValue id with
+                    | true, host -> host.Focus NavigationMethod.Directional |> ignore
+                    | _ -> ())
+            | _ -> ()
+
+    member private this.MoveRowFocus(id: Guid, delta: int) =
+        match visibleRowIds |> Array.tryFindIndex ((=) id) with
+        | Some index -> this.FocusRowAt(Math.Clamp(index + delta, 0, visibleRowIds.Length - 1))
+        | None -> ()
+
     /// 一行会话。选中态用强调色浅底 + 左缘，生成中用一个呼吸点。
-    member private _.RenderRow(summary: ConversationSummary) : Control =
-        let isActive = activeId = Some summary.id
+    member private this.RenderRow(summary: ConversationSummary) : Control =
         let title =
             TextBlock(
                 Text = summary.title,
                 FontSize = Tokens.fontSmall,
-                FontWeight = (if isActive then FontWeight.Medium else FontWeight.Medium),
+                FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
                 TextTrimming = TextTrimming.CharacterEllipsis)
         // 自动标题取自回复首行，预览又从同一段正文开头截取，
@@ -150,16 +187,26 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         column.Children.Add titleRow
         column.Children.Add preview
         let host =
-            Border(
+            ActionBorder(
                 Padding = Thickness(Tokens.space3, 7.0),
                 CornerRadius = CornerRadius Tokens.radiusMd,
-                Background = (if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush),
-                BorderBrush = (if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush),
+                Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
                 BorderThickness = Thickness(2.0, 0.0, 0.0, 0.0),
                 Cursor = handCursor,
                 Focusable = true,
                 MinHeight = 44.0,
                 Child = column)
+        this.ApplyRowState(summary.id, host)
+        rowHosts[summary.id] <- host
+        host.DetachedFromVisualTree.Add(fun _ ->
+            match rowHosts.TryGetValue summary.id with
+            | true, current when obj.ReferenceEquals(current, host) -> rowHosts.Remove summary.id |> ignore
+            | _ -> ())
+        Avalonia.Automation.AutomationProperties.SetName(host, summary.title)
+        Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
+            host,
+            Nullable Avalonia.Automation.Peers.AutomationControlType.ListItem)
         let openMenu () =
             Menu.show
                 overlay
@@ -176,26 +223,35 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ]
         Ui.onClick moreButton (fun () -> openMenu ())
-        if not isActive then
-            host.PointerEntered.Add(fun _ ->
-                host.Background <- Tokens.hover
-                moreButton.IsVisible <- true)
-            host.PointerExited.Add(fun _ ->
-                host.Background <- Brushes.Transparent
-                if not moreButton.IsFocused then moreButton.IsVisible <- false)
-        else
-            host.PointerEntered.Add(fun _ -> moreButton.IsVisible <- true)
-            host.PointerExited.Add(fun _ -> if not moreButton.IsFocused then moreButton.IsVisible <- false)
-        host.GotFocus.Add(fun _ -> moreButton.IsVisible <- true)
-        host.LostFocus.Add(fun _ -> if not moreButton.IsFocused then moreButton.IsVisible <- false)
-        host.PointerReleased.Add(fun e ->
-            if e.InitialPressMouseButton = MouseButton.Left then
-                e.Handled <- true
-                actions.openConversation summary.id)
+        host.PointerEntered.Add(fun _ ->
+            if activeId <> Some summary.id then host.Background <- Tokens.hover
+            moreButton.IsVisible <- true)
+        host.PointerExited.Add(fun _ ->
+            this.ApplyRowState(summary.id, host)
+            if not moreButton.IsFocused then moreButton.IsVisible <- false)
+        host.GotFocus.Add(fun _ ->
+            if activeId <> Some summary.id then host.Background <- Tokens.hover
+            moreButton.IsVisible <- true)
+        host.LostFocus.Add(fun _ ->
+            this.ApplyRowState(summary.id, host)
+            if not moreButton.IsFocused then moreButton.IsVisible <- false)
+        Ui.onClick host (fun () -> actions.openConversation summary.id)
         host.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
+            if e.Key = Key.Down then
                 e.Handled <- true
-                actions.openConversation summary.id)
+                this.MoveRowFocus(summary.id, 1)
+            elif e.Key = Key.Up then
+                e.Handled <- true
+                this.MoveRowFocus(summary.id, -1)
+            elif e.Key = Key.Home then
+                e.Handled <- true
+                this.FocusRowAt 0
+            elif e.Key = Key.End then
+                e.Handled <- true
+                this.FocusRowAt(visibleRowIds.Length - 1)
+            elif e.Key = Key.F10 && e.KeyModifiers.HasFlag KeyModifiers.Shift then
+                e.Handled <- true
+                openMenu ())
         host.PointerReleased.Add(fun e ->
             if e.InitialPressMouseButton = MouseButton.Right then
                 e.Handled <- true
@@ -210,25 +266,25 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         host :> Control
 
     member private this.Rebuild() =
-        listPanel.Children.Clear()
+        rowHosts.Clear()
+        flatIndexByConversation.Clear()
         let query = if isNull searchBox.Text then "" else searchBox.Text
         let visible =
             summaries
             |> List.filter (fun s -> showArchived || not s.archived)
             |> List.filter (ConversationSummary.matches query)
         let groups = ConversationSummary.group DateTimeOffset.Now visible
+        visibleRowIds <- groups |> List.collect (fun group -> group.items |> List.map (fun item -> item.id)) |> Array.ofList
+        let flattened = ResizeArray<SidebarListItem>()
         for group in groups do
-            let header = Ui.sectionLabel group.label
-            header.Margin <- Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space1)
-            listPanel.Children.Add header
+            flattened.Add(SectionHeader group.label)
             for item in group.items do
-                listPanel.Children.Add(this.RenderRow item)
+                flatIndexByConversation[item.id] <- flattened.Count
+                flattened.Add(ConversationRow item)
         let hasArchived = summaries |> List.exists (fun s -> s.archived)
         if hasArchived && not showArchived then
-            let toggle = Ui.button Ui.Ghost "显示已归档会话" actions.toggleArchivedVisibility
-            toggle.Margin <- Thickness(Tokens.space2, Tokens.space2, Tokens.space2, 0.0)
-            toggle.HorizontalAlignment <- HorizontalAlignment.Left
-            listPanel.Children.Add toggle
+            flattened.Add ArchivedToggle
+        conversationList.ItemsSource <- flattened
         emptyState.IsVisible <- List.isEmpty visible
         if List.isEmpty visible then
             if not connected then
@@ -248,8 +304,17 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
     member this.SetActive(id: Guid option) =
         if activeId <> id then
+            let previous = activeId
             activeId <- id
-            this.Rebuild()
+            let refresh key =
+                match key with
+                | Some value ->
+                    match rowHosts.TryGetValue value with
+                    | true, host -> this.ApplyRowState(value, host)
+                    | _ -> ()
+                | None -> ()
+            refresh previous
+            refresh id
 
     member this.SetShowArchived(value: bool) =
         if showArchived <> value then
@@ -261,6 +326,12 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         statusDot.Fill <- if isConnected then Tokens.success :> IBrush else Tokens.textFaint :> IBrush
         statusText.Text <- text
         this.Rebuild()
+
+    member _.SetCompactMode(value: bool) =
+        compactBackButton.IsVisible <- value
+        let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
+        for button in [ compactBackButton; newConversationButton; settingsButton; clearSearchButton ] do
+            Ui.setSquareTarget button size
 
     member _.FocusSearch() =
         searchBox.Focus() |> ignore
@@ -282,14 +353,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 LetterSpacing = 0.8,
                 VerticalAlignment = VerticalAlignment.Center)
         let brandRow = Ui.hstack Tokens.space2 [ brand; wordmark :> Control ]
-        let newButton = Ui.iconButtonAccent Icons.plus "新建会话（Ctrl+N）"
-        Ui.onClick newButton actions.newConversation
+        let leading = Ui.hstack Tokens.space1 [ compactBackButton :> Control; brandRow :> Control ]
         let header =
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
-            DockPanel.SetDock(brandRow, Dock.Left)
-            DockPanel.SetDock(newButton, Dock.Right)
-            dock.Children.Add brandRow
-            dock.Children.Add newButton
+            DockPanel.SetDock(leading, Dock.Left)
+            DockPanel.SetDock(newConversationButton, Dock.Right)
+            dock.Children.Add leading
+            dock.Children.Add newConversationButton
             Border(
                 Height = Tokens.barHeight,
                 Padding = Thickness(Tokens.space4, 0.0),
@@ -298,25 +368,30 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         searchBox.KeyDown.Add(fun e ->
             if e.Key = Key.Escape then
                 e.Handled <- true
-                searchBox.Text <- "")
+                searchBox.Text <- ""
+            elif e.Key = Key.Down && visibleRowIds.Length > 0 then
+                e.Handled <- true
+                this.FocusRowAt 0)
+        let searchDebounce = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 160.0)
+        searchDebounce.Tick.Add(fun _ ->
+            searchDebounce.Stop()
+            this.Rebuild())
         searchBox.TextChanged.Add(fun _ ->
             clearSearchButton.IsVisible <- not (String.IsNullOrWhiteSpace searchBox.Text)
-            this.Rebuild())
+            searchDebounce.Stop()
+            searchDebounce.Start())
         let searchArea = Border(Padding = Thickness(Tokens.space3, 0.0, Tokens.space3, Tokens.space2), Child = searchShell)
 
-        let settingsButton = Ui.iconButton Icons.gear "设置（Ctrl+,）"
-        Ui.onClick settingsButton actions.openSettings
-        let statusRow = Ui.hstack Tokens.space2 [ statusDot :> Control; statusText :> Control ]
-        statusRow.Cursor <- handCursor
-        statusRow.Focusable <- true
+        let statusRow =
+            ActionBorder(
+                Background = Brushes.Transparent,
+                CornerRadius = CornerRadius Tokens.radiusSm,
+                Cursor = handCursor,
+                Focusable = true,
+                Child = Ui.hstack Tokens.space2 [ statusDot :> Control; statusText :> Control ])
         ToolTip.SetTip(statusRow, "点击重新连接")
-        statusRow.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            actions.reconnect ())
-        statusRow.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                actions.reconnect ())
+        Avalonia.Automation.AutomationProperties.SetName(statusRow, "重新连接服务器")
+        Ui.onClick statusRow (fun () -> actions.reconnect ())
         let footer =
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(statusRow, Dock.Left)
@@ -330,8 +405,36 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 BorderThickness = Thickness(0.0, 1.0, 0.0, 0.0),
                 Child = dock)
 
+        conversationList.ItemsPanel <- FuncTemplate<Panel>(fun () -> VirtualizingStackPanel() :> Panel)
+        conversationList.ItemTemplate <-
+            FuncDataTemplate<SidebarListItem>(
+                (fun item _ ->
+                    match item with
+                    | SectionHeader label ->
+                        let header = Ui.sectionLabel label
+                        header.Margin <- Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space1)
+                        header :> Control
+                    | ConversationRow summary -> this.RenderRow summary
+                    | ArchivedToggle ->
+                        let toggle = Ui.button Ui.Ghost "显示已归档会话" actions.toggleArchivedVisibility
+                        toggle.Margin <- Thickness(Tokens.space2, Tokens.space2, Tokens.space2, 0.0)
+                        toggle.HorizontalAlignment <- HorizontalAlignment.Left
+                        toggle :> Control),
+                true)
+        conversationList.ContainerPrepared.Add(fun args ->
+            match args.Container with
+            | :? ListBoxItem as item ->
+                item.Focusable <- false
+                item.Padding <- Thickness 0.0
+                item.Margin <- Thickness 0.0
+                item.Background <- Brushes.Transparent
+                item.BorderThickness <- Thickness 0.0
+                item.HorizontalContentAlignment <- HorizontalAlignment.Stretch
+            | _ -> ())
+        Avalonia.Automation.AutomationProperties.SetName(conversationList, "会话列表")
+
         let body = Grid()
-        body.Children.Add listScroller
+        body.Children.Add conversationList
         body.Children.Add emptyState
 
         let layout = DockPanel()

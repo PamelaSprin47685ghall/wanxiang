@@ -46,6 +46,8 @@ type UiPrefs = {
     sidebarCollapsed: bool
     /// 是否展示归档会话
     showArchived: bool
+    /// 减少非必要动态效果
+    reduceMotion: bool
     /// 发送键：true = Enter 发送，false = Ctrl+Enter 发送
     enterSends: bool
     /// 窗口几何（桌面端）
@@ -69,6 +71,7 @@ module UiPrefs =
           sidebarWidth = Tokens.sidebarWidth
           sidebarCollapsed = false
           showArchived = false
+          reduceMotion = false
           enterSends = true
           windowWidth = 1240.0
           windowHeight = 800.0
@@ -135,6 +138,7 @@ module UiPrefs =
               sidebarWidth = floatOf "sidebarWidth" defaults.sidebarWidth |> clamp Tokens.sidebarMinWidth Tokens.sidebarMaxWidth
               sidebarCollapsed = boolOf "sidebarCollapsed" defaults.sidebarCollapsed
               showArchived = boolOf "showArchived" defaults.showArchived
+              reduceMotion = boolOf "reduceMotion" defaults.reduceMotion
               enterSends = boolOf "enterSends" defaults.enterSends
               windowWidth = floatOf "windowWidth" defaults.windowWidth |> clamp 900.0 6000.0
               windowHeight = floatOf "windowHeight" defaults.windowHeight |> clamp 600.0 4000.0
@@ -156,6 +160,7 @@ module UiPrefs =
             o["sidebarWidth"] <- prefs.sidebarWidth
             o["sidebarCollapsed"] <- prefs.sidebarCollapsed
             o["showArchived"] <- prefs.showArchived
+            o["reduceMotion"] <- prefs.reduceMotion
             o["enterSends"] <- prefs.enterSends
             o["windowWidth"] <- prefs.windowWidth
             o["windowHeight"] <- prefs.windowHeight

@@ -1,0 +1,202 @@
+namespace Wanxiang.UI
+
+open System
+open System.Collections.Generic
+open Avalonia.Input
+open Wanxiang.Core
+
+/// Composer 中的一条附件草稿。用 attachmentId 而不是 sha256 作为身份：
+/// 同一文件被选择两次时，两条草稿仍能独立上传、删除和完成。
+type PendingAttachment = {
+    attachmentId: Guid
+    sha256: string
+    size: int64
+    mediaType: string
+    fileName: string
+    /// 上传中时为 false
+    ready: bool
+}
+
+/// 附件传输所需元数据。协议层完成/失败事件通过 attachmentId 回来。
+type AttachmentUpload = {
+    attachmentId: Guid
+    fileName: string
+    mediaType: string
+    size: int64
+    sha256: string
+}
+
+/// 附件草稿状态机。UI 只消费 Items，不再自己同时维护 pending list + upload dictionary。
+type AttachmentDraftController() =
+    let uploads = Dictionary<Guid, AttachmentUpload>()
+    let mutable items: PendingAttachment list = []
+
+    member _.Items = items
+    member _.HasReady = items |> List.exists _.ready
+    member _.HasUploading = items |> List.exists (fun item -> not item.ready)
+
+    member _.Begin(upload: AttachmentUpload) =
+        uploads[upload.attachmentId] <- upload
+        items <-
+            items
+            @ [ { attachmentId = upload.attachmentId
+                  sha256 = upload.sha256
+                  size = upload.size
+                  mediaType = upload.mediaType
+                  fileName = upload.fileName
+                  ready = false } ]
+        items
+
+    /// 用户从草稿中移除后，底层上传可以自然完成，但不会再重新出现在 Composer。
+    member _.Remove(attachmentId: Guid) =
+        items <- items |> List.filter (fun item -> item.attachmentId <> attachmentId)
+        items
+
+    /// 返回上传元数据，以及完成时这条附件是否仍在用户草稿里。
+    member _.Complete(attachmentId: Guid, committedSize: int64) : (AttachmentUpload * bool) option =
+        match uploads.TryGetValue attachmentId with
+        | true, upload ->
+            uploads.Remove attachmentId |> ignore
+            let mutable stillDrafted = false
+            items <-
+                items
+                |> List.map (fun item ->
+                    if item.attachmentId = attachmentId then
+                        stillDrafted <- true
+                        { item with ready = true; size = committedSize }
+                    else
+                        item)
+            Some(upload, stillDrafted)
+        | _ -> None
+
+    /// 失败时只移除对应的一条草稿；相同 sha256 的其它附件不受影响。
+    member _.Abort(attachmentId: Guid) : (AttachmentUpload * bool) option =
+        match uploads.TryGetValue attachmentId with
+        | true, upload ->
+            uploads.Remove attachmentId |> ignore
+            let stillDrafted = items |> List.exists (fun item -> item.attachmentId = attachmentId)
+            items <- items |> List.filter (fun item -> item.attachmentId <> attachmentId)
+            Some(upload, stillDrafted)
+        | _ -> None
+
+    /// 发送是草稿的原子消费点。只要仍有 uploading，就拒绝消费。
+    member _.TryConsumeReady() : PendingAttachment list option =
+        if items |> List.exists (fun item -> not item.ready) then
+            None
+        else
+            let consumed = items
+            items <- []
+            Some consumed
+
+/// 一个命令对应的 UI 后续动作。只有服务端 CommandCommitted 后才执行。
+type CommandFeedback = {
+    successMessage: string option
+    onCommitted: unit -> unit
+}
+
+/// request → commit/reject 的轻量状态机，避免 MainView 散落维护 invocation dictionary。
+type CommandFeedbackTracker() =
+    let pending = Dictionary<Guid, CommandFeedback>()
+
+    member _.Count = pending.Count
+
+    member _.Track(cmd: ClientCommand, successMessage: string option, onCommitted: unit -> unit) =
+        pending[ClientCommand.invocationId cmd] <-
+            { successMessage = successMessage
+              onCommitted = onCommitted }
+
+    member _.Commit(invocationId: Guid) =
+        match pending.TryGetValue invocationId with
+        | true, feedback ->
+            pending.Remove invocationId |> ignore
+            Some feedback
+        | _ -> None
+
+    member _.Reject(invocationId: Guid) = pending.Remove invocationId |> ignore
+    member _.Clear() = pending.Clear()
+
+/// 主壳导航的纯状态。视图只负责把这个状态投影成 Grid/Visibility；
+/// “窗口变窄时该开什么、Ctrl+B 在 compact/desktop 分别意味着什么”集中在这里。
+type NavigationSnapshot = {
+    compactMode: bool
+    compactNavigationOpen: bool
+    sidebarCollapsed: bool
+}
+
+type NavigationController(initialSidebarCollapsed: bool) =
+    let mutable state =
+        { compactMode = false
+          compactNavigationOpen = false
+          sidebarCollapsed = initialSidebarCollapsed }
+    let mutable viewportApplied = false
+
+    member _.State = state
+
+    /// 返回是否需要重新投影布局，以及更新后的状态。
+    member _.ApplyViewport(width: float, hasConversation: bool) : bool * NavigationSnapshot =
+        if width <= 0.0 then false, state
+        else
+            let compact = width < LayoutPolicy.compactBreakpoint
+            let changed = compact <> state.compactMode
+            let needsApply = changed || not viewportApplied
+            if needsApply then
+                viewportApplied <- true
+                state <-
+                    if compact then
+                        { state with
+                            compactMode = true
+                            compactNavigationOpen = if changed then not hasConversation else state.compactNavigationOpen }
+                    else
+                        { state with compactMode = false; compactNavigationOpen = false }
+            needsApply, state
+
+    member _.ToggleSidebar() =
+        state <-
+            if state.compactMode then
+                { state with compactNavigationOpen = not state.compactNavigationOpen }
+            else
+                { state with sidebarCollapsed = not state.sidebarCollapsed }
+        state
+
+    member _.SetCompactNavigation(opened: bool) =
+        if state.compactMode then state <- { state with compactNavigationOpen = opened }
+        state
+
+    member _.EnsureSearchVisible() =
+        state <-
+            if state.compactMode then { state with compactNavigationOpen = true }
+            elif state.sidebarCollapsed then { state with sidebarCollapsed = false }
+            else state
+        state
+
+/// 全局快捷键只做“按键 → 意图”解析；是否允许在 modal 打开时执行、
+/// 以及具体副作用由 MainView 决定。
+type ShortcutAction =
+    | Escape
+    | ToggleSidebar
+    | NewConversation
+    | FocusSearch
+    | OpenSettings
+    | ToggleTheme
+    | ExportConversation
+    | OpenConversationAt of int
+    | ShowShortcuts
+    | NoShortcut
+
+module ShortcutRouter =
+
+    let resolve (e: KeyEventArgs) =
+        let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
+        let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
+        if e.Key = Key.Escape then Escape
+        elif ctrl && e.Key = Key.B then ToggleSidebar
+        elif ctrl && e.Key = Key.N then NewConversation
+        elif ctrl && e.Key = Key.K then FocusSearch
+        elif ctrl && e.Key = Key.OemComma then OpenSettings
+        elif ctrl && shift && e.Key = Key.S then ToggleTheme
+        elif ctrl && shift && e.Key = Key.E then ExportConversation
+        elif ctrl && not shift && e.Key >= Key.D1 && e.Key <= Key.D9 then
+            OpenConversationAt(int e.Key - int Key.D1)
+        elif ctrl && (e.Key = Key.OemQuestion || e.Key = Key.Divide) then ShowShortcuts
+        elif e.Key = Key.F1 then ShowShortcuts
+        else NoShortcut

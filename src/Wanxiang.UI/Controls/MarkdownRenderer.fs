@@ -90,44 +90,68 @@ type MarkdownRenderer(
                     run.FontSize <- size - 0.5
                     block.Inlines.Add run
             | MdImage(alt, url) ->
-                let run = Run(sprintf "[%s]" alt)
+                // 默认不主动请求远程 Markdown 图片：避免阅读模型回复时向第三方
+                // 泄露网络信息或触发 tracking pixel。显式告诉用户这是隐私策略。
+                let label = if String.IsNullOrWhiteSpace alt then "远程图片" else alt
+                let run = Run(sprintf "[远程图片未加载：%s]" label)
                 run.Foreground <- Tokens.textFaint
                 block.Inlines.Add run
-                ToolTip.SetTip(block, url)
+                ToolTip.SetTip(block, sprintf "为保护隐私，默认不加载远程图片。来源：%s" url)
             | MdBreak -> block.Inlines.Add(LineBreak())
         block :> Control
 
     /// 链接需要能点。整段文本共用一个 TextBlock 时无法逐字命中，
     /// 因此只在段落里存在链接时，把段落拆成「文本 + 可点链接」的 WrapPanel。
-    member private this.RenderInlineRow(items: MdInline list, size: float, brush: IBrush) : Control =
+    member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush) : Control =
         let hasLink = items |> List.exists (function MdLink _ -> true | _ -> false)
         if not hasLink then
-            this.RenderInlines(items, size, FontWeight.Normal, brush)
+            this.RenderInlines(items, size, weight, brush)
         else
             let wrap = WrapPanel(Orientation = Orientation.Horizontal)
             let mutable buffer: MdInline list = []
             let flush () =
                 if not (List.isEmpty buffer) then
-                    let control = this.RenderInlines(List.rev buffer, size, FontWeight.Normal, brush)
+                    let control = this.RenderInlines(List.rev buffer, size, weight, brush)
                     wrap.Children.Add control
                     buffer <- []
+            let addLinkChunk (fullText: string) (chunk: string) (url: string) =
+                let linkText =
+                    TextBlock(
+                        Text = chunk,
+                        TextWrapping = TextWrapping.Wrap,
+                        FontSize = size,
+                        FontWeight = weight,
+                        Foreground = Tokens.accent,
+                        TextDecorations = TextDecorations.Underline,
+                        VerticalAlignment = VerticalAlignment.Center)
+                let link =
+                    ActionBorder(
+                        Background = Brushes.Transparent,
+                        Padding = Thickness 0.0,
+                        Cursor = handCursor,
+                        Focusable = true,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Child = linkText)
+                Avalonia.Automation.AutomationProperties.SetName(link, fullText)
+                Avalonia.Automation.AutomationProperties.SetHelpText(link, url)
+                Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
+                    link,
+                    Nullable Avalonia.Automation.Peers.AutomationControlType.Hyperlink)
+                ToolTip.SetTip(link, url)
+                Ui.onClick link (fun () -> openLink url)
+                wrap.Children.Add link
             for item in items do
                 match item with
                 | MdLink(text, url) ->
                     flush ()
-                    let link =
-                        TextBlock(
-                            Text = text,
-                            FontSize = size,
-                            Foreground = Tokens.accent,
-                            TextDecorations = TextDecorations.Underline,
-                            Cursor = handCursor,
-                            VerticalAlignment = VerticalAlignment.Center)
-                    ToolTip.SetTip(link, url)
-                    link.PointerReleased.Add(fun e ->
-                        e.Handled <- true
-                        openLink url)
-                    wrap.Children.Add link
+                    // WrapPanel 只能在 child 之间换行。超长 URL / hash 如果作为一个 child，
+                    // 就会撑破窄屏；按小段拆成多个同 URL 的 action，几何上可自然换行。
+                    if text.Length <= 40 then
+                        addLinkChunk text text url
+                    else
+                        for start in 0 .. 40 .. text.Length - 1 do
+                            let count = min 40 (text.Length - start)
+                            addLinkChunk text (text.Substring(start, count)) url
                 | other -> buffer <- other :: buffer
             flush ()
             wrap :> Control
@@ -177,10 +201,7 @@ type MarkdownRenderer(
 
         let headerButton (icon: IBrush -> Control) (tip: string) =
             let button = Ui.iconButton icon tip
-            button.Width <- 26.0
-            button.Height <- 26.0
-            button.MinWidth <- 26.0
-            button.MinHeight <- 26.0
+            Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             Ui.setIcon button icon Tokens.codeMuted
             button
 
@@ -195,13 +216,7 @@ type MarkdownRenderer(
                 Ui.setIcon copyButton Icons.copy Tokens.codeMuted
                 ToolTip.SetTip(copyButton, "复制代码"))
             timer.Start()
-        copyButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            doCopy ())
-        copyButton.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                doCopy ())
+        Ui.onClick copyButton doCopy
 
         // 长行原来只能横向滚动：一行长命令要么看不全，要么读一行拖一次。
         // 折行是逐块开关，初值取自 UI 偏好。
@@ -216,13 +231,7 @@ type MarkdownRenderer(
             wrapped <- not wrapped
             MarkdownRenderer.DefaultCodeWrap <- wrapped
             applyWrap ()
-        wrapButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            toggleWrap ())
-        wrapButton.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                toggleWrap ())
+        Ui.onClick wrapButton toggleWrap
         applyWrap ()
 
         let header =
@@ -272,7 +281,7 @@ type MarkdownRenderer(
                     let content =
                         if columnIndex < List.length cells then cells[columnIndex] else []
                     let cell =
-                        this.RenderInlines(
+                        this.RenderInlineRow(
                             content,
                             fontSize - 0.5,
                             (if isHeader then FontWeight.Medium else FontWeight.Normal),
@@ -319,11 +328,11 @@ type MarkdownRenderer(
         | MdParagraph [ MdMath(tex, true) ] -> this.RenderMath tex
         | MdHeading(level, items) ->
             let size = headingSize level
-            let control = this.RenderInlines(items, size, FontWeight.Medium, Tokens.text)
+            let control = this.RenderInlineRow(items, size, FontWeight.Medium, Tokens.text)
             control.Margin <- Thickness(0.0, (if level <= 2 then Tokens.space4 else Tokens.space3), 0.0, Tokens.space1)
             [ control ]
         | MdParagraph items ->
-            let control = this.RenderInlineRow(items, fontSize, Tokens.text)
+            let control = this.RenderInlineRow(items, fontSize, FontWeight.Normal, Tokens.text)
             control.Margin <- Thickness(0.0, 0.0, 0.0, Tokens.space2)
             [ control ]
         | MdList(ordered, items) ->
@@ -358,7 +367,7 @@ type MarkdownRenderer(
                             HorizontalAlignment = HorizontalAlignment.Left,
                             Child = dot)
                         :> Control
-                let body = this.RenderInlineRow(content, fontSize, Tokens.text)
+                let body = this.RenderInlineRow(content, fontSize, FontWeight.Normal, Tokens.text)
                 let row = DockPanel()
                 DockPanel.SetDock(marker, Dock.Left)
                 row.Children.Add marker
@@ -383,7 +392,7 @@ type MarkdownRenderer(
                     mark.Width <- 10.0
                     mark.Height <- 10.0
                     box.Child <- mark
-                let body = this.RenderInlineRow(content, fontSize, (if isChecked then Tokens.textMuted else Tokens.text))
+                let body = this.RenderInlineRow(content, fontSize, FontWeight.Normal, (if isChecked then Tokens.textMuted else Tokens.text))
                 let row = DockPanel()
                 DockPanel.SetDock(box, Dock.Left)
                 row.Children.Add box
