@@ -68,7 +68,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             Foreground = Tokens.textFaint,
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
-            LineHeight = 18.0)
+            LineHeight = ControlMetrics.sidebarStatusLineHeight)
 
     let statusDot = Ui.statusDot 7.0
     let statusText =
@@ -88,7 +88,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let flatIndexByConversation = System.Collections.Generic.Dictionary<Guid, int>()
 
     do
-        clearSearchButton.IsVisible <- false
+        Ui.setReservedActionVisible clearSearchButton false
         compactBackButton.IsVisible <- false
         Ui.onClick compactBackButton actions.closeNavigation
         Ui.onClick newConversationButton actions.newConversation
@@ -179,7 +179,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             DockPanel.SetDock(pin, Dock.Left)
             titleRow.Children.Add pin
         let moreButton = Ui.iconButton Icons.more "操作菜单"
-        moreButton.IsVisible <- false
+        Ui.setReservedActionVisible moreButton false
         DockPanel.SetDock(moreButton, Dock.Right)
         titleRow.Children.Add moreButton
         titleRow.Children.Add title
@@ -188,14 +188,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         column.Children.Add preview
         let host =
             ActionBorder(
-                Padding = Thickness(Tokens.space3, 7.0),
+                Padding = Thickness(Tokens.space3, ControlMetrics.sidebarRowPaddingY),
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
                 BorderThickness = Thickness(2.0, 0.0, 0.0, 0.0),
                 Cursor = handCursor,
                 Focusable = true,
-                MinHeight = 44.0,
+                MinHeight = ControlMetrics.sidebarRowMinHeight,
                 Child = column)
         this.ApplyRowState(summary.id, host)
         rowHosts[summary.id] <- host
@@ -225,16 +225,16 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         Ui.onClick moreButton (fun () -> openMenu ())
         host.PointerEntered.Add(fun _ ->
             if activeId <> Some summary.id then host.Background <- Tokens.hover
-            moreButton.IsVisible <- true)
+            Ui.setReservedActionVisible moreButton true)
         host.PointerExited.Add(fun _ ->
             this.ApplyRowState(summary.id, host)
-            if not moreButton.IsFocused then moreButton.IsVisible <- false)
+            if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
         host.GotFocus.Add(fun _ ->
             if activeId <> Some summary.id then host.Background <- Tokens.hover
-            moreButton.IsVisible <- true)
+            Ui.setReservedActionVisible moreButton true)
         host.LostFocus.Add(fun _ ->
             this.ApplyRowState(summary.id, host)
-            if not moreButton.IsFocused then moreButton.IsVisible <- false)
+            if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
         Ui.onClick host (fun () -> actions.openConversation summary.id)
         host.KeyDown.Add(fun e ->
             if e.Key = Key.Down then
@@ -377,7 +377,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             searchDebounce.Stop()
             this.Rebuild())
         searchBox.TextChanged.Add(fun _ ->
-            clearSearchButton.IsVisible <- not (String.IsNullOrWhiteSpace searchBox.Text)
+            Ui.setReservedActionVisible clearSearchButton (not (String.IsNullOrWhiteSpace searchBox.Text))
             searchDebounce.Stop()
             searchDebounce.Start())
         let searchArea = Border(Padding = Thickness(Tokens.space3, 0.0, Tokens.space3, Tokens.space2), Child = searchShell)

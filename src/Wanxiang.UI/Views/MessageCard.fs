@@ -94,7 +94,7 @@ module MessageCard =
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = ctx.fontSize - 1.5,
                 Foreground = Tokens.textMuted,
-                LineHeight = (ctx.fontSize - 1.5) * 1.6,
+                LineHeight = ReadingRhythm.secondaryLineHeight (ctx.fontSize - 1.5),
                 SelectionBrush = Tokens.accentSoft)
         let body, setBodyVisible = detailViewport (bodyText :> Control) (not collapsed)
         body.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
@@ -197,7 +197,7 @@ module MessageCard =
                 FontSize = Tokens.fontCaption,
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
-                LineHeight = 17.0,
+                LineHeight = ReadingRhythm.technicalLineHeight Tokens.fontCaption,
                 SelectionBrush = Tokens.accentSoft)
         let detail, setDetailVisible = detailViewport (detailText :> Control) false
         detail.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
@@ -247,7 +247,7 @@ module MessageCard =
                 FontSize = Tokens.fontSmall,
                 Foreground = (if missing then Tokens.textFaint else Tokens.text),
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                MaxWidth = 260.0,
+                MaxWidth = ControlMetrics.attachmentNameMaxWidth,
                 VerticalAlignment = VerticalAlignment.Center)
         let meta =
             TextBlock(
@@ -270,7 +270,7 @@ module MessageCard =
                     BorderBrush = Tokens.border,
                     BorderThickness = Thickness 1.0,
                     CornerRadius = CornerRadius Tokens.radiusMd,
-                    Padding = Thickness(Tokens.space3, 6.0),
+                    Padding = Thickness(Tokens.space3, ControlMetrics.attachmentRowPaddingY),
                     Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
                     HorizontalAlignment = HorizontalAlignment.Left,
                     Child = row)
@@ -280,7 +280,7 @@ module MessageCard =
                     BorderBrush = Tokens.border,
                     BorderThickness = Thickness 1.0,
                     CornerRadius = CornerRadius Tokens.radiusMd,
-                    Padding = Thickness(Tokens.space3, 6.0),
+                    Padding = Thickness(Tokens.space3, ControlMetrics.attachmentRowPaddingY),
                     Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
                     HorizontalAlignment = HorizontalAlignment.Left,
                     Cursor = handCursor,
@@ -313,18 +313,12 @@ module MessageCard =
                 VerticalAlignment = VerticalAlignment.Center)
         let addButton (icon: IBrush -> Control) (tip: string) (action: unit -> unit) =
             let button = Ui.iconButton icon tip
-            button.Width <- Tokens.iconButton
-            button.Height <- Tokens.iconButton
-            button.MinWidth <- Tokens.iconButton
-            button.MinHeight <- Tokens.iconButton
+            Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             Ui.onClick button action
             row.Children.Add button
         let addCopyButton (text: string) =
             let button = Ui.iconButton Icons.copy "复制"
-            button.Width <- Tokens.iconButton
-            button.Height <- Tokens.iconButton
-            button.MinWidth <- Tokens.iconButton
-            button.MinHeight <- Tokens.iconButton
+            Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             let doCopy () =
                 actions.copyText text
                 Ui.setIcon button Icons.check Tokens.success
@@ -367,7 +361,7 @@ module MessageCard =
                 FontSize = Tokens.fontCaption,
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
-                LineHeight = 18.0)
+                LineHeight = ReadingRhythm.helperLineHeight)
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = 3.0)
         column.Children.Add title
         column.Children.Add hint
@@ -475,7 +469,7 @@ module MessageCard =
                         TextWrapping = TextWrapping.Wrap,
                         FontSize = ctx.fontSize,
                         Foreground = Tokens.userBubbleText,
-                        LineHeight = ctx.fontSize * 1.6,
+                        LineHeight = ReadingRhythm.proseLineHeight ctx.fontSize,
                         SelectionBrush = Tokens.accentHover))
             else
                 body.Children.Add(renderer.RenderText message.text)

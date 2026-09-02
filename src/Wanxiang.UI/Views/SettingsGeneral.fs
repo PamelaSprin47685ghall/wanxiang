@@ -50,20 +50,6 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             | true, v -> Some v
             | _ -> None
 
-    let labeled (text: string) (hint: string) (control: Control) : Control =
-        let column = Ui.vstack 0.0 [ Ui.fieldLabel text :> Control; control ]
-        if String.IsNullOrWhiteSpace hint then column :> Control
-        else
-            let note = Ui.caption hint
-            note.Margin <- Thickness(2.0, 3.0, 0.0, 0.0)
-            column.Children.Add note
-            column :> Control
-
-    let labeledInput (text: string) (hint: string) (box: TextBox) : Control =
-        let column = labeled text hint (box.Parent :?> Control) :?> StackPanel
-        column.Children.Add(Ui.fieldValidationMessage box)
-        column :> Control
-
     let switchRow (title: string) (hint: string) (initial: bool) (onChanged: bool -> unit) : Control * (unit -> bool) * (bool -> unit) =
         let toggle, read, write, flip = Ui.toggle initial onChanged
         Avalonia.Automation.AutomationProperties.SetName(toggle, title)
@@ -163,11 +149,11 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         for _ in 1 .. 5 do grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-        let temperatureField = labeledInput "Temperature" "越高越发散。留空则用服务商默认值。" temperatureBox
-        let topPField = labeledInput "Top P" "核采样阈值，0–1。" topPBox
-        let maxTokensField = labeledInput "最大输出 token" "限制单次回复长度。" maxTokensBox
-        let contextField = labeledInput "上下文消息上限" "每次请求最多携带多少条历史，防止长会话撞上模型上限。" contextBox
-        let toolRoundsField = labeledInput "工具调用轮数上限" "模型连续调用工具超过这个轮数就中止本次生成。" toolRoundsBox
+        let temperatureField = Ui.inputFieldGroup "Temperature" "越高越发散。留空则用服务商默认值。" temperatureBox
+        let topPField = Ui.inputFieldGroup "Top P" "核采样阈值，0–1。" topPBox
+        let maxTokensField = Ui.inputFieldGroup "最大输出 token" "限制单次回复长度。" maxTokensBox
+        let contextField = Ui.inputFieldGroup "上下文消息上限" "每次请求最多携带多少条历史，防止长会话撞上模型上限。" contextBox
+        let toolRoundsField = Ui.inputFieldGroup "工具调用轮数上限" "模型连续调用工具超过这个轮数就中止本次生成。" toolRoundsBox
         for control in [ temperatureField; topPField; maxTokensField; contextField; toolRoundsField ] do grid.Children.Add control
         let applyGridLayout width =
             let single = width > 0.0 && width < LayoutPolicy.formSingleColumnBreakpoint
@@ -196,7 +182,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                     Ui.caption "这些是新会话的默认值。单个会话可以在会话设置里单独调整。" :> Control ]
               :> Control
               grid :> Control
-              labeled "默认系统指令" "会作为 system 消息随每次请求发送。" (instructionsBox.Parent :?> Control)
+              Ui.controlFieldGroup "默认系统指令" "会作为 system 消息随每次请求发送。" (instructionsBox.Parent :?> Control)
               autoTitleRow
               Ui.hairline () :> Control
               saveButton :> Control ]
@@ -282,7 +268,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                   [ Ui.heading "外观与交互" :> Control
                     Ui.caption "这些偏好只保存在本机，不会同步到服务端。" :> Control ]
               :> Control
-              labeled "主题" "深色主题是同一套纸感在低光下的版本。" (themeButton :> Control)
+              Ui.controlFieldGroup "主题" "深色主题是同一套纸感在低光下的版本。" (themeButton :> Control)
               fontRow
               Ui.hairline () :> Control
               enterRow

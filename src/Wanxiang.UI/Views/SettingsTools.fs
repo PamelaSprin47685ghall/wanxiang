@@ -23,7 +23,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             FontSize = Tokens.fontCaption,
             Foreground = Tokens.textMuted,
             TextWrapping = TextWrapping.Wrap,
-            LineHeight = 17.0)
+            LineHeight = ReadingRhythm.captionLineHeight)
     let mutable catalog = Catalog.empty
 
     let mcpPayload (id: string) (label: string) (command: string) (args: string list) (url: string) (timeout: int) (enabled: bool) =
@@ -154,7 +154,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 FontSize = Tokens.fontCaption,
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
-                LineHeight = 17.0,
+                LineHeight = ReadingRhythm.captionLineHeight,
                 Margin = Thickness(0.0, 2.0, 0.0, 0.0))
         let column = Ui.vstack 1.0 [ name :> Control; identifier :> Control; description :> Control ]
         let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)

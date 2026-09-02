@@ -8,6 +8,7 @@ open Avalonia.Input
 open Avalonia.Interactivity
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Threading
 
 /// 输入区对外暴露的动作。
 type ComposerActions = {
@@ -39,8 +40,8 @@ type Composer(actions: ComposerActions) as this =
             CaretBrush = Tokens.accent,
             FontSize = Tokens.fontReading,
             Padding = Thickness 0.0,
-            MinHeight = 26.0,
-            MaxHeight = 240.0,
+            MinHeight = ControlMetrics.composerInputMinHeight,
+            MaxHeight = ControlMetrics.composerInputMaxHeight,
             VerticalContentAlignment = VerticalAlignment.Center)
 
     let attachmentStrip =
@@ -71,7 +72,7 @@ type Composer(actions: ComposerActions) as this =
         ActionBorder(
             Background = Brushes.Transparent,
             CornerRadius = CornerRadius Tokens.radiusSm,
-            Padding = Thickness(Tokens.space2, 3.0),
+            Padding = Thickness(ControlMetrics.compactChipPaddingX, ControlMetrics.compactChipPaddingY),
             Cursor = new Cursor(StandardCursorType.Hand),
             Focusable = true,
             VerticalAlignment = VerticalAlignment.Center)
@@ -172,7 +173,7 @@ type Composer(actions: ComposerActions) as this =
                     FontSize = Tokens.fontMicro,
                     Foreground = Tokens.text,
                     TextTrimming = TextTrimming.CharacterEllipsis,
-                    MaxWidth = 150.0,
+                    MaxWidth = ControlMetrics.composerAttachmentNameMaxWidth,
                     VerticalAlignment = VerticalAlignment.Center)
             let size =
                 TextBlock(
@@ -181,7 +182,9 @@ type Composer(actions: ComposerActions) as this =
                     Foreground = Tokens.textFaint,
                     VerticalAlignment = VerticalAlignment.Center)
             let remove = Ui.iconButton Icons.close "移除"
-            Ui.onClick remove (fun () -> actions.removeAttachment attachment.attachmentId)
+            Ui.onClick remove (fun () ->
+                actions.removeAttachment attachment.attachmentId
+                Dispatcher.UIThread.Post(fun () -> input.Focus() |> ignore))
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1, VerticalAlignment = VerticalAlignment.Center)
             row.Children.Add icon
             row.Children.Add name
@@ -193,7 +196,7 @@ type Composer(actions: ComposerActions) as this =
                     BorderBrush = Tokens.border,
                     BorderThickness = Thickness 1.0,
                     CornerRadius = CornerRadius Tokens.radiusSm,
-                    Padding = Thickness(Tokens.space2, 3.0),
+                    Padding = Thickness(ControlMetrics.compactChipPaddingX, ControlMetrics.compactChipPaddingY),
                     Child = row))
         attachmentScroller.IsVisible <- not (List.isEmpty attachments)
 
@@ -276,7 +279,12 @@ type Composer(actions: ComposerActions) as this =
         column.Children.Add(Border(Height = 1.0, Background = Tokens.borderSoft))
         column.Children.Add footerRow
 
-        shell.Padding <- Thickness(Tokens.space3, Tokens.space2, Tokens.space2, Tokens.space2)
+        shell.Padding <-
+            Thickness(
+                ControlMetrics.composerShellPaddingX,
+                ControlMetrics.composerShellPaddingY,
+                Tokens.space2,
+                ControlMetrics.composerShellPaddingY)
         shell.Child <- column
         shell.BoxShadow <- Tokens.shadowSoft ()
 

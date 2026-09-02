@@ -11,6 +11,7 @@
     <Compile Include="Design/Tokens.fs" />
     <Compile Include="Design/LayoutPolicy.fs" />
     <Compile Include="Design/MotionPolicy.fs" />
+    <Compile Include="Design/Metrics.fs" />
     <Compile Include="Design/Icons.fs" />
     <Compile Include="Model/UiPrefs.fs" />
     <Compile Include="Model/MediaTypes.fs" />

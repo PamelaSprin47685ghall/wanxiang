@@ -95,16 +95,18 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let messagePanel =
         StackPanel(
             Orientation = Orientation.Vertical,
-            Spacing = Tokens.space6,
+            Spacing = ContentMetrics.messageGap,
             // 滚到底时末条消息与输入区之间的呼吸量。必须放在这里：
             // ScrollViewer.Padding 的下值不进可滚动范围（见 ScrollLayoutTests）。
             // 实测可见量比设定值小约 15pt，48 对应约 33pt 的净留白。
-            Margin = Thickness(0.0, 0.0, 0.0, 48.0),
-            HorizontalAlignment = HorizontalAlignment.Center)
+            Margin = Thickness(0.0, 0.0, 0.0, ContentMetrics.messageEndBreathing),
+            MaxWidth = Tokens.readingWidth,
+            HorizontalAlignment = HorizontalAlignment.Stretch)
     let scroller =
         ScrollViewer(
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
             // 下内边距对 ScrollViewer 无效（不计入可滚动范围，见 ScrollLayoutTests），
             // 末条消息与输入区之间的留白由 messagePanel 的下边距承担
             Padding = Thickness(Tokens.shellInset, Tokens.space5, Tokens.shellInset, 0.0))
@@ -115,7 +117,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Spacing = Tokens.space3,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            MaxWidth = 420.0,
+            MaxWidth = ContentMetrics.emptyStateMaxWidth,
             IsVisible = false)
     let emptyTitle =
         TextBlock(
@@ -132,7 +134,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Foreground = Tokens.textMuted,
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
-            LineHeight = 21.0)
+            LineHeight = ReadingRhythm.emptyStateLineHeight)
     let emptyActions = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Center)
     let mutable lastEmptyState: (ChatEmptyState * string option) option = None
 
@@ -161,12 +163,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleHost.Children.Add titleEditShell
         titleEditShell.IsVisible <- false
 
-    member private this.CommitTitle() =
+    member private this.CommitTitle(restoreFocus: bool) =
         let next = if isNull titleEditBox.Text then "" else titleEditBox.Text.Trim()
         titleEditShell.IsVisible <- false
         titleAction.IsVisible <- true
         if not (String.IsNullOrWhiteSpace next) && next <> titleText.Text then
             actions.renameTitle next
+        if restoreFocus then
+            Dispatcher.UIThread.Post(fun () -> titleAction.Focus(NavigationMethod.Tab) |> ignore)
 
     member private this.BeginTitleEdit() =
         if titleAction.IsVisible && titleAction.Focusable && not (String.IsNullOrWhiteSpace titleText.Text) then
@@ -387,12 +391,13 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleEditBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
-                this.CommitTitle()
+                this.CommitTitle true
             elif e.Key = Key.Escape then
                 e.Handled <- true
                 titleEditShell.IsVisible <- false
-                titleAction.IsVisible <- true)
-        titleEditBox.LostFocus.Add(fun _ -> if titleEditShell.IsVisible then this.CommitTitle())
+                titleAction.IsVisible <- true
+                Dispatcher.UIThread.Post(fun () -> titleAction.Focus(NavigationMethod.Tab) |> ignore))
+        titleEditBox.LostFocus.Add(fun _ -> if titleEditShell.IsVisible then this.CommitTitle false)
 
         Ui.onClick stopButton (fun () -> actions.stopGeneration ())
         Ui.onClick forkButton (fun () -> actions.forkFromHere ())
@@ -441,20 +446,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         emptyPanel.Children.Add emptyHint
         emptyPanel.Children.Add emptyActions
 
+        // 让 Avalonia 的 ContentPresenter 完成 reading column 的收缩/拉伸；
+        // `MaxWidth + Stretch` 取代手工监听 Viewport 后写 Width，避免 resize/scale 时
+        // 维护第二套宽度同步逻辑。
         scroller.Content <- messagePanel
-        // 阅读列必须是「可用宽度上限 readingWidth」的**显式**宽度：
-        // 居中对齐的 StackPanel 只会收缩到内容宽度，短消息会把整列挤成一条窄带。
-        scroller.PropertyChanged.Add(fun args ->
-            if args.Property = ScrollViewer.ViewportProperty || args.Property = Visual.BoundsProperty then
-                let available = scroller.Viewport.Width - Tokens.shellInset * 2.0
-                if available > 120.0 then
-                    messagePanel.Width <- min Tokens.readingWidth available)
         scroller.ScrollChanged.Add(fun _ ->
             let extent = scroller.Extent.Height
             let viewport = scroller.Viewport.Height
             let offset = scroller.Offset.Y
-            atBottom <- extent - viewport - offset < 48.0
-            scrollToBottomButton.IsVisible <- not atBottom && extent > viewport + 120.0
+            atBottom <- extent - viewport - offset < ContentMetrics.scrollBottomThreshold
+            scrollToBottomButton.IsVisible <- not atBottom && extent > viewport + ContentMetrics.scrollBottomRevealThreshold
             if offset <= 0.5 && extent > viewport then actions.requestOlderHistory ())
 
         scrollToBottomButton.IsVisible <- false

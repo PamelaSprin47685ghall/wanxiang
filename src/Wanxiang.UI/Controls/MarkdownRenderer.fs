@@ -44,7 +44,7 @@ type MarkdownRenderer(
                 FontSize = size,
                 FontWeight = weight,
                 Foreground = brush,
-                LineHeight = size * 1.65,
+                LineHeight = ReadingRhythm.proseLineHeight size,
                 SelectionBrush = Tokens.accentSoft)
         for item in items do
             match item with
@@ -78,7 +78,7 @@ type MarkdownRenderer(
                 block.PointerReleased.Add(fun _ -> ())
                 ToolTip.SetTip(block, url)
             | MdMath(tex, display) ->
-                match MathRender.tryInline (if display then size + 1.0 else size) (size * 1.65) tex with
+                match MathRender.tryInline (if display then size + 1.0 else size) (ReadingRhythm.proseLineHeight size) tex with
                 | Some visual -> block.Inlines.Add(MathRender.inlineContainer visual)
                 | None ->
                     // 没有脚本后端或 TeX 有语法错：按行内代码呈现原式，
@@ -162,7 +162,7 @@ type MarkdownRenderer(
                 FontFamily = Tokens.monoFontFamily,
                 FontSize = fontSize - 1.5,
                 Foreground = Tokens.codeText,
-                LineHeight = (fontSize - 1.5) * 1.6,
+                LineHeight = ReadingRhythm.technicalLineHeight (fontSize - 1.5),
                 Margin = Thickness(Tokens.blockPaddingX, Tokens.blockPaddingY),
                 SelectionBrush = Tokens.accentSoft)
         let brushOf kind : IBrush =
@@ -247,7 +247,7 @@ type MarkdownRenderer(
                 Background = Tokens.codeHeaderBg,
                 BorderBrush = Tokens.codeBorder,
                 BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0),
-                Padding = Thickness(Tokens.blockPaddingX, 4.0, Tokens.space2, 4.0),
+                Padding = Thickness(Tokens.blockPaddingX, Tokens.space1, Tokens.space2, Tokens.space1),
                 Child = dock)
 
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
@@ -259,7 +259,7 @@ type MarkdownRenderer(
             BorderThickness = Thickness 1.0,
             CornerRadius = CornerRadius Tokens.radiusMd,
             ClipToBounds = true,
-            Margin = Thickness(0.0, Tokens.space2),
+            Margin = Thickness(0.0, ReadingRhythm.blockGap),
             Child = stack)
         :> Control
 
@@ -311,7 +311,7 @@ type MarkdownRenderer(
                 BorderThickness = Thickness 1.0,
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 ClipToBounds = true,
-                Margin = Thickness(0.0, Tokens.space2),
+                Margin = Thickness(0.0, ReadingRhythm.blockGap),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Child = grid)
             :> Control
@@ -329,14 +329,18 @@ type MarkdownRenderer(
         | MdHeading(level, items) ->
             let size = headingSize level
             let control = this.RenderInlineRow(items, size, FontWeight.Medium, Tokens.text)
-            control.Margin <- Thickness(0.0, (if level <= 2 then Tokens.space4 else Tokens.space3), 0.0, Tokens.space1)
+            control.Margin <- Thickness(0.0, ReadingRhythm.headingBefore level, 0.0, ReadingRhythm.headingAfter level)
             [ control ]
         | MdParagraph items ->
             let control = this.RenderInlineRow(items, fontSize, FontWeight.Normal, Tokens.text)
-            control.Margin <- Thickness(0.0, 0.0, 0.0, Tokens.space2)
+            control.Margin <- Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap)
             [ control ]
         | MdList(ordered, items) ->
-            let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 4.0, Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2))
+            let stack =
+                StackPanel(
+                    Orientation = Orientation.Vertical,
+                    Spacing = ReadingRhythm.listItemGap,
+                    Margin = Thickness(0.0, 0.0, 0.0, ReadingRhythm.listBlockGap))
             for (depth, bullet, content) in items do
                 // 有序号用文字（要显示数字），无序用绘制圆点：
                 // 字形圆点在内嵌字体里又小又偏上，与上方数字标记明显不齐。
@@ -346,9 +350,9 @@ type MarkdownRenderer(
                             Text = bullet,
                             FontSize = fontSize - 0.5,
                             Foreground = Tokens.textMuted,
-                            MinWidth = 20.0,
+                            MinWidth = ReadingRhythm.listMarkerWidth,
                             TextAlignment = TextAlignment.Right,
-                            Margin = Thickness(float depth * 16.0, 1.0, Tokens.space2, 0.0),
+                            Margin = Thickness(float depth * ReadingRhythm.listIndentStep, 1.0, Tokens.space2, 0.0),
                             VerticalAlignment = VerticalAlignment.Top)
                         :> Control
                     else
@@ -360,7 +364,7 @@ type MarkdownRenderer(
                                 Background = Tokens.textMuted,
                                 VerticalAlignment = VerticalAlignment.Center)
                         Border(
-                            Width = 20.0 + float depth * 16.0,
+                            Width = ReadingRhythm.listMarkerWidth + float depth * ReadingRhythm.listIndentStep,
                             Padding = Thickness(0.0, 0.0, Tokens.space2, 0.0),
                             Margin = Thickness(0.0, fontSize * 0.55, 0.0, 0.0),
                             VerticalAlignment = VerticalAlignment.Top,
@@ -375,7 +379,11 @@ type MarkdownRenderer(
                 stack.Children.Add row
             [ stack :> Control ]
         | MdTask items ->
-            let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 4.0, Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2))
+            let stack =
+                StackPanel(
+                    Orientation = Orientation.Vertical,
+                    Spacing = ReadingRhythm.listItemGap,
+                    Margin = Thickness(0.0, 0.0, 0.0, ReadingRhythm.listBlockGap))
             for (isChecked, content) in items do
                 let box =
                     Border(
@@ -408,7 +416,7 @@ type MarkdownRenderer(
                   BorderBrush = Tokens.accentSoft,
                   BorderThickness = Thickness(3.0, 0.0, 0.0, 0.0),
                   Padding = Thickness(Tokens.space4, Tokens.space1, 0.0, 0.0),
-                  Margin = Thickness(0.0, Tokens.space1, 0.0, Tokens.space3),
+                  Margin = Thickness(0.0, Tokens.space1, 0.0, ReadingRhythm.quoteBottomGap),
                   Child = stack)
               :> Control ]
         | MdCode(language, code) -> [ this.RenderCode(language, code) ]
@@ -416,7 +424,7 @@ type MarkdownRenderer(
             [ Border(
                   Height = 1.0,
                   Background = Tokens.borderSoft,
-                  Margin = Thickness(0.0, Tokens.space4),
+                  Margin = Thickness(0.0, ReadingRhythm.headingBefore 3),
                   HorizontalAlignment = HorizontalAlignment.Stretch)
               :> Control ]
         | MdTable(header, rows) -> [ this.RenderTable(header, rows) ]

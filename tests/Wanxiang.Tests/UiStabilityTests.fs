@@ -60,6 +60,137 @@ let private show (content: Control) width height =
     window
 
 [<Fact>]
+let ``craft metrics form a stable readable hierarchy`` () =
+    let size = Tokens.fontReading
+    Assert.True(ReadingRhythm.proseLineHeight size > ReadingRhythm.secondaryLineHeight size)
+    Assert.True(ReadingRhythm.secondaryLineHeight size > ReadingRhythm.technicalLineHeight size)
+    Assert.True(ReadingRhythm.headingBefore 1 > ReadingRhythm.headingBefore 2)
+    Assert.True(ReadingRhythm.headingBefore 2 > ReadingRhythm.headingBefore 3)
+    Assert.True(ControlMetrics.textButtonMinHeight >= Tokens.iconButton)
+    Assert.True(ControlMetrics.sidebarRowMinHeight > ControlMetrics.textButtonMinHeight)
+
+[<Fact>]
+let ``markdown and primitive controls consume shared craft metrics`` () =
+    Headless.ensure ()
+    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
+    let rendered = renderer.RenderText "一段用于验证阅读节奏的正文。"
+    let button = Ui.button Ui.Secondary "保存" ignore
+    let fieldShell, field = Ui.textField "输入内容"
+    let root = StackPanel()
+    root.Children.Add rendered
+    root.Children.Add button
+    root.Children.Add fieldShell
+    let window = show root 620.0 260.0
+    try
+        let prose =
+            descendants rendered
+            |> Seq.choose (function :? SelectableTextBlock as text -> Some text | _ -> None)
+            |> Seq.head
+        Assert.Equal(ReadingRhythm.proseLineHeight Tokens.fontReading, prose.LineHeight, 3)
+        Assert.Equal(ControlMetrics.textButtonMinHeight, button.MinHeight, 3)
+        Assert.Equal(ControlMetrics.textFieldTextMinHeight, field.MinHeight, 3)
+        Assert.Equal(ControlMetrics.textFieldPaddingY, fieldShell.Padding.Top, 3)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``reserved contextual actions never change their layout slot`` () =
+    Headless.ensure ()
+    let action = Ui.iconButton Icons.more "更多"
+    let window = show action 90.0 70.0
+    try
+        Dispatcher.UIThread.RunJobs()
+        let width = action.Bounds.Width
+        let height = action.Bounds.Height
+        Ui.setReservedActionVisible action false
+        Dispatcher.UIThread.RunJobs()
+        Assert.True action.IsVisible
+        Assert.Equal(width, action.Bounds.Width, 3)
+        Assert.Equal(height, action.Bounds.Height, 3)
+        Assert.Equal(0.0, action.Opacity, 3)
+        Assert.False action.IsHitTestVisible
+        Assert.False action.Focusable
+
+        Ui.setReservedActionVisible action true
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal(width, action.Bounds.Width, 3)
+        Assert.Equal(height, action.Bounds.Height, 3)
+        Assert.Equal(1.0, action.Opacity, 3)
+        Assert.True action.IsHitTestVisible
+        Assert.True action.Focusable
+    finally
+        window.Close()
+
+[<Fact>]
+let ``standard input field group keeps label validation and hint in one rhythm`` () =
+    Headless.ensure ()
+    let shell, box = Ui.textField "输入"
+    let group = Ui.inputFieldGroup "字段" "辅助说明" box
+    let window = show group 420.0 150.0
+    try
+        let panel = group :?> StackPanel
+        Assert.Equal(4, panel.Children.Count)
+        Assert.IsType<TextBlock>(panel.Children[0]) |> ignore
+        Assert.True(obj.ReferenceEquals(shell, panel.Children[1]))
+        Assert.True(obj.ReferenceEquals(Ui.fieldValidationMessage box, panel.Children[2]))
+        let hint = Assert.IsType<TextBlock>(panel.Children[3])
+        Assert.Equal(ReadingRhythm.captionLineHeight, hint.LineHeight, 3)
+        Assert.Equal(Tokens.space1, hint.Margin.Top, 3)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``chat reading column relies on avalonia stretch and max width across viewports`` () =
+    Headless.ensure ()
+    let messageActions =
+        { copyText = ignore
+          regenerate = ignore
+          editAndFork = ignore
+          deleteMessage = ignore
+          downloadAttachment = ignore
+          openLink = ignore }
+    let actions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message = messageActions }
+    for width in [ 1000.0; 500.0 ] do
+        let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
+        chat.Build()
+        let longMessage =
+            { MessageView.empty with
+                role = "assistant"
+                text = String.replicate 40 "这是一段用来撑满阅读列的长正文。"
+                commitId = Some 1UL }
+        chat.RenderMessages(
+            [ longMessage ],
+            None,
+            None,
+            Tokens.fontReading,
+            true,
+            None,
+            Set.empty)
+        let window = show chat width 520.0
+        try
+            Dispatcher.UIThread.RunJobs()
+            let scroller =
+                descendants chat
+                |> Seq.choose (function :? ScrollViewer as value -> Some value | _ -> None)
+                |> Seq.head
+            let readingColumn = scroller.Content :?> Control
+            Assert.True(readingColumn.Bounds.Width <= Tokens.readingWidth + 0.5)
+            if width > Tokens.readingWidth + Tokens.shellInset * 2.0 then
+                Assert.True(abs (readingColumn.Bounds.Width - Tokens.readingWidth) < 1.0)
+            else
+                Assert.True(readingColumn.Bounds.Width > width - Tokens.shellInset * 4.0)
+        finally
+            window.Close()
+
+[<Fact>]
 let ``navigation controller owns compact and collapsed state transitions`` () =
     let navigation = NavigationController(true)
     let applyWide, wide = navigation.ApplyViewport(1200.0, false)

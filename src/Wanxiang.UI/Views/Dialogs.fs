@@ -55,7 +55,7 @@ module Dialogs =
                 FontSize = Tokens.fontBody,
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
-                LineHeight = 20.0)
+                LineHeight = ReadingRhythm.uiBodyLineHeight)
         let content =
             Ui.vstack
                 Tokens.space4
@@ -118,7 +118,7 @@ module Dialogs =
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
                 IsVisible = false,
-                LineHeight = 17.0)
+                LineHeight = ReadingRhythm.captionLineHeight)
 
         let submitCode () =
             let code = if isNull codeBox.Text then "" else codeBox.Text.Trim()
@@ -209,19 +209,19 @@ module Dialogs =
         let instructionsShell, instructionsBox = Ui.textArea "留空则使用服务端默认指令" 96.0
         instructionsBox.Text <- current.instructions |> Option.defaultValue ""
 
-        let temperatureShell, temperatureBox = Ui.textField "0–2，留空跟随默认"
+        let _, temperatureBox = Ui.textField "0–2，留空跟随默认"
         temperatureBox.Text <-
             match current.temperature with
             | Some t -> t.ToString("0.##", Globalization.CultureInfo.InvariantCulture)
             | None -> ""
-        let topPShell, topPBox = Ui.textField "0–1，留空跟随默认"
+        let _, topPBox = Ui.textField "0–1，留空跟随默认"
         topPBox.Text <-
             match current.topP with
             | Some p -> p.ToString("0.##", Globalization.CultureInfo.InvariantCulture)
             | None -> ""
-        let maxTokensShell, maxTokensBox = Ui.textField "留空不限制"
+        let _, maxTokensBox = Ui.textField "留空不限制"
         maxTokensBox.Text <- (match current.maxTokens with Some m -> string m | None -> "")
-        let thinkingBudgetShell, thinkingBudgetBox = Ui.textField "留空跟随默认；0 关闭思维链"
+        let _, thinkingBudgetBox = Ui.textField "留空跟随默认；0 关闭思维链"
         thinkingBudgetBox.Text <- (match current.thinkingBudget with Some b -> string b | None -> "")
 
         let selectedTools = System.Collections.Generic.HashSet<string>(current.tools)
@@ -299,14 +299,10 @@ module Dialogs =
         paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         for _ in 1 .. 4 do paramGrid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-        let temperatureColumn =
-            Ui.vstack 0.0 [ Ui.fieldLabel "Temperature" :> Control; temperatureShell :> Control; Ui.fieldValidationMessage temperatureBox :> Control ]
-        let topPColumn =
-            Ui.vstack 0.0 [ Ui.fieldLabel "Top P" :> Control; topPShell :> Control; Ui.fieldValidationMessage topPBox :> Control ]
-        let maxTokensColumn =
-            Ui.vstack 0.0 [ Ui.fieldLabel "最大输出 token" :> Control; maxTokensShell :> Control; Ui.fieldValidationMessage maxTokensBox :> Control ]
-        let thinkingBudgetColumn =
-            Ui.vstack 0.0 [ Ui.fieldLabel "思维链预算（token）" :> Control; thinkingBudgetShell :> Control; Ui.fieldValidationMessage thinkingBudgetBox :> Control ]
+        let temperatureColumn = Ui.inputFieldGroup "Temperature" "" temperatureBox
+        let topPColumn = Ui.inputFieldGroup "Top P" "" topPBox
+        let maxTokensColumn = Ui.inputFieldGroup "最大输出 token" "" maxTokensBox
+        let thinkingBudgetColumn = Ui.inputFieldGroup "思维链预算（token）" "" thinkingBudgetBox
         paramGrid.Children.Add temperatureColumn
         paramGrid.Children.Add topPColumn
         paramGrid.Children.Add maxTokensColumn
@@ -335,8 +331,8 @@ module Dialogs =
             Ui.vstack
                 Tokens.space4
                 [ Ui.vstack Tokens.space1 [ Ui.title "会话设置" :> Control; Ui.caption "只影响当前会话，不改服务端默认值。" :> Control ] :> Control
-                  Ui.vstack 0.0 [ Ui.fieldLabel "模型" :> Control; modelButton :> Control ] :> Control
-                  Ui.vstack 0.0 [ Ui.fieldLabel "系统指令" :> Control; instructionsShell :> Control ] :> Control
+                  Ui.controlFieldGroup "模型" "" (modelButton :> Control)
+                  Ui.controlFieldGroup "系统指令" "" (instructionsShell :> Control)
                   paramGrid :> Control
                   Ui.hairline () :> Control
                   Ui.vstack Tokens.space2 [ Ui.sectionLabel "可用工具" :> Control; toolsPanel :> Control ] :> Control

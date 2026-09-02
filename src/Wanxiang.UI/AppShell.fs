@@ -484,8 +484,11 @@ type MainView() as this =
                         do! stream.CopyToAsync buffer |> Async.AwaitTask
                         let bytes = buffer.ToArray()
                         Dispatcher.UIThread.Post(fun () -> this.BeginUpload(file.Name, bytes))
+                    Dispatcher.UIThread.Post(fun () -> composer.Focus())
                 with ex ->
-                    Dispatcher.UIThread.Post(fun () -> toast (sprintf "读取文件失败：%s" ex.Message) Failure)
+                    Dispatcher.UIThread.Post(fun () ->
+                        toast (sprintf "读取文件失败：%s" ex.Message) Failure
+                        composer.Focus())
             }
             |> Async.Start
 

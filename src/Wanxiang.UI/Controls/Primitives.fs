@@ -119,7 +119,7 @@ module Ui =
                     FontSize = Tokens.fontMicro,
                     Foreground = Tokens.danger,
                     TextWrapping = TextWrapping.Wrap,
-                    LineHeight = 16.0,
+                    LineHeight = ReadingRhythm.validationLineHeight,
                     IsVisible = false,
                     Margin = Thickness(2.0, 3.0, 0.0, 0.0))
             validationMessages.Add(box, message)
@@ -195,7 +195,7 @@ module Ui =
             FontSize = Tokens.fontCaption,
             Foreground = Tokens.textMuted,
             TextWrapping = TextWrapping.Wrap,
-            LineHeight = 17.0)
+            LineHeight = ReadingRhythm.captionLineHeight)
 
     let fieldLabel (text: string) : TextBlock =
         TextBlock(
@@ -205,6 +205,19 @@ module Ui =
             Foreground = Tokens.textFaint,
             Margin = Thickness(2.0, 0.0, 0.0, 3.0),
             LetterSpacing = 0.3)
+
+    /// 表单字段的统一垂直结构：label → control → validation → hint。
+    /// 这里只组合 Avalonia 原生控件，不接管测量/校验状态；调用方仍拥有字段本身。
+    let fieldGroup (labelText: string) (hint: string) (control: Control) (validation: Control option) : Control =
+        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
+        column.Children.Add(fieldLabel labelText)
+        column.Children.Add control
+        validation |> Option.iter column.Children.Add
+        if not (String.IsNullOrWhiteSpace hint) then
+            let note = caption hint
+            note.Margin <- Thickness(2.0, Tokens.space1, 0.0, 0.0)
+            column.Children.Add note
+        column :> Control
 
     /// 区块小标题（侧栏分组、设置分节）。
     let sectionLabel (text: string) : TextBlock =
@@ -395,6 +408,14 @@ module Ui =
         host.MinWidth <- size
         host.MinHeight <- size
 
+    /// 保留控件的布局槽位，只切换可见反馈和可操作性。
+    /// 适合 clear / overflow 等上下文动作：出现时不会让标题或输入框突然变窄。
+    let setReservedActionVisible (host: Border) (visible: bool) =
+        host.IsVisible <- true
+        host.Opacity <- if visible then 1.0 else 0.0
+        host.IsHitTestVisible <- visible
+        host.Focusable <- visible
+
     let setToggled (host: Border) (active: bool) =
         host.Background <- if active then Tokens.accentSoft :> IBrush else Brushes.Transparent :> IBrush
 
@@ -420,13 +441,13 @@ module Ui =
         let host =
             ActionBorder(
                 CornerRadius = CornerRadius Tokens.radiusMd,
-                Padding = Thickness(Tokens.space4, 7.0),
+                Padding = Thickness(Tokens.space4, ControlMetrics.textButtonPaddingY),
                 Background = bg,
                 BorderBrush = stroke,
                 BorderThickness = (if isNull stroke then Thickness 0.0 else Thickness 1.0),
                 Cursor = handCursor,
                 Focusable = true,
-                MinHeight = 32.0,
+                MinHeight = ControlMetrics.textButtonMinHeight,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child =
                     TextBlock(
@@ -461,7 +482,7 @@ module Ui =
                 CaretBrush = Tokens.accent,
                 FontSize = Tokens.fontBody,
                 Padding = Thickness 0.0,
-                MinHeight = 22.0,
+                MinHeight = ControlMetrics.textFieldTextMinHeight,
                 VerticalContentAlignment = VerticalAlignment.Center)
         let shell =
             Border(
@@ -469,7 +490,7 @@ module Ui =
                 BorderBrush = Tokens.border,
                 BorderThickness = Thickness 1.0,
                 CornerRadius = CornerRadius Tokens.radiusMd,
-                Padding = Thickness(Tokens.space3, 8.0),
+                Padding = Thickness(Tokens.space3, ControlMetrics.textFieldPaddingY),
                 Child = box)
         box.GotFocus.Add(fun _ ->
             shell.BorderBrush <- Tokens.accent
@@ -504,8 +525,15 @@ module Ui =
     /// 带标签的输入行。
     let labeledField (labelText: string) (placeholder: string) : Control * TextBox =
         let shell, box = textField placeholder
-        let column = vstack 0.0 [ fieldLabel labelText; shell; fieldValidationMessage box ]
-        column :> Control, box
+        fieldGroup labelText "" shell (Some(fieldValidationMessage box :> Control)), box
+
+    /// 带 label / hint / validation 的标准输入组。
+    let inputFieldGroup (labelText: string) (hint: string) (box: TextBox) : Control =
+        fieldGroup labelText hint (box.Parent :?> Control) (Some(fieldValidationMessage box :> Control))
+
+    /// 非 TextBox 控件（select、textarea 外壳、只读值等）的标准字段组。
+    let controlFieldGroup (labelText: string) (hint: string) (control: Control) : Control =
+        fieldGroup labelText hint control None
 
     /// 多行输入。
     let textArea (placeholder: string) (minHeight: float) : Border * TextBox =

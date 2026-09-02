@@ -83,7 +83,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 FontSize = Tokens.fontCaption,
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
-                LineHeight = 17.0)
+                LineHeight = ReadingRhythm.captionLineHeight)
 
         let applyPreset (preset: ProviderPreset) =
             selectedKind <- preset.kind
@@ -196,7 +196,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             Ui.vstack
                 Tokens.space3
                 [ Ui.title (if existing.IsSome then "编辑服务商" else "添加服务商") :> Control
-                  Ui.vstack 0.0 [ Ui.fieldLabel "预设" :> Control; presetButton :> Control ] :> Control
+                  Ui.controlFieldGroup "预设" "" (presetButton :> Control)
                   presetHint :> Control
                   idField
                   labelField

@@ -70,11 +70,12 @@ module Menu =
             dock.Children.Add hint
         let host =
             ActionBorder(
-                Padding = Thickness(Tokens.space3, 7.0),
+                Padding = Thickness(Tokens.space3, ControlMetrics.menuItemPaddingY),
                 CornerRadius = CornerRadius Tokens.radiusSm,
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
                 Focusable = true,
+                MinHeight = ControlMetrics.menuItemMinHeight,
                 Child = dock)
         Avalonia.Automation.AutomationProperties.SetName(host, entry.label)
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
