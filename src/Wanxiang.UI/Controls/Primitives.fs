@@ -123,6 +123,16 @@ module Ui =
                     IsVisible = false,
                     Margin = Thickness(2.0, 3.0, 0.0, 0.0))
             validationMessages.Add(box, message)
+            // 一旦用户开始修正输入，旧错误就不应继续“指控”当前内容。
+            // 如果仍不合法，下一次提交会重新给出准确错误。
+            box.TextChanged.Add(fun _ ->
+                if message.IsVisible then
+                    message.Text <- ""
+                    message.IsVisible <- false
+                    Avalonia.Automation.AutomationProperties.SetHelpText(box, "")
+                    match box.Parent with
+                    | :? Border as shell when not box.IsFocused -> shell.BorderBrush <- Tokens.border
+                    | _ -> ())
             message
 
     let private isInvalid (box: TextBox) =
@@ -216,6 +226,12 @@ module Ui =
         if not (String.IsNullOrWhiteSpace hint) then
             let note = caption hint
             note.Margin <- Thickness(2.0, Tokens.space1, 0.0, 0.0)
+            match validation with
+            | Some error ->
+                note.IsVisible <- not error.IsVisible
+                error.PropertyChanged.Add(fun args ->
+                    if args.Property = Visual.IsVisibleProperty then note.IsVisible <- not error.IsVisible)
+            | None -> ()
             column.Children.Add note
         column :> Control
 
@@ -316,7 +332,7 @@ module Ui =
                 Child = host,
                 RenderTransform = RotateTransform 0.0,
                 RenderTransformOrigin = RelativePoint.Center)
-        let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 40.0)
+        let timer = new DispatcherTimer(Interval = MotionLedger.busySpinnerFrame)
         let mutable angle = 0.0
         let mutable attached = false
         let mutable motionSubscription: IDisposable option = None
@@ -468,6 +484,15 @@ module Ui =
             tb.Text <- text
             Avalonia.Automation.AutomationProperties.SetName(host, text)
         | _ -> ()
+
+    let preparePendingButton (host: Border) =
+        host.MinWidth <- max host.MinWidth ControlMetrics.pendingActionMinWidth
+
+    /// 异步提交按钮保持同一几何，只切换文案和 enabled state。
+    let setButtonPending (host: Border) (pending: bool) (idleText: string) (pendingText: string) =
+        setButtonText host (if pending then pendingText else idleText)
+        setEnabled host (not pending)
+        Avalonia.Automation.AutomationProperties.SetHelpText(host, if pending then pendingText else "")
 
     // ---------- 输入 ----------
 

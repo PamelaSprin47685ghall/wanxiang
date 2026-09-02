@@ -83,7 +83,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     member private this.Select(section: SettingsSection) =
         current <- section
         for KeyValue(key, button) in navButtons do
-            button.Background <- if key = section then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
+            let selected = key = section
+            button.Background <- if selected then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
+            Avalonia.Automation.AutomationProperties.SetItemStatus(button, if selected then "当前分区" else "")
         contentHost.Content <- renderSection section
 
     member private this.NavButton(section: SettingsSection) : Border =
@@ -103,6 +105,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 Background = Brushes.Transparent,
                 Cursor = new Cursor(StandardCursorType.Hand),
                 Focusable = true,
+                MinHeight = ControlMetrics.settingsNavMinHeight,
                 Child = Ui.hstack Tokens.space2 [ glyph; caption :> Control ])
         Avalonia.Automation.AutomationProperties.SetName(host, SettingsSection.label section)
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
@@ -140,13 +143,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         this.Background <- Tokens.canvas
 
         let closeButton = Ui.iconButton Icons.close "关闭设置（Esc）"
-        closeButton.PointerReleased.Add(fun e ->
-            e.Handled <- true
-            onClose ())
-        closeButton.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                onClose ())
+        Ui.onClick closeButton onClose
         let header =
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             let caption = Ui.title "设置"
@@ -170,7 +167,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 VerticalScrollBarVisibility = ScrollBarVisibility.Hidden)
         let nav =
             Border(
-                Width = 196.0,
+                Width = ControlMetrics.settingsNavWidth,
                 Padding = Thickness(Tokens.space3, Tokens.space4),
                 BorderBrush = Tokens.borderSoft,
                 BorderThickness = Thickness(0.0, 0.0, 1.0, 0.0),
@@ -180,18 +177,14 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
             Border(
                 Padding = Thickness(Tokens.space8, Tokens.space6, Tokens.space8, Tokens.space10),
                 Child = contentHost,
-                HorizontalAlignment = HorizontalAlignment.Center)
+                MaxWidth = ControlMetrics.settingsContentMaxWidth,
+                HorizontalAlignment = HorizontalAlignment.Stretch)
         let content =
             ScrollViewer(
                 Content = contentFrame,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
-        // 居中并限宽。只设 MaxWidth 时 Border 会收缩到内容宽，
-        // 卡片撑不开；必须按视口显式给宽度。
-        content.PropertyChanged.Add(fun args ->
-            if args.Property = ScrollViewer.ViewportProperty then
-                let available = content.Viewport.Width
-                if available > 240.0 then contentFrame.Width <- min 980.0 available)
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch)
 
         let split = DockPanel()
         DockPanel.SetDock(nav, Dock.Left)
@@ -214,7 +207,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                         contentFrame.Padding <- Thickness(Tokens.space4, Tokens.space4, Tokens.space4, Tokens.space8)
                     else
                         DockPanel.SetDock(nav, Dock.Left)
-                        nav.Width <- 196.0
+                        nav.Width <- ControlMetrics.settingsNavWidth
                         nav.Height <- Double.NaN
                         nav.Padding <- Thickness(Tokens.space3, Tokens.space4)
                         nav.BorderThickness <- Thickness(0.0, 0.0, 1.0, 0.0)

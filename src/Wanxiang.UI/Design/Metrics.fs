@@ -20,6 +20,16 @@ module ReadingRhythm =
     let helperLineHeight = 18.0
     let emptyStateLineHeight = 21.0
 
+    /// Markdown 标题字号也属于阅读节奏，而不是组件临时放大的视觉特效。
+    let headingFontSize (baseSize: float) (level: int) =
+        baseSize
+        + match level with
+          | 1 -> 10.0
+          | 2 -> 6.5
+          | 3 -> 4.0
+          | 4 -> 2.0
+          | _ -> 1.0
+
     let paragraphGap = Tokens.space2
     let listItemGap = Tokens.space1
     let listBlockGap = Tokens.space2
@@ -44,6 +54,8 @@ module ControlMetrics =
     /// 常规文本按钮用 MinHeight，让 Avalonia 自己处理字体 / scale 后的真实高度。
     let textButtonMinHeight = 34.0
     let textButtonPaddingY = 7.0
+    /// “保存”→“正在保存…”时按钮外框不能扩张，避免 footer 横向跳动。
+    let pendingActionMinWidth = 96.0
 
     let textFieldTextMinHeight = 22.0
     let textFieldPaddingY = Tokens.space2
@@ -51,12 +63,19 @@ module ControlMetrics =
     let sidebarRowMinHeight = 44.0
     let sidebarRowPaddingY = 7.0
     let sidebarStatusLineHeight = ReadingRhythm.helperLineHeight
+    let sidebarStateSlotWidth = 19.0
+    let sidebarStateGlyphSize = 11.0
+    let sidebarRunningDotSize = 6.0
 
     let composerInputMinHeight = 26.0
     let composerInputMaxHeight = 240.0
     let composerShellPaddingX = Tokens.space3
     let composerShellPaddingY = Tokens.space2
     let composerAttachmentNameMaxWidth = 160.0
+    let composerAttachmentStateWidth = 54.0
+    let composerAttachmentIconSlot = 15.0
+    let composerModelMaxWidth = 240.0
+    let composerModelCompactMaxWidth = 150.0
 
     let compactChipPaddingX = Tokens.space2
     let compactChipPaddingY = Tokens.space1
@@ -66,6 +85,14 @@ module ControlMetrics =
 
     let menuItemMinHeight = 34.0
     let menuItemPaddingY = 7.0
+    let menuIconSlotWidth = 18.0
+    let menuRightSlotMinWidth = 16.0
+
+    let toastAccentWidth = 2.0
+
+    let settingsNavWidth = 196.0
+    let settingsNavMinHeight = 38.0
+    let settingsContentMaxWidth = 980.0
 
 module ContentMetrics =
 
@@ -74,4 +101,5 @@ module ContentMetrics =
     let scrollBottomThreshold = 48.0
     let scrollBottomRevealThreshold = 120.0
     let emptyStateMaxWidth = 420.0
+    let toastMaxWidth = 560.0
 

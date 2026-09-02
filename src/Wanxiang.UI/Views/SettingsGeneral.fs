@@ -29,6 +29,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
 
     let mutable readAutoTitle: unit -> bool = fun () -> true
     let mutable setAutoTitle: bool -> unit = ignore
+    let mutable setGenerationPending: bool -> unit = ignore
     let mutable syncAppearance: UiPrefs -> unit = ignore
 
     let floatText (value: float option) =
@@ -136,7 +137,8 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             payload["maxContextMessages"] <- contextMessages.Value
             payload["maxToolRounds"] <- toolRounds.Value
             payload["autoTitle"] <- readAutoTitle ()
-            actions.updateGeneration payload
+            setGenerationPending true
+            actions.updateGeneration payload (fun _ -> setGenerationPending false)
 
     member this.BuildGeneration() : Control =
         let autoTitleRow, readAuto, writeAuto =
@@ -144,7 +146,10 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         readAutoTitle <- readAuto
         setAutoTitle <- writeAuto
         let saveButton = Ui.button Ui.Primary "保存生成设置" (fun () -> this.SaveGeneration())
+        Ui.preparePendingButton saveButton
         saveButton.HorizontalAlignment <- HorizontalAlignment.Left
+        setGenerationPending <- fun pending ->
+            Ui.setButtonPending saveButton pending "保存生成设置" "正在保存…"
         let grid = Grid(ColumnSpacing = Tokens.space3, RowSpacing = Tokens.space3)
         grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))

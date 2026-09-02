@@ -92,6 +92,7 @@ type AttachmentDraftController() =
 type CommandFeedback = {
     successMessage: string option
     onCommitted: unit -> unit
+    onCompleted: bool -> unit
 }
 
 /// request → commit/reject 的轻量状态机，避免 MainView 散落维护 invocation dictionary。
@@ -101,9 +102,22 @@ type CommandFeedbackTracker() =
     member _.Count = pending.Count
 
     member _.Track(cmd: ClientCommand, successMessage: string option, onCommitted: unit -> unit) =
+        let invocationId = ClientCommand.invocationId cmd
+        pending[invocationId] <-
+            { successMessage = successMessage
+              onCommitted = onCommitted
+              onCompleted = ignore }
+
+    member _.TrackWithCompletion(
+        cmd: ClientCommand,
+        successMessage: string option,
+        onCommitted: unit -> unit,
+        onCompleted: bool -> unit
+    ) =
         pending[ClientCommand.invocationId cmd] <-
             { successMessage = successMessage
-              onCommitted = onCommitted }
+              onCommitted = onCommitted
+              onCompleted = onCompleted }
 
     member _.Commit(invocationId: Guid) =
         match pending.TryGetValue invocationId with
@@ -112,8 +126,48 @@ type CommandFeedbackTracker() =
             Some feedback
         | _ -> None
 
-    member _.Reject(invocationId: Guid) = pending.Remove invocationId |> ignore
+    member _.Reject(invocationId: Guid) =
+        match pending.TryGetValue invocationId with
+        | true, feedback ->
+            pending.Remove invocationId |> ignore
+            Some feedback
+        | _ -> None
+
+    member _.RejectAll() =
+        let callbacks = pending.Values |> Seq.map _.onCompleted |> Array.ofSeq
+        pending.Clear()
+        callbacks |> Array.iter (fun callback -> callback false)
+
     member _.Clear() = pending.Clear()
+
+/// 配置写入同样遵循 request → ConfigApplied 的权威确认。
+type ConfigFeedback = {
+    successMessage: string
+    onCompleted: bool -> unit
+}
+
+type ConfigFeedbackTracker() =
+    let pending = Dictionary<Guid, ConfigFeedback>()
+
+    member _.Count = pending.Count
+
+    member _.Track(requestId: Guid, successMessage: string, onCompleted: bool -> unit) =
+        pending[requestId] <-
+            { successMessage = successMessage
+              onCompleted = onCompleted }
+
+    member _.Resolve(requestId: Guid) =
+        match pending.TryGetValue requestId with
+        | true, feedback ->
+            pending.Remove requestId |> ignore
+            Some feedback
+        | _ -> None
+
+    /// 连接断开时让所有等待中的编辑器退出 pending，避免永久灰掉。
+    member _.RejectAll() =
+        let callbacks = pending.Values |> Seq.map _.onCompleted |> Array.ofSeq
+        pending.Clear()
+        callbacks |> Array.iter (fun callback -> callback false)
 
 /// 主壳导航的纯状态。视图只负责把这个状态投影成 Grid/Visibility；
 /// “窗口变窄时该开什么、Ctrl+B 在 compact/desktop 分别意味着什么”集中在这里。

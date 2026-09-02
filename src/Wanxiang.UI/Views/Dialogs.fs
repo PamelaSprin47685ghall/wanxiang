@@ -28,21 +28,44 @@ module Dialogs =
         row
 
     /// 单行输入对话框（重命名等）。
-    let prompt (overlay: OverlayHost) (title: string) (hint: string) (initial: string) (confirmLabel: string) (onConfirm: string -> unit) =
+    let prompt
+        (overlay: OverlayHost)
+        (title: string)
+        (hint: string)
+        (initial: string)
+        (confirmLabel: string)
+        (onConfirm: string -> (bool -> unit) -> unit)
+        =
         let shell, box = Ui.textField hint
         box.Text <- initial
+        let mutable active = true
+        let mutable pending = false
+        let mutable setPending: bool -> unit = ignore
         let submit () =
             let value = if isNull box.Text then "" else box.Text.Trim()
-            if not (String.IsNullOrWhiteSpace value) then
-                overlay.CloseDialog()
-                onConfirm value
+            if not pending && not (String.IsNullOrWhiteSpace value) then
+                setPending true
+                onConfirm value (fun ok ->
+                    if active then
+                        setPending false
+                        if ok then overlay.CloseDialog())
         box.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
                 submit ())
+        let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        let confirmButton = Ui.button Ui.Primary confirmLabel submit
+        Ui.preparePendingButton confirmButton
+        setPending <- fun value ->
+            pending <- value
+            Ui.setButtonPending confirmButton value confirmLabel "正在保存…"
+            Ui.setEnabled cancelButton (not value)
+        let buttons = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+        buttons.Children.Add cancelButton
+        buttons.Children.Add confirmButton
         let content =
-            Ui.vstack Tokens.space4 [ Ui.title title :> Control; shell :> Control; actionRow overlay confirmLabel Ui.Primary submit :> Control ]
-        overlay.ShowDialog(content :> Control, 420.0)
+            Ui.vstack Tokens.space4 [ Ui.title title :> Control; shell :> Control; buttons :> Control ]
+        overlay.ShowDialog(content :> Control, 420.0, onClosed = (fun () -> active <- false))
         Dispatcher.UIThread.Post(fun () ->
             box.Focus() |> ignore
             box.SelectAll())
@@ -186,8 +209,11 @@ module Dialogs =
         (overlay: OverlayHost)
         (catalog: Catalog)
         (current: SessionConfig)
-        (onSave: SessionConfig -> unit)
+        (onSave: SessionConfig -> (bool -> unit) -> unit)
         =
+        let mutable dialogActive = true
+        let mutable pending = false
+        let mutable setPending: bool -> unit = ignore
         let mutable providerId = current.provider
         let mutable model = current.model
 
@@ -283,17 +309,22 @@ module Dialogs =
             match firstInvalid with
             | Some box -> box.Focus() |> ignore
             | None ->
-                overlay.CloseDialog()
-                onSave
-                    { current with
-                        provider = providerId
-                        model = model
-                        instructions = instructions
-                        temperature = temperature
-                        topP = topP
-                        maxTokens = maxTokens
-                        thinkingBudget = thinkingBudget
-                        tools = List.ofSeq selectedTools }
+                if not pending then
+                    setPending true
+                    onSave
+                        { current with
+                            provider = providerId
+                            model = model
+                            instructions = instructions
+                            temperature = temperature
+                            topP = topP
+                            maxTokens = maxTokens
+                            thinkingBudget = thinkingBudget
+                            tools = List.ofSeq selectedTools }
+                        (fun ok ->
+                            if dialogActive then
+                                setPending false
+                                if ok then overlay.CloseDialog())
 
         let paramGrid = Grid(ColumnSpacing = Tokens.space3, RowSpacing = Tokens.space3)
         paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
@@ -327,6 +358,16 @@ module Dialogs =
         paramGrid.PropertyChanged.Add(fun args ->
             if args.Property = Visual.BoundsProperty then applyParamLayout paramGrid.Bounds.Width)
 
+        let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        let saveButton = Ui.button Ui.Primary "保存" save
+        Ui.preparePendingButton saveButton
+        setPending <- fun value ->
+            pending <- value
+            Ui.setButtonPending saveButton value "保存" "正在保存…"
+            Ui.setEnabled cancelButton (not value)
+        let footer = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+        footer.Children.Add cancelButton
+        footer.Children.Add saveButton
         let content =
             Ui.vstack
                 Tokens.space4
@@ -337,7 +378,7 @@ module Dialogs =
                   Ui.hairline () :> Control
                   Ui.vstack Tokens.space2 [ Ui.sectionLabel "可用工具" :> Control; toolsPanel :> Control ] :> Control
                   Ui.hairline () :> Control
-                  actionRow overlay "保存" Ui.Primary save :> Control ]
+                  footer :> Control ]
         let scroller =
             ScrollViewer(
                 Content = content,
@@ -345,7 +386,7 @@ module Dialogs =
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
         applyParamLayout paramGrid.Bounds.Width
-        overlay.ShowDialog(scroller :> Control, 520.0)
+        overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () -> dialogActive <- false))
 
     /// 快捷键帮助（分类清晰、对标桌面端成熟软件）。
     let shortcuts (overlay: OverlayHost) =

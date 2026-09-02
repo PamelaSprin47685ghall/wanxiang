@@ -154,10 +154,20 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable compactMode = false
     let mutable hasConversationChrome = false
     let mutable isGenerating = false
+    let mutable titleEditable = false
 
     do
         generatingChip.Child <-
-            let row = Ui.hstack Tokens.space2 [ Ui.spinner 12.0; generatingCaption :> Control ]
+            // Streaming 文本本身已经持续变化；Header 只需要一个静态状态点，
+            // 不再额外跑第二个 spinner 与正文竞争注意力 / UI thread。
+            let stateDot =
+                Border(
+                    Width = 5.0,
+                    Height = 5.0,
+                    CornerRadius = CornerRadius Tokens.radiusPill,
+                    Background = Tokens.accent,
+                    VerticalAlignment = VerticalAlignment.Center)
+            let row = Ui.hstack Tokens.space2 [ stateDot :> Control; generatingCaption :> Control ]
             row
         titleHost.Children.Add titleAction
         titleHost.Children.Add titleEditShell
@@ -182,6 +192,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 titleEditBox.SelectAll())
 
     member this.SetTitle(text: string, editable: bool) =
+        titleEditable <- editable
         titleText.Text <- text
         titleText.Foreground <- if editable then Tokens.text else Tokens.textFaint
         titleAction.Focusable <- editable
@@ -388,6 +399,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         this.Background <- Tokens.canvas
 
         Ui.onClick titleAction (fun () -> this.BeginTitleEdit())
+        titleAction.KeyDown.Add(fun e ->
+            if e.Key = Key.F2 && titleEditable then
+                e.Handled <- true
+                this.BeginTitleEdit())
+        titleAction.PointerEntered.Add(fun _ ->
+            if titleEditable then titleText.Foreground <- Tokens.accent)
+        titleAction.PointerExited.Add(fun _ ->
+            titleText.Foreground <- if titleEditable then Tokens.text else Tokens.textFaint)
         titleEditBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
@@ -423,7 +442,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         leftGroup.Children.Add sidebarToggleButton
         leftGroup.Children.Add titleHost
         leftGroup.Children.Add generatingChip
-        let rightGroup = Ui.hstack Tokens.space1 [ stopButton :> Control; forkButton :> Control; sessionSettingsButton :> Control ]
+        // 从左到右按保留优先级排列：Stop > Session Settings > Fork。
+        let rightGroup = Ui.hstack Tokens.space1 [ stopButton :> Control; sessionSettingsButton :> Control; forkButton :> Control ]
         let headerDock = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
         DockPanel.SetDock(rightGroup, Dock.Right)
         headerDock.Children.Add rightGroup

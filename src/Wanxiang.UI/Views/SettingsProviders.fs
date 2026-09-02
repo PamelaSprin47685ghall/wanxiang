@@ -12,12 +12,12 @@ open Avalonia.Media
 
 /// 设置界面对外暴露的动作。全部落到协议上，客户端不直接碰 TOML。
 type SettingsActions = {
-    upsertProvider: JsonObject -> unit
+    upsertProvider: JsonObject -> (bool -> unit) -> unit
     deleteProvider: string -> unit
     probeProvider: string -> unit
-    upsertMcp: JsonObject -> unit
+    upsertMcp: JsonObject -> (bool -> unit) -> unit
     deleteMcp: string -> unit
-    updateGeneration: JsonObject -> unit
+    updateGeneration: JsonObject -> (bool -> unit) -> unit
     savePrefs: UiPrefs -> unit
     toast: string -> ToastTone -> unit
 }
@@ -54,6 +54,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
     /// 服务商编辑器。`existing = None` 表示新增。
     member private this.ShowEditor(existing: ProviderInfo option) =
+        let mutable editorActive = true
         let takenIds = catalog.providers |> List.map (fun p -> p.id)
         let initialPreset =
             match existing with
@@ -147,6 +148,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             row.Children.Add enabledToggle
             row
 
+        let idleSaveText = if existing.IsSome then "保存" else "添加"
+        let mutable setPending: bool -> unit = ignore
         let save () =
             for box in [ idBox; urlBox; modelsBox ] do Ui.clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
@@ -183,13 +186,21 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         (readEnabled ())
                         (existing |> Option.map (fun p -> p.timeoutSeconds) |> Option.defaultValue 120)
                         (existing |> Option.map (fun p -> p.maxRetries) |> Option.defaultValue 2)
-                actions.upsertProvider payload
-                overlay.CloseDialog()
+                setPending true
+                actions.upsertProvider payload (fun ok ->
+                    setPending false
+                    if ok && editorActive then overlay.CloseDialog())
 
+        let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        let saveButton = Ui.button Ui.Primary idleSaveText save
+        Ui.preparePendingButton saveButton
+        setPending <- fun pending ->
+            Ui.setButtonPending saveButton pending idleSaveText "正在保存…"
+            Ui.setEnabled cancelButton (not pending)
         let buttons =
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
-            row.Children.Add(Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog()))
-            row.Children.Add(Ui.button Ui.Primary (if existing.IsSome then "保存" else "添加") save)
+            row.Children.Add cancelButton
+            row.Children.Add saveButton
             row
 
         let form =
@@ -213,7 +224,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
-        overlay.ShowDialog(scroller :> Control, 520.0)
+        overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () -> editorActive <- false))
 
     /// 探活结果回填：把服务商的模型列表直接更新到配置里。
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
@@ -223,8 +234,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             | Some provider when not (List.isEmpty models) ->
                 let defaultModel =
                     if List.contains provider.defaultModel models then provider.defaultModel else List.head models
-                actions.upsertProvider(
-                    providerPayload
+                actions.toast (sprintf "已获取 %d 个模型，正在保存…" (List.length models)) Neutral
+                actions.upsertProvider
+                    (providerPayload
                         provider.id
                         provider.label
                         provider.kind
@@ -235,7 +247,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         provider.enabled
                         provider.timeoutSeconds
                         provider.maxRetries)
-                actions.toast (sprintf "已获取 %d 个模型并保存。" (List.length models)) Success
+                    ignore
             | _ -> actions.toast "服务商返回了空模型列表。" Warning
         else
             actions.toast (sprintf "探测失败：%s" (error |> Option.defaultValue "未知原因")) Failure
@@ -284,8 +296,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 true
                 [ MenuEntry.create "获取模型列表" (fun () -> actions.probeProvider provider.id) |> MenuEntry.withIcon Icons.refresh
                   MenuEntry.create (if provider.enabled then "停用" else "启用") (fun () ->
-                      actions.upsertProvider(
-                          providerPayload
+                      actions.upsertProvider
+                          (providerPayload
                               provider.id
                               provider.label
                               provider.kind
@@ -295,7 +307,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                               provider.defaultModel
                               (not provider.enabled)
                               provider.timeoutSeconds
-                              provider.maxRetries))
+                              provider.maxRetries)
+                          ignore)
                   MenuEntry.create "删除" (fun () -> actions.deleteProvider provider.id)
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ])

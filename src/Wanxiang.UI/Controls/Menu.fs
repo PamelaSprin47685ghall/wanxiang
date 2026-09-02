@@ -36,28 +36,42 @@ module Menu =
 
     let private renderEntry (overlay: OverlayHost) (entry: MenuEntry) : Control =
         let foreground: IBrush = if entry.danger then Tokens.danger else Tokens.text
-        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        let iconSlot =
+            Border(
+                Width = ControlMetrics.menuIconSlotWidth,
+                Height = Tokens.iconGlyph,
+                VerticalAlignment = VerticalAlignment.Center)
         match entry.icon with
         | Some icon ->
             let glyph = icon (if entry.danger then Tokens.danger else Tokens.textMuted)
+            glyph.HorizontalAlignment <- HorizontalAlignment.Center
             glyph.VerticalAlignment <- VerticalAlignment.Center
-            row.Children.Add glyph
+            iconSlot.Child <- glyph
         | None -> ()
-        row.Children.Add(
+        let caption =
             TextBlock(
                 Text = entry.label,
                 FontSize = Tokens.fontSmall,
                 Foreground = foreground,
                 VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis))
-        let dock = DockPanel(LastChildFill = false)
-        DockPanel.SetDock(row, Dock.Left)
-        dock.Children.Add row
+                TextTrimming = TextTrimming.CharacterEllipsis)
+        let left = Grid(ColumnSpacing = Tokens.space2)
+        left.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
+        left.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+        Grid.SetColumn(iconSlot, 0)
+        Grid.SetColumn(caption, 1)
+        left.Children.Add iconSlot
+        left.Children.Add caption
+        let rightSlot =
+            Border(
+                MinWidth = ControlMetrics.menuRightSlotMinWidth,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Right)
         if entry.selected then
             let mark = Icons.check Tokens.accent
             mark.VerticalAlignment <- VerticalAlignment.Center
-            DockPanel.SetDock(mark, Dock.Right)
-            dock.Children.Add mark
+            mark.HorizontalAlignment <- HorizontalAlignment.Right
+            rightSlot.Child <- mark
         elif not (String.IsNullOrWhiteSpace entry.hint) then
             let hint =
                 TextBlock(
@@ -66,8 +80,14 @@ module Menu =
                     Foreground = Tokens.textFaint,
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = Thickness(Tokens.space4, 0.0, 0.0, 0.0))
-            DockPanel.SetDock(hint, Dock.Right)
-            dock.Children.Add hint
+            rightSlot.Child <- hint
+        let row = Grid(ColumnSpacing = Tokens.space2)
+        row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+        row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
+        Grid.SetColumn(left, 0)
+        Grid.SetColumn(rightSlot, 1)
+        row.Children.Add left
+        row.Children.Add rightSlot
         let host =
             ActionBorder(
                 Padding = Thickness(Tokens.space3, ControlMetrics.menuItemPaddingY),
@@ -76,7 +96,7 @@ module Menu =
                 Cursor = handCursor,
                 Focusable = true,
                 MinHeight = ControlMetrics.menuItemMinHeight,
-                Child = dock)
+                Child = row)
         Avalonia.Automation.AutomationProperties.SetName(host, entry.label)
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
@@ -90,12 +110,33 @@ module Menu =
             entry.action ())
         host :> Control
 
+    /// 菜单用 Up/Down/Home/End 做 roving focus；几何仍完全交给 Avalonia。
+    let private wireDirectionalNavigation (panel: StackPanel) =
+        panel.KeyDown.Add(fun e ->
+            if e.Key = Key.Up || e.Key = Key.Down || e.Key = Key.Home || e.Key = Key.End then
+                let items =
+                    panel.Children
+                    |> Seq.choose (function :? ActionBorder as item when item.Focusable && item.IsEnabled -> Some item | _ -> None)
+                    |> Array.ofSeq
+                if items.Length > 0 then
+                    let current = items |> Array.tryFindIndex _.IsFocused |> Option.defaultValue -1
+                    let next =
+                        match e.Key with
+                        | Key.Home -> 0
+                        | Key.End -> items.Length - 1
+                        | Key.Up -> if current <= 0 then items.Length - 1 else current - 1
+                        | _ -> if current < 0 || current >= items.Length - 1 then 0 else current + 1
+                    e.Handled <- true
+                    items[next].Focus(NavigationMethod.Directional) |> ignore
+                    items[next].BringIntoView())
+
     /// 打开一个菜单。`entries` 为空时不打开。
     let show (overlay: OverlayHost) (anchor: Control) (alignRight: bool) (entries: MenuEntry list) =
         if not (List.isEmpty entries) then
             let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = 1.0)
             for entry in entries do
                 panel.Children.Add(renderEntry overlay entry)
+            wireDirectionalNavigation panel
             let scroller =
                 ScrollViewer(
                     Content = panel,
@@ -119,6 +160,7 @@ module Menu =
                     panel.Children.Add header
                 for entry in items do
                     panel.Children.Add(renderEntry overlay entry))
+            wireDirectionalNavigation panel
             let scroller =
                 ScrollViewer(
                     Content = panel,

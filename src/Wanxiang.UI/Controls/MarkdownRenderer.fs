@@ -24,13 +24,7 @@ type MarkdownRenderer(
 
     let handCursor = new Cursor(StandardCursorType.Hand)
 
-    let headingSize (level: int) =
-        match level with
-        | 1 -> fontSize + 10.0
-        | 2 -> fontSize + 6.5
-        | 3 -> fontSize + 4.0
-        | 4 -> fontSize + 2.0
-        | _ -> fontSize + 1.0
+    let headingSize (level: int) = ReadingRhythm.headingFontSize fontSize level
 
     /// 代码块折行的当前默认值。来自 UI 偏好，块内的切换也会更新它，
     /// 于是同一屏里后续渲染的代码块跟着用户刚做的选择。
@@ -91,9 +85,14 @@ type MarkdownRenderer(
                     block.Inlines.Add run
             | MdImage(alt, url) ->
                 // 默认不主动请求远程 Markdown 图片：避免阅读模型回复时向第三方
-                // 泄露网络信息或触发 tracking pixel。显式告诉用户这是隐私策略。
+                // 泄露网络信息或触发 tracking pixel。把来源域名直接写在正文里，
+                // 让它看起来像明确策略，而不是一张“坏掉的图片”。
                 let label = if String.IsNullOrWhiteSpace alt then "远程图片" else alt
-                let run = Run(sprintf "[远程图片未加载：%s]" label)
+                let source =
+                    match Uri.TryCreate(url, UriKind.Absolute) with
+                    | true, uri when not (String.IsNullOrWhiteSpace uri.Host) -> uri.Host
+                    | _ -> url
+                let run = Run(sprintf "[图片未加载：%s · %s]" label source)
                 run.Foreground <- Tokens.textFaint
                 block.Inlines.Add run
                 ToolTip.SetTip(block, sprintf "为保护隐私，默认不加载远程图片。来源：%s" url)
@@ -114,7 +113,7 @@ type MarkdownRenderer(
                     let control = this.RenderInlines(List.rev buffer, size, weight, brush)
                     wrap.Children.Add control
                     buffer <- []
-            let addLinkChunk (fullText: string) (chunk: string) (url: string) =
+            let addLinkChunk (fullText: string) (chunk: string) (url: string) (focusable: bool) =
                 let linkText =
                     TextBlock(
                         Text = chunk,
@@ -129,10 +128,10 @@ type MarkdownRenderer(
                         Background = Brushes.Transparent,
                         Padding = Thickness 0.0,
                         Cursor = handCursor,
-                        Focusable = true,
+                        Focusable = focusable,
                         VerticalAlignment = VerticalAlignment.Center,
                         Child = linkText)
-                Avalonia.Automation.AutomationProperties.SetName(link, fullText)
+                if focusable then Avalonia.Automation.AutomationProperties.SetName(link, fullText)
                 Avalonia.Automation.AutomationProperties.SetHelpText(link, url)
                 Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
                     link,
@@ -147,11 +146,13 @@ type MarkdownRenderer(
                     // WrapPanel 只能在 child 之间换行。超长 URL / hash 如果作为一个 child，
                     // 就会撑破窄屏；按小段拆成多个同 URL 的 action，几何上可自然换行。
                     if text.Length <= 40 then
-                        addLinkChunk text text url
+                        addLinkChunk text text url true
                     else
                         for start in 0 .. 40 .. text.Length - 1 do
                             let count = min 40 (text.Length - start)
-                            addLinkChunk text (text.Substring(start, count)) url
+                            // 视觉上仍可逐段命中，但一个长链接只占一个 Tab stop，
+                            // 避免键盘用户在同一 URL 上重复停留多次。
+                            addLinkChunk text (text.Substring(start, count)) url (start = 0)
                 | other -> buffer <- other :: buffer
             flush ()
             wrap :> Control
@@ -210,7 +211,7 @@ type MarkdownRenderer(
             copyText code
             Ui.setIcon copyButton Icons.check Tokens.success
             ToolTip.SetTip(copyButton, "已复制！")
-            let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 1500.0)
+            let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
             timer.Tick.Add(fun _ ->
                 timer.Stop()
                 Ui.setIcon copyButton Icons.copy Tokens.codeMuted

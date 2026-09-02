@@ -85,6 +85,16 @@ module MessageCard =
     let private formatDuration (ms: int64) =
         if ms >= 1000L then sprintf "%.1f 秒" (float ms / 1000.0) else sprintf "%d 毫秒" (int ms)
 
+    let private technicalText (text: string) (size: float) (brush: IBrush) =
+        SelectableTextBlock(
+            Text = text,
+            FontFamily = Tokens.monoFontFamily,
+            FontSize = size,
+            Foreground = brush,
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = ReadingRhythm.technicalLineHeight size,
+            SelectionBrush = Tokens.accentSoft)
+
     /// 思考过程：左缘竖线 + 可折叠。流式期间默认展开，让人看到模型在动。
     let private reasoningBlock (ctx: MessageContext) (reasoning: string) (durationMs: int64 option) : Control =
         let collapsed = not ctx.streaming && ctx.autoCollapseReasoning
@@ -123,11 +133,17 @@ module MessageCard =
                 Child = headerRow)
         Avalonia.Automation.AutomationProperties.SetName(header, "切换思考过程")
         let mutable bodyVisible = not collapsed
+        let syncHeaderName () =
+            Avalonia.Automation.AutomationProperties.SetName(
+                header,
+                if bodyVisible then "收起思考过程" else "展开思考过程")
         let toggle () =
             bodyVisible <- not bodyVisible
             setBodyVisible bodyVisible
             chevronHost.Child <- if bodyVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
+            syncHeaderName ()
         Ui.onClick header toggle
+        syncHeaderName ()
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         stack.Children.Add header
         stack.Children.Add body
@@ -185,23 +201,15 @@ module MessageCard =
                 IsVisible = not (String.IsNullOrWhiteSpace summaryText),
                 Margin = Thickness(0.0, 3.0, 0.0, 0.0))
         let detailText =
-            let text =
-                [ if not (String.IsNullOrWhiteSpace call.argumentsJson) then "参数\n" + call.argumentsJson
-                  match call.result with
-                  | Some result when not (String.IsNullOrWhiteSpace result) -> "结果\n" + result
-                  | _ -> () ]
-                |> String.concat "\n\n"
-            SelectableTextBlock(
-                Text = text,
-                FontFamily = Tokens.monoFontFamily,
-                FontSize = Tokens.fontCaption,
-                Foreground = Tokens.textMuted,
-                TextWrapping = TextWrapping.Wrap,
-                LineHeight = ReadingRhythm.technicalLineHeight Tokens.fontCaption,
-                SelectionBrush = Tokens.accentSoft)
+            [ if not (String.IsNullOrWhiteSpace call.argumentsJson) then "参数\n" + call.argumentsJson
+              match call.result with
+              | Some result when not (String.IsNullOrWhiteSpace result) -> "结果\n" + result
+              | _ -> () ]
+            |> String.concat "\n\n"
+            |> fun text -> technicalText text Tokens.fontCaption Tokens.textMuted
         let detail, setDetailVisible = detailViewport (detailText :> Control) false
         detail.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
-        let chevronHost = Border(Child = Icons.chevronDown Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
+        let chevronHost = Border(Child = Icons.chevronRight Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
         let headerRow = DockPanel(LastChildFill = false)
         let left = Ui.hstack Tokens.space2 [ icon; name :> Control; state :> Control ]
         DockPanel.SetDock(left, Dock.Left)
@@ -224,14 +232,19 @@ module MessageCard =
                 Focusable = true,
                 Child = stack)
         let mutable detailVisible = false
+        let syncToolName () =
+            Avalonia.Automation.AutomationProperties.SetName(
+                host,
+                sprintf "%s工具调用 %s" (if detailVisible then "收起" else "展开") call.name)
         let toggle () =
             detailVisible <- not detailVisible
             setDetailVisible detailVisible
             summary.IsVisible <- not detailVisible && not (String.IsNullOrWhiteSpace summaryText)
             chevronHost.Child <-
-                if detailVisible then Icons.chevronUp Tokens.textFaint else Icons.chevronDown Tokens.textFaint
+                if detailVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
+            syncToolName ()
         Ui.onClick host toggle
-        Avalonia.Automation.AutomationProperties.SetName(host, sprintf "展开工具调用 %s" call.name)
+        syncToolName ()
         ToolTip.SetTip(host, "点击展开参数与结果")
         host :> Control
 
@@ -323,7 +336,7 @@ module MessageCard =
                 actions.copyText text
                 Ui.setIcon button Icons.check Tokens.success
                 ToolTip.SetTip(button, "已复制！")
-                let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 1500.0)
+                let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
                 timer.Tick.Add(fun _ ->
                     timer.Stop()
                     Ui.setIcon button Icons.copy Tokens.textMuted
@@ -384,21 +397,17 @@ module MessageCard =
             actionRow.Children.Add(Ui.button Ui.Secondary "重试" onRetry)
         match error.detail with
         | Some detail ->
-            let detailText =
-                SelectableTextBlock(
-                    Text = detail,
-                    FontFamily = Tokens.monoFontFamily,
-                    FontSize = Tokens.fontMicro,
-                    Foreground = Tokens.textFaint,
-                    TextWrapping = TextWrapping.Wrap,
-                    SelectionBrush = Tokens.accentSoft)
+            let detailText = technicalText detail Tokens.fontMicro Tokens.textFaint
             let detailHost, setDetailVisible = detailViewport (detailText :> Control) false
             detailHost.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
             let mutable visible = false
-            actionRow.Children.Add(
-                Ui.button Ui.Ghost "技术细节" (fun () ->
-                    visible <- not visible
-                    setDetailVisible visible))
+            let mutable toggleDetail: unit -> unit = ignore
+            let detailButton = Ui.button Ui.Ghost "技术细节" (fun () -> toggleDetail ())
+            toggleDetail <- fun () ->
+                visible <- not visible
+                setDetailVisible visible
+                Ui.setButtonText detailButton (if visible then "收起技术细节" else "技术细节")
+            actionRow.Children.Add detailButton
             if actionRow.Children.Count > 0 then column.Children.Add actionRow
             column.Children.Add detailHost
         | None -> if actionRow.Children.Count > 0 then column.Children.Add actionRow

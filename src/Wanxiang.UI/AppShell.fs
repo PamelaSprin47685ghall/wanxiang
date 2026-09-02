@@ -68,6 +68,7 @@ type MainView() as this =
     let mutable setConnectStatus: string -> unit = ignore
     let mutable pageLoading = false
     let commandFeedback = CommandFeedbackTracker()
+    let configFeedback = ConfigFeedbackTracker()
 
     let toast message tone = overlay.Toast(message, tone)
     let topLevel () = TopLevel.GetTopLevel this
@@ -107,7 +108,19 @@ type MainView() as this =
     let sendCommandWithFeedback (cmd: ClientCommand) (successMessage: string option) (onCommitted: unit -> unit) =
         commandFeedback.Track(cmd, successMessage, onCommitted)
         sendCommand cmd
+    let sendCommandWithCompletion
+        (cmd: ClientCommand)
+        (successMessage: string option)
+        (onCommitted: unit -> unit)
+        (onCompleted: bool -> unit)
+        =
+        commandFeedback.TrackWithCompletion(cmd, successMessage, onCommitted, onCompleted)
+        sendCommand cmd
     let newInvocation () = Guid.CreateVersion7()
+    let sendConfigWithFeedback (successMessage: string) (eventOf: Guid -> WireEvent) (onCompleted: bool -> unit) =
+        let requestId = newInvocation ()
+        configFeedback.Track(requestId, successMessage, onCompleted)
+        send (eventOf requestId)
 
     let activeConversation () =
         activeConvId |> Option.bind (fun id -> state.Conversations.TryFind id)
@@ -654,11 +667,20 @@ type MainView() as this =
                       if not (isNull item) && item.GetValueKind() = JsonValueKind.String then item.GetValue<string>() ]
             settings.ApplyProbe(d.providerId, d.ok, models, d.error)
         | ConfigApplied d ->
-            if d.ok then
-                toast "配置已保存" Success
-                send CatalogRequest
-            else
-                toast (String.Join("；", d.errors)) Failure
+            match configFeedback.Resolve d.requestId with
+            | Some feedback ->
+                feedback.onCompleted d.ok
+                if d.ok then
+                    toast feedback.successMessage Success
+                    send CatalogRequest
+                else
+                    toast (String.Join("；", d.errors)) Failure
+            | None ->
+                if d.ok then
+                    toast "配置已保存" Success
+                    send CatalogRequest
+                else
+                    toast (String.Join("；", d.errors)) Failure
         | ConversationListSnapshot d ->
             state.Handle ev
             summaries <- ConversationSummary.parseList d.items
@@ -786,10 +808,11 @@ type MainView() as this =
             match commandFeedback.Commit d.invocationId with
             | Some feedback ->
                 feedback.onCommitted ()
+                feedback.onCompleted true
                 feedback.successMessage |> Option.iter (fun message -> toast message Success)
             | None -> ()
         | CommandRejected d ->
-            commandFeedback.Reject d.invocationId
+            commandFeedback.Reject d.invocationId |> Option.iter (fun feedback -> feedback.onCompleted false)
             match d.requiredCommitId with
             | Some _ -> toast "本地数据不是最新，已自动追赶，请重试。" Warning
             | None -> toast (sprintf "操作被拒绝：%s" d.message) Failure
@@ -812,10 +835,11 @@ type MainView() as this =
               openConversation = fun id -> this.OpenConversation id
               renameConversation =
                 fun summary ->
-                    Dialogs.prompt overlay "重命名会话" "会话标题" summary.title "保存" (fun title ->
-                        sendCommand (
+                    Dialogs.prompt overlay "重命名会话" "会话标题" summary.title "保存" (fun title onCompleted ->
+                        let command =
                             RenameConversation
-                                {| invocationId = newInvocation (); conversationId = summary.id; title = title |}))
+                                {| invocationId = newInvocation (); conversationId = summary.id; title = title |}
+                        sendCommandWithCompletion command None ignore onCompleted)
               deleteConversation =
                 fun summary ->
                     Dialogs.confirm
@@ -906,11 +930,11 @@ type MainView() as this =
                 fun () ->
                     match activeConvId with
                     | Some convId ->
-                        Dialogs.sessionSettings overlay catalog (activeConfig ()) (fun config ->
+                        Dialogs.sessionSettings overlay catalog (activeConfig ()) (fun config onCompleted ->
                             let command =
                                 UpdateConversationConfig
                                     {| invocationId = newInvocation (); conversationId = convId; config = config |}
-                            sendCommandWithFeedback command (Some "会话设置已更新") ignore)
+                            sendCommandWithCompletion command (Some "会话设置已更新") ignore onCompleted)
                     | None -> toast "先选择一个会话。" Warning
               forkFromHere =
                 fun () ->
@@ -960,20 +984,39 @@ type MainView() as this =
 
     member private this.BuildSettings() =
         let actions =
-            { upsertProvider = fun payload -> send (ConfigUpsertProvider {| requestId = newInvocation (); provider = payload |})
+            { upsertProvider =
+                fun payload onCompleted ->
+                    sendConfigWithFeedback
+                        "服务商设置已保存"
+                        (fun requestId -> ConfigUpsertProvider {| requestId = requestId; provider = payload |})
+                        onCompleted
               deleteProvider =
                 fun id ->
                     Dialogs.confirm overlay "删除服务商" (sprintf "「%s」将从配置中移除，使用它的会话需要重新选择模型。" id) "删除" (fun () ->
-                        send (ConfigDeleteProvider {| requestId = newInvocation (); providerId = id |}))
+                        sendConfigWithFeedback
+                            "服务商已删除"
+                            (fun requestId -> ConfigDeleteProvider {| requestId = requestId; providerId = id |})
+                            ignore)
               probeProvider = fun id -> send (ProviderProbeRequest {| requestId = newInvocation (); providerId = id |})
-              upsertMcp = fun payload -> send (ConfigUpsertMcp {| requestId = newInvocation (); server = payload |})
+              upsertMcp =
+                fun payload onCompleted ->
+                    sendConfigWithFeedback
+                        "MCP 设置已保存"
+                        (fun requestId -> ConfigUpsertMcp {| requestId = requestId; server = payload |})
+                        onCompleted
               deleteMcp =
                 fun id ->
                     Dialogs.confirm overlay "删除 MCP 服务器" (sprintf "「%s」提供的工具将不再可用。" id) "删除" (fun () ->
-                        send (ConfigDeleteMcp {| requestId = newInvocation (); serverId = id |}))
+                        sendConfigWithFeedback
+                            "MCP 服务器已删除"
+                            (fun requestId -> ConfigDeleteMcp {| requestId = requestId; serverId = id |})
+                            ignore)
               updateGeneration =
-                fun payload ->
-                    send (ConfigUpdateGeneration {| requestId = newInvocation (); generation = payload |})
+                fun payload onCompleted ->
+                    sendConfigWithFeedback
+                        "生成设置已保存"
+                        (fun requestId -> ConfigUpdateGeneration {| requestId = requestId; generation = payload |})
+                        onCompleted
               savePrefs = fun next -> this.SavePrefs next
               toast = fun message tone -> toast message tone }
         settings <- SettingsView(overlay, actions, (fun next -> this.SavePrefs next), (fun () -> this.CloseSettings()))
@@ -1017,6 +1060,14 @@ type MainView() as this =
                 Cursor = new Cursor(StandardCursorType.SizeWestEast),
                 IsVisible = not initialNavigation.sidebarCollapsed)
         Avalonia.Automation.AutomationProperties.SetName(sidebarSplitter, "调整侧边栏宽度")
+        sidebarSplitter.PointerEntered.Add(fun _ -> sidebarSplitter.Background <- Tokens.hover)
+        sidebarSplitter.PointerExited.Add(fun _ ->
+            sidebarSplitter.Background <-
+                if sidebarSplitter.IsFocused then Tokens.accentFaint :> IBrush else Brushes.Transparent :> IBrush)
+        sidebarSplitter.GotFocus.Add(fun _ -> sidebarSplitter.Background <- Tokens.accentFaint)
+        sidebarSplitter.LostFocus.Add(fun _ ->
+            sidebarSplitter.Background <-
+                if sidebarSplitter.IsPointerOver then Tokens.hover :> IBrush else Brushes.Transparent :> IBrush)
         sidebarSplitter.DragCompleted.Add(fun _ ->
             let nav = navigation.State
             if not nav.compactMode && not nav.sidebarCollapsed then
@@ -1048,7 +1099,8 @@ type MainView() as this =
             Dispatcher.UIThread.Post(fun () ->
                 authenticated <- false
                 activeGenerationId <- None
-                commandFeedback.Clear()
+                commandFeedback.RejectAll()
+                configFeedback.RejectAll()
                 let detail = match error with Some e -> e.Message | None -> ""
                 sidebar.SetConnection(false, "连接已断开")
                 if not (String.IsNullOrWhiteSpace detail) then toast (sprintf "连接断开：%s" detail) Warning

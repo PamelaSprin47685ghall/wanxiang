@@ -8,6 +8,7 @@ open Avalonia.Automation
 open Avalonia.Automation.Peers
 open Avalonia.Automation.Provider
 open Avalonia.Controls
+open Avalonia.Controls.Documents
 open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
@@ -279,10 +280,38 @@ let ``field validation is local and does not change geometry`` () =
         let message = Ui.fieldValidationMessage box
         Assert.True message.IsVisible
         Assert.Equal("端点地址不能为空。", message.Text)
+        box.Text <- "https://example.com"
+        Dispatcher.UIThread.RunJobs()
+        Assert.False message.IsVisible
+        Assert.Equal("", AutomationProperties.GetHelpText(box))
+        Ui.setFieldError box "再次验证错误"
         Ui.clearFieldError box
         Dispatcher.UIThread.RunJobs()
         Assert.False message.IsVisible
         Assert.Equal(before, shell.BorderThickness)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``field group shows hint or error but never both`` () =
+    Headless.ensure ()
+    let _, box = Ui.textField "输入"
+    let group = Ui.inputFieldGroup "端点" "填写服务地址。" box
+    let window = show group 420.0 150.0
+    try
+        let panel = group :?> StackPanel
+        let error = Ui.fieldValidationMessage box
+        let hint = panel.Children[3] :?> TextBlock
+        Assert.True hint.IsVisible
+        Assert.False error.IsVisible
+        Ui.setFieldError box "地址无效。"
+        Dispatcher.UIThread.RunJobs()
+        Assert.True error.IsVisible
+        Assert.False hint.IsVisible
+        box.Text <- "https://example.com"
+        Dispatcher.UIThread.RunJobs()
+        Assert.False error.IsVisible
+        Assert.True hint.IsVisible
     finally
         window.Close()
 
@@ -360,6 +389,60 @@ let ``composer send stop state keeps automation name in sync`` () =
         window.Close()
 
 [<Fact>]
+let ``composer attachment slots stay stable across uploading ready and thirty items`` () =
+    Headless.ensure ()
+    let actions =
+        { submit = ignore
+          stopGeneration = ignore
+          pickAttachment = ignore
+          removeAttachment = ignore
+          openModelPicker = ignore }
+    let composer = Composer(actions)
+    composer.Build()
+    composer.SetEnabled(true, "")
+    let id = Guid.NewGuid()
+    let pending =
+        { attachmentId = id
+          sha256 = "stable"
+          size = 1024L
+          mediaType = "text/plain"
+          fileName = "a-very-long-attachment-name-that-needs-ellipsis.txt"
+          ready = false }
+    let window = show composer 720.0 360.0
+    try
+        composer.SetAttachments [ pending ]
+        Dispatcher.UIThread.RunJobs()
+        let removePending = byAutomationName composer "移除"
+        let pendingPoint = removePending.TranslatePoint(Point(0.0, 0.0), composer).Value
+        let heightPending = composer.Bounds.Height
+
+        composer.SetAttachments [ { pending with ready = true; size = 15L * 1024L * 1024L } ]
+        Dispatcher.UIThread.RunJobs()
+        let removeReady = byAutomationName composer "移除"
+        let readyPoint = removeReady.TranslatePoint(Point(0.0, 0.0), composer).Value
+        Assert.True(abs (pendingPoint.X - readyPoint.X) < 0.5, sprintf "remove x %.1f -> %.1f" pendingPoint.X readyPoint.X)
+        Assert.True(abs (heightPending - composer.Bounds.Height) < 0.5)
+
+        let many =
+            [ for index in 1 .. 30 ->
+                  { pending with
+                      attachmentId = Guid.NewGuid()
+                      sha256 = string index
+                      fileName = sprintf "attachment-%02d-with-a-long-name.txt" index
+                      ready = index % 3 <> 0
+                      size = int64 index * 1024L } ]
+        composer.SetAttachments many
+        Dispatcher.UIThread.RunJobs()
+        let attachmentScroller =
+            descendants composer
+            |> Seq.choose (function :? ScrollViewer as s when abs (s.MaxHeight - LayoutPolicy.attachmentDraftMaxHeight) < 0.1 -> Some s | _ -> None)
+            |> Seq.head
+        Assert.True(attachmentScroller.Extent.Height > attachmentScroller.Viewport.Height)
+        Assert.True(attachmentScroller.Bounds.Height <= LayoutPolicy.attachmentDraftMaxHeight + 0.5)
+    finally
+        window.Close()
+
+[<Fact>]
 let ``attachment draft uses upload identity so duplicate files stay independent`` () =
     let draft = AttachmentDraftController()
     let firstId = Guid.NewGuid()
@@ -408,14 +491,38 @@ let ``command feedback tracker resolves exactly once on commit or reject`` () =
     Assert.Equal(1, committed)
     Assert.Equal(Some "saved", feedback.successMessage)
     Assert.Equal(0, tracker.Count)
-    Assert.True(tracker.Commit(firstInvocation).IsNone)
+    let duplicateCommit = tracker.Commit firstInvocation
+    Assert.True(duplicateCommit.IsNone)
 
     let rejectedInvocation = Guid.NewGuid()
     let rejected = RenameConversation {| invocationId = rejectedInvocation; conversationId = conversationId; title = "B" |}
     tracker.Track(rejected, None, fun () -> committed <- committed + 1)
-    tracker.Reject rejectedInvocation
+    tracker.Reject rejectedInvocation |> ignore
     Assert.Equal(0, tracker.Count)
     Assert.Equal(1, committed)
+
+[<Fact>]
+let ``config feedback tracker resolves exactly once and rejects pending UI on disconnect`` () =
+    let tracker = ConfigFeedbackTracker()
+    let first = Guid.NewGuid()
+    let mutable completions: bool list = []
+    tracker.Track(first, "已保存", fun ok -> completions <- ok :: completions)
+    let feedback = tracker.Resolve(first) |> Option.get
+    Assert.Equal("已保存", feedback.successMessage)
+    feedback.onCompleted true
+    Assert.Single completions |> ignore
+    Assert.True completions.Head
+    let duplicateResolve = tracker.Resolve first
+    Assert.True(duplicateResolve.IsNone)
+
+    let second = Guid.NewGuid()
+    let third = Guid.NewGuid()
+    tracker.Track(second, "第二项", fun ok -> completions <- ok :: completions)
+    tracker.Track(third, "第三项", fun ok -> completions <- ok :: completions)
+    tracker.RejectAll()
+    Assert.Equal(0, tracker.Count)
+    Assert.Equal(3, completions.Length)
+    Assert.Equal(2, completions |> List.filter not |> List.length)
 
 [<Fact>]
 let ``large tool detail is bounded first and can explicitly expand fully`` () =
@@ -451,6 +558,7 @@ let ``large tool detail is bounded first and can explicitly expand fully`` () =
         let invoke = ControlAutomationPeer.CreatePeerForElement tool |> Assert.IsAssignableFrom<IInvokeProvider>
         invoke.Invoke()
         Dispatcher.UIThread.RunJobs()
+        Assert.Equal("收起工具调用 huge_tool", AutomationProperties.GetName(tool))
 
         let detailScroller =
             descendants card
@@ -464,6 +572,10 @@ let ``large tool detail is bounded first and can explicitly expand fully`` () =
         Dispatcher.UIThread.RunJobs()
         Assert.True(Double.IsPositiveInfinity detailScroller.MaxHeight)
         Assert.Equal("收回限高", AutomationProperties.GetName(expand))
+
+        invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal("展开工具调用 huge_tool", AutomationProperties.GetName(tool))
     finally
         window.Close()
 
@@ -492,6 +604,12 @@ let ``dialog is constrained to the live viewport and restores focus`` () =
         Assert.True(dialog.Width <= root.Bounds.Width - Tokens.space3 * 2.0 + 0.5)
         Assert.True(dialog.MaxHeight <= root.Bounds.Height - Tokens.space3 * 2.0 + 0.5)
         Assert.True field.IsFocused
+
+        window.Width <- 240.0
+        window.Height <- 180.0
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(dialog.MaxWidth <= root.Bounds.Width - Tokens.space3 * 2.0 + 0.5)
+        Assert.True(dialog.MaxHeight <= root.Bounds.Height - Tokens.space3 * 2.0 + 0.5)
 
         overlay.CloseDialog()
         Dispatcher.UIThread.RunJobs()
@@ -535,9 +653,86 @@ let ``popup flips and clamps inside the viewport then restores anchor focus`` ()
         Assert.True(popup.Margin.Top + popup.Bounds.Height <= root.Bounds.Height - Tokens.space3 + 0.5)
         Assert.True first.IsFocused
 
+        window.Width <- 240.0
+        window.Height <- 160.0
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(popup.MaxWidth <= root.Bounds.Width - Tokens.space3 * 2.0 + 0.5)
+        Assert.True(popup.MaxHeight <= root.Bounds.Height - Tokens.space3 * 2.0 + 0.5)
+        Assert.True(popup.Margin.Left >= Tokens.space3 - 0.5)
+        Assert.True(popup.Margin.Top >= Tokens.space3 - 0.5)
+
         overlay.ClosePopup()
         Dispatcher.UIThread.RunJobs()
         Assert.True anchor.IsFocused
+    finally
+        window.Close()
+
+[<Fact>]
+let ``long markdown link has one keyboard stop and remote image states its source`` () =
+    Headless.ensure ()
+    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
+    let longLabel = String.replicate 12 "very-long-link-segment-"
+    let rendered = renderer.RenderText(sprintf "[%s](https://example.com/path)\n\n![架构图](https://cdn.example.com/diagram.png)" longLabel)
+    let window = show rendered 420.0 220.0
+    try
+        let hyperlinkStops =
+            descendants rendered
+            |> Seq.filter (fun control ->
+                control.Focusable
+                && AutomationProperties.GetControlTypeOverride(control)
+                   = Nullable<AutomationControlType>(AutomationControlType.Hyperlink))
+            |> Seq.length
+        Assert.Equal(1, hyperlinkStops)
+        let imageNotice =
+            descendants rendered
+            |> Seq.choose (function :? SelectableTextBlock as text -> Some text | _ -> None)
+            |> Seq.collect (fun text -> text.Inlines |> Seq.cast<Inline>)
+            |> Seq.choose (function :? Run as run -> Some run.Text | _ -> None)
+            |> String.concat ""
+        Assert.Contains("图片未加载", imageNotice)
+        Assert.Contains("cdn.example.com", imageNotice)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``forty item menu keeps long labels bounded and supports directional focus`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let anchor = Ui.button Ui.Secondary "打开菜单" ignore
+    anchor.HorizontalAlignment <- HorizontalAlignment.Right
+    anchor.VerticalAlignment <- VerticalAlignment.Bottom
+    root.Children.Add anchor
+    let overlay = OverlayHost(root)
+    overlay.WireDismiss()
+    let window = show root 360.0 320.0
+    try
+        anchor.Focus NavigationMethod.Tab |> ignore
+        let longLabel = "菜单项 01 " + String.replicate 18 "非常长的名称"
+        let entries =
+            [ for index in 1 .. 40 ->
+                  let label = if index = 1 then longLabel else sprintf "菜单项 %02d" index
+                  MenuEntry.create label ignore
+                  |> (if index % 3 = 0 then MenuEntry.withIcon Icons.info else id) ]
+        Menu.show overlay anchor true entries
+        Dispatcher.UIThread.RunJobs()
+        let first = byAutomationName root longLabel
+        let second = byAutomationName root "菜单项 02"
+        Assert.True first.IsFocused
+        first.RaiseEvent(KeyEventArgs(Key = Key.Down, RoutedEvent = InputElement.KeyDownEvent))
+        Dispatcher.UIThread.RunJobs()
+        Assert.True second.IsFocused
+        second.RaiseEvent(KeyEventArgs(Key = Key.End, RoutedEvent = InputElement.KeyDownEvent))
+        Dispatcher.UIThread.RunJobs()
+        let last = byAutomationName root "菜单项 40"
+        Assert.True last.IsFocused
+
+        let popup = root.Children[4] :?> Border
+        Assert.True(first.Bounds.Width <= popup.Bounds.Width + 0.5)
+        let menuScroller =
+            visualControls popup
+            |> Seq.choose (function :? ScrollViewer as s -> Some s | _ -> None)
+            |> Seq.head
+        Assert.True(menuScroller.Extent.Height > menuScroller.Viewport.Height)
     finally
         window.Close()
 
@@ -595,6 +790,57 @@ let ``history prepend preserves the reader viewport anchor`` () =
         let delta = scroller.Extent.Height - oldExtent
         let expected = oldOffset + delta
         Assert.True(abs (scroller.Offset.Y - expected) < 2.0, sprintf "offset %.1f expected %.1f" scroller.Offset.Y expected)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``repeated streaming updates preserve committed card instances`` () =
+    Headless.ensure ()
+    let messageActions =
+        { copyText = ignore
+          regenerate = ignore
+          editAndFork = ignore
+          deleteMessage = ignore
+          downloadAttachment = ignore
+          openLink = ignore }
+    let actions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message = messageActions }
+    let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
+    chat.Build()
+    let window = show chat 900.0 620.0
+    try
+        let committed =
+            [ for index in 1UL .. 200UL ->
+                  { MessageView.empty with
+                      role = if index % 2UL = 0UL then "user" else "assistant"
+                      text = sprintf "Committed message %d — %s" index (String.replicate 6 "稳定内容")
+                      commitId = Some index } ]
+        chat.RenderMessages(committed, None, None, Tokens.fontReading, true, None, Set.empty)
+        Dispatcher.UIThread.RunJobs()
+        let scroller =
+            descendants chat
+            |> Seq.choose (function :? ScrollViewer as s -> Some s | _ -> None)
+            |> Seq.head
+        let panel = scroller.Content :?> StackPanel
+        let first = panel.Children[0]
+        let watch = Stopwatch.StartNew()
+        for update in 1 .. 30 do
+            let streaming =
+                { MessageView.empty with
+                    role = "assistant"
+                    text = String.replicate update "流式增量" }
+            chat.RenderMessages(committed, Some streaming, None, Tokens.fontReading, true, None, Set.empty)
+            Dispatcher.UIThread.RunJobs()
+            Assert.True(obj.ReferenceEquals(first, panel.Children[0]))
+        watch.Stop()
+        Assert.True(watch.Elapsed.TotalMilliseconds < 2500.0, sprintf "30 streaming updates %.0f ms" watch.Elapsed.TotalMilliseconds)
     finally
         window.Close()
 
@@ -696,6 +942,263 @@ let ``sidebar keeps a bounded visual tree for 5000 conversations`` () =
         let realizedAfterScroll = list.GetRealizedContainers() |> Seq.length
         Assert.True(realizedAfterScroll > 0 && realizedAfterScroll < 80, sprintf "realized after scroll = %d" realizedAfterScroll)
     finally
+        window.Close()
+
+[<Fact>]
+let ``sidebar running pin and idle states keep the same title origin`` () =
+    Headless.ensure ()
+    let actions =
+        { newConversation = ignore
+          openConversation = ignore
+          renameConversation = ignore
+          deleteConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    root.Children.Insert(0, sidebar)
+    let window = show root 360.0 600.0
+    let id = Guid.NewGuid()
+    let baseItem = summary id "Stable title"
+    try
+        let titleOrigin pinned running =
+            sidebar.SetConversations [ { baseItem with pinned = pinned; running = running } ]
+            Dispatcher.UIThread.RunJobs()
+            let list = byAutomationName sidebar "会话列表" :?> ListBox
+            let host = realizedByAutomationName list "Stable title"
+            let title =
+                visualControls host
+                |> Seq.choose (function :? TextBlock as text when text.Text = "Stable title" -> Some text | _ -> None)
+                |> Seq.head
+            title.TranslatePoint(Point(0.0, 0.0), host).Value.X, host.Bounds.Height
+        let idleX, idleH = titleOrigin false false
+        let pinX, pinH = titleOrigin true false
+        let runningX, runningH = titleOrigin false true
+        Assert.True(abs (idleX - pinX) < 0.5)
+        Assert.True(abs (idleX - runningX) < 0.5)
+        for height in [ idleH; pinH; runningH ] do
+            Assert.True(height >= ControlMetrics.sidebarRowMinHeight - 0.5)
+
+        sidebar.SetActive(Some id)
+        Dispatcher.UIThread.RunJobs()
+        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let selected = realizedByAutomationName list "Stable title"
+        Assert.Equal("当前会话", AutomationProperties.GetItemStatus(selected))
+    finally
+        window.Close()
+
+[<Fact>]
+let ``sidebar recycles twenty thousand rows through scroll search active and theme changes`` () =
+    Headless.ensure ()
+    let actions =
+        { newConversation = ignore
+          openConversation = ignore
+          renameConversation = ignore
+          deleteConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    root.Children.Insert(0, sidebar)
+    let window = show root 360.0 700.0
+    let initialTheme = Tokens.current ()
+    try
+        let ids = [| for _ in 1 .. 20000 -> Guid.NewGuid() |]
+        let items =
+            [ for index in 1 .. 20000 ->
+                  { summary ids[index - 1] (sprintf "Conversation %05d" index) with
+                      lastCommitId = uint64 index } ]
+        let watch = Stopwatch.StartNew()
+        sidebar.SetConversations items
+        Dispatcher.UIThread.RunJobs()
+        watch.Stop()
+        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let realizedCount () = list.GetRealizedContainers() |> Seq.length
+        let rec awaitRealized remaining name =
+            Dispatcher.UIThread.RunJobs()
+            let found =
+                list.GetRealizedContainers()
+                |> Seq.collect visualControls
+                |> Seq.tryFind (fun control -> AutomationProperties.GetName(control) = name)
+            match found with
+            | Some control -> control
+            | None when remaining > 0 ->
+                Thread.Sleep 10
+                awaitRealized (remaining - 1) name
+            | None -> failwithf "%s was not realized after ScrollIntoView" name
+        Assert.True(realizedCount () > 0 && realizedCount () < 90)
+        Assert.True(watch.Elapsed.TotalMilliseconds < 3000.0, sprintf "20k render %.0f ms" watch.Elapsed.TotalMilliseconds)
+
+        // 明确的 lastCommitId 排序保证 20000 在顶部、00001 在底部。
+        Assert.NotNull(awaitRealized 8 "Conversation 20000")
+        list.ScrollIntoView(list.ItemCount - 1)
+        let last = awaitRealized 8 "Conversation 00001"
+        Assert.Contains("Conversation 00001", string (ToolTip.GetTip last))
+        sidebar.SetActive(Some ids[0])
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal("当前会话", AutomationProperties.GetItemStatus(last))
+
+        Tokens.apply Dark
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(realizedCount () < 90)
+        Tokens.apply Light
+        Dispatcher.UIThread.RunJobs()
+        list.ScrollIntoView 0
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(realizedCount () < 90)
+
+        let search =
+            descendants sidebar
+            |> Seq.choose (function :? TextBox as box when box.PlaceholderText = "搜索会话" -> Some box | _ -> None)
+            |> Seq.head
+        let pumpSearchDebounce () =
+            let watch = Stopwatch.StartNew()
+            while watch.Elapsed.TotalMilliseconds < 220.0 do
+                Thread.Sleep 5
+                Dispatcher.UIThread.RunJobs()
+        search.Text <- "Conversation 20000"
+        pumpSearchDebounce ()
+        Assert.NotNull(awaitRealized 8 "Conversation 20000")
+        search.Text <- ""
+        pumpSearchDebounce ()
+        Assert.NotNull(awaitRealized 8 "Conversation 20000")
+        Assert.True(realizedCount () < 90)
+    finally
+        Tokens.apply initialTheme
+        window.Close()
+
+[<Fact>]
+let ``accelerated craft soak covers the long-session action ledger without visual growth`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    overlay.WireDismiss()
+    let mutable opened = 0
+    let sidebarActions =
+        { newConversation = ignore
+          openConversation = fun _ -> opened <- opened + 1
+          renameConversation = ignore
+          deleteConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let sidebar = Sidebar(overlay, sidebarActions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    let mutable submitted = 0
+    let composer =
+        Composer(
+            { submit = fun _ -> submitted <- submitted + 1
+              stopGeneration = ignore
+              pickAttachment = ignore
+              removeAttachment = ignore
+              openModelPicker = ignore })
+    composer.Build()
+    composer.SetEnabled(true, "")
+    let chat =
+        ChatView(
+            { renameTitle = ignore
+              openSessionSettings = ignore
+              forkFromHere = ignore
+              stopGeneration = ignore
+              requestOlderHistory = ignore
+              retryLast = ignore
+              toggleSidebar = ignore
+              message =
+                { copyText = ignore
+                  regenerate = ignore
+                  editAndFork = ignore
+                  deleteMessage = ignore
+                  downloadAttachment = ignore
+                  openLink = ignore } },
+            fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
+    chat.Build()
+    let main = DockPanel()
+    DockPanel.SetDock(composer, Dock.Bottom)
+    main.Children.Add composer
+    main.Children.Add chat
+    let layout = Grid()
+    layout.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength 300.0))
+    layout.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+    Grid.SetColumn(sidebar, 0)
+    Grid.SetColumn(main, 1)
+    layout.Children.Add sidebar
+    layout.Children.Add main
+    root.Children.Insert(0, layout)
+    let window = show root 1100.0 720.0
+    let initialTheme = Tokens.current ()
+    try
+        let ids = [| for _ in 1 .. 300 -> Guid.NewGuid() |]
+        sidebar.SetConversations
+            [ for index in 1 .. 300 ->
+                  { summary ids[index - 1] (sprintf "Soak %03d" index) with lastCommitId = uint64 (301 - index) } ]
+        Dispatcher.UIThread.RunJobs()
+        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let initialLayerCount = root.Children.Count
+
+        for index in 0 .. 19 do
+            sidebar.SetActive(Some ids[index])
+            Dispatcher.UIThread.RunJobs()
+        let search =
+            descendants sidebar
+            |> Seq.choose (function :? TextBox as box when box.PlaceholderText = "搜索会话" -> Some box | _ -> None)
+            |> Seq.head
+        for index in 1 .. 20 do
+            search.Text <- sprintf "Soak %03d" index
+        search.Text <- ""
+        Thread.Sleep 190
+        Dispatcher.UIThread.RunJobs()
+
+        let send = byAutomationName composer "发送"
+        let sendInvoke = ControlAutomationPeer.CreatePeerForElement send |> Assert.IsAssignableFrom<IInvokeProvider>
+        for index in 1 .. 30 do
+            composer.SetText(sprintf "message %d" index)
+            sendInvoke.Invoke()
+            Dispatcher.UIThread.RunJobs()
+        for _ in 1 .. 10 do
+            composer.SetGenerating true
+            composer.SetGenerating false
+        Assert.Equal("发送", AutomationProperties.GetName(send))
+
+        let anchor = Ui.button Ui.Secondary "soak popup" ignore
+        root.Children.Insert(1, anchor)
+        for index in 1 .. 20 do
+            Menu.show overlay anchor false [ MenuEntry.create (sprintf "item %d" index) ignore ]
+            Dispatcher.UIThread.RunJobs()
+            overlay.ClosePopup()
+            Dispatcher.UIThread.RunJobs()
+        root.Children.Remove anchor |> ignore
+
+        for index in 1 .. 10 do
+            Tokens.apply(if index % 2 = 0 then Light else Dark)
+            Dispatcher.UIThread.RunJobs()
+
+        Assert.Equal(30, submitted)
+        Assert.True(list.GetRealizedContainers() |> Seq.length < 90)
+        Assert.Equal(initialLayerCount, root.Children.Count)
+        Assert.False overlay.IsPopupOpen
+    finally
+        Tokens.apply initialTheme
         window.Close()
 
 [<Fact>]
@@ -843,17 +1346,44 @@ let ``reduced motion keeps spinner static`` () =
         MotionPolicy.setReduced false
 
 [<Fact>]
+let ``motion ledger permits no geometry animation and reduced durations collapse to zero`` () =
+    Assert.False MotionLedger.geometryAnimationAllowed
+    Assert.Equal(40.0, MotionLedger.busySpinnerFrame.TotalMilliseconds, 3)
+    Assert.Equal(1500.0, MotionLedger.copyConfirmationHold.TotalMilliseconds, 3)
+    MotionPolicy.setReduced false
+    Assert.True(MotionPolicy.duration(180).TotalMilliseconds > 0.0)
+    MotionPolicy.setReduced true
+    Assert.Equal(TimeSpan.Zero, MotionPolicy.duration 180)
+    MotionPolicy.setReduced false
+
+[<Fact>]
+let ``tertiary text keeps readable contrast in both palette modes`` () =
+    let relativeLuminance (color: Color) =
+        let channel (value: byte) =
+            let c = float value / 255.0
+            if c <= 0.03928 then c / 12.92 else Math.Pow((c + 0.055) / 1.055, 2.4)
+        0.2126 * channel color.R + 0.7152 * channel color.G + 0.0722 * channel color.B
+    let contrast foreground background =
+        let a = relativeLuminance foreground
+        let b = relativeLuminance background
+        (max a b + 0.05) / (min a b + 0.05)
+    for palette in [ Palette.light; Palette.dark ] do
+        Assert.True(contrast palette.textFaint palette.canvas >= 4.5)
+        Assert.True(contrast palette.textFaint palette.surface >= 4.5)
+        Assert.True(contrast palette.textMuted palette.canvas >= 4.5)
+
+[<Fact>]
 let ``appearance preference update keeps the same focused control instance`` () =
     Headless.ensure ()
     let root = Grid()
     let overlay = OverlayHost(root)
     let settingsActions =
-        { upsertProvider = ignore
+        { upsertProvider = fun _ completed -> completed true
           deleteProvider = ignore
           probeProvider = ignore
-          upsertMcp = ignore
+          upsertMcp = fun _ completed -> completed true
           deleteMcp = ignore
-          updateGeneration = ignore
+          updateGeneration = fun _ completed -> completed true
           savePrefs = ignore
           toast = fun _ _ -> () }
     let mutable settingsRef: SettingsView option = None
@@ -882,6 +1412,105 @@ let ``appearance preference update keeps the same focused control instance`` () 
         let largerAfter = byAutomationName settings "更大"
         Assert.True(obj.ReferenceEquals(largerBefore, largerAfter))
         Assert.True largerAfter.IsFocused
+    finally
+        window.Close()
+
+[<Fact>]
+let ``settings uses native stretch max width and exposes selected navigation status`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let settingsActions =
+        { upsertProvider = fun _ completed -> completed true
+          deleteProvider = ignore
+          probeProvider = ignore
+          upsertMcp = fun _ completed -> completed true
+          deleteMcp = ignore
+          updateGeneration = fun _ completed -> completed true
+          savePrefs = ignore
+          toast = fun _ _ -> () }
+    let settings = SettingsView(overlay, settingsActions, ignore, ignore)
+    settings.Build()
+    root.Children.Insert(0, settings)
+    let window = show root 1200.0 720.0
+    try
+        Dispatcher.UIThread.RunJobs()
+        let frame =
+            descendants settings
+            |> Seq.choose (function :? Border as border when abs (border.MaxWidth - ControlMetrics.settingsContentMaxWidth) < 0.1 -> Some border | _ -> None)
+            |> Seq.head
+        Assert.True(frame.Bounds.Width <= ControlMetrics.settingsContentMaxWidth + 0.5)
+        Assert.True(frame.Bounds.Width > 700.0)
+
+        let providers = byAutomationName settings "服务商"
+        let appearance = byAutomationName settings "外观"
+        Assert.Equal("当前分区", AutomationProperties.GetItemStatus(providers))
+        let invokeAppearance = ControlAutomationPeer.CreatePeerForElement appearance |> Assert.IsAssignableFrom<IInvokeProvider>
+        invokeAppearance.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal("", AutomationProperties.GetItemStatus(providers))
+        Assert.Equal("当前分区", AutomationProperties.GetItemStatus(appearance))
+
+        window.Width <- 600.0
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(frame.Bounds.Width <= 600.5)
+        Assert.True(frame.Bounds.Width > 500.0)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``provider editor stays pending until authoritative config result`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    overlay.WireDismiss()
+    let mutable pendingCallback: (bool -> unit) option = None
+    let settingsActions =
+        { upsertProvider = fun _ completed -> pendingCallback <- Some completed
+          deleteProvider = ignore
+          probeProvider = ignore
+          upsertMcp = fun _ completed -> completed true
+          deleteMcp = ignore
+          updateGeneration = fun _ completed -> completed true
+          savePrefs = ignore
+          toast = fun _ _ -> () }
+    let providers = SettingsProviders(overlay, settingsActions)
+    let view = providers.Build()
+    root.Children.Insert(0, view)
+    let window = show root 760.0 700.0
+    try
+        let addProvider = byAutomationName view "添加服务商"
+        ControlAutomationPeer.CreatePeerForElement addProvider
+        |> Assert.IsAssignableFrom<IInvokeProvider>
+        |> fun invoke -> invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        Assert.True overlay.IsDialogOpen
+
+        let add = byAutomationName root "添加"
+        ControlAutomationPeer.CreatePeerForElement add
+        |> Assert.IsAssignableFrom<IInvokeProvider>
+        |> fun invoke -> invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        let pending = byAutomationName root "正在保存…"
+        Assert.False pending.IsEnabled
+        let cancel = byAutomationName root "取消"
+        Assert.False cancel.IsEnabled
+        Assert.True overlay.IsDialogOpen
+
+        pendingCallback.Value false
+        Dispatcher.UIThread.RunJobs()
+        let retry = byAutomationName root "添加"
+        Assert.True retry.IsEnabled
+        Assert.True((byAutomationName root "取消").IsEnabled)
+        Assert.True overlay.IsDialogOpen
+
+        ControlAutomationPeer.CreatePeerForElement retry
+        |> Assert.IsAssignableFrom<IInvokeProvider>
+        |> fun invoke -> invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        pendingCallback.Value true
+        Dispatcher.UIThread.RunJobs()
+        Assert.False overlay.IsDialogOpen
     finally
         window.Close()
 

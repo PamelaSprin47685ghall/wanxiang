@@ -67,7 +67,7 @@ type Composer(actions: ComposerActions) as this =
             Foreground = Tokens.textMuted,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 240.0)
+            MaxWidth = ControlMetrics.composerModelMaxWidth)
     let modelChip =
         ActionBorder(
             Background = Brushes.Transparent,
@@ -167,6 +167,13 @@ type Composer(actions: ComposerActions) as this =
                 else
                     Ui.spinner 13.0
             icon.VerticalAlignment <- VerticalAlignment.Center
+            icon.HorizontalAlignment <- HorizontalAlignment.Center
+            let iconSlot =
+                Border(
+                    Width = ControlMetrics.composerAttachmentIconSlot,
+                    Height = ControlMetrics.composerAttachmentIconSlot,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Child = icon)
             let name =
                 TextBlock(
                     Text = attachment.fileName,
@@ -180,13 +187,15 @@ type Composer(actions: ComposerActions) as this =
                     Text = (if attachment.ready then AttachmentRef.formatSize attachment.size else "上传中"),
                     FontSize = Tokens.fontMicro,
                     Foreground = Tokens.textFaint,
+                    Width = ControlMetrics.composerAttachmentStateWidth,
+                    TextAlignment = TextAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Center)
             let remove = Ui.iconButton Icons.close "移除"
             Ui.onClick remove (fun () ->
                 actions.removeAttachment attachment.attachmentId
                 Dispatcher.UIThread.Post(fun () -> input.Focus() |> ignore))
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1, VerticalAlignment = VerticalAlignment.Center)
-            row.Children.Add icon
+            row.Children.Add iconSlot
             row.Children.Add name
             row.Children.Add size
             row.Children.Add remove
@@ -236,7 +245,8 @@ type Composer(actions: ComposerActions) as this =
     /// 窄屏只收紧已有控件，不增加第二套输入逻辑：隐藏键盘提示、压缩边距与模型标签。
     member this.SetCompactMode(value: bool) =
         hintText.IsVisible <- not value
-        modelCaption.MaxWidth <- if value then 150.0 else 240.0
+        modelCaption.MaxWidth <-
+            if value then ControlMetrics.composerModelCompactMaxWidth else ControlMetrics.composerModelMaxWidth
         let actionSize = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         Ui.setSquareTarget attachButton actionSize
         Ui.setSquareTarget sendButton actionSize

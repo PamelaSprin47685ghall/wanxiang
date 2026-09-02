@@ -118,6 +118,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let isActive = activeId = Some id
         host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
         host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
+        Avalonia.Automation.AutomationProperties.SetItemStatus(host, if isActive then "当前会话" else "")
 
     member private _.FocusRowAt(index: int) =
         if index >= 0 && index < visibleRowIds.Length then
@@ -166,18 +167,32 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 Margin = Thickness(0.0, 1.0, 0.0, 0.0))
         let titleRow = DockPanel(LastChildFill = true)
+        // running / pinned / idle 永远占同一个槽位。状态切换只换槽内内容，
+        // 不允许标题左缘跟着生成状态来回漂。
+        let stateSlot =
+            Border(
+                Width = ControlMetrics.sidebarStateSlotWidth,
+                Height = ControlMetrics.sidebarStateGlyphSize,
+                Margin = Thickness(0.0, 0.0, Tokens.space2, 0.0),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left)
         if summary.running then
-            let dot = Ellipse(Width = 6.0, Height = 6.0, Fill = Tokens.accent, VerticalAlignment = VerticalAlignment.Center, Margin = Thickness(0.0, 0.0, Tokens.space2, 0.0))
-            DockPanel.SetDock(dot, Dock.Left)
-            titleRow.Children.Add dot
+            stateSlot.Child <-
+                Ellipse(
+                    Width = ControlMetrics.sidebarRunningDotSize,
+                    Height = ControlMetrics.sidebarRunningDotSize,
+                    Fill = Tokens.accent,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center)
         elif summary.pinned then
             let pin = Icons.pin Tokens.textFaint
-            pin.Width <- 11.0
-            pin.Height <- 11.0
+            pin.Width <- ControlMetrics.sidebarStateGlyphSize
+            pin.Height <- ControlMetrics.sidebarStateGlyphSize
+            pin.HorizontalAlignment <- HorizontalAlignment.Center
             pin.VerticalAlignment <- VerticalAlignment.Center
-            pin.Margin <- Thickness(0.0, 0.0, Tokens.space2, 0.0)
-            DockPanel.SetDock(pin, Dock.Left)
-            titleRow.Children.Add pin
+            stateSlot.Child <- pin
+        DockPanel.SetDock(stateSlot, Dock.Left)
+        titleRow.Children.Add stateSlot
         let moreButton = Ui.iconButton Icons.more "操作菜单"
         Ui.setReservedActionVisible moreButton false
         DockPanel.SetDock(moreButton, Dock.Right)
@@ -375,7 +390,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let searchDebounce = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 160.0)
         searchDebounce.Tick.Add(fun _ ->
             searchDebounce.Stop()
-            this.Rebuild())
+            this.Rebuild()
+            // 搜索是一次新的结果上下文，明确从首项开始，而不是继承旧列表的
+            // 虚拟化 offset。Down 进入结果时第一项因此始终完全可见。
+            if visibleRowIds.Length > 0 then conversationList.ScrollIntoView 0)
         searchBox.TextChanged.Add(fun _ ->
             Ui.setReservedActionVisible clearSearchButton (not (String.IsNullOrWhiteSpace searchBox.Text))
             searchDebounce.Stop()

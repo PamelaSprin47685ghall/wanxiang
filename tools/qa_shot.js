@@ -21,6 +21,7 @@ const HEIGHT = Number(arg('height', 900));
 const SCALE = Number(arg('scale', 1));
 const TAG = arg('tag', 'run');
 const THEME = arg('theme', 'light');
+const RESIZE_SWEEP = arg('resize-sweep', 'false') === 'true';
 
 mkdirSync(OUT, { recursive: true });
 
@@ -63,6 +64,7 @@ async function main() {
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: THEME }]);
 
     const errors = [];
+    const resizeChecks = [];
     page.on('console', (m) => {
         const t = m.text();
         if (/error|fail|exception|unhandled/i.test(t)) errors.push(t.slice(0, 400));
@@ -171,6 +173,46 @@ async function main() {
         shots.push(path);
         console.log('shot:', path);
     }
+    const currentLayout = async () => {
+        return await page.evaluate(() => {
+            const canvas = document.querySelector('#out canvas');
+            const rect = canvas?.getBoundingClientRect();
+            return {
+                canvas: rect ? [rect.width, rect.height] : null,
+                body: [document.body.scrollWidth, document.body.scrollHeight],
+                viewport: [window.innerWidth, window.innerHeight],
+                devicePixelRatio: window.devicePixelRatio,
+            };
+        });
+    };
+    const verifyLayout = (label, state) => {
+        const [vw, vh] = state.viewport;
+        const [bw, bh] = state.body;
+        const canvas = state.canvas;
+        const close = (a, b) => Math.abs(a - b) <= 0.75;
+        if (!canvas || !close(canvas[0], vw) || !close(canvas[1], vh) || bw > vw + 0.75 || bh > vh + 0.75) {
+            errors.push(`layout ${label}: ${JSON.stringify(state)}`);
+        }
+        resizeChecks.push({ label, ...state });
+    };
+    const resizeSweep = async (phase) => {
+        if (!RESIZE_SWEEP) return;
+        const minWidth = 390;
+        const maxWidth = Math.max(WIDTH, 1440);
+        const step = 53;
+        const widths = [];
+        for (let width = maxWidth; width >= minWidth; width -= step) widths.push(width);
+        if (widths[widths.length - 1] !== minWidth) widths.push(minWidth);
+        const back = widths.slice(0, -1).reverse();
+        for (const width of [...widths, ...back]) {
+            await page.setViewport({ width, height: HEIGHT, deviceScaleFactor: SCALE });
+            await sleep(90);
+            verifyLayout(`${phase}-${width}`, await currentLayout());
+        }
+        await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: SCALE });
+        await sleep(180);
+        verifyLayout(`${phase}-restored`, await currentLayout());
+    };
     const click = async (x, y, settle = 600) => {
         await page.mouse.click(geo.x + x, geo.y + y);
         await sleep(settle);
@@ -182,9 +224,12 @@ async function main() {
     const compact = geo.w < 720;
     const sidebarActionX = compact ? geo.w - 26 : 258;
     const settingsX = compact ? geo.w - 26 : 264;
-    const composerY = geo.h - 70;
+    // compact Composer 的底部还多一行模型选择；固定减 70 会点到 footer，
+    // 后续键盘输入实际没有落进 TextBox，窄屏截图因此会误报“已覆盖”交互态。
+    const composerY = geo.h - (compact ? 104 : 70);
 
     await shot('01-connected');
+    await resizeSweep('connected');
 
     // 侧栏右上角「新建会话」。compact 下侧栏占满 viewport，动作贴右。
     await click(sidebarActionX, 26, 1800);
@@ -195,6 +240,7 @@ async function main() {
     await page.keyboard.press('Enter');
     await sleep(1400);
     await shot('03-streaming');
+    await resizeSweep('streaming');
     await sleep(5000);
     await shot('04-markdown');
 
@@ -216,17 +262,14 @@ async function main() {
     }
     await click(settingsX, geo.h - 26, 1600);
     await shot('07-settings');
+    await resizeSweep('settings');
 
-    const layout = await page.evaluate(() => {
-        const canvas = document.querySelector('#out canvas');
-        const rect = canvas?.getBoundingClientRect();
-        return {
-            canvas: rect ? [rect.width, rect.height] : null,
-            body: [document.body.scrollWidth, document.body.scrollHeight],
-            devicePixelRatio: window.devicePixelRatio,
-        };
-    });
-    console.log(JSON.stringify({ shots, layout, errors: errors.slice(0, 12) }, null, 2));
+    const layout = await currentLayout();
+    console.log(JSON.stringify({ shots, layout, resizeChecks, errors: errors.slice(0, 12) }, null, 2));
+    if (errors.length > 0) {
+        console.error(`qa_shot: ${errors.length} browser/layout error(s)`);
+        process.exitCode = 1;
+    }
     } finally {
         await browser.close();
     }

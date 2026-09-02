@@ -39,6 +39,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         o
 
     member private this.ShowEditor(existing: McpInfo option) =
+        let mutable editorActive = true
         let idField, idBox = Ui.labeledField "稳定标识" "例如 filesystem"
         let labelField, labelBox = Ui.labeledField "显示名称" "在界面上怎么称呼它"
         let commandField, commandBox = Ui.labeledField "本地命令" "例如 npx"
@@ -72,6 +73,8 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             row.Children.Add enabledToggle
             row
 
+        let idleSaveText = if existing.IsSome then "保存" else "添加"
+        let mutable setPending: bool -> unit = ignore
         let save () =
             for box in [ idBox; commandBox; urlBox; timeoutBox ] do Ui.clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
@@ -100,14 +103,23 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 timeoutBox.Focus() |> ignore
             else
                 let timeout = snd timeoutResult
-                actions.upsertMcp(
-                    mcpPayload id (if isNull labelBox.Text then "" else labelBox.Text.Trim()) command args url timeout (readEnabled ()))
-                overlay.CloseDialog()
+                setPending true
+                actions.upsertMcp
+                    (mcpPayload id (if isNull labelBox.Text then "" else labelBox.Text.Trim()) command args url timeout (readEnabled ()))
+                    (fun ok ->
+                        setPending false
+                        if ok && editorActive then overlay.CloseDialog())
 
+        let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        let saveButton = Ui.button Ui.Primary idleSaveText save
+        Ui.preparePendingButton saveButton
+        setPending <- fun pending ->
+            Ui.setButtonPending saveButton pending idleSaveText "正在保存…"
+            Ui.setEnabled cancelButton (not pending)
         let buttons =
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
-            row.Children.Add(Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog()))
-            row.Children.Add(Ui.button Ui.Primary (if existing.IsSome then "保存" else "添加") save)
+            row.Children.Add cancelButton
+            row.Children.Add saveButton
             row
 
         let form =
@@ -130,7 +142,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
-        overlay.ShowDialog(scroller :> Control, 520.0)
+        overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () -> editorActive <- false))
 
     member private _.RenderTool(tool: ToolInfo) : Control =
         let icon = if tool.source = "mcp" then Icons.server Tokens.textMuted else Icons.wrench Tokens.textMuted
@@ -202,15 +214,16 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 (moreButton :> Control)
                 true
                 [ MenuEntry.create (if server.enabled then "停用" else "启用") (fun () ->
-                      actions.upsertMcp(
-                          mcpPayload
+                      actions.upsertMcp
+                          (mcpPayload
                               server.id
                               server.label
                               (server.command |> Option.defaultValue "")
                               server.args
                               (server.url |> Option.defaultValue "")
                               server.callTimeoutSeconds
-                              (not server.enabled)))
+                              (not server.enabled))
+                          ignore)
                   MenuEntry.create "删除" (fun () -> actions.deleteMcp server.id)
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ])

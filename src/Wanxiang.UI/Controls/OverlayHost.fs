@@ -23,6 +23,7 @@ type ToastTone =
 type OverlayHost(root: Grid) =
 
     let viewportInset = Tokens.space3
+    let popupGap = Tokens.space2
 
     let scrim =
         Border(
@@ -186,7 +187,7 @@ type OverlayHost(root: Grid) =
     let fitToastsToViewport () =
         let width = max 0.0 (root.Bounds.Width - viewportInset * 2.0)
         if width > 0.0 then
-            toastStack.MaxWidth <- min 600.0 width
+            toastStack.MaxWidth <- min ContentMetrics.toastMaxWidth width
             for child in toastStack.Children do
                 child.MaxWidth <- toastStack.MaxWidth
 
@@ -194,7 +195,7 @@ type OverlayHost(root: Grid) =
         match popupAnchor with
         | Some anchor when popupCard.IsVisible ->
             try
-                let point = anchor.TranslatePoint(Point(0.0, anchor.Bounds.Height + 6.0), root)
+                let point = anchor.TranslatePoint(Point(0.0, anchor.Bounds.Height + popupGap), root)
                 if point.HasValue then
                     let p = point.Value
                     fitPopupToViewport ()
@@ -204,7 +205,7 @@ type OverlayHost(root: Grid) =
                     let clampedX = Math.Clamp(x, viewportInset, max viewportInset (root.Bounds.Width - width - viewportInset))
                     let flipUp = p.Y + height > root.Bounds.Height - viewportInset
                     let candidateY =
-                        if flipUp then p.Y - anchor.Bounds.Height - height - 12.0 else p.Y
+                        if flipUp then p.Y - anchor.Bounds.Height - height - popupGap * 2.0 else p.Y
                     let maxY = max viewportInset (root.Bounds.Height - height - viewportInset)
                     let clampedY = Math.Clamp(candidateY, viewportInset, maxY)
                     popupCard.Margin <- Thickness(clampedX, clampedY, 0.0, 0.0)
@@ -286,13 +287,14 @@ type OverlayHost(root: Grid) =
                 | Success -> Tokens.success :> IBrush
                 | Warning -> Tokens.warning :> IBrush
                 | Failure -> Tokens.danger :> IBrush
-            let bar = Border(Width = 3.0, CornerRadius = CornerRadius Tokens.radiusPill, Background = accentBrush)
+            let bar = Border(Width = ControlMetrics.toastAccentWidth, CornerRadius = CornerRadius Tokens.radiusPill, Background = accentBrush)
             let body =
                 TextBlock(
                     Text = message,
                     FontSize = Tokens.fontSmall,
                     Foreground = Tokens.text,
                     TextWrapping = TextWrapping.Wrap,
+                    LineHeight = ReadingRhythm.helperLineHeight,
                     VerticalAlignment = VerticalAlignment.Center)
             let bodyScroller =
                 ScrollViewer(
