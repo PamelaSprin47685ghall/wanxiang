@@ -27,6 +27,10 @@ public static partial class BrowserBridge
     [JSImport("pageUrl", "wanxiang")]
     public static partial string PageUrl();
 
+    /// <summary>CSS 像素视口宽（响应式断点唯一依据；Bounds.Width 在 Browser 高 DPR 下不可靠）。</summary>
+    [JSImport("wxViewportWidth", "wanxiang")]
+    public static partial double ViewportWidth();
+
     /// <summary>在全局作用域执行一段脚本（highlight.js / KaTeX 的加载）。</summary>
     [JSImport("richLoad", "wanxiang")]
     public static partial void RichLoad(string source);

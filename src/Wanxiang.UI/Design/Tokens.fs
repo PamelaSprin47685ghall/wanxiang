@@ -50,6 +50,17 @@ module Tokens =
     /// 改边框粗细会让按钮内容跳一下，而焦点本该是「无位移的提示」。
     let focusRingSpread = 2.0
 
+    /// 图文基线微调：15~16pt 图标与 14pt 文本在 StackPanel/DockPanel 顶对齐时约 2pt 视差。
+    /// 统一用它代替散落的 Margin(0,2,0,0)，避免“差不多对齐”。
+    let iconBaselineNudge = 2.0
+
+    /// 不透明度阶梯：状态表达只切透明度，不改尺寸，避免布局跳动。
+    let opacityDisabled = 0.5
+    let opacitySubtle = 0.62
+    let opacityComposerDisabled = 0.72
+    let opacityPressed = 0.78
+    let opacityStreamingCaret = 0.85
+
     /// 带框块（代码块、表格）的统一内边距。两者常在同一段回答里前后出现，
     /// 各自取值会让左缘差几个像素，读起来像没对齐的两张卡片。
     let blockPaddingX = space3

@@ -394,7 +394,7 @@ type MarkdownRenderer(
                         BorderBrush = (if isChecked then Tokens.accent else Tokens.line),
                         BorderThickness = Thickness 1.4,
                         Background = (if isChecked then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush),
-                        Margin = Thickness(0.0, 2.0, Tokens.space2, 0.0),
+                        Margin = Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space2, 0.0),
                         VerticalAlignment = VerticalAlignment.Top)
                 if isChecked then
                     let mark = Icons.check Tokens.textOnAccent

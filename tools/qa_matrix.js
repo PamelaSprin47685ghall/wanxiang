@@ -2,6 +2,8 @@
 // 精品 UI 发布矩阵：逐组调用 qa_shot.js，并把“七态 + viewport + console”变成硬门禁。
 
 const { spawnSync } = require('node:child_process');
+const { createHash } = require('node:crypto');
+const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 
 const argv = process.argv.slice(2);
@@ -43,6 +45,11 @@ function close(a, b) {
 const results = [];
 let failed = false;
 
+// 前序挂起的 headless chrome 会占住 GPU/端口：先清场（失败也无妨）。
+try {
+    spawnSync('pkill', ['-f', 'chrome.*headless'], { stdio: 'ignore' });
+} catch { /* no pkill available */ }
+
 for (const [name, width, height, theme, scale] of cases) {
     const tag = `${PREFIX}-${name}`;
     console.log(`=== MATRIX ${tag} ${width}x${height} ${theme} @${scale} ===`);
@@ -74,6 +81,27 @@ for (const [name, width, height, theme, scale] of cases) {
     }
 
     const sevenStates = Array.isArray(result.shots) && result.shots.length === 7;
+    // 内容门禁：存在 7 个文件不代表 7 个状态。生成态（03–06）若与 07-settings
+    // 逐字节相同，说明 LONG/TOOL/FAIL 根本没渲染（verify-round1 教训：空数据
+    // 目录无 provider，提交后自动跳设置，后续点击全落在设置页上）。
+    let distinct = false;
+    let distinctDetail = 'shots missing';
+    if (sevenStates) {
+        const hashOf = (p) => {
+            try {
+                return createHash('md5').update(readFileSync(p)).digest('hex').slice(0, 12);
+            } catch {
+                return null;
+            }
+        };
+        const hashes = result.shots.map(hashOf);
+        const settingsHash = hashes[6];
+        const genStates = hashes.slice(2, 6);
+        const allNull = hashes.some((h) => h === null);
+        const allSameAsSettings = !allNull && genStates.every((h) => h === settingsHash);
+        distinct = !allNull && !allSameAsSettings;
+        distinctDetail = allNull ? 'unreadable shot' : `03-06 vs 07: ${genStates.map((h) => (h === settingsHash ? 'SAME' : 'diff')).join(',')}`;
+    }
     const noErrors = Array.isArray(result.errors) && result.errors.length === 0;
     const canvas = result.layout?.canvas;
     const body = result.layout?.body;
@@ -86,9 +114,9 @@ for (const [name, width, height, theme, scale] of cases) {
         && body[0] <= viewport[0] + 0.75
         && body[1] <= viewport[1] + 0.75;
     const dpr = close(result.layout?.devicePixelRatio ?? scale, scale);
-    const ok = run.status === 0 && sevenStates && noErrors && geometry && dpr;
+    const ok = run.status === 0 && sevenStates && noErrors && geometry && dpr && distinct;
     if (!ok) failed = true;
-    results.push({ name, ok, sevenStates, noErrors, geometry, dpr, layout: result.layout, errors: result.errors });
+    results.push({ name, ok, sevenStates, noErrors, geometry, dpr, distinct, distinctDetail, layout: result.layout, errors: result.errors });
 }
 
 console.log('=== MATRIX SUMMARY ===');

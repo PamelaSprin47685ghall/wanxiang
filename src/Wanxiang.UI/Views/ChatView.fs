@@ -79,7 +79,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             CornerRadius = CornerRadius Tokens.radiusPill,
             Padding = Thickness(Tokens.space3, 3.0),
             VerticalAlignment = VerticalAlignment.Center,
-            IsVisible = false)
+            IsVisible = true,
+            Opacity = 0.0,
+            IsHitTestVisible = false)
     let generatingCaption =
         TextBlock(
             Text = "生成中",
@@ -204,7 +206,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member this.SetGenerating(generating: bool, statusText: string) =
         isGenerating <- generating
-        generatingChip.IsVisible <- generating && not compactMode
+        Ui.setReservedActionVisible generatingChip (generating && not compactMode)
         generatingCaption.Text <- if String.IsNullOrWhiteSpace statusText then "生成中" else statusText
         stopButton.IsVisible <- generating
 
@@ -220,7 +222,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         for button in [ sidebarToggleButton; stopButton; forkButton; sessionSettingsButton; scrollToBottomButton ] do
             Ui.setSquareTarget button size
-        generatingChip.IsVisible <- isGenerating && not value
+        Ui.setReservedActionVisible generatingChip (isGenerating && not value)
         forkButton.IsVisible <- hasConversationChrome && not value
 
     member this.ShowEmpty(state: ChatEmptyState, onPrimary: (string * (unit -> unit)) option) =

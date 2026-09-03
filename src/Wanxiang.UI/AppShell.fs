@@ -17,6 +17,7 @@ open Avalonia.Platform.Storage
 open Avalonia.Threading
 open Wanxiang.Client
 open Wanxiang.Core
+open Wanxiang.Interop
 open Wanxiang.Protocol
 
 /// 主视图：应用的组装点。
@@ -67,6 +68,10 @@ type MainView() as this =
     let mutable pairingRequested = false
     let mutable setConnectStatus: string -> unit = ignore
     let mutable pageLoading = false
+    /// 浏览器宿主的 CSS 像素视口宽（`wxViewportWidth` 轮询写入）。
+    /// Browser 后端高 DPR 下 `Bounds.Width` 会被 DPR 除一次，不可做断点依据；
+    /// 有覆盖值时响应式布局只认它，桌面/测试走 Bounds 原路径。
+    let mutable hostViewportWidth: float option = None
     let commandFeedback = CommandFeedbackTracker()
     let configFeedback = ConfigFeedbackTracker()
 
@@ -139,9 +144,24 @@ type MainView() as this =
         if state.compactMode && not (isNull (box mainLayout)) then mainLayout.Apply state
 
     member private this.ApplyResponsiveLayout(width: float) =
-        if width > 0.0 && not (isNull (box mainLayout)) then
-            let needsApply, state = navigation.ApplyViewport(width, activeConvId.IsSome)
+        let effective = hostViewportWidth |> Option.defaultValue width
+        if effective > 0.0 && not (isNull (box mainLayout)) then
+            let needsApply, state = navigation.ApplyViewport(effective, activeConvId.IsSome)
             if needsApply then mainLayout.Apply state
+
+    /// 浏览器 CSS 视口轮询：zoom、DPR、显示器移动都不会可靠触发 Bounds 更新，
+    /// 但 innerWidth 永远是真相。桌面端不调用（保留 Bounds 路径）。
+    member private this.WatchHostViewport() =
+        if OperatingSystem.IsBrowser() then
+            let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 500.0)
+            timer.Tick.Add(fun _ ->
+                try
+                    let css = BrowserBridge.ViewportWidth()
+                    if css > 0.0 && hostViewportWidth <> Some css then
+                        hostViewportWidth <- Some css
+                        this.ApplyResponsiveLayout css
+                with _ -> ())
+            timer.Start()
 
     member private _.StreamingMessage() : MessageView option =
         if streamText.Length = 0 && streamReasoning.Length = 0 && List.isEmpty streamToolCalls then None
@@ -1129,6 +1149,7 @@ type MainView() as this =
 
         this.Render()
         this.ApplyResponsiveLayout this.Bounds.Width
+        this.WatchHostViewport()
         this.AutoConnect()
 
     /// 已有凭据时自动连接：桌面读 client.toml，PWA 读 IndexedDB（决策 52/53、Q191）。

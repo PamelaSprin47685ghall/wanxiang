@@ -179,7 +179,7 @@ module Ui =
             isOver <- false
             host.Opacity <- 1.0
             refresh ())
-        host.PointerPressed.Add(fun _ -> host.Opacity <- 0.78)
+        host.PointerPressed.Add(fun _ -> host.Opacity <- Tokens.opacityPressed)
         host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
         refresh ()
 
@@ -413,7 +413,7 @@ module Ui =
     /// 用户分不清「不可用」和「渲染坏了」。
     let setEnabled (host: Border) (enabled: bool) =
         host.IsEnabled <- enabled
-        host.Opacity <- if enabled then 1.0 else 0.5
+        host.Opacity <- if enabled then 1.0 else Tokens.opacityDisabled
         host.IsHitTestVisible <- enabled
         host.Focusable <- enabled
 

@@ -231,7 +231,7 @@ type Composer(actions: ComposerActions) as this =
         enabled <- value
         input.IsEnabled <- value
         Ui.setEnabled attachButton value
-        shell.Opacity <- if value then 1.0 else 0.72
+        shell.Opacity <- if value then 1.0 else Tokens.opacityComposerDisabled
         disabledNotice.Text <- reason
         disabledNotice.IsVisible <- not value && not (String.IsNullOrWhiteSpace reason)
         refreshSendState ()
@@ -286,7 +286,7 @@ type Composer(actions: ComposerActions) as this =
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
         column.Children.Add attachmentScroller
         column.Children.Add inputRow
-        column.Children.Add(Border(Height = 1.0, Background = Tokens.borderSoft))
+        column.Children.Add(Ui.hairline ())
         column.Children.Add footerRow
 
         shell.Padding <-
@@ -300,7 +300,7 @@ type Composer(actions: ComposerActions) as this =
 
         input.GotFocus.Add(fun _ ->
             shell.BorderBrush <- Tokens.accent
-            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color)))
+            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color)))
         input.LostFocus.Add(fun _ ->
             shell.BorderBrush <- Tokens.border
             shell.BoxShadow <- Tokens.shadowSoft ())

@@ -313,7 +313,7 @@ module MessageCard =
     /// 只在 hover 时出现等于在触屏上不存在、在键盘上摸不到；
     /// 常驻一档淡显既可发现，又不至于跟正文抢注意力。
     /// 不能再低：更淡的图标在浅纸背景上已经读不出形状。
-    let idleActionOpacity = 0.62
+    let idleActionOpacity = Tokens.opacitySubtle
 
     /// 消息操作按钮。放在脚注行里随文档流排布——
     /// 早先做成浮在消息上方的悬浮条，常驻显示后就会压住头像和气泡边角。
@@ -360,7 +360,7 @@ module MessageCard =
     let errorCard (error: GenerationError) (onRetry: unit -> unit) : Control =
         let icon = Icons.alert Tokens.danger
         icon.VerticalAlignment <- VerticalAlignment.Top
-        icon.Margin <- Thickness(0.0, 2.0, 0.0, 0.0)
+        icon.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
         let title =
             TextBlock(
                 Text = error.message,
@@ -494,8 +494,8 @@ module MessageCard =
                     Background = Tokens.accent,
                     CornerRadius = CornerRadius 1.5,
                     HorizontalAlignment = HorizontalAlignment.Left,
-                    Margin = Thickness(0.0, 2.0, 0.0, 0.0),
-                    Opacity = 0.85)
+                    Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0),
+                    Opacity = Tokens.opacityStreamingCaret)
             body.Children.Add caret
 
         let bubble =
@@ -523,7 +523,7 @@ module MessageCard =
                         CornerRadius = CornerRadius Tokens.radiusPill,
                         Background = Tokens.accentSoft,
                         VerticalAlignment = VerticalAlignment.Top,
-                        Margin = Thickness(0.0, 2.0, 0.0, 0.0))
+                        Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0))
                 host.Child <-
                     TextBlock(
                         Text = "你",
@@ -536,7 +536,7 @@ module MessageCard =
             else
                 let host = ctx.brandAvatar ()
                 host.VerticalAlignment <- VerticalAlignment.Top
-                host.Margin <- Thickness(0.0, 2.0, 0.0, 0.0)
+                host.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
                 host
 
         let row: Control =
@@ -550,7 +550,7 @@ module MessageCard =
                 // 助手正文必须铺满阅读列：横向 StackPanel 只会给子元素「期望宽度」，
                 // 于是代码块和表格被压成窄条。用 DockPanel 让头像靠左、气泡填满剩余空间。
                 let dock = DockPanel(LastChildFill = true, HorizontalAlignment = HorizontalAlignment.Stretch)
-                avatar.Margin <- Thickness(0.0, 2.0, Tokens.space3, 0.0)
+                avatar.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space3, 0.0)
                 DockPanel.SetDock(avatar, Dock.Left)
                 dock.Children.Add avatar
                 bubble.Width <- Double.NaN
@@ -573,14 +573,14 @@ module MessageCard =
                     VerticalAlignment = VerticalAlignment.Center)
             if MessageView.isUser message then
                 line.HorizontalAlignment <- HorizontalAlignment.Right
-                line.Margin <- Thickness(0.0, 2.0, gutter - 5.0, 0.0)
+                line.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, gutter - 5.0, 0.0)
                 match metaText with
                 | Some text -> line.Children.Add text
                 | None -> ()
                 line.Children.Add buttons
             else
                 line.HorizontalAlignment <- HorizontalAlignment.Left
-                line.Margin <- Thickness(gutter, 2.0, 0.0, 0.0)
+                line.Margin <- Thickness(gutter, Tokens.iconBaselineNudge, 0.0, 0.0)
                 line.Children.Add buttons
                 match metaText with
                 | Some text -> line.Children.Add text

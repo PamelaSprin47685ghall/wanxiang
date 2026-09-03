@@ -17,9 +17,9 @@
     --dark-warm:  #3d3d3a;
     --olive:      #504e49;
     --stone:      #6b6a64;
-    --border:     #e8e6dc;
-    --border-soft:#e5e3d8;
-    --line:       #d8d5c8;
+    --border:     #D9D5C7;
+    --border-soft:#E3E0D3;
+    --line:       #C7C3B3;
 
     /* 字体栈：PWA 走 Sarasa Term SC 内嵌 + 平替；行高取 Kami 1.55 阅读档 */
     --wx-font:
@@ -29,10 +29,10 @@
         "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
     --wx-r-sm: 6px;
-    --wx-r-md: 8px;
-    --wx-r-lg: 12px;
+    --wx-r-md: 9px;
+    --wx-r-lg: 14px;
     --wx-r-pill: 999px;
-    --wx-hairline: 1px solid #e8e6dc;
+    --wx-hairline: 1px solid #E3E0D3;
 }
 
 html, body {
@@ -47,7 +47,7 @@ html, body {
     color: var(--near-black);
     font-family: var(--wx-font);
     font-size: 14px;
-    line-height: 1.58;
+    line-height: 1.62;
     letter-spacing: 0.2px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -169,7 +169,7 @@ html, body {
 .toast {
     position: fixed;
     left: 50%;
-    bottom: 18px;
+    top: 18px;
     transform: translateX(-50%);
     z-index: 9999;
     padding: 10px 20px;

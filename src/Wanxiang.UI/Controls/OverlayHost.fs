@@ -222,6 +222,15 @@ type OverlayHost(root: Grid) =
             Grid.SetColumnSpan(layer, 8)
             Grid.SetRowSpan(layer, 8)
             root.Children.Add layer |> ignore
+        // 底层滚动时浮层锚点会脱节：滚轮不经过 popupCatcher 的点击捕获，
+        // 因此像层外点击一样直接关闭，避免浮层悬在错误位置。
+        root.PointerWheelChanged.Add(fun _ ->
+            if popupCard.IsVisible then
+                popupCatcher.IsVisible <- false
+                popupCard.IsVisible <- false
+                popupCard.Child <- null
+                popupAnchor <- None
+                restorePopupFocus ())
 
     member private _.HideDialog() =
         scrim.IsVisible <- false

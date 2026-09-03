@@ -147,7 +147,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
     member private _.RenderTool(tool: ToolInfo) : Control =
         let icon = if tool.source = "mcp" then Icons.server Tokens.textMuted else Icons.wrench Tokens.textMuted
         icon.VerticalAlignment <- VerticalAlignment.Top
-        icon.Margin <- Thickness(0.0, 2.0, 0.0, 0.0)
+        icon.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
         let name =
             TextBlock(
                 Text = tool.label,
@@ -167,7 +167,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = ReadingRhythm.captionLineHeight,
-                Margin = Thickness(0.0, 2.0, 0.0, 0.0))
+                Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0))
         let column = Ui.vstack 1.0 [ name :> Control; identifier :> Control; description :> Control ]
         let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)
         row.Children.Add icon

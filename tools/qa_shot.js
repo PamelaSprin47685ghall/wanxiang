@@ -1,9 +1,16 @@
 #!/usr/bin/env node
-// 万象 PWA 视觉 QA：驱动真实交互并逐态截图。
+// 万象 PWA 视觉 QA：7 态截图 + 几何门禁。
+//
+// 设计原则（verify-round2 教训）：纯坐标点击在 compact 抽屉下不可靠
+// （点击落在抽屉行上变成选中会话，输入框永远拿不到焦点，三次发送零提交）。
+// 因此状态驱动走 WebSocket 协议（配对→建会话→发 LONG/TOOL/FAIL→等 generation.finished，
+// 服务端 ack 即内容断言），浏览器只负责渲染截图；纯 UI 动作（选会话行、开设置）
+// 必须做像素变化断言，失败重试 3 次再报错。
 // 用法：node tools/qa_shot.js --tag <name> [--theme dark] [--width 1440] [--height 900] [--scale 1.25]
-// 依赖：puppeteer-core + 本机 google-chrome；服务端需在 127.0.0.1:8765 运行。
+// 依赖：puppeteer-core + 本机 google-chrome；服务端需运行并已 qa_provision.js 配好 mock。
 
 const puppeteer = require('puppeteer-core');
+const { createHash, randomUUID } = require('node:crypto');
 const { existsSync, mkdirSync, readFileSync } = require('node:fs');
 const { join } = require('node:path');
 
@@ -43,6 +50,56 @@ function latestPairingCode() {
 
 const shots = [];
 
+// ---- WS 协议客户端（与 e2e_smoke 同语义：cursor 追平，否则写命令判 stale）----
+function makeClient(url) {
+    const ws = new WebSocket(url);
+    const events = [];
+    const waiters = [];
+    let cursor = 0n;
+    ws.onmessage = (e) => {
+        const ev = JSON.parse(e.data);
+        events.push(ev);
+        const p = ev.payload || {};
+        let top = cursor;
+        for (const c of [p.lastCommitId, p.commitId, p.toCommitId]) {
+            if (typeof c === 'number' && BigInt(c) > top) top = BigInt(c);
+        }
+        if (top > cursor) {
+            cursor = top;
+            ws.send(JSON.stringify({ type: 'cursor.advanced', payload: { id: Number(top) } }));
+        }
+        for (let i = waiters.length - 1; i >= 0; i--) {
+            if (waiters[i].match(ev)) {
+                waiters[i].resolve(ev);
+                waiters.splice(i, 1);
+            }
+        }
+    };
+    return {
+        ws,
+        events,
+        open: () => new Promise((resolve, reject) => {
+            ws.onopen = resolve;
+            ws.onerror = () => reject(new Error('websocket error'));
+        }),
+        send: (type, payload) => ws.send(JSON.stringify(payload ? { type, payload } : { type })),
+        waitFor: (match, timeoutMs, label) => {
+            const existing = events.find(match);
+            if (existing) return Promise.resolve(existing);
+            return new Promise((resolve, reject) => {
+                const w = { match, resolve };
+                waiters.push(w);
+                setTimeout(() => {
+                    const ix = waiters.indexOf(w);
+                    if (ix >= 0) waiters.splice(ix, 1);
+                    reject(new Error(`timeout waiting for ${label}`));
+                }, timeoutMs);
+            });
+        },
+        close: () => { try { ws.close(); } catch { /* already closed */ } },
+    };
+}
+
 async function main() {
     const browser = await puppeteer.launch({
         executablePath: CHROME,
@@ -71,7 +128,6 @@ async function main() {
     });
     page.on('pageerror', (e) => errors.push(String(e).slice(0, 400)));
 
-    // 配对码只出现在服务端 stderr，页面拿不到；用桥函数让页面向 Node 索取。
     await page.exposeFunction('wxPairingCode', async () => {
         for (let i = 0; i < 60; i++) {
             const code = latestPairingCode();
@@ -81,49 +137,44 @@ async function main() {
         return null;
     });
 
+    // ---- 协议面：配对 + 建会话（mock 模型 + echo 工具）----
+    const wsUrl = BASE.replace('http', 'ws') + '/ws';
+    const ctl = makeClient(wsUrl);
+    await ctl.open();
+    const hello = await ctl.waitFor((e) => e.type === 'protocol.hello', 15000, 'protocol.hello');
+    const instanceId = hello.payload.instanceId;
+    ctl.send('protocol.hello', { protocol: 'wanxiang', version: 1 });
+    ctl.send('pairing.requested', { clientName: 'qa' });
+    await ctl.waitFor((e) => e.type === 'pairing.started', 15000, 'pairing.started');
+    const code = await page.evaluate(() => window.wxPairingCode());
+    if (!code) throw new Error('no pairing code in server log');
+    ctl.send('pairing.attempted', { code, clientName: 'qa' });
+    const paired = await ctl.waitFor((e) => e.type === 'pairing.succeeded', 15000, 'pairing.succeeded');
+    ctl.send('auth.present', { token: paired.payload.token });
+    await ctl.waitFor((e) => e.type === 'auth.accepted', 15000, 'auth.accepted');
+    console.log('paired instance', instanceId);
+    ctl.send('catalog.request');
+    await ctl.waitFor((e) => e.type === 'catalog.snapshot', 15000, 'catalog.snapshot');
+    ctl.send('conversation-list.observe');
+    await ctl.waitFor((e) => e.type === 'conversation-list.snapshot', 15000, 'list snapshot');
+
+    const convId = randomUUID();
+    ctl.send('conversation.create', {
+        invocationId: randomUUID(),
+        conversationId: convId,
+        title: `QA ${TAG}`,
+        config: { provider: 'mock', model: 'mock-gpt-mini', tools: ['builtin:echo'] },
+    });
+    await ctl.waitFor((e) => e.type === 'command.committed', 15000, 'create committed');
+    ctl.send('conversation.observe', { conversationId: convId });
+    await ctl.waitFor((e) => e.type === 'conversation.snapshot', 15000, 'conversation snapshot');
+
+    // ---- 展现面：凭据写入 IndexedDB，浏览器自动连接同一会话列表 ----
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    // Service Worker 首次接管会触发 location.reload() 销毁执行上下文，故先让它 reload 完再注入脚本。
     await sleep(3500);
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await sleep(1200);
-
-    const credentials = await page.evaluate(async (base) => {
-        const wsUrl = base.replace('http', 'ws') + '/ws';
-        return await new Promise((resolve, reject) => {
-            const ws = new WebSocket(wsUrl);
-            let instanceId = null;
-            const timer = setTimeout(() => reject(new Error('pairing timeout')), 30000);
-            ws.onmessage = async (e) => {
-                const ev = JSON.parse(e.data);
-                if (ev.type === 'protocol.hello') {
-                    instanceId = ev.payload.instanceId;
-                    ws.send(JSON.stringify({ type: 'protocol.hello', payload: { protocol: 'wanxiang', version: 1 } }));
-                    ws.send(JSON.stringify({ type: 'pairing.requested', payload: { clientName: 'qa' } }));
-                } else if (ev.type === 'pairing.started') {
-                    const code = await window.wxPairingCode();
-                    if (!code) {
-                        clearTimeout(timer);
-                        reject(new Error('no pairing code in server log'));
-                        return;
-                    }
-                    ws.send(JSON.stringify({ type: 'pairing.attempted', payload: { code, clientName: 'qa' } }));
-                } else if (ev.type === 'pairing.succeeded') {
-                    clearTimeout(timer);
-                    resolve({ instanceId, token: ev.payload.token });
-                    ws.close();
-                } else if (ev.type === 'pairing.failed') {
-                    clearTimeout(timer);
-                    reject(new Error(ev.payload.reason));
-                }
-            };
-            ws.onerror = () => reject(new Error('websocket error'));
-        });
-    }, BASE);
-    console.log('paired instance', credentials.instanceId);
-
-    // 写入 IndexedDB：Avalonia 启动后会自动读它并连接（决策 52/53、Q191）
     await page.evaluate(
-        async (base, cred) => {
+        async (creds) => {
             const db = await new Promise((resolve, reject) => {
                 const req = indexedDB.open('wanxiang', 1);
                 req.onupgradeneeded = () => req.result.createObjectStore('connections', { keyPath: 'instanceId' });
@@ -132,19 +183,12 @@ async function main() {
             });
             await new Promise((resolve, reject) => {
                 const tx = db.transaction('connections', 'readwrite');
-                tx.objectStore('connections').put({
-                    instanceId: cred.instanceId,
-                    url: base.replace('http', 'ws') + '/ws',
-                    token: cred.token,
-                    name: 'qa',
-                    updatedAt: Date.now(),
-                });
+                tx.objectStore('connections').put({ ...creds, name: 'qa', updatedAt: Date.now() });
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);
             });
         },
-        BASE,
-        credentials,
+        { instanceId, url: wsUrl, token: paired.payload.token },
     );
 
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -167,11 +211,29 @@ async function main() {
         return { x: r.x, y: r.y, w: r.width, h: r.height };
     });
 
+    const hashFile = (p) => createHash('md5').update(readFileSync(p)).digest('hex');
     async function shot(name) {
         const path = join(OUT, `${TAG}-${name}.png`);
         await page.screenshot({ path });
         shots.push(path);
         console.log('shot:', path);
+        return path;
+    }
+    // 纯 UI 动作必须自证效果：点前点后像素无变化 = 没点中，重试 3 次再判失败。
+    async function clickExpectChange(x, y, label) {
+        const probe = join(OUT, `${TAG}-.probe.png`);
+        let before = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            await page.screenshot({ path: probe });
+            before = hashFile(probe);
+            await page.mouse.click(geo.x + x, geo.y + y);
+            await sleep(1200);
+            await page.screenshot({ path: probe });
+            if (hashFile(probe) !== before) return;
+            console.log(`retry ${label} (${attempt}/3): no visual change`);
+            await sleep(800);
+        }
+        throw new Error(`click had no effect: ${label} at (${Math.round(x)},${Math.round(y)})`);
     }
     const currentLayout = async () => {
         return await page.evaluate(() => {
@@ -213,57 +275,76 @@ async function main() {
         await sleep(180);
         verifyLayout(`${phase}-restored`, await currentLayout());
     };
-    const click = async (x, y, settle = 600) => {
-        await page.mouse.click(geo.x + x, geo.y + y);
-        await sleep(settle);
-    };
-    const typeText = async (text) => {
-        await page.keyboard.type(text, { delay: 8 });
-        await sleep(250);
-    };
-    const compact = geo.w < 720;
-    const sidebarActionX = compact ? geo.w - 26 : 258;
-    const settingsX = compact ? geo.w - 26 : 264;
-    // compact Composer 的底部还多一行模型选择；固定减 70 会点到 footer，
-    // 后续键盘输入实际没有落进 TextBox，窄屏截图因此会误报“已覆盖”交互态。
-    const composerY = geo.h - (compact ? 104 : 70);
 
+    const compact = geo.w < 720;
+    const rowX = Math.min(140, geo.w * 0.25);
+
+    // 01 已连接（侧栏/抽屉列表态）
     await shot('01-connected');
     await resizeSweep('connected');
 
-    // 侧栏右上角「新建会话」。compact 下侧栏占满 viewport，动作贴右。
-    await click(sidebarActionX, 26, 1800);
+    // 02 空会话：点第一行（WS 建的 QA 会话，按更新时间置顶）
+    await clickExpectChange(rowX, 190, 'open-qa-conversation');
+    await sleep(800);
     await shot('02-new-conversation');
 
-    await click(geo.w / 2, composerY);
-    await typeText('LONG show me full markdown layout');
-    await page.keyboard.press('Enter');
-    await sleep(1400);
+    // 03/04 LONG：流式中 vs 完成（服务端 ack 即内容断言）
+    ctl.send('chat.user-message.enqueue', {
+        invocationId: randomUUID(),
+        conversationId: convId,
+        message: { role: 'user', contents: [{ text: 'LONG show me full markdown layout' }] },
+    });
+    await ctl.waitFor((e) => e.type === 'generation.started', 20000, 'long started');
+    await sleep(900);
     await shot('03-streaming');
     await resizeSweep('streaming');
-    await sleep(5000);
+    await ctl.waitFor((e) => e.type === 'generation.finished' && e.payload.status === 'completed', 60000, 'long finished');
+    await sleep(600);
     await shot('04-markdown');
 
-    await click(geo.w / 2, composerY);
-    await typeText('TOOL call echo');
-    await page.keyboard.press('Enter');
-    await sleep(4500);
+    // 05 TOOL
+    const startsBefore = ctl.events.filter((e) => e.type === 'generation.started').length;
+    ctl.send('chat.user-message.enqueue', {
+        invocationId: randomUUID(),
+        conversationId: convId,
+        message: { role: 'user', contents: [{ text: 'TOOL call echo' }] },
+    });
+    await ctl.waitFor(
+        () => ctl.events.filter((e) => e.type === 'generation.started').length > startsBefore,
+        20000,
+        'tool started',
+    );
+    await ctl.waitFor(
+        (e) => e.type === 'generation.finished' && e.payload.status === 'completed',
+        60000,
+        'tool finished',
+    );
+    await sleep(600);
     await shot('05-tool-call');
 
-    await click(geo.w / 2, composerY);
-    await typeText('FAIL trigger upstream error');
-    await page.keyboard.press('Enter');
-    await sleep(4000);
+    // 06 FAIL：等 failed 终态
+    ctl.send('chat.user-message.enqueue', {
+        invocationId: randomUUID(),
+        conversationId: convId,
+        message: { role: 'user', contents: [{ text: 'FAIL trigger upstream error' }] },
+    });
+    await ctl.waitFor((e) => e.type === 'generation.finished' && e.payload.status === 'failed', 60000, 'fail finished');
+    await sleep(600);
     await shot('06-error-card');
 
-    // 侧栏右下角齿轮 → 设置。compact 对话态先显式打开侧栏。
-    if (compact) {
-        await click(20, 26, 450);
+    // 07 设置：齿轮常驻（wide）；compact 先确保抽屉打开再点齿轮
+    const settingsX = compact ? geo.w - 26 : 264;
+    try {
+        await clickExpectChange(settingsX, geo.h - 26, 'open-settings');
+    } catch {
+        await page.mouse.click(geo.x + 20, geo.y + 26);
+        await sleep(1000);
+        await clickExpectChange(settingsX, geo.h - 26, 'open-settings-after-drawer');
     }
-    await click(settingsX, geo.h - 26, 1600);
     await shot('07-settings');
     await resizeSweep('settings');
 
+    ctl.close();
     const layout = await currentLayout();
     console.log(JSON.stringify({ shots, layout, resizeChecks, errors: errors.slice(0, 12) }, null, 2));
     if (errors.length > 0) {
@@ -271,7 +352,11 @@ async function main() {
         process.exitCode = 1;
     }
     } finally {
-        await browser.close();
+        // SwANGLE 下 browser.close() 偶发挂起：10 秒关不掉就放手，matrix 会 pkill 残留。
+        await Promise.race([
+            browser.close().catch(() => {}),
+            sleep(10000).then(() => console.error('browser.close timed out, leaving for cleanup')),
+        ]);
     }
 }
 

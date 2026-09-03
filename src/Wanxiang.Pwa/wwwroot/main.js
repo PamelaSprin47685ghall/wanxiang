@@ -55,6 +55,13 @@ export function pageUrl() {
     return globalThis.location.href;
 }
 
+// 响应式布局用的 CSS 像素视口宽。注意不能拿 Avalonia 的 Bounds.Width 当断点依据：
+// Browser 后端在 devicePixelRatio > 1 时上报的布局宽度会被 DPR 除一次
+// （900 CSS @1.5 → ~600 units → 误进 compact），而 innerWidth 永远是 CSS 像素。
+export function wxViewportWidth() {
+    return globalThis.innerWidth || 0;
+}
+
 // ---- 富文本引擎（highlight.js / KaTeX）----
 // 脚本正文由 .NET 侧作为清单资源持有并传进来，浏览器这边只负责执行与调用：
 // 一份资源同时服务桌面（Jint）与浏览器（本地 JS 引擎），不会两边各存一套。
@@ -120,7 +127,7 @@ const dotnetRuntime = await dotnet
     .create();
 
 dotnetRuntime.setModuleImports("wanxiang", {
-    credList, credPut, credDelete, pageUrl,
+    credList, credPut, credDelete, pageUrl, wxViewportWidth,
     richLoad, richHighlight, richMath,
 });
 

@@ -419,7 +419,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             Border(
                 Height = Tokens.barHeight,
                 Padding = Thickness(Tokens.space4, 0.0, Tokens.space3, 0.0),
-                BorderBrush = Tokens.border,
+                BorderBrush = Tokens.borderSoft,
                 BorderThickness = Thickness(0.0, 1.0, 0.0, 0.0),
                 Child = dock)
 
