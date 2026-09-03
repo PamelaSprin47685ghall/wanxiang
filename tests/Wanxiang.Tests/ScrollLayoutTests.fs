@@ -22,12 +22,12 @@ let private extentWith (padding: Thickness) (childMargin: Thickness) =
     extent
 
 [<Fact>]
-let ``ScrollViewer 的下内边距不计入可滚动范围`` () =
-    // 这条平台行为很反直觉，却决定了「末条消息与输入区的间距」该往哪加：
-    // 加在 Padding 上滚到底时一点都留不住，看起来就是消息贴着输入框。
+let ``ScrollViewer 的下内边距计入可滚动范围`` () =
+    // Avalonia 12.0 时代曾不计入（导致末条留白必须加在内容 Margin 上）；
+    // 升级至 Avalonia 12.1+ 后已修复，下内边距会计入可滚动范围。
     let bare = extentWith (Thickness 0.0) (Thickness 0.0)
     let padded = extentWith (Thickness(0.0, 0.0, 0.0, 200.0)) (Thickness 0.0)
-    Assert.Equal(bare, padded)
+    Assert.Equal(bare + 200.0, padded)
 
 [<Fact>]
 let ``内容自身的下边距会计入可滚动范围`` () =

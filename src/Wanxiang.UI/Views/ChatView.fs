@@ -98,8 +98,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         StackPanel(
             Orientation = Orientation.Vertical,
             Spacing = ContentMetrics.messageGap,
-            // 滚到底时末条消息与输入区之间的呼吸量。必须放在这里：
-            // ScrollViewer.Padding 的下值不进可滚动范围（见 ScrollLayoutTests）。
+            // 滚到底时末条消息与输入区之间的呼吸量：
+            // 由 messagePanel 的下边距统一定义（见 ScrollLayoutTests）。
             // 实测可见量比设定值小约 15pt，48 对应约 33pt 的净留白。
             Margin = Thickness(0.0, 0.0, 0.0, ContentMetrics.messageEndBreathing),
             MaxWidth = Tokens.readingWidth,
@@ -109,8 +109,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            // 下内边距对 ScrollViewer 无效（不计入可滚动范围，见 ScrollLayoutTests），
-            // 末条消息与输入区之间的留白由 messagePanel 的下边距承担
+            // 末条消息与输入区之间的留白统一由 messagePanel.Margin 承担，底部 Padding 设为 0 避免叠加
             Padding = Thickness(Tokens.shellInset, Tokens.space5, Tokens.shellInset, 0.0))
 
     let emptyPanel =

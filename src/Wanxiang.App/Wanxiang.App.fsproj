@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia.Desktop" Version="12.0.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
     <!-- 纯托管 JS 解释器：让桌面端能跑 highlight.js 与 KaTeX，不引入原生依赖 -->
     <PackageReference Include="Jint" Version="4.16.1" />
   </ItemGroup>
