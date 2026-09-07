@@ -381,12 +381,25 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 Child = dock)
 
         searchBox.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape then
+            if e.Key = Key.Down then
+                if visibleRowIds.Length > 0 then
+                    e.Handled <- true
+                    this.FocusRowAt 0
+            elif e.Key = Key.Escape then
                 e.Handled <- true
-                searchBox.Text <- ""
-            elif e.Key = Key.Down && visibleRowIds.Length > 0 then
-                e.Handled <- true
-                this.FocusRowAt 0)
+                if not (String.IsNullOrEmpty searchBox.Text) then
+                    searchBox.Text <- ""
+                else
+                    match activeId with
+                    | Some id ->
+                        match rowHosts.TryGetValue id with
+                        | true, host -> host.Focus(NavigationMethod.Tab) |> ignore
+                        | _ -> ()
+                    | None -> ()
+            elif e.Key = Key.Enter then
+                if visibleRowIds.Length > 0 then
+                    e.Handled <- true
+                    actions.openConversation visibleRowIds.[0])
         let searchDebounce = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 160.0)
         searchDebounce.Tick.Add(fun _ ->
             searchDebounce.Stop()

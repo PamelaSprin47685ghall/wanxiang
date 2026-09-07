@@ -295,10 +295,17 @@ type MarkdownRenderer(
             Border() :> Control
         else
             let grid = Grid()
-            // 列宽必须是 star：Auto 会让表格收缩到内容宽度，
-            // 而外框是拉伸的，于是框内右侧留下一条空白带。
-            for _ in 1 .. columnCount do
-                grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
+            // 窄表（<= 4 列）采用 1.0 Star 自然撑满阅读列宽；
+            // 多列宽表（> 4 列）设置每列最小宽度（120px），并放入横向 ScrollViewer，
+            // 避免在 748px 阅读宽度下被强行压成挤压错乱的细条。
+            if columnCount > 4 then
+                for _ in 1 .. columnCount do
+                    let col = ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star))
+                    col.MinWidth <- 120.0
+                    grid.ColumnDefinitions.Add col
+            else
+                for _ in 1 .. columnCount do
+                    grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
             let mutable rowIndex = 0
             let addRow (cells: MdInline list list) (isHeader: bool) =
                 grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
@@ -329,8 +336,16 @@ type MarkdownRenderer(
                 rowIndex <- rowIndex + 1
             if not (List.isEmpty header) then addRow header true
             for row in rows do addRow row false
-            // 不再套横向 ScrollViewer：那会按内容宽度测量子元素，star 列会塌回内容宽。
-            // 单元格文字自动换行即可，表格始终与阅读列同宽。
+            let tableContent: Control =
+                if columnCount > 4 then
+                    ScrollViewer(
+                        Content = grid,
+                        HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                        VerticalScrollBarVisibility = ScrollBarVisibility.Disabled)
+                    :> Control
+                else
+                    grid :> Control
+
             Border(
                 BorderBrush = Tokens.border,
                 BorderThickness = Thickness 1.0,
@@ -338,7 +353,7 @@ type MarkdownRenderer(
                 ClipToBounds = true,
                 Margin = Thickness(0.0, ReadingRhythm.blockGap),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
-                Child = grid)
+                Child = tableContent)
             :> Control
 
     member private this.RenderMath(tex: string) : Control list =

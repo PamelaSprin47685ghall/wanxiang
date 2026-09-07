@@ -10,6 +10,8 @@ open System.Text
 open System.Text.Json.Nodes
 open Avalonia
 open Avalonia.Controls
+open Avalonia.Controls.Primitives
+open Avalonia.Threading
 open Avalonia.Input
 open Avalonia.Platform.Storage
 open Xunit
@@ -328,3 +330,330 @@ let ``Composer handles dropFiles hook when files are dropped`` () =
     Assert.NotEmpty dropped
     Assert.Equal("test.png", dropped[0].Name)
     Assert.True(dropArgs.Handled)
+
+// =========================================================================
+// 6. Markdown Table Layout (<4 vs >4 columns)
+// =========================================================================
+
+let rec private descendants (control: Control) =
+    seq {
+        yield control
+        match control with
+        | :? Panel as panel ->
+            for child in panel.Children do
+                yield! descendants child
+        | :? Decorator as decorator when not (isNull decorator.Child) ->
+            yield! descendants decorator.Child
+        | :? ContentControl as host ->
+            match host.Content with
+            | :? Control as child -> yield! descendants child
+            | _ -> ()
+        | _ -> ()
+    }
+
+[<Fact>]
+let ``MarkdownRenderer wide table (>4 columns) wraps in horizontal scroll viewer`` () =
+    Headless.ensure ()
+    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
+
+    // 1. Wide table with 6 columns (> 4)
+    let wideDoc =
+        "| A | B | C | D | E | F |\n"
+        + "|---|---|---|---|---|---|\n"
+        + "| 1 | 2 | 3 | 4 | 5 | 6 |"
+
+    let wideControl = renderer.RenderText wideDoc
+    let wideScrollViewers =
+        descendants wideControl
+        |> Seq.choose (function :? ScrollViewer as s -> Some s | _ -> None)
+        |> Seq.toList
+
+    Assert.NotEmpty wideScrollViewers
+    let sv = wideScrollViewers.Head
+    Assert.Equal(ScrollBarVisibility.Auto, sv.HorizontalScrollBarVisibility)
+    Assert.Equal(ScrollBarVisibility.Disabled, sv.VerticalScrollBarVisibility)
+
+    // Grid inside wide table must enforce min column widths
+    let grid = Assert.IsAssignableFrom<Grid>(sv.Content)
+    Assert.Equal(6, grid.ColumnDefinitions.Count)
+    for col in grid.ColumnDefinitions do
+        Assert.Equal(120.0, col.MinWidth)
+
+    // 2. Narrow table with 2 columns (<= 4)
+    let narrowDoc =
+        "| Col1 | Col2 |\n"
+        + "|------|------|\n"
+        + "| val1 | val2 |"
+
+    let narrowControl = renderer.RenderText narrowDoc
+    let narrowScrollViewers =
+        descendants narrowControl
+        |> Seq.choose (function :? ScrollViewer as s -> Some s | _ -> None)
+        |> Seq.toList
+
+    // 2-column table renders directly without an inner horizontal ScrollViewer
+    Assert.Empty narrowScrollViewers
+
+// =========================================================================
+// 7. ChatView Floating Rhythm & Scroll-to-Bottom Unread Indicator
+// =========================================================================
+
+[<Fact>]
+let ``ChatView tracks unread messages when scrolled away from bottom`` () =
+    Headless.ensure ()
+    let chatActions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message =
+            { copyText = ignore
+              regenerate = ignore
+              editAndFork = ignore
+              deleteMessage = ignore
+              downloadAttachment = ignore
+              openLink = ignore } }
+
+    let chat = ChatView(chatActions, Brand.logo)
+    chat.Build()
+
+    let window = Window(Width = 760.0, Height = 520.0, Content = chat)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+
+        // Locate the scroll-to-bottom button inside chat
+        let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
+        let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
+        let scroller = Assert.IsAssignableFrom<ScrollViewer>(body.Children.[0])
+        let scrollToBottomBtn = Assert.IsAssignableFrom<Border>(body.Children.[2])
+        let btnContent = Assert.IsAssignableFrom<StackPanel>(scrollToBottomBtn.Child)
+        let btnLabel = Assert.IsAssignableFrom<TextBlock>(btnContent.Children.[1])
+
+        // Initial state: not visible
+        Assert.False(scrollToBottomBtn.IsVisible)
+        Assert.Equal("回到最新", btnLabel.Text)
+
+        // Render an initial batch of 25 messages to create substantial scrollable extent
+        let initialMessages =
+            [ for i in 1UL .. 25UL ->
+                { MessageView.empty with
+                    role = if i % 2UL = 0UL then "user" else "assistant"
+                    text = sprintf "Message %d: %s" i (String.replicate 10 "内容填充用于产生滚动高度。")
+                    commitId = Some i } ]
+
+        chat.RenderMessages(initialMessages, None, None, Tokens.fontReading, true, None, Set.empty)
+        Dispatcher.UIThread.RunJobs()
+
+        // User scrolls up away from bottom
+        scroller.Offset <- Vector(0.0, 0.0)
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(scrollToBottomBtn.IsVisible, "Button becomes visible when scrolled away from bottom")
+
+        // Now render 3 new messages while user is scrolled up
+        let additionalMessages =
+            [ for i in 26UL .. 28UL ->
+                { MessageView.empty with
+                    role = "assistant"
+                    text = sprintf "New message %d" i
+                    commitId = Some i } ]
+
+        chat.RenderMessages(initialMessages @ additionalMessages, None, None, Tokens.fontReading, true, None, Set.empty)
+        Dispatcher.UIThread.RunJobs()
+
+        // Button remains visible, label and tooltip indicate unread count
+        Assert.True(scrollToBottomBtn.IsVisible)
+        Assert.Contains("3", btnLabel.Text)
+        Assert.Contains("新消息", btnLabel.Text)
+        Assert.Equal(btnLabel.Text, Avalonia.Automation.AutomationProperties.GetName(scrollToBottomBtn))
+
+        // Clicking the button clears unread count and scrolls to bottom
+        let peer = Avalonia.Automation.Peers.ControlAutomationPeer.CreatePeerForElement scrollToBottomBtn
+        let invoke = Assert.IsAssignableFrom<Avalonia.Automation.Provider.IInvokeProvider>(peer)
+        invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+
+        // Button hides and resets back to "回到最新"
+        Assert.False(scrollToBottomBtn.IsVisible)
+        Assert.Equal("回到最新", btnLabel.Text)
+    finally
+        window.Close()
+
+// =========================================================================
+// 8. Composer Prompt History & Draft Restoration
+// =========================================================================
+
+[<Fact>]
+let ``Composer prompt history records submissions and recalls with Up/Down`` () =
+    Headless.ensure ()
+    let submittedTexts = ResizeArray<string>()
+    let composerActions =
+        { submit = fun text ->
+            submittedTexts.Add text
+            true
+          stopGeneration = ignore
+          pickAttachment = ignore
+          removeAttachment = ignore
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
+
+    let composer = Composer(composerActions)
+    composer.Build()
+    composer.SetEnabled(true, "")
+
+    let rec findInput (c: Control) : TextBox option =
+        match c with
+        | :? TextBox as tb -> Some tb
+        | :? Panel as p -> p.Children |> Seq.tryPick findInput
+        | :? Decorator as d when not (isNull d.Child) -> findInput d.Child
+        | _ -> None
+
+    let input = findInput composer |> Option.defaultWith (fun () -> failwith "Input TextBox not found in Composer")
+
+    let sendKey (key: Key) (modifiers: KeyModifiers) =
+        let args = KeyEventArgs(
+            RoutedEvent = InputElement.KeyDownEvent,
+            Key = key,
+            KeyModifiers = modifiers)
+        input.RaiseEvent args
+        Dispatcher.UIThread.RunJobs()
+        args
+
+    // Submit Prompt 1
+    composer.SetText "First prompt"
+    sendKey Key.Enter KeyModifiers.None |> ignore
+    Assert.Equal<string seq>([ "First prompt" ], submittedTexts)
+    Assert.Equal("", input.Text)
+
+    // Submit Prompt 2
+    composer.SetText "Second prompt"
+    sendKey Key.Enter KeyModifiers.None |> ignore
+    Assert.Equal<string seq>([ "First prompt"; "Second prompt" ], submittedTexts)
+    Assert.Equal("", input.Text)
+
+    // Now user types an uncommitted draft
+    composer.SetText "Draft in progress"
+    input.CaretIndex <- 0 // Caret at 0 allows Up key history recall
+
+    // Press Up: recalls most recent submission ("Second prompt")
+    let up1 = sendKey Key.Up KeyModifiers.None
+    Assert.True(up1.Handled)
+    Assert.Equal("Second prompt", input.Text)
+
+    // Press Up again: recalls older submission ("First prompt")
+    let up2 = sendKey Key.Up KeyModifiers.None
+    Assert.True(up2.Handled)
+    Assert.Equal("First prompt", input.Text)
+
+    // Press Down: goes forward in history to "Second prompt"
+    let down1 = sendKey Key.Down KeyModifiers.None
+    Assert.True(down1.Handled)
+    Assert.Equal("Second prompt", input.Text)
+
+    // Press Down again: reaches the end of history and restores the uncommitted draft
+    let down2 = sendKey Key.Down KeyModifiers.None
+    Assert.True(down2.Handled)
+    Assert.Equal("Draft in progress", input.Text)
+
+// =========================================================================
+// 9. Sidebar Search Keyboard Navigation & Shortcuts
+// =========================================================================
+
+[<Fact>]
+let ``Sidebar search navigation moves focus and handles escape`` () =
+    Headless.ensure ()
+    let mutable openedConvId: Guid option = None
+    let sidebarActions =
+        { newConversation = ignore
+          openConversation = fun id -> openedConvId <- Some id
+          renameConversation = ignore
+          deleteConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let sidebar = Sidebar(overlay, sidebarActions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    root.Children.Insert(0, sidebar)
+
+    let window = Window(Width = 360.0, Height = 600.0, Content = root)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+
+        let conv1 = Guid.NewGuid()
+        let conv2 = Guid.NewGuid()
+        let summaries =
+            [ { id = conv1
+                title = "Alpha Conversation"
+                preview = "preview 1"
+                running = false
+                pinned = false
+                archived = false
+                createdAt = DateTimeOffset.Now
+                updatedAt = DateTimeOffset.Now
+                messageCount = 2
+                isFork = false
+                providerId = "test"
+                model = "model"
+                lastCommitId = 1UL }
+              { id = conv2
+                title = "Beta Conversation"
+                preview = "preview 2"
+                running = false
+                pinned = false
+                archived = false
+                createdAt = DateTimeOffset.Now
+                updatedAt = DateTimeOffset.Now
+                messageCount = 3
+                isFork = false
+                providerId = "test"
+                model = "model"
+                lastCommitId = 2UL } ]
+
+        sidebar.SetConversations summaries
+        Dispatcher.UIThread.RunJobs()
+
+        // Find the searchBox
+        let searchBox =
+            descendants sidebar
+            |> Seq.choose (function :? TextBox as tb when tb.PlaceholderText = "搜索会话" -> Some tb | _ -> None)
+            |> Seq.head
+
+        let sendSearchKey (key: Key) =
+            let args = KeyEventArgs(
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = key,
+                KeyModifiers = KeyModifiers.None)
+            searchBox.RaiseEvent args
+            Dispatcher.UIThread.RunJobs()
+            args
+
+        // 1. Enter key in search box opens the first visible conversation
+        let enterArgs = sendSearchKey Key.Enter
+        Assert.True(enterArgs.Handled)
+        // items are sorted by lastCommitId descending, so conv2 (lastCommitId=2UL) precedes conv1 (lastCommitId=1UL)
+        Assert.Equal(Some conv2, openedConvId)
+
+        // 2. Down arrow navigates focus into the conversation list
+        let downArgs = sendSearchKey Key.Down
+        Assert.True(downArgs.Handled)
+
+        // 3. Escape key clears non-empty search query
+        searchBox.Text <- "Alpha"
+        let escArgs1 = sendSearchKey Key.Escape
+        Assert.True(escArgs1.Handled)
+        Assert.Equal("", searchBox.Text)
+    finally
+        window.Close()

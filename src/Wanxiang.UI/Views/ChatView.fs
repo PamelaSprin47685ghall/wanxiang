@@ -157,6 +157,22 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable mountedKeys: CardKey option array = [||]
 
     let scrollToBottomButton = Ui.iconButtonAccent Icons.arrowDown "回到最新"
+    let scrollToBottomLabel =
+        TextBlock(
+            Text = "回到最新",
+            FontSize = Tokens.fontSmall,
+            Foreground = Tokens.textOnAccent,
+            FontWeight = FontWeight.Medium,
+            VerticalAlignment = VerticalAlignment.Center)
+    let scrollToBottomIcon = Icons.arrowDown Tokens.textOnAccent
+    let scrollToBottomContent =
+        let panel = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        panel.Children.Add scrollToBottomIcon
+        panel.Children.Add scrollToBottomLabel
+        panel
+    let mutable unreadSinceScrolledUp: int = 0
+    let mutable previousRenderedMessageCount: int = 0
+    let mutable smoothScrollTimer: DispatcherTimer option = None
 
     let mutable atBottom = true
     let mutable headerBar: Border = Unchecked.defaultof<Border>
@@ -232,6 +248,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         for button in [ sidebarToggleButton; stopButton; forkButton; sessionSettingsButton; scrollToBottomButton ] do
             Ui.setSquareTarget button size
+        if not value && unreadSinceScrolledUp > 0 then
+            scrollToBottomButton.Width <- Double.NaN
+            scrollToBottomButton.MinWidth <- Tokens.iconButton
         Ui.setReservedActionVisible generatingChip (isGenerating && not value)
         forkButton.IsVisible <- hasConversationChrome && not value
 
@@ -262,10 +281,19 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member this.HideEmpty() =
         lastEmptyState <- None
+        this.ResetScrollState()
         emptyPanel.IsVisible <- false
         scroller.IsVisible <- true
         messagePanel.IsVisible <- true
 
+    /// 重置滚动到底状态与未读计数（换会话、加载骨架或切换视图时调用）。
+    member this.ResetScrollState() =
+        smoothScrollTimer |> Option.iter (fun t -> t.Stop())
+        smoothScrollTimer <- None
+        atBottom <- true
+        unreadSinceScrolledUp <- 0
+        previousRenderedMessageCount <- 0
+        this.UpdateScrollToBottomAppearance()
     /// 停止骨架呼吸动画。
     member private this.StopSkeletonBreathing() =
         skeletonTimer |> Option.iter (fun t -> t.Stop())
@@ -360,6 +388,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     /// 显示骨架屏（换会话或初次加载中，替代空白屏与“加载中…”）
     member this.ShowSkeletonLoading() =
+        this.ResetScrollState()
         this.EnsureSkeletonBuilt()
         lastEmptyState <- None
         emptyPanel.IsVisible <- false
@@ -480,6 +509,56 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 cardCache.Remove stale |> ignore
 
         if wasAtBottom then this.ScrollToEndDeferred()
+        else
+            let newCount = desired.Count
+            let delta = newCount - previousRenderedMessageCount
+            if delta > 0 && previousRenderedMessageCount > 0 then
+                unreadSinceScrolledUp <- unreadSinceScrolledUp + delta
+            elif unreadSinceScrolledUp = 0 && not wasAtBottom && (streamingMessage.IsSome || (delta > 0)) then
+                unreadSinceScrolledUp <- max 1 delta
+            this.UpdateScrollToBottomAppearance()
+        previousRenderedMessageCount <- desired.Count
+
+    member private this.UpdateScrollToBottomAppearance() =
+        let extent = scroller.Extent.Height
+        let viewport = scroller.Viewport.Height
+        if atBottom then
+            unreadSinceScrolledUp <- 0
+            scrollToBottomButton.IsVisible <- false
+            scrollToBottomLabel.Text <- "回到最新"
+            scrollToBottomLabel.IsVisible <- false
+            ToolTip.SetTip(scrollToBottomButton, "回到最新")
+            Avalonia.Automation.AutomationProperties.SetName(scrollToBottomButton, "回到最新")
+            let size = if compactMode then LayoutPolicy.compactActionTarget else Tokens.iconButton
+            Ui.setSquareTarget scrollToBottomButton size
+            scrollToBottomButton.Padding <- Thickness 0.0
+        else
+            scrollToBottomButton.IsVisible <- extent > viewport + ContentMetrics.scrollBottomRevealThreshold
+            if unreadSinceScrolledUp > 0 then
+                let text =
+                    if unreadSinceScrolledUp = 1 then "新消息"
+                    else sprintf "%d 条新消息" unreadSinceScrolledUp
+                scrollToBottomLabel.Text <- text
+                scrollToBottomLabel.IsVisible <- not compactMode
+                ToolTip.SetTip(scrollToBottomButton, text)
+                Avalonia.Automation.AutomationProperties.SetName(scrollToBottomButton, text)
+                if compactMode then
+                    let size = LayoutPolicy.compactActionTarget
+                    Ui.setSquareTarget scrollToBottomButton size
+                    scrollToBottomButton.Padding <- Thickness 0.0
+                else
+                    scrollToBottomButton.Width <- Double.NaN
+                    scrollToBottomButton.MinWidth <- Tokens.iconButton
+                    scrollToBottomButton.Height <- Tokens.iconButton
+                    scrollToBottomButton.Padding <- Thickness(Tokens.space3, 0.0, Tokens.space4, 0.0)
+            else
+                scrollToBottomLabel.Text <- "回到最新"
+                scrollToBottomLabel.IsVisible <- false
+                ToolTip.SetTip(scrollToBottomButton, "回到最新")
+                Avalonia.Automation.AutomationProperties.SetName(scrollToBottomButton, "回到最新")
+                let size = if compactMode then LayoutPolicy.compactActionTarget else Tokens.iconButton
+                Ui.setSquareTarget scrollToBottomButton size
+                scrollToBottomButton.Padding <- Thickness 0.0
 
     /// 丢弃卡片缓存，下一次重绘全部重建。
     ///
@@ -501,6 +580,41 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         attempt 3
 
     member this.ScrollToEnd() = this.ScrollToEndDeferred()
+
+    /// 平滑滚动到底部
+    member this.SmoothScrollToEnd() =
+        smoothScrollTimer |> Option.iter (fun t -> t.Stop())
+        smoothScrollTimer <- None
+        if MotionPolicy.isReduced () then
+            this.ScrollToEndDeferred()
+        else
+            let startOffset = scroller.Offset.Y
+            let maxTarget = max 0.0 (scroller.Extent.Height - scroller.Viewport.Height)
+            if maxTarget <= startOffset then
+                this.ScrollToEndDeferred()
+            else
+                let startTime = DateTime.UtcNow
+                let durationMs = 240.0
+                let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 16.0)
+                timer.Tick.Add(fun _ ->
+                    let elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds
+                    let currentExtent = scroller.Extent.Height
+                    let currentViewport = scroller.Viewport.Height
+                    let target = max 0.0 (currentExtent - currentViewport)
+                    if elapsed >= durationMs || target <= 0.0 then
+                        timer.Stop()
+                        smoothScrollTimer <- None
+                        atBottom <- true
+                        scroller.ScrollToEnd()
+                        this.UpdateScrollToBottomAppearance()
+                    else
+                        let progress = elapsed / durationMs
+                        // Ease-out cubic: 1 - (1 - t)^3
+                        let eased = 1.0 - Math.Pow(1.0 - progress, 3.0)
+                        let newY = startOffset + (target - startOffset) * eased
+                        scroller.Offset <- Vector(scroller.Offset.X, newY))
+                smoothScrollTimer <- Some timer
+                timer.Start()
 
     /// 加载更早历史前记录当前滚动几何。分页是 prepend，不保留 anchor 的话
     /// 新内容一插到顶部，用户正在读的那条消息会瞬间跳出视口。
@@ -602,17 +716,26 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let extent = scroller.Extent.Height
             let viewport = scroller.Viewport.Height
             let offset = scroller.Offset.Y
-            atBottom <- extent - viewport - offset < ContentMetrics.scrollBottomThreshold
-            scrollToBottomButton.IsVisible <- not atBottom && extent > viewport + ContentMetrics.scrollBottomRevealThreshold
+            let wasAtBottom = atBottom
+            let nowAtBottom = extent - viewport - offset < ContentMetrics.scrollBottomThreshold
+            atBottom <- nowAtBottom
+            if nowAtBottom then
+                unreadSinceScrolledUp <- 0
+            this.UpdateScrollToBottomAppearance()
             if offset <= 0.5 && extent > viewport then actions.requestOlderHistory ())
 
+        scrollToBottomButton.Child <- scrollToBottomContent
+        scrollToBottomLabel.IsVisible <- false
+        scrollToBottomButton.BoxShadow <- Tokens.shadowPopup ()
         scrollToBottomButton.IsVisible <- false
         scrollToBottomButton.HorizontalAlignment <- HorizontalAlignment.Right
         scrollToBottomButton.VerticalAlignment <- VerticalAlignment.Bottom
         scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Tokens.space5, Tokens.space4)
         let doScrollToBottom () =
             atBottom <- true
-            scroller.ScrollToEnd()
+            unreadSinceScrolledUp <- 0
+            this.UpdateScrollToBottomAppearance()
+            this.SmoothScrollToEnd()
         Ui.onClick scrollToBottomButton doScrollToBottom
 
         let body = Grid()

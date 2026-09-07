@@ -113,6 +113,10 @@ type Composer(actions: ComposerActions) as this =
     let mutable generating = false
     let mutable canStop = true
     let mutable enabled = false
+    let promptHistory = ResizeArray<string>()
+    let mutable historyIndex = -1
+    let mutable uncommittedDraft = ""
+    let maxHistoryCount = 100
     let mutable attachments: PendingAttachment list = []
 
     let refreshSendState () =
@@ -165,6 +169,35 @@ type Composer(actions: ComposerActions) as this =
                     let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
                     if ctrl then
                         if actions.pasteFromClipboard () then
+                            e.Handled <- true
+                elif e.Key = Key.Up && e.KeyModifiers = KeyModifiers.None then
+                    let currentText = if isNull input.Text then "" else input.Text
+                    // Caret is at line 0 if CaretIndex = 0 or if there is no newline before CaretIndex
+                    let isAtBeginning =
+                        input.CaretIndex = 0 ||
+                        let idx = Math.Min(input.CaretIndex, currentText.Length)
+                        not (currentText.Substring(0, idx).Contains('\n'))
+                    if isAtBeginning && promptHistory.Count > 0 then
+                        if historyIndex = -1 then
+                            uncommittedDraft <- currentText
+                            historyIndex <- promptHistory.Count - 1
+                        elif historyIndex > 0 then
+                            historyIndex <- historyIndex - 1
+                        input.Text <- promptHistory.[historyIndex]
+                        input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
+                        e.Handled <- true
+                elif e.Key = Key.Down && e.KeyModifiers = KeyModifiers.None then
+                    if historyIndex <> -1 then
+                        if historyIndex < promptHistory.Count - 1 then
+                            historyIndex <- historyIndex + 1
+                            input.Text <- promptHistory.[historyIndex]
+                            input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
+                            e.Handled <- true
+                        else
+                            // Reached the end: restore draft
+                            historyIndex <- -1
+                            input.Text <- uncommittedDraft
+                            input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
                             e.Handled <- true),
             RoutingStrategies.Tunnel)
 
@@ -174,6 +207,13 @@ type Composer(actions: ComposerActions) as this =
             let text = if isNull input.Text then "" else input.Text
             if not (String.IsNullOrWhiteSpace text) || attachments |> List.exists (fun a -> a.ready) then
                 if actions.submit text then
+                    if not (String.IsNullOrWhiteSpace text) then
+                        if promptHistory.Count = 0 || promptHistory.[promptHistory.Count - 1] <> text then
+                            promptHistory.Add text
+                            if promptHistory.Count > maxHistoryCount then
+                                promptHistory.RemoveAt 0
+                    historyIndex <- -1
+                    uncommittedDraft <- ""
                     // 所有权已经移交；回调若切到了另一份草稿，不清它的内容。
                     if input.Text = text then input.Text <- ""
                     refreshSendState ()
