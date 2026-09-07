@@ -54,6 +54,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     let mutable instanceId = ""
     let mutable serverUrl = ""
     let navButtons = System.Collections.Generic.Dictionary<SettingsSection, Border>()
+    let scrollPositions = System.Collections.Generic.Dictionary<SettingsSection, float>()
     let mutable responsiveCompact: bool option = None
 
     /// 每个分区只构建一次并缓存。
@@ -94,19 +95,31 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
 
     member private this.Select(section: SettingsSection) =
         let changed = current <> section
+        if changed then
+            contentScroll |> Option.iter (fun scroller ->
+                if scroller.Offset.Y > 0.0 || not (scrollPositions.ContainsKey current) then
+                    scrollPositions[current] <- scroller.Offset.Y)
         current <- section
         this.UpdateNavButtonStates()
-        if changed then
-            contentScroll |> Option.iter (fun scroller -> scroller.Offset <- Vector(0.0, 0.0))
         contentHost.Content <- renderSection section
+        if changed then
+            let targetY =
+                match scrollPositions.TryGetValue section with
+                | true, y -> y
+                | _ -> 0.0
+            contentScroll |> Option.iter (fun scroller ->
+                scroller.Offset <- Vector(0.0, targetY))
         match navButtons.TryGetValue section with
         | true, button -> button.BringIntoView()
         | _ -> ()
 
     member private this.NavigateSection(direction: int) =
         let sections = SettingsSection.all
+        let count = sections.Length
         let idx = sections |> List.tryFindIndex ((=) current) |> Option.defaultValue 0
-        let nextIdx = Math.Clamp(idx + direction, 0, sections.Length - 1)
+        let nextIdx =
+            let raw = (idx + direction) % count
+            if raw < 0 then raw + count else raw
         let target = sections[nextIdx]
         this.Select target
         match navButtons.TryGetValue target with
@@ -118,6 +131,16 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         match navButtons.TryGetValue section with
         | true, button -> button.Focus(NavigationMethod.Directional) |> ignore
         | _ -> ()
+
+    member this.GetSectionScrollOffset(section: SettingsSection) =
+        match scrollPositions.TryGetValue section with
+        | true, y -> y
+        | _ -> 0.0
+
+    member this.SetSectionScrollOffset(section: SettingsSection, y: float) =
+        scrollPositions[section] <- y
+        if current = section then
+            contentScroll |> Option.iter (fun s -> s.Offset <- Vector(0.0, y))
 
     member private this.NavButton(section: SettingsSection) : Border =
         let glyph = (SettingsSection.icon section) Tokens.textMuted
@@ -152,10 +175,10 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
             elif e.Key = Key.Down then
                 e.Handled <- true
                 this.NavigateSection 1
-            elif e.Key = Key.Left && responsiveCompact = Some true then
+            elif e.Key = Key.Left then
                 e.Handled <- true
                 this.NavigateSection -1
-            elif e.Key = Key.Right && responsiveCompact = Some true then
+            elif e.Key = Key.Right then
                 e.Handled <- true
                 this.NavigateSection 1
             elif e.Key = Key.Home then

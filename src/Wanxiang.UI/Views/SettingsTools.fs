@@ -28,6 +28,65 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             LineHeight = ReadingRhythm.captionLineHeight)
     let mutable catalog = Catalog.empty
 
+    let attachFieldValidation (box: TextBox) =
+        let msg = Ui.fieldValidationMessage box
+        msg.FontSize <- Tokens.fontMicro
+        msg.Foreground <- Tokens.danger
+
+        let updateVisual () =
+            match box.Parent with
+            | :? Border as shell ->
+                if msg.IsVisible then
+                    shell.BorderBrush <- Tokens.danger
+                    shell.BoxShadow <-
+                        if box.IsFocused then
+                            BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
+                        else
+                            BoxShadows()
+                elif box.IsFocused then
+                    shell.BorderBrush <- Tokens.accent
+                    shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color))
+                else
+                    shell.BorderBrush <- Tokens.border
+                    shell.BoxShadow <- BoxShadows()
+            | _ -> ()
+
+        box.GetObservable(TextBox.TextProperty).Subscribe(fun _ ->
+            if msg.IsVisible then
+                Ui.clearFieldError box
+                updateVisual ()) |> ignore
+
+        box.GotFocus.Add(fun _ -> updateVisual ())
+        box.LostFocus.Add(fun _ -> updateVisual ())
+
+    let applyFieldError (box: TextBox) (errorText: string) =
+        Ui.setFieldError box errorText
+        let msg = Ui.fieldValidationMessage box
+        msg.FontSize <- Tokens.fontMicro
+        msg.Foreground <- Tokens.danger
+        msg.IsVisible <- true
+        match box.Parent with
+        | :? Border as shell ->
+            shell.BorderBrush <- Tokens.danger
+            shell.BoxShadow <-
+                if box.IsFocused then
+                    BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
+                else
+                    BoxShadows()
+        | _ -> ()
+
+    let clearFieldError (box: TextBox) =
+        Ui.clearFieldError box
+        match box.Parent with
+        | :? Border as shell ->
+            if box.IsFocused then
+                shell.BorderBrush <- Tokens.accent
+                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color))
+            else
+                shell.BorderBrush <- Tokens.border
+                shell.BoxShadow <- BoxShadows()
+        | _ -> ()
+
     let mcpPayload (id: string) (label: string) (command: string) (args: string list) (url: string) (timeout: int) (enabled: bool) =
         let o = JsonObject()
         o["id"] <- id
@@ -52,6 +111,9 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         argsBox.VerticalContentAlignment <- VerticalAlignment.Top
         let urlField, urlBox = Ui.labeledField "远程端点" "https://example.com/mcp（与命令二选一）"
         let timeoutField, timeoutBox = Ui.labeledField "单次调用超时（秒）" "60"
+        let allBoxes = [ idBox; labelBox; commandBox; argsBox; urlBox; timeoutBox ]
+        for box in allBoxes do attachFieldValidation box
+
 
         match existing with
         | Some server ->
@@ -79,7 +141,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let idleSaveText = if existing.IsSome then "保存" else "添加"
         let mutable setPending: bool -> unit = ignore
         let save () =
-            for box in [ idBox; labelBox; commandBox; urlBox; timeoutBox ] do Ui.clearFieldError box
+            for box in allBoxes do clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
             let label = if isNull labelBox.Text then "" else labelBox.Text.Trim()
             let command = if isNull commandBox.Text then "" else commandBox.Text.Trim()
@@ -93,7 +155,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             let rawTimeout = if isNull timeoutBox.Text then "" else timeoutBox.Text.Trim()
             let mutable firstInvalid: TextBox option = None
             let fail (box: TextBox) msg =
-                Ui.setFieldError box msg
+                applyFieldError box msg
                 if firstInvalid.IsNone then firstInvalid <- Some box
 
             if String.IsNullOrWhiteSpace id then
@@ -133,10 +195,20 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 let errorMsg = (Ui.fieldValidationMessage box).Text
                 if not (String.IsNullOrWhiteSpace errorMsg) then
                     actions.toast errorMsg Warning
+                match box.Parent with
+                | :? Border as shell ->
+                    shell.BorderBrush <- Tokens.danger
+                    shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
+                | _ -> ()
                 box.BringIntoView()
                 box.Focus(NavigationMethod.Directional) |> ignore
                 Dispatcher.UIThread.Post(fun () ->
                     if box.IsEffectivelyVisible && box.IsEnabled then
+                        match box.Parent with
+                        | :? Border as shell ->
+                            shell.BorderBrush <- Tokens.danger
+                            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
+                        | _ -> ()
                         box.BringIntoView()
                         box.Focus(NavigationMethod.Directional) |> ignore)
             | None ->

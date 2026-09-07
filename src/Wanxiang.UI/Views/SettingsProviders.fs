@@ -10,6 +10,7 @@ open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Threading
+open System.Text.RegularExpressions
 
 /// 设置界面对外暴露的动作。全部落到协议上，客户端不直接碰 TOML。
 type SettingsActions = {
@@ -31,6 +32,65 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
     let listPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
     let mutable catalog = Catalog.empty
+
+    let attachFieldValidation (box: TextBox) =
+        let msg = Ui.fieldValidationMessage box
+        msg.FontSize <- Tokens.fontMicro
+        msg.Foreground <- Tokens.danger
+
+        let updateVisual () =
+            match box.Parent with
+            | :? Border as shell ->
+                if msg.IsVisible then
+                    shell.BorderBrush <- Tokens.danger
+                    shell.BoxShadow <-
+                        if box.IsFocused then
+                            BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
+                        else
+                            BoxShadows()
+                elif box.IsFocused then
+                    shell.BorderBrush <- Tokens.accent
+                    shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color))
+                else
+                    shell.BorderBrush <- Tokens.border
+                    shell.BoxShadow <- BoxShadows()
+            | _ -> ()
+
+        box.GetObservable(TextBox.TextProperty).Subscribe(fun _ ->
+            if msg.IsVisible then
+                Ui.clearFieldError box
+                updateVisual ()) |> ignore
+
+        box.GotFocus.Add(fun _ -> updateVisual ())
+        box.LostFocus.Add(fun _ -> updateVisual ())
+
+    let applyFieldError (box: TextBox) (errorText: string) =
+        Ui.setFieldError box errorText
+        let msg = Ui.fieldValidationMessage box
+        msg.FontSize <- Tokens.fontMicro
+        msg.Foreground <- Tokens.danger
+        msg.IsVisible <- true
+        match box.Parent with
+        | :? Border as shell ->
+            shell.BorderBrush <- Tokens.danger
+            shell.BoxShadow <-
+                if box.IsFocused then
+                    BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
+                else
+                    BoxShadows()
+        | _ -> ()
+
+    let clearFieldError (box: TextBox) =
+        Ui.clearFieldError box
+        match box.Parent with
+        | :? Border as shell ->
+            if box.IsFocused then
+                shell.BorderBrush <- Tokens.accent
+                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color))
+            else
+                shell.BorderBrush <- Tokens.border
+                shell.BoxShadow <- BoxShadows()
+        | _ -> ()
 
     /// 探活结果按服务商 id 暂存，用于在编辑器里回填模型列表。
     let probeResults = System.Collections.Generic.Dictionary<string, string list>()
@@ -79,6 +139,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         modelsBox.MinHeight <- 92.0
         modelsBox.VerticalContentAlignment <- VerticalAlignment.Top
         let defaultModelField, defaultModelBox = Ui.labeledField "默认模型" "留空则自动使用列表中第一个"
+        let allBoxes = [ idBox; labelBox; urlBox; keyBox; modelsBox; defaultModelBox ]
+        for box in allBoxes do attachFieldValidation box
+
 
         let presetHint =
             TextBlock(
@@ -155,7 +218,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let idleSaveText = if existing.IsSome then "保存" else "添加"
         let mutable setPending: bool -> unit = ignore
         let save () =
-            for box in [ idBox; labelBox; urlBox; keyBox; modelsBox; defaultModelBox ] do Ui.clearFieldError box
+            for box in allBoxes do clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
             let label = if isNull labelBox.Text then "" else labelBox.Text.Trim()
             let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
@@ -168,13 +231,15 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 |> List.ofArray
             let mutable firstInvalid: TextBox option = None
             let fail (box: TextBox) msg =
-                Ui.setFieldError box msg
+                applyFieldError box msg
                 if firstInvalid.IsNone then firstInvalid <- Some box
 
             if String.IsNullOrWhiteSpace id then
                 fail idBox "稳定标识不能为空。"
             elif existing.IsNone && List.contains id takenIds then
                 fail idBox "该标识已存在，请换一个。"
+            elif not (Regex.IsMatch(id, "^[a-zA-Z0-9_-]+$")) then
+                fail idBox "稳定标识仅支持英文字母、数字、下划线(_)与连字符(-)。"
 
             if String.IsNullOrWhiteSpace label then
                 fail labelBox "显示名称不能为空。"
@@ -211,10 +276,20 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 let errorMsg = (Ui.fieldValidationMessage box).Text
                 if not (String.IsNullOrWhiteSpace errorMsg) then
                     actions.toast errorMsg Warning
+                match box.Parent with
+                | :? Border as shell ->
+                    shell.BorderBrush <- Tokens.danger
+                    shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
+                | _ -> ()
                 box.BringIntoView()
                 box.Focus(NavigationMethod.Directional) |> ignore
                 Dispatcher.UIThread.Post(fun () ->
                     if box.IsEffectivelyVisible && box.IsEnabled then
+                        match box.Parent with
+                        | :? Border as shell ->
+                            shell.BorderBrush <- Tokens.danger
+                            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
+                        | _ -> ()
                         box.BringIntoView()
                         box.Focus(NavigationMethod.Directional) |> ignore)
             | None ->

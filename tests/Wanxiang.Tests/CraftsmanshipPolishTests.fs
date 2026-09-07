@@ -601,6 +601,57 @@ let ``ChatView tracks unread messages when scrolled away from bottom`` () =
         window.Close()
 
 [<Fact>]
+let ``SettingsView preserves and restores scroll offset across sections`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let actions: SettingsActions =
+        { upsertProvider = fun _ cb -> cb true
+          deleteProvider = ignore
+          probeProvider = ignore
+          upsertMcp = fun _ cb -> cb true
+          deleteMcp = ignore
+          updateGeneration = fun _ cb -> cb true
+          savePrefs = ignore
+          toast = fun _ _ -> () }
+    let settings = SettingsView(overlay, actions, ignore, ignore)
+    let control = settings.Build()
+    let window = Window(Width = 800.0, Height = 400.0, Content = settings)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        let navButtons =
+            descendants settings
+            |> Seq.choose (fun d ->
+                if d.Focusable && not (isNull d.Tag) && (d.Tag :? SettingsSection) then Some(d.Tag :?> SettingsSection, d) else None)
+            |> dict
+
+        let scroller =
+            descendants settings
+            |> Seq.pick (function :? ScrollViewer as s when s.VerticalScrollBarVisibility = ScrollBarVisibility.Auto -> Some s | _ -> None)
+
+        // Set scroll offset on Providers
+        settings.SetSectionScrollOffset(SettingsSection.Providers, 150.0)
+
+        // Switch to Tools
+        let toolsBtn = navButtons.[SettingsSection.Tools]
+        toolsBtn.Focus() |> ignore
+        let enterArgs = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None)
+        toolsBtn.RaiseEvent enterArgs
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal(0.0, settings.GetSectionScrollOffset SettingsSection.Tools)
+
+        // Switch back to Providers -> offset restored
+        let providersBtn = navButtons.[SettingsSection.Providers]
+        providersBtn.Focus() |> ignore
+        let enterArgs2 = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None)
+        providersBtn.RaiseEvent enterArgs2
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal(150.0, settings.GetSectionScrollOffset SettingsSection.Providers)
+    finally
+        window.Close()
+
+[<Fact>]
 let ``Sidebar conversation row right click invokes context menu`` () =
     Headless.ensure ()
     let root = Grid()
@@ -957,6 +1008,42 @@ let ``SettingsView supports Up and Down arrow traversal across navigation sectio
         toolsBtn.RaiseEvent upArgs
         Dispatcher.UIThread.RunJobs()
         Assert.True(upArgs.Handled)
+        Assert.True(providersBtn.IsFocused)
+
+        // Press Up arrow on Providers -> should cycle to About (last section)
+        let upCycleArgs = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Up, KeyModifiers = KeyModifiers.None)
+        providersBtn.RaiseEvent upCycleArgs
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(upCycleArgs.Handled)
+        let aboutBtn = navButtons.[SettingsSection.About]
+        Assert.True(aboutBtn.IsFocused)
+
+        // Press Down arrow on About -> should cycle to Providers (first section)
+        let downCycleArgs = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down, KeyModifiers = KeyModifiers.None)
+        aboutBtn.RaiseEvent downCycleArgs
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(downCycleArgs.Handled)
+        Assert.True(providersBtn.IsFocused)
+
+        // Press Left arrow on Providers -> should cycle to About
+        let leftCycleArgs = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Left, KeyModifiers = KeyModifiers.None)
+        providersBtn.RaiseEvent leftCycleArgs
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(leftCycleArgs.Handled)
+        Assert.True(aboutBtn.IsFocused)
+
+        // Press End -> jumps to About
+        let endArgs = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.End, KeyModifiers = KeyModifiers.None)
+        providersBtn.RaiseEvent endArgs
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(endArgs.Handled)
+        Assert.True(aboutBtn.IsFocused)
+
+        // Press Home -> jumps to Providers
+        let homeArgs = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Home, KeyModifiers = KeyModifiers.None)
+        aboutBtn.RaiseEvent homeArgs
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(homeArgs.Handled)
         Assert.True(providersBtn.IsFocused)
     finally
         window.Close()

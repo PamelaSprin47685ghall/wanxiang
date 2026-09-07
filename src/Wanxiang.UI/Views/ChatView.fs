@@ -123,21 +123,23 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let emptyPanel =
         StackPanel(
             Orientation = Orientation.Vertical,
-            Spacing = Tokens.space3,
+            Spacing = 0.0,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = Thickness(Tokens.space4, 0.0),
+            // reading column 内水平居中，留出下方呼吸留白形成微妙向上视差偏置 (optical bias)
+            Margin = Thickness(Tokens.space4, 0.0, Tokens.space4, Tokens.space8),
             MaxWidth = ContentMetrics.emptyStateMaxWidth,
             IsVisible = false)
     let emptyTitle =
         TextBlock(
             Text = "",
             FontSize = Tokens.fontHeading,
-            FontWeight = FontWeight.Medium,
-            Foreground = Tokens.textPrimary,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Tokens.text,
             TextAlignment = TextAlignment.Center,
             LineHeight = ReadingRhythm.headingLineHeight,
-            LetterSpacing = 0.4)
+            LetterSpacing = 0.4,
+            Margin = Thickness(0.0, Tokens.space4, 0.0, 0.0))
     let emptyHint =
         TextBlock(
             Text = "",
@@ -146,20 +148,28 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
             LineHeight = ReadingRhythm.emptyStateLineHeight,
-            MaxWidth = ContentMetrics.emptyStateMaxWidth)
+            MaxWidth = ContentMetrics.emptyStateMaxWidth,
+            Margin = Thickness(0.0, Tokens.space3, 0.0, 0.0))
     let mutable currentPrimaryAction: unit -> unit = ignore
     let emptyActionButton =
         let btn = Ui.button Ui.Primary "" (fun () -> currentPrimaryAction ())
         btn.HorizontalAlignment <- HorizontalAlignment.Center
         btn.VerticalAlignment <- VerticalAlignment.Center
-        btn.MinWidth <- 120.0
-        btn.Height <- 36.0
+        btn.MinWidth <- 136.0
+        btn.Height <- 38.0
+        btn.CornerRadius <- CornerRadius Tokens.radiusMd
         btn.Padding <- Thickness(Tokens.space4, 0.0)
         btn.Focusable <- true
         btn.IsVisible <- false
         btn
     let emptyActions =
-        let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Center, IsVisible = false)
+        let panel =
+            StackPanel(
+                Orientation = Orientation.Vertical,
+                Spacing = Tokens.space2,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = Thickness(0.0, Tokens.space4, 0.0, 0.0),
+                IsVisible = false)
         panel.Children.Add emptyActionButton
         panel
     let mutable lastEmptyState: (ChatEmptyState * string option) option = None

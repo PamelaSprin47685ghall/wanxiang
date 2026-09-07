@@ -105,6 +105,6 @@ module ContentMetrics =
     let messageEndBreathing = 48.0
     let scrollBottomThreshold = 48.0
     let scrollBottomRevealThreshold = 120.0
-    let emptyStateMaxWidth = 420.0
+    let emptyStateMaxWidth = 480.0
     let toastMaxWidth = 560.0
 

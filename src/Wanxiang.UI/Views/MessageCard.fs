@@ -196,7 +196,7 @@ module MessageCard =
                 Height = Tokens.iconGlyph,
                 MinWidth = Tokens.iconGlyph,
                 MinHeight = Tokens.iconGlyph,
-                Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0),
+                Margin = Thickness 0.0,
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center)
         let rotateTransform = RotateTransform(if bodyVisible then 90.0 else 0.0)
@@ -257,12 +257,18 @@ module MessageCard =
         bgTransition.Property <- Border.BackgroundProperty
         bgTransition.Duration <- MotionPolicy.duration 120
         headerTransitions.Add bgTransition
+        let borderTransition = Avalonia.Animation.BrushTransition()
+        borderTransition.Property <- Border.BorderBrushProperty
+        borderTransition.Duration <- MotionPolicy.duration 120
+        headerTransitions.Add borderTransition
         let header =
             ActionBorder(
                 CornerRadius = CornerRadius Tokens.radiusSm,
-                Padding = Thickness(Tokens.space1, 2.0),
+                Padding = Thickness(Tokens.space1, 3.0),
                 Margin = Thickness 0.0,
                 Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
+                BorderThickness = Thickness 1.0,
                 Cursor = handCursor,
                 Focusable = true,
                 Transitions = headerTransitions,
@@ -282,13 +288,28 @@ module MessageCard =
             setBodyVisible bodyVisible
             syncChevron ()
             syncHeaderName ()
-        header.PointerEntered.Add(fun _ ->
-            header.Background <- Tokens.hover
-            header.Opacity <- 0.9)
-        header.PointerExited.Add(fun _ ->
-            header.Background <- Brushes.Transparent
-            header.Opacity <- 1.0)
+        let updateHeaderVisual () =
+            if header.IsFocused then
+                header.BorderBrush <- Tokens.accent
+                header.Background <- Tokens.hover
+                header.Opacity <- 1.0
+            elif header.IsPointerOver then
+                header.BorderBrush <- Tokens.line
+                header.Background <- Tokens.hover
+                header.Opacity <- 0.9
+            else
+                header.BorderBrush <- Brushes.Transparent
+                header.Background <- Brushes.Transparent
+                header.Opacity <- 1.0
+        header.PointerEntered.Add(fun _ -> updateHeaderVisual ())
+        header.PointerExited.Add(fun _ -> updateHeaderVisual ())
+        header.GotFocus.Add(fun _ -> updateHeaderVisual ())
+        header.LostFocus.Add(fun _ -> updateHeaderVisual ())
         Ui.onClick header toggle
+        header.KeyDown.Add(fun e ->
+            if header.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
+                e.Handled <- true
+                toggle ())
         syncChevron ()
         syncHeaderName ()
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
@@ -307,6 +328,83 @@ module MessageCard =
     ///
     /// 刻意做成与代码块同一量级的卡片：工具调用是模型行为的一部分，
     /// 缩成一个灰色小标签会让人以为它不重要。
+    let private prettyFormatJson (raw: string) : string =
+        if String.IsNullOrWhiteSpace raw then ""
+        else
+            let trimmed = raw.Trim()
+            if (trimmed.StartsWith "{" && trimmed.EndsWith "}") || (trimmed.StartsWith "[" && trimmed.EndsWith "]") then
+                try
+                    use doc = JsonDocument.Parse trimmed
+                    let options = JsonSerializerOptions(WriteIndented = true)
+                    JsonSerializer.Serialize(doc.RootElement, options)
+                with _ -> raw
+            else raw
+
+    let private formatToolArgsPreview (argsJson: string) : int * string =
+        if String.IsNullOrWhiteSpace argsJson then 0, ""
+        else
+            let trimmed = argsJson.Trim()
+            try
+                use doc = JsonDocument.Parse trimmed
+                match doc.RootElement.ValueKind with
+                | JsonValueKind.Object ->
+                    let props = [ for p in doc.RootElement.EnumerateObject() -> p.Name, p.Value ]
+                    let count = props.Length
+                    if count = 0 then 0, "无参数"
+                    else
+                        let formatVal (v: JsonElement) =
+                            match v.ValueKind with
+                            | JsonValueKind.String ->
+                                let s = v.GetString().Replace('\n', ' ').Replace('\r', ' ').Trim()
+                                if s.Length <= 32 then sprintf "\"%s\"" s else sprintf "\"%s…\"" (s.Substring(0, 30))
+                            | JsonValueKind.Number -> v.GetRawText()
+                            | JsonValueKind.True -> "true"
+                            | JsonValueKind.False -> "false"
+                            | JsonValueKind.Null -> "null"
+                            | JsonValueKind.Array -> sprintf "[%d]" (v.GetArrayLength())
+                            | JsonValueKind.Object -> sprintf "{%d}" (v.EnumerateObject() |> Seq.length)
+                            | _ -> v.GetRawText()
+                        let pairs = props |> List.map (fun (name, v) -> sprintf "%s: %s" name (formatVal v))
+                        let joined = String.Join(", ", pairs)
+                        count, (if joined.Length > 96 then joined.Substring(0, 95) + "…" else joined)
+                | JsonValueKind.Array ->
+                    let count = doc.RootElement.GetArrayLength()
+                    count, sprintf "[%d 项]" count
+                | _ ->
+                    let s = trimmed.Replace('\n', ' ').Replace('\r', ' ')
+                    1, (if s.Length > 96 then s.Substring(0, 95) + "…" else s)
+            with _ ->
+                let single = trimmed.Replace('\n', ' ').Replace('\r', ' ')
+                1, (if single.Length > 96 then single.Substring(0, 95) + "…" else single)
+
+    let private tryExtractToolError (resultOpt: string option) : string option =
+        match resultOpt with
+        | Some res when not (String.IsNullOrWhiteSpace res) ->
+            let trimmed = res.Trim()
+            if trimmed.StartsWith "error:" then
+                let msg = trimmed.Substring(6).Trim()
+                Some(if String.IsNullOrWhiteSpace msg then "执行失败" else msg)
+            elif trimmed.StartsWith "{" && trimmed.EndsWith "}" then
+                try
+                    use doc = JsonDocument.Parse trimmed
+                    let root = doc.RootElement
+                    if root.ValueKind = JsonValueKind.Object then
+                        let mutable errProp = Unchecked.defaultof<_>
+                        if root.TryGetProperty("error", &errProp) then
+                            match errProp.ValueKind with
+                            | JsonValueKind.String -> Some(errProp.GetString())
+                            | JsonValueKind.Object ->
+                                let mutable msgProp = Unchecked.defaultof<_>
+                                if errProp.TryGetProperty("message", &msgProp) && msgProp.ValueKind = JsonValueKind.String then
+                                    Some(msgProp.GetString())
+                                else Some(errProp.GetRawText())
+                            | _ -> Some(errProp.GetRawText())
+                        else None
+                    else None
+                with _ -> None
+            else None
+        | _ -> None
+
     let private toolCallCard (ctx: MessageContext) (call: ToolCallView) : Control =
         let running = call.result.IsNone
         let hasError =
@@ -329,9 +427,9 @@ module MessageCard =
             elif hasError then Tokens.danger
             else Tokens.success
         let statusBg: IBrush =
-            if running then Tokens.accentFaint :> IBrush
+            if running then Tokens.surfaceSoft :> IBrush
             elif hasError then Tokens.dangerSoft :> IBrush
-            else Tokens.surface :> IBrush
+            else Tokens.surfaceSoft :> IBrush
         let statusBadgeText =
             if running then "执行中"
             elif hasError then "执行失败"
@@ -352,7 +450,7 @@ module MessageCard =
                 Text = call.name,
                 FontFamily = Tokens.monoFontFamily,
                 FontSize = Tokens.fontSmall,
-                FontWeight = FontWeight.Medium,
+                FontWeight = FontWeight.SemiBold,
                 Foreground = Tokens.text,
                 VerticalAlignment = VerticalAlignment.Center)
         let statusText =
@@ -365,26 +463,15 @@ module MessageCard =
         let state =
             Border(
                 Background = statusBg,
+                BorderBrush = Tokens.borderSoft,
+                BorderThickness = Thickness 1.0,
                 CornerRadius = CornerRadius Tokens.radiusPill,
                 Padding = Thickness(Tokens.space2, 2.0),
                 Margin = Thickness 0.0,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = statusPillContent)
         /// 未展开时也给一行参数摘要：多数时候用户只想确认「传了什么」。
-        let argCount, previewText =
-            if String.IsNullOrWhiteSpace call.argumentsJson then
-                0, ""
-            else
-                let count =
-                    try
-                        use doc = JsonDocument.Parse call.argumentsJson
-                        match doc.RootElement.ValueKind with
-                        | JsonValueKind.Object -> doc.RootElement.EnumerateObject() |> Seq.length
-                        | JsonValueKind.Array -> doc.RootElement.GetArrayLength()
-                        | _ -> 1
-                    with _ -> 0
-                let single = call.argumentsJson.Replace('\n', ' ').Replace('\r', ' ').Trim()
-                count, (if single.Length > 96 then single.Substring(0, 96) + "…" else single)
+        let argCount, previewText = formatToolArgsPreview call.argumentsJson
         let summaryText =
             previewText
         let summary =
@@ -392,10 +479,32 @@ module MessageCard =
                 Text = summaryText,
                 FontFamily = Tokens.monoFontFamily,
                 FontSize = Tokens.fontMicro,
-                Foreground = Tokens.textFaint,
+                Foreground = Tokens.textMuted,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 IsVisible = not (String.IsNullOrWhiteSpace summaryText),
-                Margin = Thickness(0.0, 3.0, 0.0, 0.0))
+                Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0))
+        let errorSummaryOpt = if hasError then tryExtractToolError call.result else None
+        let errorBanner =
+            let errGlyph = Icons.alert Tokens.danger
+            errGlyph.VerticalAlignment <- VerticalAlignment.Center
+            let errText =
+                TextBlock(
+                    Text = defaultArg errorSummaryOpt "执行失败：未返回正常结果",
+                    FontFamily = Tokens.monoFontFamily,
+                    FontSize = Tokens.fontMicro,
+                    Foreground = Tokens.danger,
+                    TextWrapping = TextWrapping.Wrap,
+                    VerticalAlignment = VerticalAlignment.Center)
+            let bannerContent = Ui.hstack Tokens.space1 [ errGlyph; errText :> Control ]
+            Border(
+                Background = Tokens.dangerSoft,
+                BorderBrush = Tokens.borderSoft,
+                BorderThickness = Thickness 1.0,
+                CornerRadius = CornerRadius Tokens.radiusSm,
+                Padding = Thickness(Tokens.space2, Tokens.space1),
+                Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
+                IsVisible = hasError,
+                Child = bannerContent)
         let rawPayloadText () =
             [ if not (String.IsNullOrWhiteSpace call.argumentsJson) then sprintf "// 参数 (Arguments)\n%s" call.argumentsJson
               match call.result with
@@ -403,21 +512,23 @@ module MessageCard =
               | _ -> () ]
             |> String.concat "\n\n"
         let detailPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
-        let createDetailSection (label: string) (payload: string) =
+        let createDetailSection (label: string) (payload: string) (isError: bool) =
             let header = DockPanel(LastChildFill = false)
             let sectionTitle =
                 TextBlock(
                     Text = label,
+                    FontFamily = Tokens.fontFamily,
                     FontSize = Tokens.fontMicro,
                     FontWeight = FontWeight.Medium,
-                    Foreground = Tokens.textMuted,
+                    Foreground = (if isError then Tokens.danger else Tokens.textMuted),
                     VerticalAlignment = VerticalAlignment.Center)
             let copyBtn = createCopyButton (sprintf "复制%s" label) (sprintf "复制工具%s" label) (fun () -> payload)
             DockPanel.SetDock(sectionTitle, Dock.Left)
             DockPanel.SetDock(copyBtn, Dock.Right)
             header.Children.Add sectionTitle
             header.Children.Add copyBtn
-            let contentText = technicalText payload Tokens.fontCaption Tokens.textMuted
+            let formattedPayload = prettyFormatJson payload
+            let contentText = technicalText formattedPayload Tokens.fontCaption (if isError then Tokens.danger else Tokens.codeText)
             let codeBox =
                 Border(
                     Background = Tokens.codeBlockBackground,
@@ -431,10 +542,10 @@ module MessageCard =
             section.Children.Add codeBox
             section
         if not (String.IsNullOrWhiteSpace call.argumentsJson) then
-            detailPanel.Children.Add(createDetailSection "调用参数" call.argumentsJson)
+            detailPanel.Children.Add(createDetailSection "调用参数" call.argumentsJson false)
         match call.result with
         | Some result when not (String.IsNullOrWhiteSpace result) ->
-            detailPanel.Children.Add(createDetailSection "执行结果" result)
+            detailPanel.Children.Add(createDetailSection (if hasError then "执行结果 (异常)" else "执行结果") result hasError)
         | _ -> ()
         let detail, setDetailVisible = detailViewport (detailPanel :> Control) false
         detail.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
@@ -458,6 +569,10 @@ module MessageCard =
         DockPanel.SetDock(headerActions, Dock.Right)
         headerDock.Children.Add left
         headerDock.Children.Add headerActions
+        let headerContent = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
+        headerContent.Children.Add headerDock
+        headerContent.Children.Add summary
+        if hasError then headerContent.Children.Add errorBanner
         let headerRow =
             ActionBorder(
                 CornerRadius = CornerRadius Tokens.radiusSm,
@@ -465,10 +580,9 @@ module MessageCard =
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
                 Focusable = true,
-                Child = headerDock)
+                Child = headerContent)
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         stack.Children.Add headerRow
-        stack.Children.Add summary
         stack.Children.Add detail
         let host =
             ActionBorder(
@@ -478,8 +592,6 @@ module MessageCard =
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 Padding = Thickness(Tokens.space3, Tokens.space3),
                 Margin = Thickness(0.0, 0.0, 0.0, Tokens.space3),
-                Cursor = handCursor,
-                Focusable = true,
                 Child = stack)
         let mutable detailVisible = false
         let syncChevron () =
@@ -499,7 +611,8 @@ module MessageCard =
             let label = sprintf "%s工具调用 %s（%s%s）" (if detailVisible then "收起" else "展开") call.name statusText argInfo
             Avalonia.Automation.AutomationProperties.SetName(
                 host, sprintf "%s工具调用 %s" (if detailVisible then "收起" else "展开") call.name)
-            Avalonia.Automation.AutomationProperties.SetName(headerRow, label)
+            Avalonia.Automation.AutomationProperties.SetName(headerRow, sprintf "%s工具调用 %s" (if detailVisible then "收起" else "展开") call.name)
+            Avalonia.Automation.AutomationProperties.SetHelpText(headerRow, label)
             Avalonia.Automation.AutomationProperties.SetItemStatus(headerRow, sprintf "调用工具 · %s（%s）" call.name statusText)
             Avalonia.Automation.AutomationProperties.SetHelpText(headerRow, if detailVisible then "收起参数与结果" else "展开查看参数与结果")
             Avalonia.Automation.AutomationProperties.SetHelpText(host, if detailVisible then "收起参数与结果" else "展开查看参数与结果")
@@ -513,22 +626,19 @@ module MessageCard =
             syncToolName ()
         host.SetInvokeAction toggle
         headerRow.SetInvokeAction toggle
-        host.PointerReleased.Add(fun e ->
-            if host.IsEnabled && host.IsHitTestVisible && e.InitialPressMouseButton = MouseButton.Left then
-                let insideDetail = detailVisible && detail.IsPointerOver
-                if not insideDetail then
+        headerRow.PointerReleased.Add(fun e ->
+            if not e.Handled && headerRow.IsEnabled && headerRow.IsHitTestVisible && e.InitialPressMouseButton = MouseButton.Left then
+                if not toolCopyButton.IsPointerOver then
                     e.Handled <- true
                     toggle ())
-        headerRow.PointerReleased.Add(fun e ->
-            if headerRow.IsEnabled && headerRow.IsHitTestVisible && e.InitialPressMouseButton = MouseButton.Left then
+        headerRow.KeyDown.Add(fun e ->
+            if not e.Handled && headerRow.IsFocused && headerRow.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
                 e.Handled <- true
                 toggle ())
-        let onKeyDown (e: KeyEventArgs) =
-            if host.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
-                e.Handled <- true
-                toggle ()
-        host.KeyDown.Add(fun e -> if host.IsFocused || headerRow.IsFocused then onKeyDown e)
-        headerRow.KeyDown.Add onKeyDown
+        headerRow.PointerEntered.Add(fun _ ->
+            headerRow.Background <- Tokens.hover)
+        headerRow.PointerExited.Add(fun _ ->
+            headerRow.Background <- Brushes.Transparent)
         syncChevron ()
         syncToolName ()
         host :> Control
@@ -932,7 +1042,7 @@ module MessageCard =
             let panel =
                 StackPanel(
                     Orientation = Orientation.Horizontal,
-                    Spacing = 0.0,
+                    Spacing = Tokens.space1,
                     VerticalAlignment = VerticalAlignment.Center)
             let timeTb =
                 TextBlock(Text = time, FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted, VerticalAlignment = VerticalAlignment.Center)
@@ -1058,14 +1168,14 @@ module MessageCard =
                     VerticalAlignment = VerticalAlignment.Center)
             if MessageView.isUser message then
                 line.HorizontalAlignment <- HorizontalAlignment.Right
-                line.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, gutter, 0.0)
+                line.Margin <- Thickness(0.0, Tokens.space2, gutter, 0.0)
                 match metaText with
                 | Some text -> line.Children.Add text
                 | None -> ()
                 line.Children.Add buttons
             else
                 line.HorizontalAlignment <- HorizontalAlignment.Left
-                line.Margin <- Thickness(gutter, Tokens.iconBaselineNudge, 0.0, 0.0)
+                line.Margin <- Thickness(gutter, Tokens.space2, 0.0, 0.0)
                 line.Children.Add buttons
                 match metaText with
                 | Some text -> line.Children.Add text
