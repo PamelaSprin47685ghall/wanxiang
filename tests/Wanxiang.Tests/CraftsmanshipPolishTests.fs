@@ -789,3 +789,101 @@ let ``MessageCard toolCallCard header toggles argument and result details`` () =
         Assert.Equal("展开工具调用 weather", toolName2)
     finally
         window.Close()
+
+// =========================================================================
+// 9. Batch 2, 3, 4 Craftsmanship Polish Tests
+// =========================================================================
+
+[<Fact>]
+let ``ChatView header supports F2 to edit title and Escape to cancel`` () =
+    Headless.ensure ()
+    let mutable renamedTitle: string option = None
+    let actions: ChatActions =
+        { renameTitle = fun t -> renamedTitle <- Some t
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message =
+            { copyText = ignore
+              regenerate = ignore
+              editAndFork = ignore
+              deleteMessage = ignore
+              downloadAttachment = ignore
+              openLink = ignore } }
+    let chat = ChatView(actions, fun _ -> Border() :> Control)
+    chat.Build()
+    chat.SetConversationChrome true
+    chat.SetTitle("Original Title", true)
+    let window = Window(Width = 800.0, Height = 600.0, Content = chat)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        let titleAction =
+            descendants chat
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "重命名会话：Original Title")
+        
+        // Press F2 to begin edit
+        titleAction.RaiseEvent(KeyEventArgs(Key = Key.F2, RoutedEvent = InputElement.KeyDownEvent))
+        Dispatcher.UIThread.RunJobs()
+        
+        let titleEditBox =
+            descendants chat
+            |> Seq.pick (function :? TextBox as tb when tb.Text = "Original Title" -> Some tb | _ -> None)
+        Assert.True titleEditBox.IsVisible
+
+        // Press Escape to cancel
+        titleEditBox.RaiseEvent(KeyEventArgs(Key = Key.Escape, RoutedEvent = InputElement.KeyDownEvent, Source = titleEditBox))
+        titleEditBox.RaiseEvent(KeyEventArgs(Key = Key.Escape, RoutedEvent = InputElement.KeyDownEvent))
+        Dispatcher.UIThread.RunJobs()
+
+        // Assert not renamed and restored
+        Assert.True(Option.isNone renamedTitle)
+        Assert.True titleAction.IsVisible
+        let titleEditShell =
+            titleAction.Parent :?> Grid |> fun g -> g.Children |> Seq.item 1
+        Assert.False titleEditShell.IsVisible
+    finally
+        window.Close()
+
+[<Fact>]
+let ``Composer restores focus to input when removing last attachment and supports Escape when generating`` () =
+    Headless.ensure ()
+    let mutable stopped = false
+    let mutable submitted = None
+    let actions: ComposerActions =
+        { submit = fun t -> submitted <- Some t; true
+          stopGeneration = fun () -> stopped <- true
+          pickAttachment = ignore
+          removeAttachment = ignore
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
+    let composer = Composer(actions)
+    composer.Build()
+    let window = Window(Width = 800.0, Height = 600.0, Content = composer)
+    window.Show()
+    try
+        composer.SetEnabled(true, "")
+        Dispatcher.UIThread.RunJobs()
+        let input =
+            descendants composer
+            |> Seq.pick (function :? TextBox as tb -> Some tb | _ -> None)
+        
+        // When isGenerating, Escape stops generation
+        composer.SetGenerating true
+        Dispatcher.UIThread.RunJobs()
+        input.RaiseEvent(KeyEventArgs(Key = Key.Escape, RoutedEvent = InputElement.KeyDownEvent))
+        Dispatcher.UIThread.RunJobs()
+        Assert.True stopped
+
+        // Check Send button tooltip when generating
+        let sendBtn =
+            descendants composer
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "停止生成")
+        let tip = ToolTip.GetTip(sendBtn) :?> string
+        Assert.Contains("停止生成 (Escape)", tip)
+    finally
+        window.Close()

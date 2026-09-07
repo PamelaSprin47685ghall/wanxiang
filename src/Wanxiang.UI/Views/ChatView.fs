@@ -70,6 +70,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let titleAction =
         ActionBorder(
             Background = Brushes.Transparent,
+            Height = Tokens.iconButton,
+            MinHeight = Tokens.iconButton,
+            VerticalAlignment = VerticalAlignment.Center,
+            Padding = Thickness(Tokens.space2, 0.0),
             Focusable = true,
             Child = titleText)
 
@@ -195,6 +199,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                     VerticalAlignment = VerticalAlignment.Center)
             let row = Ui.hstack Tokens.space2 [ stateDot :> Control; generatingCaption :> Control ]
             row
+        titleEditShell.Height <- Tokens.iconButton
+        titleEditShell.MinHeight <- Tokens.iconButton
+        titleEditShell.VerticalAlignment <- VerticalAlignment.Center
+        ToolTip.SetTip(generatingChip, "正在生成回答")
+        Avalonia.Automation.AutomationProperties.SetName(generatingChip, "正在生成回答")
+        emptyActions.Margin <- Thickness(0.0, Tokens.space4, 0.0, 0.0)
         titleHost.Children.Add titleAction
         titleHost.Children.Add titleEditShell
         titleEditShell.IsVisible <- false
@@ -207,6 +217,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             actions.renameTitle next
         if restoreFocus then
             Dispatcher.UIThread.Post(fun () -> titleAction.Focus(NavigationMethod.Tab) |> ignore)
+
+    member private this.CancelTitleEdit() =
+        titleEditShell.IsVisible <- false
+        titleAction.IsVisible <- true
+        Dispatcher.UIThread.Post(fun () -> titleAction.Focus(NavigationMethod.Tab) |> ignore)
 
     member private this.BeginTitleEdit() =
         if titleAction.IsVisible && titleAction.Focusable && not (String.IsNullOrWhiteSpace titleText.Text) then
@@ -272,6 +287,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             | Some(label, action) ->
                 let button = Ui.button Ui.Primary label action
                 button.HorizontalAlignment <- HorizontalAlignment.Center
+                button.VerticalAlignment <- VerticalAlignment.Center
                 emptyActions.Children.Add button
             | None -> ()
         emptyPanel.IsVisible <- true
@@ -642,7 +658,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
         Ui.onClick titleAction (fun () -> this.BeginTitleEdit())
         titleAction.KeyDown.Add(fun e ->
-            if e.Key = Key.F2 && titleEditable then
+            if (e.Key = Key.F2 || e.Key = Key.Enter) && titleEditable then
                 e.Handled <- true
                 this.BeginTitleEdit())
         titleAction.PointerEntered.Add(fun _ ->
@@ -655,9 +671,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 this.CommitTitle true
             elif e.Key = Key.Escape then
                 e.Handled <- true
-                titleEditShell.IsVisible <- false
-                titleAction.IsVisible <- true
-                Dispatcher.UIThread.Post(fun () -> titleAction.Focus(NavigationMethod.Tab) |> ignore))
+                this.CancelTitleEdit())
         titleEditBox.LostFocus.Add(fun _ -> if titleEditShell.IsVisible then this.CommitTitle false)
 
         Ui.onClick stopButton (fun () -> actions.stopGeneration ())

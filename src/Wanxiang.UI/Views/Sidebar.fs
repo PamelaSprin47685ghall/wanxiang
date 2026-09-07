@@ -69,6 +69,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
             LineHeight = ControlMetrics.sidebarStatusLineHeight)
+    let searchEmptyHint =
+        TextBlock(
+            Text = "未找到匹配会话",
+            Foreground = Tokens.textMuted,
+            FontSize = Tokens.fontSmall,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = Thickness(0.0, Tokens.space4, 0.0, 0.0),
+            IsVisible = false)
 
     let statusDot = Ui.statusDot 7.0
     let statusText =
@@ -84,6 +93,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let mutable showArchived = false
     let mutable connected = false
     let rowHosts = System.Collections.Generic.Dictionary<Guid, Border>()
+    let summaryById = System.Collections.Generic.Dictionary<Guid, ConversationSummary>()
     let mutable visibleRowIds: Guid array = [||]
     let flatIndexByConversation = System.Collections.Generic.Dictionary<Guid, int>()
 
@@ -113,12 +123,31 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
         emptyState.Children.Add emptyTitle
         emptyState.Children.Add emptyHint
+        Avalonia.Automation.AutomationProperties.SetName(searchEmptyHint, "未找到匹配会话")
 
-    member private _.ApplyRowState(id: Guid, host: Border) =
-        let isActive = activeId = Some id
+    member private _.ApplyRowState(summary: ConversationSummary, host: Border) =
+        let isActive = activeId = Some summary.id
         host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
         host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
-        Avalonia.Automation.AutomationProperties.SetItemStatus(host, if isActive then "当前会话" else "")
+        let status =
+            if isActive then "当前会话"
+            elif summary.running then "生成中"
+            elif summary.pinned then "已置顶"
+            elif summary.archived then "已归档"
+            else ""
+        Avalonia.Automation.AutomationProperties.SetItemStatus(host, status)
+
+    member private this.ApplyRowState(id: Guid, host: Border) =
+        match summaryById.TryGetValue id with
+        | true, summary -> this.ApplyRowState(summary, host)
+        | _ ->
+            match host.Tag with
+            | :? ConversationSummary as summary -> this.ApplyRowState(summary, host)
+            | _ ->
+                let isActive = activeId = Some id
+                host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
+                host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
+                Avalonia.Automation.AutomationProperties.SetItemStatus(host, if isActive then "当前会话" else "")
 
     member private _.FocusRowAt(index: int) =
         if index >= 0 && index < visibleRowIds.Length then
@@ -145,7 +174,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 FontSize = Tokens.fontSmall,
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
-                TextTrimming = TextTrimming.CharacterEllipsis)
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center)
         // 自动标题取自回复首行，预览又从同一段正文开头截取，
         // 于是两行开头一模一样。去掉重复前缀，让预览真的补充信息。
         let previewText =
@@ -193,7 +223,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             stateSlot.Child <- pin
         DockPanel.SetDock(stateSlot, Dock.Left)
         titleRow.Children.Add stateSlot
-        let moreButton = Ui.iconButton Icons.more "操作菜单"
+        let moreButton = Ui.iconButton Icons.more "更多操作"
+        ToolTip.SetTip(moreButton, "更多操作")
+        Avalonia.Automation.AutomationProperties.SetName(moreButton, sprintf "会话“%s”的操作菜单" summary.title)
         Ui.setReservedActionVisible moreButton false
         DockPanel.SetDock(moreButton, Dock.Right)
         titleRow.Children.Add moreButton
@@ -212,7 +244,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 Focusable = true,
                 MinHeight = ControlMetrics.sidebarRowMinHeight,
                 Child = column)
-        this.ApplyRowState(summary.id, host)
+        host.Tag <- summary
+        this.ApplyRowState(summary, host)
         rowHosts[summary.id] <- host
         host.DetachedFromVisualTree.Add(fun _ ->
             match rowHosts.TryGetValue summary.id with
@@ -238,17 +271,21 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ]
         Ui.onClick moreButton (fun () -> openMenu ())
+        moreButton.GotFocus.Add(fun _ ->
+            Ui.setReservedActionVisible moreButton true)
+        moreButton.LostFocus.Add(fun _ ->
+            if not host.IsFocused then Ui.setReservedActionVisible moreButton false)
         host.PointerEntered.Add(fun _ ->
             if activeId <> Some summary.id then host.Background <- Tokens.hover
             Ui.setReservedActionVisible moreButton true)
         host.PointerExited.Add(fun _ ->
-            this.ApplyRowState(summary.id, host)
+            this.ApplyRowState(summary, host)
             if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
         host.GotFocus.Add(fun _ ->
             if activeId <> Some summary.id then host.Background <- Tokens.hover
             Ui.setReservedActionVisible moreButton true)
         host.LostFocus.Add(fun _ ->
-            this.ApplyRowState(summary.id, host)
+            this.ApplyRowState(summary, host)
             if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
         Ui.onClick host (fun () -> actions.openConversation summary.id)
         host.KeyDown.Add(fun e ->
@@ -264,7 +301,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             elif e.Key = Key.End then
                 e.Handled <- true
                 this.FocusRowAt(visibleRowIds.Length - 1)
-            elif e.Key = Key.F10 && e.KeyModifiers.HasFlag KeyModifiers.Shift then
+            elif (e.Key = Key.F10 && e.KeyModifiers.HasFlag KeyModifiers.Shift) || e.Key = Key.Apps then
                 e.Handled <- true
                 openMenu ())
         host.PointerReleased.Add(fun e ->
@@ -283,6 +320,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     member private this.Rebuild() =
         rowHosts.Clear()
         flatIndexByConversation.Clear()
+        summaryById.Clear()
+        for s in summaries do
+            summaryById[s.id] <- s
         let query = if isNull searchBox.Text then "" else searchBox.Text
         let visible =
             summaries
@@ -300,13 +340,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         if hasArchived && not showArchived then
             flattened.Add ArchivedToggle
         conversationList.ItemsSource <- flattened
-        emptyState.IsVisible <- List.isEmpty visible
+        let isSearchEmpty = not (String.IsNullOrWhiteSpace query) && List.isEmpty visible
+        searchEmptyHint.IsVisible <- isSearchEmpty
+        emptyState.IsVisible <- List.isEmpty visible && not isSearchEmpty
         if List.isEmpty visible then
             if not connected then
                 emptyTitle.Text <- "尚未连接服务器"
                 emptyHint.Text <- "连接后即可看到会话记录。"
-            elif not (String.IsNullOrWhiteSpace query) then
-                emptyTitle.Text <- "没有匹配的会话"
+            elif isSearchEmpty then
+                emptyTitle.Text <- "未找到匹配会话"
                 emptyHint.Text <- sprintf "换个关键词，或清空「%s」重新看全部。" (query.Trim())
             else
                 emptyTitle.Text <- "还没有会话"
@@ -467,6 +509,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let body = Grid()
         body.Children.Add conversationList
         body.Children.Add emptyState
+        body.Children.Add searchEmptyHint
 
         let layout = DockPanel()
         DockPanel.SetDock(header, Dock.Top)

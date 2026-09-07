@@ -53,7 +53,8 @@ type Composer(actions: ComposerActions) as this =
         WrapPanel(
             Orientation = Orientation.Horizontal,
             ItemSpacing = Tokens.space2,
-            LineSpacing = Tokens.space2)
+            LineSpacing = Tokens.space2,
+            Focusable = true)
     let attachmentScroller =
         ScrollViewer(
             Content = attachmentStrip,
@@ -122,6 +123,8 @@ type Composer(actions: ComposerActions) as this =
     let mutable uncommittedDraft = ""
     let maxHistoryCount = 100
     let mutable attachments: PendingAttachment list = []
+    let mutable pendingFocusAttachmentId: Guid option = None
+    let removeButtons = System.Collections.Generic.Dictionary<Guid, Control>()
 
     let tryFocusInput () =
         let act () =
@@ -155,24 +158,30 @@ type Composer(actions: ComposerActions) as this =
         queueButton.IsVisible <- generating
         Ui.setEnabled queueButton canSend
         let sendTip =
-            if generating then "停止生成"
+            if generating then
+                "停止生成 (Escape)"
             elif not enabled then
                 if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
-            elif uploading then "等待附件上传完成"
-            elif not hasText && not hasAttachment then "未输入内容"
-            else "发送"
+            elif uploading then
+                "附件上传中，请稍候…"
+            elif not hasText && not hasAttachment then
+                "请输入消息或添加附件"
+            else
+                if enterSends then "发送 (Enter)" else "发送 (Ctrl+Enter / ⌘Enter)"
         ToolTip.SetTip(sendButton, sendTip)
         Avalonia.Automation.AutomationProperties.SetName(sendButton, if generating then "停止生成" else "发送")
+        Avalonia.Automation.AutomationProperties.SetHelpText(sendButton, sendTip)
 
         if generating then
             let queueTip =
                 if not enabled then
                     if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
-                elif uploading then "等待附件上传完成"
-                elif not hasText && not hasAttachment then "未输入内容"
+                elif uploading then "附件上传中，请稍候…"
+                elif not hasText && not hasAttachment then "请输入消息或添加附件"
                 else "排队发送"
             ToolTip.SetTip(queueButton, queueTip)
             Avalonia.Automation.AutomationProperties.SetName(queueButton, "排队发送")
+            Avalonia.Automation.AutomationProperties.SetHelpText(queueButton, queueTip)
 
     do
         modelChip.Child <-
@@ -192,6 +201,8 @@ type Composer(actions: ComposerActions) as this =
         Avalonia.Automation.AutomationProperties.SetName(modelChip, "切换本会话使用的模型")
 
         Ui.onClick attachButton (fun () -> actions.pickAttachment ())
+        Avalonia.Automation.AutomationProperties.SetName(attachmentStrip, "附件列表")
+        ScrollViewer.SetHorizontalScrollBarVisibility(input, ScrollBarVisibility.Disabled)
 
         Ui.onClick sendButton (fun () ->
             if generating then actions.stopGeneration () else this.Submit())
@@ -203,7 +214,10 @@ type Composer(actions: ComposerActions) as this =
         input.AddHandler(
             InputElement.KeyDownEvent,
             EventHandler<KeyEventArgs>(fun _ e ->
-                if e.Key = Key.Enter then
+                if e.Key = Key.Escape && generating then
+                    e.Handled <- true
+                    actions.stopGeneration ()
+                elif e.Key = Key.Enter then
                     let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
                     let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
                     if shift then ()
@@ -268,6 +282,7 @@ type Composer(actions: ComposerActions) as this =
 
     member private this.RenderAttachments() =
         attachmentStrip.Children.Clear()
+        removeButtons.Clear()
         for attachment in attachments do
             let icon =
                 if attachment.ready then
@@ -299,24 +314,76 @@ type Composer(actions: ComposerActions) as this =
                     Width = ControlMetrics.composerAttachmentStateWidth,
                     TextAlignment = TextAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Center)
-            let remove = Ui.iconButton Icons.close "移除"
+            let removeLabel = sprintf "移除附件 %s" attachment.fileName
+            let remove = Ui.iconButton Icons.close removeLabel
+            ToolTip.SetTip(remove, removeLabel)
+            Avalonia.Automation.AutomationProperties.SetName(remove, removeLabel)
+            if not (isNull remove.Child) then
+                Avalonia.Automation.AutomationProperties.SetName(remove.Child, "移除")
+
+            removeButtons.[attachment.attachmentId] <- remove
+
+            let currentAttachmentId = attachment.attachmentId
             Ui.onClick remove (fun () ->
-                actions.removeAttachment attachment.attachmentId
-                tryFocusInput ())
+                let remaining = attachments |> List.filter (fun a -> a.attachmentId <> currentAttachmentId)
+                match remaining with
+                | [] ->
+                    pendingFocusAttachmentId <- None
+                    actions.removeAttachment currentAttachmentId
+                    tryFocusInput ()
+                | items ->
+                    let idx =
+                        attachments
+                        |> List.tryFindIndex (fun a -> a.attachmentId = currentAttachmentId)
+                        |> Option.defaultValue 0
+                    let targetIdx = Math.Clamp(idx, 0, items.Length - 1)
+                    let nextTargetId = items.[targetIdx].attachmentId
+                    pendingFocusAttachmentId <- Some nextTargetId
+                    actions.removeAttachment currentAttachmentId
+                    Dispatcher.UIThread.Post(fun () ->
+                        match pendingFocusAttachmentId with
+                        | Some targetId ->
+                            pendingFocusAttachmentId <- None
+                            match removeButtons.TryGetValue targetId with
+                            | true, btn when btn.IsEffectivelyVisible && btn.IsEnabled ->
+                                btn.Focus() |> ignore
+                            | _ ->
+                                if attachmentStrip.IsEffectivelyVisible && attachmentStrip.IsEnabled then
+                                    attachmentStrip.Focus() |> ignore
+                                else
+                                    tryFocusInput ()
+                        | None -> ()))
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1, VerticalAlignment = VerticalAlignment.Center)
             row.Children.Add iconSlot
             row.Children.Add name
             row.Children.Add size
             row.Children.Add remove
-            attachmentStrip.Children.Add(
+            let chipLabel = sprintf "附件：%s (%s)" attachment.fileName (AttachmentRef.formatSize attachment.size)
+            let chip =
                 Border(
                     Background = Tokens.surfaceRaised,
                     BorderBrush = Tokens.border,
                     BorderThickness = Thickness 1.0,
                     CornerRadius = CornerRadius Tokens.radiusSm,
                     Padding = Thickness(ControlMetrics.compactChipPaddingX, ControlMetrics.compactChipPaddingY),
-                    Child = row))
+                    Child = row)
+            ToolTip.SetTip(chip, chipLabel)
+            Avalonia.Automation.AutomationProperties.SetName(chip, chipLabel)
+            attachmentStrip.Children.Add chip
         attachmentScroller.IsVisible <- not (List.isEmpty attachments)
+        match pendingFocusAttachmentId with
+        | Some targetId ->
+            pendingFocusAttachmentId <- None
+            Dispatcher.UIThread.Post(fun () ->
+                match removeButtons.TryGetValue targetId with
+                | true, btn when btn.IsEffectivelyVisible && btn.IsEnabled ->
+                    btn.Focus() |> ignore
+                | _ ->
+                    if attachmentStrip.IsEffectivelyVisible && attachmentStrip.IsEnabled then
+                        attachmentStrip.Focus() |> ignore
+                    else
+                        tryFocusInput ())
+        | None -> ()
 
     member this.SetAttachments(items: PendingAttachment list) =
         if attachments <> items then
@@ -371,13 +438,11 @@ type Composer(actions: ComposerActions) as this =
         generating <- value
         if value then
             Ui.setIcon sendButton Icons.stop Tokens.textOnAccent
-            ToolTip.SetTip(sendButton, "停止生成")
-            Avalonia.Automation.AutomationProperties.SetName(sendButton, "停止生成")
         else
             Ui.setIcon sendButton Icons.send Tokens.textOnAccent
-            ToolTip.SetTip(sendButton, "发送")
-            Avalonia.Automation.AutomationProperties.SetName(sendButton, "发送")
         refreshSendState ()
+
+    member _.IsGenerating = generating
 
     /// 启用输入。`reason` 在禁用时说明为什么不能发。
     member this.SetEnabled(value: bool, reason: string) =
@@ -402,6 +467,7 @@ type Composer(actions: ComposerActions) as this =
     member _.SetEnterSends(value: bool) =
         enterSends <- value
         hintText.Text <- if value then "Enter 发送 · Shift+Enter 换行" else "Ctrl+Enter 发送 · Enter 换行"
+        refreshSendState ()
 
     /// 窄屏只收紧已有控件，不增加第二套输入逻辑：隐藏键盘提示、压缩边距与模型标签。
     member this.SetCompactMode(value: bool) =
