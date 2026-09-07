@@ -415,6 +415,7 @@ type MarkdownRenderer(
                             (if isHeader then FontWeight.Medium else FontWeight.Normal),
                             (if isHeader then Tokens.text else Tokens.textMuted),
                             ?fontFamily = (if isNumeric && not isHeader then Some Tokens.monoFontFamily else None),
+                            lineHeight = ReadingRhythm.proseLineHeight (fontSize - 0.5),
                             ?textAlignment = textAlignment)
                     let hasBreak = content |> List.exists (function MdBreak -> true | _ -> false)
                     cell.VerticalAlignment <-
@@ -582,7 +583,7 @@ type MarkdownRenderer(
                   BorderBrush = Tokens.accent,
                   BorderThickness = Thickness(3.0, 0.0, 0.0, 0.0),
                   Padding = Thickness(Tokens.space3, Tokens.space2, Tokens.space3, Tokens.space2),
-                  Margin = Thickness(0.0, ReadingRhythm.quoteTopGap, 0.0, ReadingRhythm.quoteBottomGap),
+                  Margin = Thickness(0.0, (if insideQuote then Tokens.space2 else ReadingRhythm.quoteTopGap), 0.0, (if insideQuote then Tokens.space2 else ReadingRhythm.quoteBottomGap)),
                   Child = stack)
               :> Control ]
         | MdCode(language, code) -> [ this.RenderCode(language, code) ]

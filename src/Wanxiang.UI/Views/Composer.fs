@@ -43,7 +43,9 @@ type Composer(actions: ComposerActions) as this =
             Background = Brushes.Transparent,
             Foreground = Tokens.text,
             CaretBrush = Tokens.accent,
+            PlaceholderForeground = Tokens.textMuted,
             FontSize = Tokens.fontReading,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             Padding = Thickness(0.0, 4.0, 0.0, 4.0),
             MinHeight = ControlMetrics.composerInputMinHeight,
             MaxHeight = ControlMetrics.composerMaxHeight,
@@ -64,7 +66,16 @@ type Composer(actions: ComposerActions) as this =
             IsVisible = false,
             Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2))
 
-    let sendButton = Ui.iconButtonAccent Icons.send "发送"
+    let sendButton =
+        let btn = Ui.iconButtonAccent Icons.send "发送"
+        btn.HorizontalAlignment <- HorizontalAlignment.Center
+        btn.VerticalAlignment <- VerticalAlignment.Center
+        btn.Width <- Tokens.iconButton
+        btn.Height <- Tokens.iconButton
+        btn.MinWidth <- Tokens.iconButton
+        btn.MinHeight <- Tokens.iconButton
+        btn.CornerRadius <- CornerRadius Tokens.radiusPill
+        btn
     let queueButton = Ui.iconButton Icons.send "排队发送"
     let pendingPanel = StackPanel(Spacing = Tokens.space2)
     let pendingScroller =
@@ -93,6 +104,7 @@ type Composer(actions: ComposerActions) as this =
         TextBlock(
             Text = "",
             FontSize = Tokens.fontMicro,
+            Padding = Thickness(0.0, ControlMetrics.compactChipPaddingY),
             Foreground = Tokens.textFaint,
             VerticalAlignment = VerticalAlignment.Center)
     let shell =
@@ -269,6 +281,7 @@ type Composer(actions: ComposerActions) as this =
         Ui.onClick queueButton (fun () -> this.Submit())
 
         input.TextChanged.Add(fun _ -> refreshSendState ())
+        input.SizeChanged.Add(fun _ -> refreshSendState ())
         // TextBox 的 AcceptsReturn 会在自己的 OnKeyDown 里吃掉 Enter，
         // 冒泡阶段的监听器再拦已经太晚，必须走隧道阶段。
         input.AddHandler(
@@ -537,6 +550,7 @@ type Composer(actions: ComposerActions) as this =
             Ui.setIcon sendButton Icons.stop Tokens.textOnAccent
         else
             Ui.setIcon sendButton Icons.send Tokens.textOnAccent
+        // 发送/停止只换字形：按钮外尺寸与圆角在构造时已固定，切换时不动几何，避免 1px 抖动。
         refreshSendState ()
 
     member _.IsGenerating = generating

@@ -22,7 +22,9 @@ type ToastTone =
 /// 一个应用只有一个实例，由 AppShell 创建并注入给各视图。
 type OverlayHost(root: Grid) =
 
-    let viewportInset = Tokens.space3
+    // 对话框 / 浮层 / 提示条统一的视口留白：space4 在小窗口与高 DPI 下仍能保证
+    // 卡片边缘与阴影不贴边；fit*ToViewport 与 popup 钳位都以它为唯一依据。
+    let viewportInset = Tokens.space4
     let popupGap = Tokens.space2
 
     let scrim =
@@ -39,6 +41,9 @@ type OverlayHost(root: Grid) =
             BorderThickness = Thickness 1.0,
             CornerRadius = CornerRadius Tokens.radiusXl,
             Padding = Thickness Tokens.space6,
+            // Center + Margin 双保险：MaxWidth/MaxHeight 负责钳制，Margin 保证
+            // 首次测量前或 bounds 为 0 的过渡帧也不贴边。
+            Margin = Thickness viewportInset,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             IsVisible = false)
@@ -88,13 +93,20 @@ type OverlayHost(root: Grid) =
             | null -> None
             | manager -> manager.GetFocusedElement() |> Option.ofObj
 
+    /// 可恢复的触发源：可用、有效可见且仍挂在视觉树上。Esc / scrim / catcher 关闭时
+    /// 触发控件可能已被移除（detach 后 IsEffectivelyVisible 仍可能为 true），
+    /// 因此再用 TopLevel 校验是否仍在树上，避免把焦点抢到游离控件上。
+    let isRestorable (control: Control) =
+        control.IsEnabled
+        && control.IsEffectivelyVisible
+        && not (isNull (TopLevel.GetTopLevel control))
+
     let restoreFocus (previous: IInputElement option) =
         match previous with
-        | Some (:? Control as control) when control.IsEffectivelyVisible && control.IsEnabled ->
-            // 对话框 / 浮层关闭时原控件可能已 detach：真正聚焦前再检查一次，
-            // 避免把焦点抢到不可见或不可用的控件上。
+        | Some (:? Control as control) when isRestorable control ->
+            // 关闭与 Post 之间树可能又变了：真正聚焦前再检查一次。
             Dispatcher.UIThread.Post(fun () ->
-                if control.IsEffectivelyVisible && control.IsEnabled then
+                if isRestorable control then
                     control.Focus() |> ignore)
         | _ -> ()
 
@@ -198,6 +210,11 @@ type OverlayHost(root: Grid) =
             toastStack.MaxWidth <- min ContentMetrics.toastMaxWidth width
             for child in toastStack.Children do
                 child.MaxWidth <- toastStack.MaxWidth
+        // 底部已有 space8 外边距：再按视口高度钳住 MaxHeight，
+        // 多条堆叠时顶部仍保留 viewportInset，不顶到视口上缘。
+        let height = max 0.0 (root.Bounds.Height - Tokens.space8 - viewportInset)
+        if height > 0.0 then
+            toastStack.MaxHeight <- height
 
     let positionPopup () =
         match popupAnchor with

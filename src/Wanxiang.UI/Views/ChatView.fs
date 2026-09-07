@@ -258,21 +258,63 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     let updateTitleActionVisual () =
         if not titleEditable then
+            titleAction.Background <- Brushes.Transparent
             titleAction.BorderBrush <- Brushes.Transparent
             titleAction.BoxShadow <- BoxShadows()
             titleText.Foreground <- Tokens.textFaint
         elif titleAction.IsFocused then
+            titleAction.Background <- Brushes.Transparent
             titleAction.BorderBrush <- Tokens.accent
             titleAction.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
             titleText.Foreground <- Tokens.accent
         elif titleAction.IsPointerOver then
-            titleAction.BorderBrush <- Tokens.line
+            // 悬停只换底色与描边：边框粗细与阴影不变，不向外扩张。
+            titleAction.Background <- Tokens.hover
+            titleAction.BorderBrush <- Tokens.borderSoft
             titleAction.BoxShadow <- BoxShadows()
-            titleText.Foreground <- Tokens.accent
+            titleText.Foreground <- Tokens.text
         else
+            titleAction.Background <- Brushes.Transparent
             titleAction.BorderBrush <- Brushes.Transparent
             titleAction.BoxShadow <- BoxShadows()
             titleText.Foreground <- Tokens.text
+
+    // 内框几何与 titleAction 对齐：外壳定高、内框填满内高并横向拉伸，
+    // 使进出编辑模式时顶栏高度与右侧按钮位置纹丝不动。
+    let ensureTitleEditGeometry () =
+        titleHost.Height <- Tokens.iconButton
+        titleHost.MinHeight <- Tokens.iconButton
+        titleHost.MaxHeight <- Tokens.iconButton
+        titleHost.Margin <- Thickness 0.0
+        titleAction.Margin <- Thickness 0.0
+        titleEditShell.Margin <- Thickness 0.0
+        titleEditBox.HorizontalAlignment <- HorizontalAlignment.Stretch
+        titleEditBox.Height <- Tokens.iconButton - 2.0
+        titleEditBox.MaxHeight <- Tokens.iconButton - 2.0
+
+    // 标题铬层（ToolTip / 自动化名称 / 悬停视觉）统一入口，
+    // 提交与取消都要经过它，避免可见文本与无障碍名称脱节。
+    let syncTitleChrome (text: string) =
+        ToolTip.SetTip(titleAction, text)
+        ToolTip.SetTip(titleText, text)
+        Avalonia.Automation.AutomationProperties.SetName(titleText, text)
+        Avalonia.Automation.AutomationProperties.SetName(
+            titleAction,
+            if titleEditable then sprintf "重命名会话：%s" text else text)
+        updateTitleActionVisual ()
+
+    // 把方向键与键盘焦点都送回标题按钮：先同步尝试一次，
+    // 再在 Input 优先级补一次，应对布局刚切换完还接不住焦点的那一帧。
+    let restoreTitleActionFocus () =
+        if titleAction.IsVisible && titleAction.Focusable then
+            titleAction.Focus(NavigationMethod.Directional) |> ignore
+            Dispatcher.UIThread.Post(
+                (fun () ->
+                    if titleAction.IsVisible && titleAction.Focusable && not titleAction.IsFocused then
+                        titleAction.Focus(NavigationMethod.Directional) |> ignore),
+                DispatcherPriority.Input)
+
+    do ensureTitleEditGeometry ()
 
     member private this.CommitTitle(restoreFocus: bool) =
         if editingTitle || titleEditShell.IsVisible then
@@ -280,17 +322,18 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let next = if isNull titleEditBox.Text then "" else titleEditBox.Text.Trim()
             titleAction.IsVisible <- true
             titleEditShell.IsVisible <- false
-            if not (String.IsNullOrWhiteSpace next) && next <> titleText.Text then
-                actions.renameTitle next
-            else
-                titleEditBox.Text <- titleText.Text
+            let effective =
+                if not (String.IsNullOrWhiteSpace next) && next <> titleText.Text then
+                    titleText.Text <- next
+                    titleEditBox.Text <- next
+                    actions.renameTitle next
+                    next
+                else
+                    titleEditBox.Text <- titleText.Text
+                    titleText.Text
+            syncTitleChrome effective
             if restoreFocus then
-                titleAction.Focus(NavigationMethod.Tab) |> ignore
-                Dispatcher.UIThread.Post(
-                    (fun () ->
-                        if titleAction.IsVisible && titleAction.Focusable && not titleAction.IsFocused then
-                            titleAction.Focus(NavigationMethod.Tab) |> ignore),
-                    DispatcherPriority.Input)
+                restoreTitleActionFocus ()
 
     member private this.CancelTitleEdit() =
         if editingTitle || titleEditShell.IsVisible then
@@ -298,15 +341,13 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             titleEditBox.Text <- titleText.Text
             titleAction.IsVisible <- true
             titleEditShell.IsVisible <- false
-            titleAction.Focus(NavigationMethod.Tab) |> ignore
-            Dispatcher.UIThread.Post(
-                (fun () ->
-                    if titleAction.IsVisible && titleAction.Focusable && not titleAction.IsFocused then
-                        titleAction.Focus(NavigationMethod.Tab) |> ignore),
-                DispatcherPriority.Input)
+            syncTitleChrome titleText.Text
+            restoreTitleActionFocus ()
 
     member private this.BeginTitleEdit() =
         if titleEditable && titleAction.Focusable && not (String.IsNullOrWhiteSpace titleText.Text) then
+            // 进编辑模式前先对齐几何：与 titleAction 同高同宽，右侧按钮不跳。
+            ensureTitleEditGeometry ()
             editingTitle <- true
             titleEditBox.Text <- titleText.Text
             titleAction.IsVisible <- false
@@ -331,13 +372,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleEditBox.Text <- text
         titleAction.Focusable <- editable
         titleAction.Cursor <- if editable then new Cursor(StandardCursorType.Hand) else null
-        updateTitleActionVisual ()
-        ToolTip.SetTip(titleAction, text)
-        ToolTip.SetTip(titleText, text)
-        Avalonia.Automation.AutomationProperties.SetName(titleText, text)
-        Avalonia.Automation.AutomationProperties.SetName(
-            titleAction,
-            if editable then sprintf "重命名会话：%s" text else text)
+        syncTitleChrome text
 
     member this.SetGenerating(generating: bool, statusText: string) =
         isGenerating <- generating

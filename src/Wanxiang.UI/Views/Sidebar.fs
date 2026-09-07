@@ -86,7 +86,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             TextAlignment = TextAlignment.Center)
     let searchEmptyHintSub =
         TextBlock(
-            Text = "点击清空或按 Esc 恢复",
+            Text = "点击清空，或按 Enter / Esc 恢复",
             FontSize = Tokens.fontMicro,
             Foreground = Tokens.textFaint,
             TextAlignment = TextAlignment.Center)
@@ -145,7 +145,12 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let searchIcon = Icons.search Tokens.textFaint
         searchIcon.VerticalAlignment <- VerticalAlignment.Center
         searchIcon.Margin <- Thickness(0.0, 0.0, Tokens.space2, 0.0)
-        let searchRow = DockPanel(LastChildFill = true)
+        // 清空按钮常驻槽位（Ui.setReservedActionVisible 只切透明度/命中），
+        // 左侧留出与搜索图标对称的光学间距，出现时输入框不收缩。
+        clearSearchButton.Margin <- Thickness(Tokens.space2, 0.0, 0.0, 0.0)
+        clearSearchButton.VerticalAlignment <- VerticalAlignment.Center
+        searchBox.VerticalAlignment <- VerticalAlignment.Center
+        let searchRow = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
         DockPanel.SetDock(searchIcon, Dock.Left)
         DockPanel.SetDock(clearSearchButton, Dock.Right)
         searchRow.Children.Add searchIcon
@@ -164,9 +169,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             searchEmptyHint.Background <- Tokens.hover)
         searchEmptyHint.PointerExited.Add(fun _ ->
             searchEmptyHint.Background <- Brushes.Transparent)
+        searchEmptyHint.GotFocus.Add(fun _ ->
+            searchEmptyHint.Background <- Tokens.hover)
+        searchEmptyHint.LostFocus.Add(fun _ ->
+            searchEmptyHint.Background <- Brushes.Transparent)
         Ui.onClick searchEmptyHint (fun () -> this.ResetSearch true)
         searchEmptyHint.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape then
+            if e.Key = Key.Escape || e.Key = Key.Enter then
                 e.Handled <- true
                 this.ResetSearch true)
 
@@ -175,6 +184,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
         if host.IsFocused then
             host.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
+        else
+            host.BoxShadow <- BoxShadows()
         host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
         let status =
             if isActive then "当前会话"
@@ -195,6 +206,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
                 if host.IsFocused then
                     host.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
+                else
+                    host.BoxShadow <- BoxShadows()
                 host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
                 Avalonia.Automation.AutomationProperties.SetItemStatus(host, if isActive then "当前会话" else "")
 
@@ -283,7 +296,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         chevronGlyph.Width <- Tokens.iconGlyph
         chevronGlyph.Height <- Tokens.iconGlyph
         chevronGlyph.VerticalAlignment <- VerticalAlignment.Center
-        let leading = Ui.hstack Tokens.space2 [ archiveGlyph :> Control; label :> Control ]
+        let leading = Ui.hstack Tokens.space2 [ archiveGlyph; label :> Control ]
         leading.VerticalAlignment <- VerticalAlignment.Center
         DockPanel.SetDock(chevronGlyph, Dock.Right)
         let row = DockPanel(LastChildFill = true)
@@ -375,8 +388,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 FontSize = Tokens.fontMicro,
                 Foreground = Tokens.textFaint,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                Margin = Thickness(0.0, 1.0, 0.0, 0.0))
-        let titleRow = DockPanel(LastChildFill = true)
+                VerticalAlignment = VerticalAlignment.Center,
+                // 预览左缘与标题文本左缘对齐：缩进恰好是状态槽宽 + 槽间距。
+                Margin = Thickness(ControlMetrics.sidebarStateSlotWidth + Tokens.space2, 1.0, 0.0, 0.0))
+        let titleRow = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
         // running / pinned / idle 永远占同一个槽位。状态切换只换槽内内容，
         // 不允许标题左缘跟着生成状态来回漂。
         let stateSlot =
@@ -411,7 +426,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         DockPanel.SetDock(moreButton, Dock.Right)
         titleRow.Children.Add moreButton
         titleRow.Children.Add title
-        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
+        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0, VerticalAlignment = VerticalAlignment.Center)
         column.Children.Add titleRow
         column.Children.Add preview
         let host =

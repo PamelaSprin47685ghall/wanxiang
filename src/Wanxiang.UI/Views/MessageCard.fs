@@ -130,6 +130,14 @@ module MessageCard =
                     onCopied ()
         with _ -> ()
 
+    /// 图标字形与脚注文本基线对齐：只下沉 iconBaselineNudge，不改按钮外尺寸。
+    let private applyIconBaselineNudge (button: Border) =
+        match button.Child with
+        | null -> ()
+        | glyph ->
+            glyph.VerticalAlignment <- VerticalAlignment.Center
+            glyph.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
+
     let private createCopyButton (tipText: string) (accessibleName: string) (getText: unit -> string) : Border =
         let button = Ui.iconButton Icons.copy tipText
         button.Focusable <- true
@@ -137,6 +145,7 @@ module MessageCard =
         button.Padding <- Thickness 0.0
         button.Cursor <- handCursor
         Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+        applyIconBaselineNudge button
         ToolTip.SetTip(button, tipText)
         Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
         Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
@@ -152,6 +161,7 @@ module MessageCard =
             stopTimer ()
             Ui.setIcon button Icons.copy Tokens.textMuted
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+            applyIconBaselineNudge button
             ToolTip.SetTip(button, tipText)
             Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
             Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
@@ -162,6 +172,7 @@ module MessageCard =
                     stopTimer ()
                     Ui.setIcon button Icons.check Tokens.success
                     Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+                    applyIconBaselineNudge button
                     ToolTip.SetTip(button, "已复制！")
                     Avalonia.Automation.AutomationProperties.SetName(button, "已复制！")
                     Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制到剪贴板")
@@ -713,12 +724,18 @@ module MessageCard =
     /// 消息操作按钮。放在脚注行里随文档流排布——
     /// 早先做成浮在消息上方的悬浮条，常驻显示后就会压住头像和气泡边角。
     let private actionButtons (message: MessageView) (ctx: MessageContext) (actions: MessageActions) : StackPanel =
+        let rowTransitions = Avalonia.Animation.Transitions()
+        let opacityTransition = Avalonia.Animation.DoubleTransition()
+        opacityTransition.Property <- Visual.OpacityProperty
+        opacityTransition.Duration <- MotionPolicy.duration 150
+        rowTransitions.Add opacityTransition
         let row =
             StackPanel(
                 Orientation = Orientation.Horizontal,
                 Spacing = Tokens.space1,
                 Margin = Thickness 0.0,
                 Opacity = idleActionOpacity,
+                Transitions = rowTransitions,
                 VerticalAlignment = VerticalAlignment.Center)
         let addButton (icon: IBrush -> Control) (tip: string) (actionName: string) (help: string) (action: unit -> unit) =
             let button = Ui.iconButton icon tip
@@ -727,6 +744,7 @@ module MessageCard =
             button.Padding <- Thickness 0.0
             button.Cursor <- handCursor
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+            applyIconBaselineNudge button
             ToolTip.SetTip(button, tip)
             Avalonia.Automation.AutomationProperties.SetName(button, actionName)
             Avalonia.Automation.AutomationProperties.SetHelpText(button, help)
@@ -739,6 +757,7 @@ module MessageCard =
             button.Padding <- Thickness 0.0
             button.Cursor <- handCursor
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+            applyIconBaselineNudge button
             ToolTip.SetTip(button, "复制")
             Avalonia.Automation.AutomationProperties.SetName(button, "复制")
             Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
@@ -754,6 +773,7 @@ module MessageCard =
                 stopTimer ()
                 Ui.setIcon button Icons.copy Tokens.textMuted
                 Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+                applyIconBaselineNudge button
                 ToolTip.SetTip(button, "复制")
                 Avalonia.Automation.AutomationProperties.SetName(button, "复制")
                 Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
@@ -762,6 +782,7 @@ module MessageCard =
                 stopTimer ()
                 Ui.setIcon button Icons.check Tokens.success
                 Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+                applyIconBaselineNudge button
                 ToolTip.SetTip(button, "已复制！")
                 Avalonia.Automation.AutomationProperties.SetName(button, "已复制！")
                 Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制消息正文")
@@ -1200,4 +1221,6 @@ module MessageCard =
         host.LostFocus.Add(fun _ -> dim ())
         buttons.GotFocus.Add(fun _ -> highlight ())
         buttons.LostFocus.Add(fun _ -> dim ())
+        buttons.PointerEntered.Add(fun _ -> highlight ())
+        buttons.PointerExited.Add(fun _ -> dim ())
         host :> Control
