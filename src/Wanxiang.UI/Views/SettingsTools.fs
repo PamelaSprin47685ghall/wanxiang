@@ -28,64 +28,41 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             LineHeight = ReadingRhythm.captionLineHeight)
     let mutable catalog = Catalog.empty
 
-    let attachFieldValidation (box: TextBox) =
+    /// 外壳反馈只切描边颜色与外阴影（focusRingSpread），不动厚度与内边距。
+    /// 错误行只在自己组内与 hint 互换（Ui.fieldGroup），不挤占兄弟。
+    let syncShellVisual (box: TextBox) =
         let msg = Ui.fieldValidationMessage box
-        msg.FontSize <- Tokens.fontMicro
-        msg.Foreground <- Tokens.danger
-
-        let updateVisual () =
-            match box.Parent with
-            | :? Border as shell ->
-                if msg.IsVisible then
-                    shell.BorderBrush <- Tokens.danger
-                    shell.BoxShadow <-
-                        if box.IsFocused then
-                            BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
-                        else
-                            BoxShadows()
-                elif box.IsFocused then
-                    shell.BorderBrush <- Tokens.accent
-                    shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color))
-                else
-                    shell.BorderBrush <- Tokens.border
-                    shell.BoxShadow <- BoxShadows()
-            | _ -> ()
-
-        box.GetObservable(TextBox.TextProperty).Subscribe(fun _ ->
+        match box.Parent with
+        | :? Border as shell ->
             if msg.IsVisible then
-                Ui.clearFieldError box
-                updateVisual ()) |> ignore
-
-        box.GotFocus.Add(fun _ -> updateVisual ())
-        box.LostFocus.Add(fun _ -> updateVisual ())
-
-    let applyFieldError (box: TextBox) (errorText: string) =
-        Ui.setFieldError box errorText
-        let msg = Ui.fieldValidationMessage box
-        msg.FontSize <- Tokens.fontMicro
-        msg.Foreground <- Tokens.danger
-        msg.IsVisible <- true
-        match box.Parent with
-        | :? Border as shell ->
-            shell.BorderBrush <- Tokens.danger
-            shell.BoxShadow <-
-                if box.IsFocused then
-                    BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
-                else
-                    BoxShadows()
-        | _ -> ()
-
-    let clearFieldError (box: TextBox) =
-        Ui.clearFieldError box
-        match box.Parent with
-        | :? Border as shell ->
-            if box.IsFocused then
+                shell.BorderBrush <- Tokens.danger
+                shell.BoxShadow <-
+                    if box.IsFocused then
+                        BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.dangerSoft.Color))
+                    else
+                        BoxShadows()
+            elif box.IsFocused then
                 shell.BorderBrush <- Tokens.accent
-                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color))
+                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
             else
                 shell.BorderBrush <- Tokens.border
                 shell.BoxShadow <- BoxShadows()
         | _ -> ()
+
+    let attachFieldValidation (box: TextBox) =
+        // 错误文案的样式与“用户一改即清”由 Ui 拥有；这里只同步外壳，不重复清错。
+        Ui.fieldValidationMessage box |> ignore
+        box.GetObservable(TextBox.TextProperty).Subscribe(fun _ -> syncShellVisual box) |> ignore
+        box.GotFocus.Add(fun _ -> syncShellVisual box)
+        box.LostFocus.Add(fun _ -> syncShellVisual box)
+
+    let applyFieldError (box: TextBox) (errorText: string) =
+        Ui.setFieldError box errorText
+        syncShellVisual box
+
+    let clearFieldError (box: TextBox) =
+        Ui.clearFieldError box
+        syncShellVisual box
 
     let mcpPayload (id: string) (label: string) (command: string) (args: string list) (url: string) (timeout: int) (enabled: bool) =
         let o = JsonObject()
@@ -102,15 +79,21 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
     member private this.ShowEditor(existing: McpInfo option) =
         let takenIds = catalog.mcpServers |> List.map (fun s -> s.id)
         let mutable editorActive = true
-        let idField, idBox = Ui.labeledField "稳定标识" "例如 filesystem"
-        let labelField, labelBox = Ui.labeledField "显示名称" "在界面上怎么称呼它"
-        let commandField, commandBox = Ui.labeledField "本地命令" "例如 npx"
-        let argsField, argsBox = Ui.labeledField "命令参数" "每行一个参数"
+        let _, idBox = Ui.textField "例如 filesystem"
+        let idField = Ui.inputFieldGroup "稳定标识" "仅限字母、数字、下划线与连字符。" idBox
+        let _, labelBox = Ui.textField "在界面上怎么称呼它"
+        let labelField = Ui.inputFieldGroup "显示名称" "仅用于界面显示。" labelBox
+        let _, commandBox = Ui.textField "例如 npx"
+        let commandField = Ui.inputFieldGroup "本地命令" "本地启动命令；与远程端点二选一。" commandBox
+        let _, argsBox = Ui.textField "每行一个参数"
+        let argsField = Ui.inputFieldGroup "命令参数" "每行一个参数。" argsBox
         argsBox.AcceptsReturn <- true
         argsBox.MinHeight <- 72.0
         argsBox.VerticalContentAlignment <- VerticalAlignment.Top
-        let urlField, urlBox = Ui.labeledField "远程端点" "https://example.com/mcp（与命令二选一）"
-        let timeoutField, timeoutBox = Ui.labeledField "单次调用超时（秒）" "60"
+        let _, urlBox = Ui.textField "https://example.com/mcp"
+        let urlField = Ui.inputFieldGroup "远程端点" "http(s) 地址；与本地命令二选一。" urlBox
+        let _, timeoutBox = Ui.textField "60"
+        let timeoutField = Ui.inputFieldGroup "单次调用超时（秒）" "1–3600 秒。" timeoutBox
         let allBoxes = [ idBox; labelBox; commandBox; argsBox; urlBox; timeoutBox ]
         for box in allBoxes do attachFieldValidation box
 
@@ -195,20 +178,12 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 let errorMsg = (Ui.fieldValidationMessage box).Text
                 if not (String.IsNullOrWhiteSpace errorMsg) then
                     actions.toast errorMsg Warning
-                match box.Parent with
-                | :? Border as shell ->
-                    shell.BorderBrush <- Tokens.danger
-                    shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
-                | _ -> ()
+                // 错误行只展开自己所在的组（hint 与 error 互换），边框粗细不变；
+                // 这里只把焦点送到第一个错误处，不碰兄弟。
                 box.BringIntoView()
                 box.Focus(NavigationMethod.Directional) |> ignore
                 Dispatcher.UIThread.Post(fun () ->
                     if box.IsEffectivelyVisible && box.IsEnabled then
-                        match box.Parent with
-                        | :? Border as shell ->
-                            shell.BorderBrush <- Tokens.danger
-                            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
-                        | _ -> ()
                         box.BringIntoView()
                         box.Focus(NavigationMethod.Directional) |> ignore)
             | None ->
@@ -244,10 +219,9 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             row.KeyDown.Add(fun e ->
                 if e.Key = Key.Escape then
                     e.Handled <- true
-                    overlay.CloseDialog()
-                elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
-                    e.Handled <- true
-                    save ())
+                    overlay.CloseDialog())
+            // Enter/Space 归 Ui.onClick：行级再处理会导致保存被触发两次，
+            // 多行参数框里的回车也会误提交。这里只处理 Esc。
             row
 
         let form =
@@ -400,7 +374,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let addButton = Ui.button Ui.Primary "添加 MCP 服务器" (fun () -> this.ShowEditor None)
         addButton.HorizontalAlignment <- HorizontalAlignment.Left
         Ui.vstack
-            Tokens.space5
+            Tokens.space6
             [ Ui.vstack
                   Tokens.space1
                   [ Ui.heading "工具与 MCP" :> Control

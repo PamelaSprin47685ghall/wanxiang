@@ -62,6 +62,11 @@ type MainView() as this =
     let mutable connectAttempt = 0
     let mutable setConnectStatus: string -> unit = ignore
     let mutable pageLoading = false
+    /// 设置关闭后焦点的回家点：打开设置时的触发控件（设置入口按钮等）。只记一个元素，
+    /// 不经过 OverlayHost 的对话框记忆（对话框已有唯一的记忆路径，这里是视图显隐切换）。
+    let mutable settingsReturnFocus: Control option = None
+    /// 会话快照等待中的骨架屏延时器：300ms 内到达就不挂任何 loading chrome。
+    let mutable skeletonTimer: DispatcherTimer option = None
     /// 浏览器宿主的 CSS 像素视口宽（`wxViewportWidth` 轮询写入）。
     /// Browser 后端高 DPR 下 `Bounds.Width` 会被 DPR 除一次，不可做断点依据；
     /// 有覆盖值时响应式布局只认它，桌面/测试走 Bounds 原路径。
@@ -115,8 +120,8 @@ type MainView() as this =
                     if epoch = client.ConnectionGeneration then
                         let id = ClientCommand.invocationId cmd
                         commandFeedback.Reject id |> Option.iter (fun feedback -> feedback.onCompleted false)
-                        outbox.SetState(id, UnconfirmedMessage "连接中断；内容已保留，可重试。")
-                        outbox.RejectCreation(id, "连接中断；内容已保留，可重试。")
+                        outbox.SetState(id, UnconfirmedMessage "连接已断开；内容已保留，可重试。")
+                        outbox.RejectCreation(id, "连接已断开；内容已保留，可重试。")
                         this.Render())
         } |> Async.Start
     let sendCommandWithFeedback (cmd: ClientCommand) (successMessage: string option) (onCommitted: unit -> unit) =
@@ -174,6 +179,20 @@ type MainView() as this =
 
     member private _.StreamingMessage() : MessageView option =
         (runs.Get activeConvId).message
+    /// 会话快照到达前的本地 loading：300ms 内不挂任何 chrome，超时才挂骨架 + 标题。
+    /// 快照先到则定时器自证过期，不做任何事。
+    member private this.ShowConversationLoadingDeferred(convId: Guid) =
+        match skeletonTimer with
+        | Some timer -> timer.Stop()
+        | None -> ()
+        let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 300.0)
+        timer.Tick.Add(fun _ ->
+            timer.Stop()
+            if activeConvId = Some convId && (activeConversation ()).IsNone then
+                chat.SetTitle("加载中…", false)
+                chat.ShowSkeletonLoading())
+        skeletonTimer <- Some timer
+        timer.Start()
 
     member private this.Render() =
         let run = runs.Get activeConvId
@@ -185,7 +204,7 @@ type MainView() as this =
             if not authenticated then
                 chat.ShowEmpty(NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
                 composer.SetEnabled(false, "连接服务器后即可开始对话。")
-                composer.SetModelLabel "未连接"
+                composer.SetModelLabel "连接已断开"
             elif not (Catalog.isReady catalog) then
                 chat.ShowEmpty(NoProvider, Some("打开设置添加服务商", fun () -> this.ShowSettings()))
                 composer.SetEnabled(false, "还没有可用的模型，先在设置里添加一个服务商。")
@@ -200,10 +219,10 @@ type MainView() as this =
                 | None -> composer.SetModelLabel "未选择模型"
         | Some convId, None ->
             chat.SetConversationChrome true
-            chat.SetTitle("加载中…", false)
-            chat.ShowSkeletonLoading()
+            // Loading 分级：快照 300ms 内到达就不闪任何 loading chrome，超时才在本地挂骨架；
+            // 流式文本本身就是进度，这里不叠加任何页级 loading。
+            this.ShowConversationLoadingDeferred convId
             composer.SetEnabled(false, "")
-            ignore convId
         | Some convId, Some view ->
             let messages = messagesOf view
             let streaming = this.StreamingMessage()
@@ -226,7 +245,7 @@ type MainView() as this =
                     prefs.autoCollapseReasoning,
                     run.usage,
                     missingAttachments)
-            composer.SetEnabled(authenticated, (if authenticated then "" else "连接断开，重新连接后可继续发送。"))
+            composer.SetEnabled(authenticated, (if authenticated then "" else "连接已断开，重新连接后可继续发送。"))
         composer.SetGenerating generating
         composer.SetCanStop(authenticated && run.generationId.IsSome)
         composer.SetAttachments((attachmentDraft ()).Items)
@@ -322,12 +341,12 @@ type MainView() as this =
                             let! _ = client.TrySendAtGenerationAsync(epoch, PairingRequested {| clientName = Some CredentialStore.clientName |}) |> Async.AwaitTask
                             ()
                 Dispatcher.UIThread.Post(fun () ->
-                    if attempt = connectAttempt && not authenticated then sidebar.SetConnection(false, "连接中…"))
+                    if attempt = connectAttempt && not authenticated then sidebar.SetConnection(false, "正在连接"))
             with ex ->
                 Dispatcher.UIThread.Post(fun () ->
                     if attempt = connectAttempt then
-                        setConnectStatus (sprintf "连接失败：%s" ex.Message)
-                        sidebar.SetConnection(false, "连接失败")
+                        setConnectStatus (sprintf "连接已断开：%s" ex.Message)
+                        sidebar.SetConnection(false, "连接已断开")
                         this.ScheduleReconnect())
         }
         |> Async.Start
@@ -341,7 +360,8 @@ type MainView() as this =
             reconnectCts <- Some cts
             let delay = reconnectDelayMs
             reconnectDelayMs <- ReconnectBackoff.next reconnectDelayMs
-            sidebar.SetConnection(false, sprintf "%.0f 秒后重连" (float delay / 1000.0))
+            // 连接状态一个词：倒计时不进壳状态栏，重连中只报“正在重连”。
+            sidebar.SetConnection(false, "正在重连")
             async {
                 do! Async.Sleep delay
                 if not cts.IsCancellationRequested then
@@ -363,9 +383,12 @@ type MainView() as this =
             composer.SetAttachments((attachmentDraft ()).Items)
             chat.CancelHistoryPrependAnchor()
             pageLoading <- false
+        let navBefore = navigation.State
         this.SetCompactNavigation false
         sidebar.SetActive activeConvId
         this.Render()
+        // compact 下收起导航会带走焦点（掉到页顶）：交还给输入区；阅读位置由 ChatView 的锚点语义保留。
+        if navBefore.compactMode && navBefore.compactNavigationOpen then composer.Focus()
 
     member private _.MakeConversationCommand(conversationId: Guid) =
         let provider, model = Catalog.defaultSelection catalog |> Option.defaultValue ("", "")
@@ -435,7 +458,7 @@ type MainView() as this =
     member private this.SendMessage(text: string) : bool =
         let draft = attachmentDraft ()
         if draft.HasUploading then
-            toast "附件仍在上传，请等待上传完成后再发送。" Warning
+            toast "附件上传中，请等待上传完成后再发送。" Warning
             false
         elif not authenticated || not client.IsConnected then
             toast "连接已断开，草稿已保留。" Warning
@@ -468,11 +491,15 @@ type MainView() as this =
             runs.ClearError convId
             sendCommand (RegenerateResponse {| invocationId = newInvocation (); conversationId = convId |})
             this.Render()
+            // 错误卡片随重试卸载：焦点无处可去会掉到页顶，先交还给输入区。
+            composer.Focus()
 
     member private this.StopGeneration() =
         match activeConvId, (runs.Get activeConvId).generationId with
         | Some convId, Some generationId ->
             send (GenerationCancel {| conversationId = convId; generationId = generationId |})
+            // 停止按钮随生成结束隐藏：同上，焦点先回家。
+            composer.Focus()
         | _ -> ()
 
     member private this.ForkFrom(commitId: uint64 option, seedText: string) =
@@ -510,7 +537,38 @@ type MainView() as this =
                     send (ObserveConversation {| conversationId = newId |})))
         | _ -> toast "当前没有可分叉的会话。" Warning
 
+    member private _.CurrentFocusControl() : Control option =
+        try
+            match TopLevel.GetTopLevel this with
+            | null -> None
+            | top ->
+                match top.FocusManager with
+                | null -> None
+                | manager ->
+                    match manager.GetFocusedElement() with
+                    | :? Control as control -> Some control
+                    | _ -> None
+        with _ -> None
+
+    /// 设置关闭回到设置入口触发点：触发控件仍在树上就还给它，否则落到输入区，绝不掉到页顶。
+    member private this.RestoreSettingsFocus() =
+        let fallback () =
+            if workspace.IsVisible then composer.Focus()
+        match settingsReturnFocus with
+        | Some control ->
+            settingsReturnFocus <- None
+            Dispatcher.UIThread.Post(fun () ->
+                try
+                    if control.IsEnabled
+                       && control.IsEffectivelyVisible
+                       && not (isNull (TopLevel.GetTopLevel control)) then
+                        control.Focus() |> ignore
+                    else fallback ()
+                with _ -> fallback ())
+        | None -> fallback ()
+
     member private this.ShowSettings() =
+        settingsReturnFocus <- this.CurrentFocusControl()
         settingsHost.IsVisible <- true
         workspace.IsVisible <- false
         send CatalogRequest
@@ -518,6 +576,7 @@ type MainView() as this =
     member private this.CloseSettings() =
         settingsHost.IsVisible <- false
         workspace.IsVisible <- true
+        this.RestoreSettingsFocus()
 
     member private this.ShowModelPicker(anchor: Control) =
         match activeConvId, activeConversation () with
@@ -565,7 +624,7 @@ type MainView() as this =
                         Dispatcher.UIThread.Post(fun () ->
                             if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
                                 this.BeginUpload(owner, file.Name, bytes)
-                            else toast "连接已变化，请重新选择附件；文件没有发送到其他服务器。" Warning)
+                            else toast "连接已断开，请重新选择附件；文件没有发送到其他服务器。" Warning)
                     Dispatcher.UIThread.Post(fun () -> composer.Focus())
                 with ex ->
                     Dispatcher.UIThread.Post(fun () ->
@@ -593,7 +652,7 @@ type MainView() as this =
                             Dispatcher.UIThread.Post(fun () ->
                                 if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
                                     this.BeginUpload(owner, sf.Name, bytes)
-                                else toast "连接已变化，请重新选择附件；文件没有发送到其他服务器。" Warning)
+                                else toast "连接已断开，请重新选择附件；文件没有发送到其他服务器。" Warning)
                         | _ ->
                             let path = item.TryGetLocalPath()
                             if not (String.IsNullOrEmpty path) && File.Exists path then
@@ -602,7 +661,7 @@ type MainView() as this =
                                 Dispatcher.UIThread.Post(fun () ->
                                     if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
                                         this.BeginUpload(owner, name, bytes)
-                                    else toast "连接已变化，请重新选择附件；文件没有发送到其他服务器。" Warning)
+                                    else toast "连接已断开，请重新选择附件；文件没有发送到其他服务器。" Warning)
                     Dispatcher.UIThread.Post(fun () -> composer.Focus())
                 with ex ->
                     Dispatcher.UIThread.Post(fun () ->
@@ -649,7 +708,7 @@ type MainView() as this =
                                         let owner = attachmentDraft ()
                                         Dispatcher.UIThread.Post(fun () ->
                                             if authenticated then this.BeginUpload(owner, name, bytes)
-                                            else toast "连接已变化，请重新选择附件；文件没有发送到其他服务器。" Warning
+                                            else toast "连接已断开，请重新选择附件；文件没有发送到其他服务器。" Warning
                                             composer.Focus())
                                 with ex ->
                                     Dispatcher.UIThread.Post(fun () ->
@@ -819,9 +878,9 @@ type MainView() as this =
             authenticated <- false
             exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
             lastToken <- None
-            sidebar.SetConnection(false, "认证失败")
-            setConnectStatus (sprintf "认证失败：%s" d.reason)
-            toast (sprintf "认证失败：%s" d.reason) Failure
+            sidebar.SetConnection(false, "连接已断开")
+            // 失败只报一次：连接对话框内联呈现原因（紧邻重连入口），不再叠 toast。
+            setConnectStatus (sprintf "连接已断开：%s" d.reason)
             this.Render()
         | UpgradeRequired d ->
             toast (sprintf "协议版本不匹配：服务端 %d，客户端 %d。请更新其中一端。" d.serverVersion d.clientVersion) Failure
@@ -835,7 +894,7 @@ type MainView() as this =
                 if d.frozen then sprintf "配对已冻结 %d 分钟：%s" d.freezeMinutes d.reason
                 else sprintf "配对失败：%s" d.reason
             setConnectStatus message
-            toast message Failure
+            // 配对失败只报一次：对话框内联呈现（紧邻重试入口），不再叠 toast。
         | CatalogSnapshot d ->
             catalog <- Catalog.parse d.providers d.tools d.generation
             settings.SetCatalog catalog
@@ -919,7 +978,7 @@ type MainView() as this =
                 match d.status, error with
                 | "failed", Some error when activeConvId <> Some d.conversationId ->
                     toast (GenerationError.display error) Failure
-                | "cancelled", _ when activeConvId = Some d.conversationId -> toast "已停止生成" Neutral
+                | "cancelled", _ when activeConvId = Some d.conversationId -> toast "已停止" Neutral
                 | _ -> ()
                 if activeConvId = Some d.conversationId then this.Render()
         | AttachmentCommitted d ->
@@ -930,9 +989,9 @@ type MainView() as this =
             | None -> ()
         | AttachmentAborted d ->
             match drafts.All |> Seq.tryPick (fun draft -> draft.attachments.Abort d.attachmentId) with
-            | Some(_, stillDrafted) ->
+            // 上传失败只报一次：输入区附件条已内联呈现失败态，不再叠 toast。
+            | Some(_, _) ->
                 composer.SetAttachments((attachmentDraft ()).Items)
-                if stillDrafted then toast (sprintf "附件上传失败：%s" d.reason) Failure
             | None -> ()
         | AttachmentDownloadBegin d ->
             let key = d.sha256.ToLowerInvariant()
@@ -973,9 +1032,7 @@ type MainView() as this =
             outbox.SetState(d.invocationId, RejectedMessage d.message)
             outbox.RejectCreation(d.invocationId, d.message)
             this.Render()
-            match d.requiredCommitId with
-            | Some _ -> toast "本地数据不是最新，已自动追赶，请重试。" Warning
-            | None -> toast (sprintf "操作被拒绝：%s" d.message) Failure
+            // 拒绝只报一次：输入区上方的未确认行已内联呈现原因与重试，不再叠 toast。
         | ServerError d ->
             // 附件 blob 缺失时把该 sha256 标成缺失，消息里就会显示「内容已丢失」
             if d.message.StartsWith("attachment ", StringComparison.Ordinal) && d.message.Contains "not found" then
@@ -1200,14 +1257,9 @@ type MainView() as this =
 
         let initialNavigation = navigation.State
         shellGrid <- Grid()
-        shellGrid.ColumnDefinitions.Add(
-            ColumnDefinition(
-                Width = (if initialNavigation.sidebarCollapsed then GridLength(0.0) else GridLength prefs.sidebarWidth),
-                MinWidth = (if initialNavigation.sidebarCollapsed then 0.0 else Tokens.sidebarMinWidth),
-                MaxWidth = Tokens.sidebarMaxWidth))
-        shellGrid.ColumnDefinitions.Add(
-            ColumnDefinition(
-                Width = (if initialNavigation.sidebarCollapsed then GridLength(0.0) else GridLength LayoutPolicy.sidebarSplitterWidth)))
+        // 列宽唯一投影器是 MainLayoutController.Apply：这里只建空定义，初值由下方的 Apply 落定。
+        shellGrid.ColumnDefinitions.Add(ColumnDefinition(MaxWidth = Tokens.sidebarMaxWidth))
+        shellGrid.ColumnDefinitions.Add(ColumnDefinition())
         shellGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
         sidebarSplitter <-
             GridSplitter(
@@ -1233,13 +1285,9 @@ type MainView() as this =
         sidebarSplitter.DragCompleted.Add(fun _ ->
             let nav = navigation.State
             if not nav.compactMode && not nav.sidebarCollapsed then
-                let width = Math.Clamp(shellGrid.ColumnDefinitions[0].ActualWidth, Tokens.sidebarMinWidth, Tokens.sidebarMaxWidth)
-                shellGrid.ColumnDefinitions[0].Width <- GridLength width
+                let width = mainLayout.NoteUserSidebarWidth shellGrid.ColumnDefinitions[0].ActualWidth
                 prefs <- { prefs with sidebarWidth = width }
                 UiPrefs.save prefs)
-        Grid.SetColumn(sidebar, 0)
-        Grid.SetColumn(sidebarSplitter, 1)
-        Grid.SetColumn(chatColumn, 2)
         shellGrid.Children.Add sidebar
         shellGrid.Children.Add sidebarSplitter
         shellGrid.Children.Add chatColumn
@@ -1270,11 +1318,15 @@ type MainView() as this =
                     configFeedback.RejectAll()
                     let detail = match error with Some e -> e.Message | None -> ""
                     sidebar.SetConnection(false, "连接已断开")
-                    if not (String.IsNullOrWhiteSpace detail) then toast (sprintf "连接断开：%s" detail) Warning
+                    if not (String.IsNullOrWhiteSpace detail) then toast (sprintf "连接已断开：%s" detail) Warning
                     this.Render()
                     this.ScheduleReconnect()))
 
-        Tokens.Changed.Publish.Add(fun _ -> Dispatcher.UIThread.Post(fun () -> this.Render()))
+        // 壳背景跟随主题一起换：内容容器全透明，任一层过期都会在窗口边缘漏出异色细线。
+        Tokens.Changed.Publish.Add(fun _ ->
+            Dispatcher.UIThread.Post(fun () ->
+                this.Background <- Tokens.canvas
+                this.Render()))
         // 后台着色算完：卡片身份没变，必须显式丢缓存才会换成着色版
         Highlight.Ready.Add(fun _ ->
             Dispatcher.UIThread.Post(fun () ->

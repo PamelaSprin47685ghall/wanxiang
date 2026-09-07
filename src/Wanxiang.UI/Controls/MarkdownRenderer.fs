@@ -145,6 +145,27 @@ type MarkdownRenderer(
                 chunks.Add(current.ToString())
             chunks |> Seq.toList
 
+    /// 超长链接分段后，把落在段首的收标点并回上一段尾、把留在段尾的开标点顺到下一段首
+    /// （行首 / 行尾禁则）。WrapPanel 只在分段之间换行，硬切边界若把标点顶到行首行尾，
+    /// 窄屏下就会出现「。」开头的行；只挪边界一字，不断词、不改顺序。
+    static member private RebalanceLinkChunks (chunks: string list) : string list =
+        let closers =
+            set [ '。'; '，'; '、'; '；'; '：'; '！'; '？'; '”'; '’'; '）'; '］'; '｝'; '〉'; '》'; '…'; '—'
+                  '.'; ','; ';'; ':'; '!'; '?'; ')'; ']'; '}' ]
+        let openers =
+            set [ '「'; '『'; '（'; '［'; '｛'; '〈'; '《'; '“'; '‘'; '('; '['; '{' ]
+        let arr = chunks |> List.toArray
+        for i in 1 .. arr.Length - 1 do
+            if arr[i].Length > 1 && closers.Contains arr[i].[0] then
+                arr[i - 1] <- arr[i - 1] + string arr[i].[0]
+                arr[i] <- arr[i].Substring(1)
+        for i in 0 .. arr.Length - 2 do
+            if arr[i].Length > 1 && openers.Contains arr[i].[arr[i].Length - 1] then
+                let last = arr[i].[arr[i].Length - 1]
+                arr[i] <- arr[i].Substring(0, arr[i].Length - 1)
+                arr[i + 1] <- string last + arr[i + 1]
+        arr |> Array.toList |> List.filter (not << String.IsNullOrEmpty)
+
     /// 链接需要能点。整段文本共用一个 TextBlock 时无法逐字命中，
     /// 因此只在段落里存在链接时，把段落拆成「文本 + 可点链接」的 WrapPanel。
     member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily, ?textAlignment: TextAlignment, ?noBoldAccent: bool) : Control =
@@ -202,7 +223,8 @@ type MarkdownRenderer(
                     if text.Length <= 40 then
                         addLinkChunk text text url true
                     else
-                        let chunks = MarkdownRenderer.SafeChunk 40 text
+                        // 分段边界避开行首行尾禁则，见 RebalanceLinkChunks。
+                        let chunks = MarkdownRenderer.RebalanceLinkChunks(MarkdownRenderer.SafeChunk 40 text)
                         for i in 0 .. chunks.Length - 1 do
                             let chunk = chunks.[i]
                             // 视觉上仍可逐段命中，但一个长链接只占一个 Tab stop，

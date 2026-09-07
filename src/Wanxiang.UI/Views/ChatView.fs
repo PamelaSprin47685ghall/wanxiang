@@ -251,7 +251,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleEditBox.Margin <- Thickness 0.0
         ToolTip.SetTip(generatingChip, "正在生成回答")
         Avalonia.Automation.AutomationProperties.SetName(generatingChip, "正在生成回答")
-        emptyActions.Margin <- Thickness 0.0
         titleHost.Children.Add titleAction
         titleHost.Children.Add titleEditShell
         titleEditShell.IsVisible <- false

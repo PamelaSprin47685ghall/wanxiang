@@ -166,10 +166,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         host.GotFocus.Add(fun _ -> this.UpdateNavButtonStates())
         host.LostFocus.Add(fun _ -> this.UpdateNavButtonStates())
         host.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                this.Select section
-            elif e.Key = Key.Up then
+            // Enter/Space 由 Ui.onClick 拥有（选中是幂等的，但双通道无意义）；
+            // 选中态靠 Tokens.selected 底，键盘焦点另有 focusRingSpread 外环，两者可区分。
+            if e.Key = Key.Up then
                 e.Handled <- true
                 this.NavigateSection -1
             elif e.Key = Key.Down then

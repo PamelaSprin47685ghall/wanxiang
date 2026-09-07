@@ -70,7 +70,7 @@ module MessageCard =
         expandButton.Cursor <- handCursor
         expandButton.Focusable <- true
         expandButton.IsVisible <- false
-        ToolTip.SetTip(expandButton, "展开查看全部内容")
+        // 文字按钮自解释：tooltip 只会重复可见文案，不挂；无障碍名称保留。
         Avalonia.Automation.AutomationProperties.SetName(expandButton, "展开全部")
         let refreshButton () =
             let clipped = scroller.Extent.Height > scroller.Viewport.Height + 1.0
@@ -81,7 +81,6 @@ module MessageCard =
             full <- not full
             scroller.MaxHeight <- if full then Double.PositiveInfinity else LayoutPolicy.expandedDetailMaxHeight
             Ui.setButtonText expandButton (if full then "收回限高" else "展开全部")
-            ToolTip.SetTip(expandButton, if full then "收回到限高区域" else "展开查看全部内容")
             Avalonia.Automation.AutomationProperties.SetName(expandButton, if full then "收回限高" else "展开全部")
             Dispatcher.UIThread.Post refreshButton
         scroller.PropertyChanged.Add(fun args ->
@@ -102,7 +101,6 @@ module MessageCard =
                 full <- false
                 scroller.MaxHeight <- LayoutPolicy.expandedDetailMaxHeight
                 Ui.setButtonText expandButton "展开全部"
-                ToolTip.SetTip(expandButton, "展开查看全部内容")
                 Avalonia.Automation.AutomationProperties.SetName(expandButton, "展开全部")
             Dispatcher.UIThread.Post refreshButton
         host :> Control, setVisible
@@ -630,22 +628,20 @@ module MessageCard =
                 else
                     ""
             let label = sprintf "%s工具调用 %s（%s%s）" (if detailVisible then "收起" else "展开") call.name statusText argInfo
-            Avalonia.Automation.AutomationProperties.SetName(
-                host, sprintf "%s工具调用 %s" (if detailVisible then "收起" else "展开") call.name)
             Avalonia.Automation.AutomationProperties.SetName(headerRow, sprintf "%s工具调用 %s" (if detailVisible then "收起" else "展开") call.name)
             Avalonia.Automation.AutomationProperties.SetHelpText(headerRow, label)
             Avalonia.Automation.AutomationProperties.SetItemStatus(headerRow, sprintf "调用工具 · %s（%s）" call.name statusText)
             Avalonia.Automation.AutomationProperties.SetHelpText(headerRow, if detailVisible then "收起参数与结果" else "展开查看参数与结果")
             Avalonia.Automation.AutomationProperties.SetHelpText(host, if detailVisible then "收起参数与结果" else "展开查看参数与结果")
             ToolTip.SetTip(headerRow, if detailVisible then "点击收起参数与结果" else "点击展开参数与结果")
-            ToolTip.SetTip(host, if detailVisible then "点击收起参数与结果" else "点击展开参数与结果")
         let toggle () =
             detailVisible <- not detailVisible
             setDetailVisible detailVisible
             summary.IsVisible <- not detailVisible && not (String.IsNullOrWhiteSpace summaryText)
             syncChevron ()
             syncToolName ()
-        host.SetInvokeAction toggle
+        // 唯一展开入口是 headerRow：整卡 host 若同样可激活，读屏用户会在同一个开关上停留两次。
+        // 不用 Ui.onClick 是因为 header 内嵌复制按钮，冒泡上来的 PointerReleased 需要 IsPointerOver 守卫。
         headerRow.SetInvokeAction toggle
         headerRow.PointerReleased.Add(fun e ->
             if not e.Handled && headerRow.IsEnabled && headerRow.IsHitTestVisible && e.InitialPressMouseButton = MouseButton.Left then
@@ -660,6 +656,7 @@ module MessageCard =
             headerRow.Background <- Tokens.hover)
         headerRow.PointerExited.Add(fun _ ->
             headerRow.Background <- Brushes.Transparent)
+        Avalonia.Automation.AutomationProperties.SetName(host, sprintf "工具调用 %s" call.name)
         syncChevron ()
         syncToolName ()
         host :> Control
@@ -820,14 +817,24 @@ module MessageCard =
         | _ -> ()
         row
 
-    /// 生成失败卡片：错误分类 + 可行动建议 + 重试入口。
+    /// 错误标题必须是人话：兼容路径（旧服务端纯文本 error）可能把原始异常直接塞进 message；
+    /// 含换行、堆栈帧或异常类名的原文一律降级为固定标题，原文只进按需展开的「技术细节」。
+    let private errorTitle (error: GenerationError) : string =
+        let m = if isNull error.message then "" else error.message.Trim()
+        let looksRaw =
+            m.Contains "\n" || m.Contains "Exception" || m.Contains "StackTrace"
+            || m.Contains " at " || m.StartsWith "error:"
+        if String.IsNullOrWhiteSpace m || looksRaw then "生成失败"
+        else m
+
+    /// 生成失败卡片：发生了什么 → 用户能做什么 → 是否可重试 → 技术细节按需。
     let errorCard (error: GenerationError) (onRetry: unit -> unit) : Control =
         let icon = Icons.alert Tokens.danger
         icon.VerticalAlignment <- VerticalAlignment.Top
         icon.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
         let title =
             TextBlock(
-                Text = error.message,
+                Text = errorTitle error,
                 FontSize = Tokens.fontBody,
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
@@ -845,8 +852,9 @@ module MessageCard =
         let topRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)
         topRow.Children.Add icon
         topRow.Children.Add column
+        // 等待建议只跟可重试错误走：不可重试时给秒数等于指错路。
         match error.retryAfterSeconds with
-        | Some seconds ->
+        | Some seconds when error.retryable ->
             column.Children.Add(
                 TextBlock(
                     Text = sprintf "建议等待约 %d 秒后重试。" seconds,
@@ -870,7 +878,6 @@ module MessageCard =
             retryButton.Cursor <- handCursor
             Avalonia.Automation.AutomationProperties.SetName(retryButton, "重试生成")
             Avalonia.Automation.AutomationProperties.SetHelpText(retryButton, "重新尝试生成")
-            ToolTip.SetTip(retryButton, "重新尝试生成")
             actionRow.Children.Add retryButton
         match error.detail with
         | Some detail ->
@@ -878,7 +885,7 @@ module MessageCard =
             let detailHeader = DockPanel(LastChildFill = false)
             let detailTitle =
                 TextBlock(
-                    Text = "错误堆栈与技术细节",
+                    Text = "技术细节",
                     FontSize = Tokens.fontMicro,
                     FontWeight = FontWeight.Medium,
                     Foreground = Tokens.textMuted,
@@ -950,7 +957,6 @@ module MessageCard =
             let syncDetailButton () =
                 detailRotate.Angle <- if visible then 90.0 else 0.0
                 detailCaption.Text <- if visible then "收起技术细节" else "技术细节"
-                ToolTip.SetTip(detailToggle, if visible then "收起错误技术细节" else "展开查看技术细节")
                 Avalonia.Automation.AutomationProperties.SetName(detailToggle, if visible then "收起技术细节" else "技术细节")
                 Avalonia.Automation.AutomationProperties.SetHelpText(detailToggle, if visible then "收起错误技术细节" else "展开查看技术细节")
                 Avalonia.Automation.AutomationProperties.SetRole(detailToggle, AutomationRole.Button)
@@ -985,8 +991,12 @@ module MessageCard =
         cardLayout.Children.Add topRow
         if actionRow.Children.Count > 0 then cardLayout.Children.Add actionRow
         if detailContainer.Children.Count > 0 then cardLayout.Children.Add detailContainer
+        // danger 只做状态点与提示条（见 Palette 约束）：整卡 dangerSoft 是重红色块；
+        // 与工具卡同级，用 surface 卡 + 常规边框，错误语义由标题旁的 danger 图标承担。
         Border(
-            Background = Tokens.dangerSoft,
+            Background = Tokens.surface,
+            BorderBrush = Tokens.border,
+            BorderThickness = Thickness 1.0,
             CornerRadius = CornerRadius Tokens.radiusLg,
             Padding = Thickness(Tokens.space4, Tokens.space3),
             Margin = Thickness(0.0, Tokens.space2, 0.0, 0.0),

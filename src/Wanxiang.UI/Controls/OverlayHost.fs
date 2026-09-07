@@ -84,6 +84,10 @@ type OverlayHost(root: Grid) =
     let mutable popupPreferredMinWidth = 180.0
     let mutable popupAnchor: Control option = None
     let mutable popupAlignRight = false
+    // 同时可见的提示条上限与去重登记：提示条只配给跨上下文确认与短暂系统状态，
+    // 堆叠盖住内容或重复刷屏就违背了它存在的理由，因此新条挤掉最旧的、同文只留最新一条。
+    let toastCap = 3
+    let toastEntries = ResizeArray<string * (unit -> unit)>()
 
     let currentFocus () =
         match TopLevel.GetTopLevel root with
@@ -336,7 +340,9 @@ type OverlayHost(root: Grid) =
     member _.Descendants(control: Control) = descendants control
     member _.Focusables(content: Control) = focusables content
 
-    /// 提示条：自动消失，可叠加多条。错误默认停留更久。
+    /// 提示条：只给跨上下文的成功确认与无更好归宿的短暂系统状态。
+    /// 表单校验走行内错误、可恢复的错误走常驻入口、正文已有表达的不再弹条；
+    /// 同文去重且最多同时保留 toastCap 条，失败默认停留更久以便读完。
     member _.Toast(message: string, tone: ToastTone) =
         if not (String.IsNullOrWhiteSpace message) then
             let accentBrush =
@@ -398,7 +404,23 @@ type OverlayHost(root: Grid) =
                     removed <- true
                     expire.Stop()
                     toastStack.Children.Remove toast |> ignore
+                    toastEntries.RemoveAll(fun (text, _) -> text = message) |> ignore
+            // 同文只留最新一条：先清掉旧的，计数里也不再占位。
+            toastEntries
+            |> Seq.filter (fun (text, _) -> text = message)
+            |> Seq.map snd
+            |> Array.ofSeq
+            |> Array.iter (fun dismiss -> dismiss ())
+            // 新条挤掉最旧的：提示条永远是少数派，不盖住内容。
+            while toastEntries.Count >= toastCap do
+                let _, dismissOldest = toastEntries[0]
+                dismissOldest ()
+            toastEntries.Add(message, remove)
             Ui.onClick toast remove
+            toast.KeyDown.Add(fun e ->
+                if e.Key = Key.Escape then
+                    e.Handled <- true
+                    remove ())
             toast.PointerEntered.Add(fun _ -> paused <- true)
             toast.PointerExited.Add(fun _ -> paused <- toast.IsFocused)
             toast.GotFocus.Add(fun _ -> paused <- true)

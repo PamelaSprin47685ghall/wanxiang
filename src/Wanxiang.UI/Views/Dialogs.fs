@@ -1,11 +1,11 @@
 namespace Wanxiang.UI
-
 open System
 open Avalonia
 open Avalonia.Controls
 open Avalonia.Controls.Primitives
 open Avalonia.Input
 open Avalonia.Layout
+
 open Avalonia.Media
 open Avalonia.Threading
 open Avalonia.Interactivity
@@ -361,6 +361,18 @@ module Dialogs =
                 e.Handled <- true
                 overlay.CloseDialog())
 
+        // 页脚走统一 actionRow：右对齐节律、取消只关闭、左右键在两按钮间移动，与全对话框一致。
+        let footerRow, connectBtn = actionRow overlay "连接" Ui.Primary connectAction
+        // 连接对话框沿用统一取消语义（只关闭、不销毁），保留更具体的提示文案。
+        match footerRow.Children[0] with
+        | :? Border as cancelBtn ->
+            AutomationProperties.SetHelpText(cancelBtn, "取消并关闭连接对话框 (Esc)")
+            ToolTip.SetTip(cancelBtn, "取消并关闭连接对话框 (Esc)")
+        | _ -> ()
+        AutomationProperties.SetName(connectBtn, "连接")
+        AutomationProperties.SetHelpText(connectBtn, "连接至服务器 (Enter)")
+        ToolTip.SetTip(connectBtn, "连接至服务器 (Enter)")
+
         let content =
             Ui.vstack
                 Tokens.space4
@@ -376,25 +388,7 @@ module Dialogs =
                   pairingToggle :> Control
                   codeSection :> Control
                   codeButton :> Control
-                  (let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
-                   let cancelBtn = Ui.button Ui.Ghost "稍后再说" (fun () -> overlay.CloseDialog())
-                   AutomationProperties.SetName(cancelBtn, "稍后再说")
-                   AutomationProperties.SetHelpText(cancelBtn, "取消并关闭连接对话框 (Esc)")
-                   ToolTip.SetTip(cancelBtn, "取消并关闭连接对话框 (Esc)")
-                   let connectBtn = Ui.button Ui.Primary "连接" connectAction
-                   AutomationProperties.SetName(connectBtn, "连接")
-                   AutomationProperties.SetHelpText(connectBtn, "连接至服务器 (Enter)")
-                   ToolTip.SetTip(connectBtn, "连接至服务器 (Enter)")
-                   row.Children.Add cancelBtn
-                   row.Children.Add connectBtn
-                   row.KeyDown.Add(fun e ->
-                       if e.Key = Key.Escape then
-                           e.Handled <- true
-                           overlay.CloseDialog()
-                       elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelBtn.IsFocused then
-                           e.Handled <- true
-                           connectAction ())
-                   row :> Control) ]
+                  footerRow :> Control ]
         content.KeyDown.Add(fun e ->
             if e.Key = Key.Escape then
                 e.Handled <- true
@@ -404,6 +398,7 @@ module Dialogs =
         fun message ->
             status.Text <- message
             status.IsVisible <- not (String.IsNullOrWhiteSpace message)
+
 
     /// 会话设置：模型、生成参数、系统指令、工具勾选。
     let sessionSettings
@@ -696,11 +691,12 @@ module Dialogs =
                 MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
-        content.Focusable <- true
+        // 内容面板本身不进 Tab 序：唯一的键盘停留点就是关闭按钮，
+        // Tab 顺序与视觉顺序一致，无不可见的焦点空转。
+
         closeBtn.Focusable <- true
+
         overlay.ShowDialog(scroller :> Control, 460.0)
         Dispatcher.UIThread.Post(fun () ->
             if closeBtn.IsEffectivelyVisible && closeBtn.IsEnabled then
-                closeBtn.Focus() |> ignore
-            elif content.IsEffectivelyVisible && content.IsEnabled then
-                content.Focus() |> ignore)
+                closeBtn.Focus() |> ignore)

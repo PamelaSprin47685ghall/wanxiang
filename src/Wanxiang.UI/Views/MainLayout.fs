@@ -1,5 +1,6 @@
 namespace Wanxiang.UI
 
+open System
 open Avalonia.Controls
 
 /// 主工作区唯一的空间投影器。
@@ -42,4 +43,11 @@ type MainLayoutController(
             sidebar.IsVisible <- not state.sidebarCollapsed
             sidebarSplitter.IsVisible <- not state.sidebarCollapsed
             sidebar.ZIndex <- 0
+
+    /// 用户拖拽后的宽度落定：钳制并写回第 0 列。列宽写操作只出自本控制器，
+    /// AppShell 只负责把返回值存进 prefs。
+    member _.NoteUserSidebarWidth(actualWidth: float) : float =
+        let width = Math.Clamp(actualWidth, Tokens.sidebarMinWidth, Tokens.sidebarMaxWidth)
+        shellGrid.ColumnDefinitions[0].Width <- GridLength width
+        width
 

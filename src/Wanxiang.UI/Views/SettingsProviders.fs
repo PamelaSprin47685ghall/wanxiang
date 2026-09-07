@@ -33,67 +33,48 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
     let listPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
     let mutable catalog = Catalog.empty
 
-    let attachFieldValidation (box: TextBox) =
+    /// 外壳反馈只切描边颜色与外阴影（focusRingSpread），不动厚度与内边距。
+    /// 错误行只在自己组内与 hint 互换（Ui.fieldGroup），不挤占兄弟。
+    let syncShellVisual (box: TextBox) =
         let msg = Ui.fieldValidationMessage box
-        msg.FontSize <- Tokens.fontMicro
-        msg.Foreground <- Tokens.danger
-
-        let updateVisual () =
-            match box.Parent with
-            | :? Border as shell ->
-                if msg.IsVisible then
-                    shell.BorderBrush <- Tokens.danger
-                    shell.BoxShadow <-
-                        if box.IsFocused then
-                            BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
-                        else
-                            BoxShadows()
-                elif box.IsFocused then
-                    shell.BorderBrush <- Tokens.accent
-                    shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color))
-                else
-                    shell.BorderBrush <- Tokens.border
-                    shell.BoxShadow <- BoxShadows()
-            | _ -> ()
-
-        box.GetObservable(TextBox.TextProperty).Subscribe(fun _ ->
+        match box.Parent with
+        | :? Border as shell ->
             if msg.IsVisible then
-                Ui.clearFieldError box
-                updateVisual ()) |> ignore
-
-        box.GotFocus.Add(fun _ -> updateVisual ())
-        box.LostFocus.Add(fun _ -> updateVisual ())
-
-    let applyFieldError (box: TextBox) (errorText: string) =
-        Ui.setFieldError box errorText
-        let msg = Ui.fieldValidationMessage box
-        msg.FontSize <- Tokens.fontMicro
-        msg.Foreground <- Tokens.danger
-        msg.IsVisible <- true
-        match box.Parent with
-        | :? Border as shell ->
-            shell.BorderBrush <- Tokens.danger
-            shell.BoxShadow <-
-                if box.IsFocused then
-                    BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
-                else
-                    BoxShadows()
-        | _ -> ()
-
-    let clearFieldError (box: TextBox) =
-        Ui.clearFieldError box
-        match box.Parent with
-        | :? Border as shell ->
-            if box.IsFocused then
+                shell.BorderBrush <- Tokens.danger
+                shell.BoxShadow <-
+                    if box.IsFocused then
+                        BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.dangerSoft.Color))
+                    else
+                        BoxShadows()
+            elif box.IsFocused then
                 shell.BorderBrush <- Tokens.accent
-                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color))
+                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
             else
                 shell.BorderBrush <- Tokens.border
                 shell.BoxShadow <- BoxShadows()
         | _ -> ()
 
+    let attachFieldValidation (box: TextBox) =
+        // 错误文案的样式与“用户一改即清”由 Ui 拥有；这里只同步外壳，不重复清错。
+        Ui.fieldValidationMessage box |> ignore
+        box.GetObservable(TextBox.TextProperty).Subscribe(fun _ -> syncShellVisual box) |> ignore
+        box.GotFocus.Add(fun _ -> syncShellVisual box)
+        box.LostFocus.Add(fun _ -> syncShellVisual box)
+
+    let applyFieldError (box: TextBox) (errorText: string) =
+        Ui.setFieldError box errorText
+        syncShellVisual box
+
+    let clearFieldError (box: TextBox) =
+        Ui.clearFieldError box
+        syncShellVisual box
+
     /// 探活结果按服务商 id 暂存，用于在编辑器里回填模型列表。
     let probeResults = System.Collections.Generic.Dictionary<string, string list>()
+
+    /// 当前编辑器的探活挂钩：ApplyProbe 到达时清掉按钮 pending 并回填模型框，
+    /// 避免用户用陈旧列表覆盖刚探到的结果。对话框关闭时清空。
+    let mutable activeProbe: (string * (bool -> unit) * (string list -> unit)) option = None
 
     let providerPayload (id: string) (label: string) (kind: string) (baseUrl: string) (apiKey: string option) (models: string list) (defaultModel: string) (enabled: bool) (timeout: int) (retries: int) =
         let o = JsonObject()
@@ -128,17 +109,23 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             | Some p when not (System.String.IsNullOrWhiteSpace p.kind) -> p.kind
             | _ -> initialPreset |> Option.map (fun x -> x.kind) |> Option.defaultValue "openai"
 
-        let idField, idBox = Ui.labeledField "稳定标识" "例如 openai"
-        let labelField, labelBox = Ui.labeledField "显示名称" "在界面上怎么称呼它"
-        let urlField, urlBox = Ui.labeledField "端点地址" "https://api.openai.com/v1"
-        let keyField, keyBox = Ui.labeledField "API Key" "粘贴密钥"
+        let _, idBox = Ui.textField "例如 openai"
+        let idField = Ui.inputFieldGroup "稳定标识" "创建后不可修改；仅限字母、数字、下划线与连字符。" idBox
+        let _, labelBox = Ui.textField "在界面上怎么称呼它"
+        let labelField = Ui.inputFieldGroup "显示名称" "仅用于界面显示。" labelBox
+        let _, urlBox = Ui.textField "https://api.openai.com/v1"
+        let urlField = Ui.inputFieldGroup "端点地址" "https:// 开头的服务地址；原生与兼容接口均可。" urlBox
+        let _, keyBox = Ui.textField "粘贴密钥"
+        let keyField = Ui.inputFieldGroup "API Key" "只保存在服务端，界面不会回显。" keyBox
         keyBox.PasswordChar <- '●'
-        let modelsField, modelsBox = Ui.labeledField "模型列表" "每行一个模型名"
+        let _, modelsBox = Ui.textField "每行一个模型名"
+        let modelsField = Ui.inputFieldGroup "模型列表" "每行一个；也可用逗号分隔。" modelsBox
         modelsBox.AcceptsReturn <- true
         modelsBox.TextWrapping <- TextWrapping.Wrap
         modelsBox.MinHeight <- 92.0
         modelsBox.VerticalContentAlignment <- VerticalAlignment.Top
-        let defaultModelField, defaultModelBox = Ui.labeledField "默认模型" "留空则自动使用列表中第一个"
+        let _, defaultModelBox = Ui.textField "留空则自动使用列表中第一个"
+        let defaultModelField = Ui.inputFieldGroup "默认模型" "必须在模型列表中；留空自动选用第一个。" defaultModelBox
         let allBoxes = [ idBox; labelBox; urlBox; keyBox; modelsBox; defaultModelBox ]
         for box in allBoxes do attachFieldValidation box
 
@@ -150,18 +137,51 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = ReadingRhythm.captionLineHeight)
+        presetHint.IsVisible <- false
+
+        let mutable currentPreset: ProviderPreset option = initialPreset
+        let mutable applyingPreset = false
+        let mutable setPresetText: string -> unit = ignore
+
+        let syncPresetHint () =
+            presetHint.IsVisible <- not (String.IsNullOrWhiteSpace presetHint.Text)
 
         let applyPreset (preset: ProviderPreset) =
-            selectedKind <- preset.kind
-            urlBox.Text <- preset.baseUrl
-            modelsBox.Text <- String.Join("\n", preset.models)
-            defaultModelBox.Text <- preset.models |> List.tryHead |> Option.defaultValue ""
-            presetHint.Text <- preset.hint
-            if existing.IsNone then
-                idBox.Text <- ProviderPresets.suggestId preset takenIds
-                labelBox.Text <- preset.label
+            applyingPreset <- true
+            try
+                selectedKind <- preset.kind
+                currentPreset <- Some preset
+                urlBox.Text <- preset.baseUrl
+                modelsBox.Text <- String.Join("\n", preset.models)
+                defaultModelBox.Text <- preset.models |> List.tryHead |> Option.defaultValue ""
+                presetHint.Text <- preset.hint
+                syncPresetHint ()
+                setPresetText preset.label
+                if existing.IsNone then
+                    idBox.Text <- ProviderPresets.suggestId preset takenIds
+                    labelBox.Text <- preset.label
+            finally
+                applyingPreset <- false
 
-        let mutable setPresetText: string -> unit = ignore
+        /// 预设一旦被手改就不再是预设：按钮文案诚实回到“自定义”，
+        /// 按钮位置与 hint 行都在原处，只换文案，视觉不断层。
+        let markCustomIfDiverged () =
+            if not applyingPreset then
+                match currentPreset with
+                | Some p ->
+                    let normModels =
+                        (if isNull modelsBox.Text then "" else modelsBox.Text)
+                            .Split([| '\n'; '\r'; ',' |], StringSplitOptions.RemoveEmptyEntries)
+                        |> Array.map (fun s -> s.Trim())
+                        |> Array.filter (String.IsNullOrWhiteSpace >> not)
+                        |> Array.distinct
+                    let normPreset =
+                        p.models |> List.map (fun s -> s.Trim()) |> List.filter (String.IsNullOrWhiteSpace >> not) |> Array.ofList
+                    let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
+                    if url <> p.baseUrl.Trim() || normModels <> normPreset then
+                        currentPreset <- None
+                        setPresetText "自定义"
+                | None -> ()
         let presetOptions () =
             [ "服务商预设",
               ProviderPresets.all
@@ -176,6 +196,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 presetOptions
         setPresetText <- setText
         presetButton.HorizontalAlignment <- HorizontalAlignment.Stretch
+        urlBox.TextChanged.Add(fun _ -> markCustomIfDiverged ())
+        modelsBox.TextChanged.Add(fun _ -> markCustomIfDiverged ())
 
         match existing with
         | Some p ->
@@ -187,21 +209,35 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             defaultModelBox.Text <- p.defaultModel
             keyBox.PlaceholderText <- if p.hasApiKey then "已保存（留空则不改动）" else "粘贴密钥"
             presetHint.Text <- initialPreset |> Option.map (fun x -> x.hint) |> Option.defaultValue ""
+            syncPresetHint ()
         | None ->
             match initialPreset with
             | Some preset -> applyPreset preset
             | None -> ()
 
-        let probeButton =
-            Ui.button Ui.Secondary "从服务器获取模型列表" (fun () ->
-                let id = if isNull idBox.Text then "" else idBox.Text.Trim()
-                if String.IsNullOrWhiteSpace id then
-                    actions.toast "先填写稳定标识再探测。" Warning
-                elif not (takenIds |> List.contains id) then
-                    actions.toast "先保存服务商，然后再探测模型列表。" Warning
-                else
-                    actions.probeProvider id
-                    actions.toast "正在向服务商请求模型列表…" Neutral)
+        let probeIdleText = "从服务器获取模型列表"
+        let mutable setProbePending: bool -> unit = ignore
+        let runProbe () =
+            let id = if isNull idBox.Text then "" else idBox.Text.Trim()
+            if String.IsNullOrWhiteSpace id then
+                actions.toast "先填写稳定标识再探测。" Warning
+            elif not (takenIds |> List.contains id) then
+                actions.toast "先保存服务商，然后再探测模型列表。" Warning
+            else
+                setProbePending true
+                activeProbe <-
+                    Some (id, setProbePending, fun models ->
+                        modelsBox.Text <- String.Join("\n", models)
+                        let currentDefault = if isNull defaultModelBox.Text then "" else defaultModelBox.Text.Trim()
+                        if String.IsNullOrWhiteSpace currentDefault || not (List.contains currentDefault models) then
+                            defaultModelBox.Text <- models |> List.tryHead |> Option.defaultValue "")
+                actions.probeProvider id
+                actions.toast "正在向服务商请求模型列表…" Neutral
+        let probeButton = Ui.button Ui.Secondary probeIdleText runProbe
+        // pending 文案更长，预留最小宽度：label 切换不改变按钮几何。
+        Ui.preparePendingButton probeButton
+        setProbePending <- fun pending ->
+            Ui.setButtonPending probeButton pending probeIdleText "正在获取…"
 
         let enabledToggle, readEnabled, _, _ =
             Ui.toggle (existing |> Option.map (fun p -> p.enabled) |> Option.defaultValue true) ignore
@@ -276,20 +312,12 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 let errorMsg = (Ui.fieldValidationMessage box).Text
                 if not (String.IsNullOrWhiteSpace errorMsg) then
                     actions.toast errorMsg Warning
-                match box.Parent with
-                | :? Border as shell ->
-                    shell.BorderBrush <- Tokens.danger
-                    shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
-                | _ -> ()
+                // 错误行只展开自己所在的组（hint 与 error 互换），边框粗细不变；
+                // 这里只把焦点送到第一个错误处，不碰兄弟。
                 box.BringIntoView()
                 box.Focus(NavigationMethod.Directional) |> ignore
                 Dispatcher.UIThread.Post(fun () ->
                     if box.IsEffectivelyVisible && box.IsEnabled then
-                        match box.Parent with
-                        | :? Border as shell ->
-                            shell.BorderBrush <- Tokens.danger
-                            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.dangerSoft.Color))
-                        | _ -> ()
                         box.BringIntoView()
                         box.Focus(NavigationMethod.Directional) |> ignore)
             | None ->
@@ -334,10 +362,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             row.KeyDown.Add(fun e ->
                 if e.Key = Key.Escape then
                     e.Handled <- true
-                    overlay.CloseDialog()
-                elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
-                    e.Handled <- true
-                    save ())
+                    overlay.CloseDialog())
+            // Enter/Space 归 Ui.onClick：行级再处理会导致保存被触发两次，
+            // 多行模型框里的回车也会误提交。这里只处理 Esc。
             row
 
         let form =
@@ -370,10 +397,16 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
-        overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () -> editorActive <- false))
+        overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () -> editorActive <- false; activeProbe <- None))
 
     /// 探活结果回填：把服务商的模型列表直接更新到配置里。
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
+        match activeProbe with
+        | Some (pid, setPending, applyModels) when pid = providerId ->
+            activeProbe <- None
+            setPending false
+            if ok && not (List.isEmpty models) then applyModels models
+        | _ -> ()
         if ok then
             probeResults[providerId] <- models
             match Catalog.tryProvider providerId catalog with
@@ -491,7 +524,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let addButton = Ui.button Ui.Primary "添加服务商" (fun () -> this.ShowEditor None)
         addButton.HorizontalAlignment <- HorizontalAlignment.Left
         Ui.vstack
-            Tokens.space4
+            Tokens.space6
             [ Ui.vstack
                   Tokens.space1
                   [ Ui.heading "服务商" :> Control

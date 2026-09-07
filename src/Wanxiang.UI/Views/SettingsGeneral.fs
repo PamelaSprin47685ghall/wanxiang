@@ -88,10 +88,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             let currentState = if read () then "开启" else "关闭"
             Avalonia.Automation.AutomationProperties.SetItemStatus(row, currentState)
         Avalonia.Automation.AutomationProperties.SetItemStatus(row, if initial then "开启" else "关闭")
-        row.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                toggleAndRefresh ())
+        // Enter/Space 由 Ui.onClick 拥有：这里再绑一次会翻转两次，键盘用户将永远打不开开关。
         Ui.onClick row toggleAndRefresh
         let syncWrite v =
             write v

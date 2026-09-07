@@ -143,6 +143,8 @@ module Menu =
             let scroller =
                 ScrollViewer(
                     Content = panel,
+                    // 与 showGrouped 同一内部滚动上限：40 条也在浮层内滚动，不把卡片撑出视口。
+                    MaxHeight = 380.0,
                     HorizontalScrollBarVisibility = Primitives.ScrollBarVisibility.Disabled,
                     VerticalScrollBarVisibility = Primitives.ScrollBarVisibility.Auto)
             overlay.ShowPopup(anchor, scroller :> Control, alignRight, 200.0)

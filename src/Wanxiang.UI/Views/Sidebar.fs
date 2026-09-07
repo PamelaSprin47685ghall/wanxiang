@@ -60,7 +60,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             Background = Brushes.Transparent,
             BorderThickness = Thickness 0.0,
             Focusable = false)
-    let emptyState = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, IsVisible = false, Margin = Thickness(Tokens.space5, Tokens.space8, Tokens.space5, 0.0))
+    let emptyState = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, IsVisible = false, Margin = Thickness(Tokens.space5, Tokens.space8, Tokens.space5, Tokens.space8), VerticalAlignment = VerticalAlignment.Center)
     let emptyTitle =
         TextBlock(
             Text = "",
@@ -124,6 +124,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let summaryById = System.Collections.Generic.Dictionary<Guid, ConversationSummary>()
     let mutable visibleRowIds: Guid array = [||]
     let flatIndexByConversation = System.Collections.Generic.Dictionary<Guid, int>()
+    let mutable focusedRowId: Guid option = None
     let mutable archivedCount = 0
     let mutable hasArchivedToggle = false
     let mutable archivedToggleFlatIndex: int option = None
@@ -153,6 +154,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         clearSearchButton.Margin <- Thickness(Tokens.space2, 0.0, 0.0, 0.0)
         clearSearchButton.VerticalAlignment <- VerticalAlignment.Center
         searchBox.VerticalAlignment <- VerticalAlignment.Center
+        // 搜索占位符用 muted：比正文弱、比 faint 强，空输入框一眼可辨。
+        searchBox.PlaceholderForeground <- Tokens.textMuted
         let searchRow = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
         DockPanel.SetDock(searchIcon, Dock.Left)
         DockPanel.SetDock(clearSearchButton, Dock.Right)
@@ -186,10 +189,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     member private _.ApplyRowState(summary: ConversationSummary, host: Border) =
         let isActive = activeId = Some summary.id
         host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
-        if host.IsFocused then
-            host.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
-        else
-            host.BoxShadow <- BoxShadows()
+        // 键盘焦点环由 ActionBorder 统一绘制（outline 语义、零位移）；
+        // 这里只管选中底与左缘，悬停由事件处理补，避免两套阴影互相覆盖。
         host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
         let status =
             if isActive then "当前会话"
@@ -208,10 +209,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             | _ ->
                 let isActive = activeId = Some id
                 host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
-                if host.IsFocused then
-                    host.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
-                else
-                    host.BoxShadow <- BoxShadows()
+                // 焦点环同上：归 ActionBorder，避免与选中态阴影打架。
                 host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
                 Avalonia.Automation.AutomationProperties.SetItemStatus(host, if isActive then "当前会话" else "")
 
@@ -223,10 +221,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 conversationList.ScrollIntoView flatIndex
                 let focusHost () =
                     match rowHosts.TryGetValue id with
-                    | true, host -> host.Focus NavigationMethod.Directional |> ignore
+                    | true, host ->
+                        // Down 进结果时首项必须完整可见：布局完成后再 BringIntoView + 聚焦。
+                        host.BringIntoView()
+                        host.Focus NavigationMethod.Directional |> ignore
                     | _ -> ()
                 focusHost ()
-                Dispatcher.UIThread.Post focusHost
+                Dispatcher.UIThread.Post(focusHost, DispatcherPriority.Input)
             | _ -> ()
 
     member private this.MoveRowFocus(id: Guid, delta: int) =
@@ -483,6 +484,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             this.ApplyRowState(summary, host)
             if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
         host.GotFocus.Add(fun _ ->
+            focusedRowId <- Some summary.id
             this.ApplyRowState(summary, host)
             if activeId <> Some summary.id then host.Background <- Tokens.hover
             Ui.setReservedActionVisible moreButton true)
@@ -541,6 +543,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         host :> Control
 
     member private this.Rebuild() =
+        // Rebuild 会整体替换 ItemsSource：焦点若在某行上先记住，刷新后仍可见就还回去；
+        // 搜索框里打字时焦点不在行上，此时绝不抢焦点。
+        let restoreFocusId =
+            match focusedRowId with
+            | Some id ->
+                match rowHosts.TryGetValue id with
+                | true, host when host.IsFocused -> Some id
+                | _ -> None
+            | None -> None
         rowHosts.Clear()
         flatIndexByConversation.Clear()
         summaryById.Clear()
@@ -578,6 +589,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     | _ -> None
                 else None)
             |> Array.ofSeq
+        match restoreFocusId with
+        | Some id when visibleRowIds |> Array.contains id ->
+            Dispatcher.UIThread.Post(
+                (fun () ->
+                    match rowHosts.TryGetValue id with
+                    | true, host when not host.IsFocused -> host.Focus(NavigationMethod.Directional) |> ignore
+                    | _ -> ()),
+                DispatcherPriority.Input)
+        | _ -> ()
         let isSearchEmpty = not (String.IsNullOrWhiteSpace query) && List.isEmpty visible
         searchEmptyHint.IsVisible <- isSearchEmpty
         emptyState.IsVisible <- List.isEmpty visible && not isSearchEmpty
@@ -679,9 +699,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         searchDebounce.Tick.Add(fun _ ->
             searchDebounce.Stop()
             this.Rebuild()
-            // 搜索是一次新的结果上下文，明确从首项开始，而不是继承旧列表的
-            // 虚拟化 offset。Down 进入结果时第一项因此始终完全可见。
-            if visibleRowIds.Length > 0 then conversationList.ScrollIntoView 0)
+            // 结果刷新不碰滚动：首项可见由 Down 通路的 FocusRowAt/BringIntoView 保证。
+            ())
         searchBox.TextChanged.Add(fun _ ->
             Ui.setReservedActionVisible clearSearchButton (not (String.IsNullOrWhiteSpace searchBox.Text))
             searchDebounce.Stop()

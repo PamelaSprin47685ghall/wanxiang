@@ -63,6 +63,7 @@ type Composer(actions: ComposerActions) as this =
             MaxHeight = LayoutPolicy.attachmentDraftMaxHeight,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            AllowAutoHide = true,
             IsVisible = false,
             Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2))
 
@@ -106,6 +107,9 @@ type Composer(actions: ComposerActions) as this =
             FontSize = Tokens.fontMicro,
             Padding = Thickness(0.0, ControlMetrics.compactChipPaddingY),
             Foreground = Tokens.textFaint,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextAlignment = TextAlignment.Right,
+            HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center)
     let shell =
         Border(
@@ -228,7 +232,7 @@ type Composer(actions: ComposerActions) as this =
             queueButton.Focusable <- false
         let sendTip =
             if generating then
-                "停止生成 (Escape)"
+                if canStop then "停止生成 (Escape)" else "正在停止，请稍候…"
             elif not enabled then
                 if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
             elif uploading then
@@ -400,7 +404,8 @@ type Composer(actions: ComposerActions) as this =
                     let glyph = if attachment.mediaType.StartsWith("image/", StringComparison.Ordinal) then Icons.image else Icons.file
                     glyph Tokens.textMuted
                 else
-                    Ui.spinner 13.0
+                    // 与文件图标同为 iconGlyph：上传中→就绪只换字形，图标槽 15px 固定，chip 高度不动。
+                    Ui.spinner Tokens.iconGlyph
             icon.VerticalAlignment <- VerticalAlignment.Center
             icon.HorizontalAlignment <- HorizontalAlignment.Center
             let iconSlot =
@@ -625,9 +630,9 @@ type Composer(actions: ComposerActions) as this =
         inputRow.Children.Add actionRow
         inputRow.Children.Add input
 
-        let footerRow = DockPanel(LastChildFill = false)
+        let footerRow = DockPanel(LastChildFill = true)
         DockPanel.SetDock(modelChip, Dock.Left)
-        DockPanel.SetDock(hintText, Dock.Right)
+        // hint 不 dock、作为 fill 占剩余宽度并右对齐：长模型名或窄窗口下只省略提示文本，绝不与模型芯片重叠争位。
         footerRow.Children.Add modelChip
         footerRow.Children.Add hintText
 
