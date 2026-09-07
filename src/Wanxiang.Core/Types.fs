@@ -149,13 +149,18 @@ module GenerationErrorKind =
         | "config-invalid" -> ConfigInvalid
         | _ -> UnknownFailure
 
+    /// 针对服务商不可用（5xx 服务端故障 vs 本地网络不可达）的细分建议。
+    let hintUnavailable (isServerOutage: bool) : string =
+        if isServerOutage then "服务商暂时过载或维护中，稍等后可重试。"
+        else "无法连接到服务商网络，请检查网络设置。"
+
     /// 该类别下用户能做什么（UI 在错误卡片里给出的行动建议）。
     let hint (k: GenerationErrorKind) : string =
         match k with
         | ProviderAuthFailed -> "请在设置中检查该服务商的 API Key。"
         | ProviderRateLimited -> "已触发服务商限流，稍等一会儿再试。"
         | ProviderTimeout -> "网络或服务商响应过慢，可直接重试。"
-        | ProviderUnavailable -> "服务商暂时不可用或网络异常，请检查网络设置或稍后重试。"
+        | ProviderUnavailable -> "服务商暂时过载或网络异常，请检查网络设置或稍后重试。"
         | ProviderBadRequest -> "当前模型不接受这些生成参数，请到会话设置调整。"
         | ContextTooLong -> "对话太长了，可新建会话或删除部分早期消息。"
         | ModelNotFound -> "该模型不可用，请在设置中确认模型名称。"
@@ -166,25 +171,55 @@ module GenerationErrorKind =
 
 module GenerationError =
 
+    /// 判断指定错误类别是否属于可重试的临时故障（标准 HTTP 语义）。
+    let isRetryable (kind: GenerationErrorKind) : bool =
+        match kind with
+        | ProviderRateLimited | ProviderTimeout | ProviderUnavailable | UnknownFailure -> true
+        | ProviderAuthFailed | ProviderBadRequest | ContextTooLong | ModelNotFound | ContentFiltered | ToolFailed | ConfigInvalid -> false
+
     let create (kind: GenerationErrorKind) (message: string) : GenerationError =
         { kind = kind
           message = message
           detail = None
-          retryable =
-            match kind with
-            | ProviderRateLimited | ProviderTimeout | ProviderUnavailable | UnknownFailure -> true
-            | _ -> false
+          retryable = isRetryable kind
           retryAfterSeconds = None }
 
     let withDetail (detail: string) (e: GenerationError) : GenerationError =
         { e with detail = if System.String.IsNullOrWhiteSpace detail then None else Some detail }
 
+    /// 根据具体失败信息与技术细节提供更有针对性的行动建议。
+    /// 区分 502/503/504 等服务商过载/维护，与本地连接断开/DNS 异常。
+    let hint (e: GenerationError) : string =
+        match e.kind with
+        | ProviderUnavailable ->
+            let combined =
+                let d = e.detail |> Option.defaultValue ""
+                sprintf "%s %s" e.message d
+            let is5xx =
+                combined.Contains "500" || combined.Contains "502" || combined.Contains "503" || combined.Contains "504"
+                || combined.Contains "Bad Gateway" || combined.Contains "Service Unavailable"
+                || combined.Contains "Gateway Timeout" || combined.Contains "Internal Server Error"
+                || combined.Contains "过载" || combined.Contains "维护"
+            let isNetwork =
+                combined.Contains "无法连接" || combined.Contains "Connection refused"
+                || combined.Contains "actively refused" || combined.Contains "no such host"
+                || combined.Contains "name or service not known" || combined.Contains "network is unreachable"
+                || combined.Contains "network unreachable" || combined.Contains "connection reset"
+                || combined.Contains "SocketException"
+            if is5xx && not isNetwork then
+                GenerationErrorKind.hintUnavailable true
+            elif isNetwork then
+                GenerationErrorKind.hintUnavailable false
+            else
+                GenerationErrorKind.hint e.kind
+        | other -> GenerationErrorKind.hint other
+
     /// 供 UI 单行展示：说明 + 行动建议。
     let display (e: GenerationError) : string =
-        let hint = GenerationErrorKind.hint e.kind
-        if e.message.Contains hint then e.message
-        elif e.message.EndsWith("。") || e.message.EndsWith(" ") then e.message + hint
-        else e.message.TrimEnd() + " " + hint
+        let h = hint e
+        if e.message.Contains h then e.message
+        elif e.message.EndsWith("。") || e.message.EndsWith(" ") then e.message + h
+        else e.message.TrimEnd() + " " + h
 
 type WanxiangError =
     | ValidationError of string

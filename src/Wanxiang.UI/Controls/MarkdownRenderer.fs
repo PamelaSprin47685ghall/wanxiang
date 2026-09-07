@@ -84,6 +84,7 @@ type MarkdownRenderer(
             | MdMath(tex, display) ->
                 match MathRender.tryInline (if display then size + 1.0 else size) lh tex with
                 | Some visual ->
+                    visual.Margin <- Thickness(Tokens.space1, 0.0)
                     visual.VerticalAlignment <- VerticalAlignment.Center
                     let container = MathRender.inlineContainer visual
                     container.BaselineAlignment <- BaselineAlignment.Center
@@ -118,7 +119,7 @@ type MarkdownRenderer(
     /// 避免在 surrogate pair 或复杂 emoji 序列中间拆分造成畸变。
     static member SafeChunk (chunkSize: int) (str: string) : string list =
         if String.IsNullOrEmpty str || chunkSize <= 0 then
-            if String.IsNullOrEmpty str then [] else [ str ]
+            []
         else
             let enumerator = StringInfo.GetTextElementEnumerator(str)
             let chunks = ResizeArray<string>()
@@ -156,6 +157,7 @@ type MarkdownRenderer(
                         TextWrapping = TextWrapping.Wrap,
                         FontSize = size,
                         FontWeight = weight,
+                        LineHeight = defaultArg lineHeight (ReadingRhythm.proseLineHeight size),
                         Foreground = Tokens.accent,
                         TextDecorations = TextDecorations.Underline,
                         VerticalAlignment = VerticalAlignment.Center)
@@ -302,7 +304,7 @@ type MarkdownRenderer(
         applyWrap ()
 
         let header =
-            let actions = StackPanel(Orientation = Orientation.Horizontal, Spacing = 2.0)
+            let actions = StackPanel(Orientation = Orientation.Horizontal, Spacing = 2.0, VerticalAlignment = VerticalAlignment.Center)
             actions.Children.Add wrapButton
             actions.Children.Add copyButton
             let dock = DockPanel(LastChildFill = false)
@@ -314,7 +316,7 @@ type MarkdownRenderer(
                 Background = Tokens.codeHeaderBg,
                 BorderBrush = Tokens.codeBorder,
                 BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0),
-                Padding = Thickness(Tokens.blockPaddingX, Tokens.space1, Tokens.space2, Tokens.space1),
+                Padding = Thickness(Tokens.blockPaddingX, Tokens.space1, Tokens.space1, Tokens.space1),
                 Child = dock)
 
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
@@ -522,7 +524,7 @@ type MarkdownRenderer(
                   BorderBrush = Tokens.accent,
                   BorderThickness = Thickness(3.0, 0.0, 0.0, 0.0),
                   Padding = Thickness(Tokens.space3, Tokens.space2, Tokens.space3, Tokens.space2),
-                  Margin = Thickness(0.0, Tokens.space1, 0.0, ReadingRhythm.quoteBottomGap),
+                  Margin = Thickness(0.0, ReadingRhythm.quoteTopGap, 0.0, ReadingRhythm.quoteBottomGap),
                   Child = stack)
               :> Control ]
         | MdCode(language, code) -> [ this.RenderCode(language, code) ]

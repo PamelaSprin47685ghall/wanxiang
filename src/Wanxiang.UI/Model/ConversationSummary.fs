@@ -113,14 +113,25 @@ module ConversationSummary =
                 || summary.model.Contains(term, StringComparison.OrdinalIgnoreCase)
                 || summary.providerId.Contains(term, StringComparison.OrdinalIgnoreCase))
 
+    let private sortDescending (items: ConversationSummary list) =
+        items
+        |> List.sortWith (fun a b ->
+            let c = b.updatedAt.CompareTo(a.updatedAt)
+            if c <> 0 then c
+            else
+                let c2 = b.lastCommitId.CompareTo(a.lastCommitId)
+                if c2 <> 0 then c2
+                else b.createdAt.CompareTo(a.createdAt))
+
     /// 一次活动落在哪个时间桶。用最近活动而非创建时间，符合「最近用过的排前面」直觉。
     let bucketOf (now: DateTimeOffset) (summary: ConversationSummary) =
-        let days = (now.Date - summary.updatedAt.ToLocalTime().Date).TotalDays
+        let updated = summary.updatedAt.ToOffset(now.Offset)
+        let days = (now.Date - updated.Date).TotalDays
         if days < 1.0 then 0, "今天"
         elif days < 2.0 then 1, "昨天"
         elif days < 8.0 then 2, "过去 7 天"
         elif days < 31.0 then 3, "过去 30 天"
-        elif summary.updatedAt.ToLocalTime().Year = now.Year then 4, "今年"
+        elif updated.Year = now.Year then 4, "今年"
         else 5, "更早"
 
     /// 分组：置顶置首，归档单独一组放最后（默认隐藏时由调用方先过滤）。
@@ -134,11 +145,11 @@ module ConversationSummary =
             |> List.sortBy (fun ((order, _), _) -> order)
             |> List.map (fun ((_, label), items) ->
                 { label = label
-                  items = items |> List.sortByDescending (fun s -> s.lastCommitId) })
+                  items = sortDescending items })
         [ if not (List.isEmpty pinned) then
               { label = "置顶"
-                items = pinned |> List.sortByDescending (fun s -> s.lastCommitId) }
+                items = sortDescending pinned }
           yield! byBucket
           if not (List.isEmpty archived) then
               { label = "已归档"
-                items = archived |> List.sortByDescending (fun s -> s.lastCommitId) } ]
+                items = sortDescending archived } ]

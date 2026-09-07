@@ -50,9 +50,10 @@ module PlainText =
             text <- text.Replace("|", " ")
             whitespace.Replace(text, " ").Trim()
 
-    /// 转成纯文本并按显示宽度截断（CJK 按两格计）。
+    /// 转成纯文本并按字符簇（grapheme clusters / text elements）截断。
     /// 使用 StringInfo 遍历字符簇（grapheme clusters / text elements），
-    /// 避免在 surrogate pair 或复杂 emoji / ZWJ 序列中间切断导致乱码。
+    /// 避免在 surrogate pair 或复杂 emoji / ZWJ / 变音组合序列中间切断导致乱码。
+    /// 截断后对末尾空白作 TrimEnd，避免在空格后直接附带省略号。
     let summarize (maxChars: int) (raw: string) : string =
         let text = ofMarkdown raw
         if maxChars <= 0 then ""

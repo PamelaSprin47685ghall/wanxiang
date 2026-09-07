@@ -46,7 +46,7 @@ type Composer(actions: ComposerActions) as this =
             FontSize = Tokens.fontReading,
             Padding = Thickness(0.0, 4.0, 0.0, 4.0),
             MinHeight = ControlMetrics.composerInputMinHeight,
-            MaxHeight = ControlMetrics.composerInputMaxHeight,
+            MaxHeight = ControlMetrics.composerMaxHeight,
             VerticalContentAlignment = VerticalAlignment.Center)
 
     let attachmentStrip =
@@ -104,12 +104,11 @@ type Composer(actions: ComposerActions) as this =
 
     let dropHintBanner =
         Border(
-            Background = Tokens.accentSoft,
-            BorderBrush = Tokens.accent,
-            BorderThickness = Thickness 1.0,
-            CornerRadius = CornerRadius Tokens.radiusMd,
-            Padding = Thickness(Tokens.space3, Tokens.space2),
-            Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2),
+            Background = Tokens.accentFaint,
+            BorderBrush = Tokens.accentSoft,
+            BorderThickness = Thickness 1.5,
+            CornerRadius = CornerRadius Tokens.radiusLg,
+            IsHitTestVisible = false,
             IsVisible = false)
     let dropHintText =
         TextBlock(
@@ -166,9 +165,9 @@ type Composer(actions: ComposerActions) as this =
 
     let updateShellVisual () =
         if isDraggingOver then
-            shell.Background <- Tokens.accentSoft
+            shell.Background <- Tokens.surface
             shell.BorderBrush <- Tokens.accent
-            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
+            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
             dropHintBanner.IsVisible <- true
             input.PlaceholderText <- "释放文件以添加到当前会话附件"
         elif input.IsFocused then
@@ -263,6 +262,7 @@ type Composer(actions: ComposerActions) as this =
         Ui.onClick attachButton (fun () -> actions.pickAttachment ())
         Avalonia.Automation.AutomationProperties.SetName(attachmentStrip, "附件列表")
         ScrollViewer.SetHorizontalScrollBarVisibility(input, ScrollBarVisibility.Disabled)
+        ScrollViewer.SetVerticalScrollBarVisibility(input, ScrollBarVisibility.Auto)
 
         Ui.onClick sendButton (fun () ->
             if generating then actions.stopGeneration () else this.Submit())
@@ -274,9 +274,22 @@ type Composer(actions: ComposerActions) as this =
         input.AddHandler(
             InputElement.KeyDownEvent,
             EventHandler<KeyEventArgs>(fun _ e ->
-                if e.Key = Key.Escape && generating then
-                    e.Handled <- true
-                    actions.stopGeneration ()
+                if e.Key = Key.Escape then
+                    if generating then
+                        e.Handled <- true
+                        actions.stopGeneration ()
+                    else
+                        if input.SelectionStart <> input.SelectionEnd then
+                            e.Handled <- true
+                            input.ClearSelection()
+                        elif input.IsFocused then
+                            e.Handled <- true
+                            match TopLevel.GetTopLevel input with
+                            | null -> ()
+                            | top ->
+                                match top.FocusManager with
+                                | null -> ()
+                                | fm -> fm.Focus(null, NavigationMethod.Unspecified, KeyModifiers.None) |> ignore
                 elif e.Key = Key.Enter then
                     let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
                     let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
@@ -582,12 +595,24 @@ type Composer(actions: ComposerActions) as this =
         footerRow.Children.Add hintText
 
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
-        dropHintBanner.Child <- dropHintText
-        column.Children.Add dropHintBanner
         column.Children.Add attachmentScroller
         column.Children.Add inputRow
         column.Children.Add(Ui.hairline ())
         column.Children.Add footerRow
+
+        let dropOverlayContent =
+            Border(
+                Background = Tokens.accentSoft,
+                CornerRadius = CornerRadius Tokens.radiusMd,
+                Padding = Thickness(Tokens.space3, Tokens.space2),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = dropHintText)
+        dropHintBanner.Child <- dropOverlayContent
+
+        let shellGrid = Grid()
+        shellGrid.Children.Add column
+        shellGrid.Children.Add dropHintBanner
 
         shell.Padding <-
             Thickness(
@@ -595,7 +620,7 @@ type Composer(actions: ComposerActions) as this =
                 ControlMetrics.composerShellPaddingY,
                 Tokens.space2,
                 ControlMetrics.composerShellPaddingY)
-        shell.Child <- column
+        shell.Child <- shellGrid
         shell.BoxShadow <- Tokens.shadowSoft ()
 
         input.GotFocus.Add(fun _ ->
@@ -633,13 +658,11 @@ type Composer(actions: ComposerActions) as this =
                     updateShellVisual ()
 
         let handleDragLeave (e: DragEventArgs) =
-            // DragLeave fires on this or shell when exiting or entering child elements.
-            // Only reset when pointer truly leaves both this and shell bounds.
+            // DragLeave fires when exiting or moving between elements.
             if not (isWithinBounds this e) && not (isWithinBounds shell e) then
                 if isDraggingOver then
                     isDraggingOver <- false
                     updateShellVisual ()
-
         let handleDrop (e: DragEventArgs) =
             if isDraggingOver then
                 isDraggingOver <- false

@@ -50,6 +50,7 @@ module MessageCard =
         let scroller =
             ScrollViewer(
                 Content = content,
+                ClipToBounds = true,
                 MaxHeight = LayoutPolicy.expandedDetailMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -100,8 +101,8 @@ module MessageCard =
         host :> Control, setVisible
 
     let private formatDuration (ms: int64) =
-        if ms >= 1000L then sprintf "%.1f 秒" (float ms / 1000.0)
-        elif ms > 0L then sprintf "%d 毫秒" (int ms)
+        if ms >= 1000L then sprintf "%.1fs" (float ms / 1000.0)
+        elif ms > 0L then sprintf "%dms" (int ms)
         else ""
 
     let private technicalText (text: string) (size: float) (brush: IBrush) =
@@ -127,11 +128,20 @@ module MessageCard =
                 SelectionBrush = Tokens.accentSoft)
         let body, setBodyVisible = detailViewport (bodyText :> Control) (not collapsed)
         body.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
-        let chevronHost = Border(VerticalAlignment = VerticalAlignment.Center)
+        let chevronHost =
+            Border(
+                Width = Tokens.iconGlyph,
+                Height = Tokens.iconGlyph,
+                MinWidth = Tokens.iconGlyph,
+                MinHeight = Tokens.iconGlyph,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center)
         let mutable bodyVisible = not collapsed
         let syncChevron () =
-            chevronHost.Child <-
-                if bodyVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
+            let glyph = if bodyVisible then Icons.chevronDown Tokens.textMuted else Icons.chevronRight Tokens.textMuted
+            glyph.HorizontalAlignment <- HorizontalAlignment.Center
+            glyph.VerticalAlignment <- VerticalAlignment.Center
+            chevronHost.Child <- glyph
         let durationText =
             match durationMs with
             | Some ms ->
@@ -145,20 +155,24 @@ module MessageCard =
             titleRun.Foreground <- Tokens.textMuted
             let tb =
                 TextBlock(
-                    FontSize = ctx.fontSize - 2.0,
+                    FontSize = Tokens.fontSmall,
                     FontWeight = FontWeight.Medium,
+                    LineHeight = ReadingRhythm.captionLineHeight,
                     VerticalAlignment = VerticalAlignment.Center)
             tb.Inlines.Add titleRun
             if not (String.IsNullOrWhiteSpace durationText) then
                 let durRun = Run durationText
-                durRun.Foreground <- Tokens.textFaint
+                durRun.Foreground <- Tokens.textMuted
                 tb.Inlines.Add durRun
             tb
-        let headerRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1)
+        let headerRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
         headerRow.Children.Add chevronHost
         headerRow.Children.Add caption
         let header =
             ActionBorder(
+                CornerRadius = CornerRadius Tokens.radiusSm,
+                Padding = Thickness(Tokens.space1, 2.0),
+                Margin = Thickness 0.0,
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
                 Focusable = true,
@@ -196,8 +210,37 @@ module MessageCard =
     /// 缩成一个灰色小标签会让人以为它不重要。
     let private toolCallCard (ctx: MessageContext) (call: ToolCallView) : Control =
         let running = call.result.IsNone
-        let statusBrush: IBrush = if running then Tokens.accent else Tokens.success
-        let icon: Control = if running then Ui.spinner 14.0 else Icons.wrench statusBrush
+        let hasError =
+            match call.result with
+            | Some res when not (String.IsNullOrWhiteSpace res) ->
+                let trimmed = res.Trim()
+                if trimmed.StartsWith "{" && trimmed.EndsWith "}" then
+                    try
+                        use doc = JsonDocument.Parse trimmed
+                        let root = doc.RootElement
+                        root.ValueKind = JsonValueKind.Object
+                        && (root.TryGetProperty("error", ref (Unchecked.defaultof<_>))
+                            || (let mutable isErr = Unchecked.defaultof<_>
+                                root.TryGetProperty("isError", &isErr) && isErr.ValueKind = JsonValueKind.True))
+                    with _ -> false
+                else false
+            | _ -> false
+        let statusBrush: IBrush =
+            if running then Tokens.accent
+            elif hasError then Tokens.danger
+            else Tokens.success
+        let statusBg: IBrush =
+            if running then Tokens.accentFaint :> IBrush
+            elif hasError then Tokens.dangerSoft :> IBrush
+            else Tokens.surface :> IBrush
+        let statusBadgeText =
+            if running then "执行中"
+            elif hasError then "执行失败"
+            else "已完成"
+        let icon: Control =
+            if running then Ui.spinner 14.0
+            elif hasError then Icons.alert statusBrush
+            else Icons.wrench statusBrush
         icon.VerticalAlignment <- VerticalAlignment.Center
         let name =
             TextBlock(
@@ -208,13 +251,14 @@ module MessageCard =
                 VerticalAlignment = VerticalAlignment.Center)
         let state =
             Border(
-                Background = (if running then Tokens.accentFaint :> IBrush else Tokens.surface :> IBrush),
+                Background = statusBg,
                 CornerRadius = CornerRadius Tokens.radiusPill,
                 Padding = Thickness(Tokens.space2, 1.0),
+                Margin = Thickness 0.0,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child =
                     TextBlock(
-                        Text = (if running then "执行中" else "已完成"),
+                        Text = statusBadgeText,
                         FontSize = Tokens.fontMicro,
                         Foreground = statusBrush,
                         VerticalAlignment = VerticalAlignment.Center))
@@ -253,7 +297,14 @@ module MessageCard =
             |> fun text -> technicalText text Tokens.fontCaption Tokens.textMuted
         let detail, setDetailVisible = detailViewport (detailText :> Control) false
         detail.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
-        let chevronHost = Border(VerticalAlignment = VerticalAlignment.Center)
+        let chevronHost =
+            Border(
+                Width = Tokens.iconGlyph,
+                Height = Tokens.iconGlyph,
+                MinWidth = Tokens.iconGlyph,
+                MinHeight = Tokens.iconGlyph,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center)
         let headerDock = DockPanel(LastChildFill = false)
         let left = Ui.hstack Tokens.space2 [ icon; name :> Control; state :> Control ]
         DockPanel.SetDock(left, Dock.Left)
@@ -262,6 +313,8 @@ module MessageCard =
         headerDock.Children.Add chevronHost
         let headerRow =
             ActionBorder(
+                CornerRadius = CornerRadius Tokens.radiusSm,
+                Margin = Thickness 0.0,
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
                 Focusable = true,
@@ -283,11 +336,12 @@ module MessageCard =
                 Child = stack)
         let mutable detailVisible = false
         let syncChevron () =
-            chevronHost.Child <-
-                if detailVisible then Icons.chevronDown Tokens.textFaint
-                else Icons.chevronRight Tokens.textFaint
+            let glyph = if detailVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
+            glyph.HorizontalAlignment <- HorizontalAlignment.Center
+            glyph.VerticalAlignment <- VerticalAlignment.Center
+            chevronHost.Child <- glyph
         let syncToolName () =
-            let statusText = if running then "执行中" else "已完成"
+            let statusText = statusBadgeText
             let argInfo =
                 if argCount > 0 && not (String.IsNullOrWhiteSpace previewText) then
                     sprintf "，%d 个参数：%s" argCount previewText
@@ -299,7 +353,7 @@ module MessageCard =
             Avalonia.Automation.AutomationProperties.SetName(
                 host, sprintf "%s工具调用 %s" (if detailVisible then "收起" else "展开") call.name)
             Avalonia.Automation.AutomationProperties.SetName(headerRow, label)
-            Avalonia.Automation.AutomationProperties.SetItemStatus(headerRow, statusText)
+            Avalonia.Automation.AutomationProperties.SetItemStatus(headerRow, sprintf "调用工具 · %s（%s）" call.name statusText)
             Avalonia.Automation.AutomationProperties.SetHelpText(headerRow, if detailVisible then "收起参数与结果" else "展开查看参数与结果")
             Avalonia.Automation.AutomationProperties.SetHelpText(host, if detailVisible then "收起参数与结果" else "展开查看参数与结果")
             ToolTip.SetTip(headerRow, if detailVisible then "点击收起参数与结果" else "点击展开参数与结果")
@@ -405,21 +459,27 @@ module MessageCard =
         let row =
             StackPanel(
                 Orientation = Orientation.Horizontal,
-                Spacing = 2.0,
+                Spacing = Tokens.space1,
+                Margin = Thickness 0.0,
                 Opacity = idleActionOpacity,
                 VerticalAlignment = VerticalAlignment.Center)
-        let addButton (icon: IBrush -> Control) (tip: string) (action: unit -> unit) =
+        let addButton (icon: IBrush -> Control) (tip: string) (actionName: string) (help: string) (action: unit -> unit) =
             let button = Ui.iconButton icon tip
             button.Focusable <- true
+            button.Margin <- Thickness 0.0
+            button.Padding <- Thickness 0.0
             button.Cursor <- handCursor
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             ToolTip.SetTip(button, tip)
-            Avalonia.Automation.AutomationProperties.SetName(button, tip)
+            Avalonia.Automation.AutomationProperties.SetName(button, actionName)
+            Avalonia.Automation.AutomationProperties.SetHelpText(button, help)
             Ui.onClick button action
             row.Children.Add button
         let addCopyButton (text: string) =
             let button = Ui.iconButton Icons.copy "复制"
             button.Focusable <- true
+            button.Margin <- Thickness 0.0
+            button.Padding <- Thickness 0.0
             button.Cursor <- handCursor
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             ToolTip.SetTip(button, "复制")
@@ -457,12 +517,12 @@ module MessageCard =
         if not (String.IsNullOrWhiteSpace message.text) then
             addCopyButton message.text
         if MessageView.isUser message && not ctx.streaming then
-            addButton Icons.pencil "编辑并分叉" (fun () -> actions.editAndFork message)
+            addButton Icons.pencil "编辑并分叉" "编辑并分叉" "以编辑后的消息创建分叉会话" (fun () -> actions.editAndFork message)
         if not (MessageView.isUser message) && ctx.isLastAssistant && not ctx.streaming then
-            addButton Icons.refresh "重新生成" actions.regenerate
+            addButton Icons.refresh "重新生成" "重新生成" "丢弃最后一次回复并重新生成" actions.regenerate
         match message.commitId with
         | Some commitId when not ctx.streaming ->
-            addButton Icons.trash "删除这条消息" (fun () -> actions.deleteMessage commitId)
+            addButton Icons.trash "删除这条消息" "删除这条消息" "从会话历史中删除这条消息" (fun () -> actions.deleteMessage commitId)
         | _ -> ()
         row
 
@@ -480,7 +540,7 @@ module MessageCard =
                 TextWrapping = TextWrapping.Wrap)
         let hint =
             TextBlock(
-                Text = GenerationErrorKind.hint error.kind,
+                Text = GenerationError.hint error,
                 FontSize = Tokens.fontCaption,
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,

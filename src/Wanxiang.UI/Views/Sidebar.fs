@@ -556,6 +556,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                         header.Margin <- Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space1)
                         header.LetterSpacing <- 0.8
                         header.Foreground <- Tokens.textMuted
+                        header.FontSize <- Tokens.fontMicro
                         header :> Control
                     | ConversationRow summary -> this.RenderRow summary
                     | ArchivedToggle ->

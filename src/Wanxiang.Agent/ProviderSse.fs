@@ -66,7 +66,16 @@ module ProviderSse =
     let raiseForStatus (response: HttpResponseMessage) (body: string) : unit =
         if not response.IsSuccessStatusCode then
             let detail = if String.IsNullOrWhiteSpace body then response.ReasonPhrase else body
-            raise (HttpRequestException(detail, null, Nullable response.StatusCode))
+            let ex = new HttpRequestException(detail, null, Nullable response.StatusCode)
+            try
+                if not (isNull response.Headers.RetryAfter) then
+                    let ra = response.Headers.RetryAfter
+                    if ra.Delta.HasValue then
+                        ex.Data["RetryAfterSeconds"] <- int ra.Delta.Value.TotalSeconds
+                    elif ra.Date.HasValue then
+                        ex.Data["RetryAfterSeconds"] <- int (ra.Date.Value - DateTimeOffset.UtcNow).TotalSeconds
+            with _ -> ()
+            raise ex
 
     let private transient (status: System.Net.HttpStatusCode) =
         let code = int status

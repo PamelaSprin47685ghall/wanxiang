@@ -56,7 +56,7 @@ module ProviderFailure =
             let lowered = text.ToLowerInvariant()
             bodySignals |> List.tryPick (fun (needle, kind) -> if lowered.Contains needle then Some kind else None)
 
-    let private retryAfterOf (ex: System.ClientModel.ClientResultException) : int option =
+    let private retryAfterOfClientResult (ex: System.ClientModel.ClientResultException) : int option =
         try
             let response = ex.GetRawResponse()
             if isNull response then None
@@ -74,6 +74,43 @@ module ProviderFailure =
                 else None
         with _ -> None
 
+    let retryAfterOfResponse (response: HttpResponseMessage) : int option =
+        try
+            if isNull response || isNull response.Headers then None
+            elif not (isNull response.Headers.RetryAfter) then
+                let ra = response.Headers.RetryAfter
+                if ra.Delta.HasValue then
+                    let s = int ra.Delta.Value.TotalSeconds
+                    if s > 0 then Some s else None
+                elif ra.Date.HasValue then
+                    let s = int (ra.Date.Value - DateTimeOffset.UtcNow).TotalSeconds
+                    if s > 0 then Some s else None
+                else None
+            else
+                let mutable values: Collections.Generic.IEnumerable<string> = null
+                if response.Headers.TryGetValues("Retry-After", &values) then
+                    values
+                    |> Seq.tryHead
+                    |> Option.bind (fun v ->
+                        match Int32.TryParse v with
+                        | true, s when s > 0 -> Some s
+                        | _ ->
+                            match DateTimeOffset.TryParse v with
+                            | true, at ->
+                                let s = int (at - DateTimeOffset.UtcNow).TotalSeconds
+                                if s > 0 then Some s else None
+                            | _ -> None)
+                else None
+        with _ -> None
+
+    let private retryAfterOfHttpException (hre: HttpRequestException) : int option =
+        try
+            if hre.Data.Contains "RetryAfterSeconds" then
+                match hre.Data["RetryAfterSeconds"] with
+                | :? int as s when s > 0 -> Some s
+                | _ -> None
+            else None
+        with _ -> None
     let private kindOfStatus (status: int) (body: string) : GenerationErrorKind =
         match signalFromBody body with
         | Some kind -> kind
@@ -89,6 +126,10 @@ module ProviderFailure =
 
     let private serverUnavailableMessage (providerLabel: string) (status: int option) : string =
         match status with
+        | Some 500 -> sprintf "「%s」服务暂时不可用（HTTP 500）。" providerLabel
+        | Some 502 -> sprintf "「%s」服务暂时不可用（HTTP 502）。" providerLabel
+        | Some 503 -> sprintf "「%s」服务暂时不可用（HTTP 503）。" providerLabel
+        | Some 504 -> sprintf "「%s」服务暂时不可用（HTTP 504）。" providerLabel
         | Some s when s >= 500 -> sprintf "「%s」服务暂时不可用（HTTP %d）。" providerLabel s
         | _ -> sprintf "「%s」服务暂时不可用。" providerLabel
 
@@ -160,7 +201,7 @@ module ProviderFailure =
                     messageOf other providerLabel model
             { GenerationError.create kind message with
                 detail = Some(detailOf (if cre.Status > 0 then sprintf "HTTP %d · %s" cre.Status body else cre.Message))
-                retryAfterSeconds = retryAfterOf cre
+                retryAfterSeconds = retryAfterOfClientResult cre
                 retryable =
                     match kind with
                     | ProviderRateLimited | ProviderTimeout | ProviderUnavailable | UnknownFailure -> true
@@ -187,6 +228,7 @@ module ProviderFailure =
                     messageOf other providerLabel model
             { GenerationError.create kind message with
                 detail = Some(detailOf hre.Message)
+                retryAfterSeconds = retryAfterOfHttpException hre
                 retryable =
                     match kind with
                     | ProviderRateLimited | ProviderTimeout | ProviderUnavailable | UnknownFailure -> true
