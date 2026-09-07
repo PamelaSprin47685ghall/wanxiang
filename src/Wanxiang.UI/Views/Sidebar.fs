@@ -144,7 +144,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         searchShell.Child <- null
         let searchIcon = Icons.search Tokens.textFaint
         searchIcon.VerticalAlignment <- VerticalAlignment.Center
-        searchIcon.Margin <- Thickness(0.0, 0.0, Tokens.space2, 0.0)
+        searchIcon.Width <- Tokens.iconGlyph
+        searchIcon.Height <- Tokens.iconGlyph
+        // 图标光学基线与输入文本对齐：只下沉 iconBaselineNudge，不改外尺寸。
+        searchIcon.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space2, 0.0)
         // 清空按钮常驻槽位（Ui.setReservedActionVisible 只切透明度/命中），
         // 左侧留出与搜索图标对称的光学间距，出现时输入框不收缩。
         clearSearchButton.Margin <- Thickness(Tokens.space2, 0.0, 0.0, 0.0)
@@ -175,7 +178,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             searchEmptyHint.Background <- Brushes.Transparent)
         Ui.onClick searchEmptyHint (fun () -> this.ResetSearch true)
         searchEmptyHint.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape || e.Key = Key.Enter then
+            // Enter/Space 由 Ui.onClick 接管（单次清空）；Escape 必须显式处理，onClick 不覆盖它。
+            if e.Key = Key.Escape then
                 e.Handled <- true
                 this.ResetSearch true)
 
@@ -486,11 +490,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             this.ApplyRowState(summary, host)
             if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
         Ui.onClick host (fun () -> actions.openConversation summary.id)
+        // Enter/Space 由 Ui.onClick 统一接管（同一按键只打开一次）；
+        // 这里只处理行内导航与行级快捷键。
         host.KeyDown.Add(fun e ->
-            if e.Key = Key.Enter || e.Key = Key.Space then
-                e.Handled <- true
-                actions.openConversation summary.id
-            elif e.Key = Key.F2 then
+            if e.Key = Key.F2 then
                 e.Handled <- true
                 actions.renameConversation summary
             elif e.Key = Key.Delete then
@@ -663,6 +666,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 if visibleRowIds.Length > 0 then
                     e.Handled <- true
                     actions.openConversation visibleRowIds.[0]
+                elif searchEmptyHint.IsVisible then
+                    // 无结果时 Enter 把焦点送到空态提示（再按 Enter/Space 清空），键盘不断线。
+                    e.Handled <- true
+                    searchEmptyHint.Focus NavigationMethod.Directional |> ignore
             elif e.Key = Key.Escape then
                 e.Handled <- true
                 if not (String.IsNullOrEmpty searchBox.Text) then

@@ -23,59 +23,6 @@ type ConnectRequest = {
 /// 应用内对话框。桌面与 PWA 共用，全部画在 OverlayHost 上。
 module Dialogs =
 
-    let private captureOpener (overlay: OverlayHost) =
-        let popupFocus =
-            match overlay.LastPopupFocus with
-            | Some (:? Control as c) when c.IsEffectivelyVisible && c.IsEnabled -> Some c
-            | _ -> None
-        let popupAnchor =
-            match overlay.LastPopupAnchor with
-            | Some c when c.IsEffectivelyVisible && c.IsEnabled -> Some c
-            | _ -> None
-        let opener =
-            match TopLevel.GetTopLevel overlay.Root with
-            | null -> None
-            | top ->
-                match top.FocusManager with
-                | null -> None
-                | fm ->
-                    match fm.GetFocusedElement() with
-                    | :? Control as c when c.IsEffectivelyVisible && c.IsEnabled -> Some c
-                    | _ -> None
-        let preferredOpener =
-            match opener with
-            | Some c -> Some c
-            | None ->
-                match popupAnchor with
-                | Some a -> Some a
-                | None -> popupFocus
-        let restore () =
-            Dispatcher.UIThread.Post(fun () ->
-                let target =
-                    match preferredOpener with
-                    | Some c when c.IsEffectivelyVisible && c.IsEnabled -> Some c
-                    | _ ->
-                        match popupAnchor with
-                        | Some a when a.IsEffectivelyVisible && a.IsEnabled -> Some a
-                        | _ ->
-                            match popupFocus with
-                            | Some pf when pf.IsEffectivelyVisible && pf.IsEnabled -> Some pf
-                            | _ ->
-                                // Fallback to composer or first focusable in root
-                                overlay.Descendants overlay.Root
-                                |> Seq.tryPick (fun (c: Control) ->
-                                    match c with
-                                    | :? Composer as comp when comp.IsEffectivelyVisible && comp.IsEnabled -> Some(comp :> Control)
-                                    | _ -> None)
-                                |> Option.orElseWith (fun () ->
-                                    overlay.Focusables overlay.Root
-                                    |> Array.tryFind (fun c -> c.IsEffectivelyVisible && c.IsEnabled))
-                match target with
-                | Some (:? Composer as comp) -> comp.Focus()
-                | Some c -> c.Focus() |> ignore
-                | None -> ())
-        restore
-
     /// 返回按钮行与主操作按钮：调用方可在 ShowDialog 之后把焦点 post 到主按钮上
     ///（ShowDialog 内部的 focusFirst 会先聚焦第一个可聚焦项，后 post 者胜出）。
     /// 返回按钮行与主操作按钮，可指定默认聚焦按钮（true 聚焦确认按钮，false 聚焦取消按钮）。
@@ -136,7 +83,6 @@ module Dialogs =
         (confirmLabel: string)
         (onConfirm: string -> (bool -> unit) -> unit)
         =
-        let restoreOpener = captureOpener overlay
         let shell, box = Ui.textField hint
         box.Text <- initial
         let validation = Ui.fieldValidationMessage box
@@ -236,8 +182,8 @@ module Dialogs =
                 e.Handled <- true
                 overlay.CloseDialog())
         overlay.ShowDialog(content :> Control, 420.0, onClosed = (fun () ->
-            active <- false
-            restoreOpener ()))
+            // 焦点恢复统一走 OverlayHost 的单记忆路径，这里只标记失活。
+            active <- false))
         Dispatcher.UIThread.Post(fun () ->
             box.Focus() |> ignore
             box.SelectAll())
@@ -251,7 +197,6 @@ module Dialogs =
         (onConfirm: unit -> unit)
         (defaultFocusDanger: bool)
         =
-        let restoreOpener = captureOpener overlay
         let message =
             TextBlock(
                 Text = body,
@@ -281,7 +226,8 @@ module Dialogs =
             elif (e.Key = Key.Enter || e.Key = Key.Space) && not buttons.Children[0].IsFocused then
                 e.Handled <- true
                 confirmAction ())
-        overlay.ShowDialog(content :> Control, 420.0, onClosed = restoreOpener)
+        // 关闭后焦点由 OverlayHost 恢复到触发控件，无需第二套记忆。
+        overlay.ShowDialog(content :> Control, 420.0)
         Dispatcher.UIThread.Post(fun () ->
             let target = if defaultFocusDanger then dangerButton else buttons.Children[0] :?> Border
             target.Focus(NavigationMethod.Directional) |> ignore)
@@ -293,7 +239,6 @@ module Dialogs =
 
     /// 长文本编辑（编辑消息并分叉）。
     let editText (overlay: OverlayHost) (title: string) (initial: string) (confirmLabel: string) (onConfirm: string -> unit) =
-        let restoreOpener = captureOpener overlay
         let shell, box = Ui.textArea "消息内容" 160.0
         box.Text <- initial
         let submit () =
@@ -322,7 +267,7 @@ module Dialogs =
             if e.Key = Key.Escape then
                 e.Handled <- true
                 overlay.CloseDialog())
-        overlay.ShowDialog(content :> Control, 520.0, onClosed = restoreOpener)
+        overlay.ShowDialog(content :> Control, 520.0)
         Dispatcher.UIThread.Post(fun () ->
             box.Focus() |> ignore
             box.CaretIndex <- (if isNull box.Text then 0 else box.Text.Length))
@@ -334,7 +279,6 @@ module Dialogs =
         (onConnect: ConnectRequest -> unit)
         (onSubmitCode: string -> unit)
         : (string -> unit) =
-        let restoreOpener = captureOpener overlay
         let urlField, urlBox = Ui.labeledField "服务器地址" "ws://127.0.0.1:8765/ws"
         urlBox.Text <- defaultUrl
         let tokenField, tokenBox = Ui.labeledField "访问令牌" "有令牌就粘贴，没有就用配对码"
@@ -455,7 +399,7 @@ module Dialogs =
             if e.Key = Key.Escape then
                 e.Handled <- true
                 overlay.CloseDialog())
-        overlay.ShowDialog(content :> Control, 460.0, onClosed = restoreOpener)
+        overlay.ShowDialog(content :> Control, 460.0)
         Dispatcher.UIThread.Post(fun () -> urlBox.Focus() |> ignore)
         fun message ->
             status.Text <- message
@@ -468,7 +412,6 @@ module Dialogs =
         (current: SessionConfig)
         (onSave: SessionConfig -> (bool -> unit) -> unit)
         =
-        let restoreOpener = captureOpener overlay
         let mutable dialogActive = true
         let mutable pending = false
         let mutable setPending: bool -> unit = ignore
@@ -690,12 +633,10 @@ module Dialogs =
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
         applyParamLayout paramGrid.Bounds.Width
         overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () ->
-            dialogActive <- false
-            restoreOpener ()))
+            dialogActive <- false))
 
     /// 快捷键帮助（分类清晰、对标桌面端成熟软件）。
     let shortcuts (overlay: OverlayHost) =
-        let restoreOpener = captureOpener overlay
         let sections =
             [ "全局与导航",
               [ "Ctrl / ⌘ + N", "新建会话"
@@ -757,7 +698,7 @@ module Dialogs =
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
         content.Focusable <- true
         closeBtn.Focusable <- true
-        overlay.ShowDialog(scroller :> Control, 460.0, onClosed = restoreOpener)
+        overlay.ShowDialog(scroller :> Control, 460.0)
         Dispatcher.UIThread.Post(fun () ->
             if closeBtn.IsEffectivelyVisible && closeBtn.IsEnabled then
                 closeBtn.Focus() |> ignore

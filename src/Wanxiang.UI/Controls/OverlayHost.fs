@@ -111,7 +111,24 @@ type OverlayHost(root: Grid) =
         | _ -> ()
 
     let rememberDialogFocus () =
-        previousDialogFocus <- currentFocus ()
+        // 唯一的对话框焦点记忆：当前焦点仍可恢复就记它；从浮层菜单里打开对话框时，
+        // 菜单项在 ClosePopup 后已脱离视觉树，同步读到的焦点不可恢复，此时回退到
+        // 浮层锚点 / 上次浮层焦点，保证关闭对话框后焦点有处可去。Dialogs 只传业务
+        // onClosed，不再自带第二套记忆。
+        let cur = currentFocus ()
+        let usable =
+            match cur with
+            | Some (:? Control as c) when isRestorable c -> true
+            | _ -> false
+        previousDialogFocus <-
+            if usable then cur
+            else
+                match lastPopupAnchor with
+                | Some a when isRestorable a -> Some (a :> IInputElement)
+                | _ ->
+                    match lastPopupFocus with
+                    | Some (:? Control as c) when isRestorable c -> lastPopupFocus
+                    | _ -> None
 
     let rememberPopupFocus () =
         let cur = currentFocus ()
@@ -328,7 +345,8 @@ type OverlayHost(root: Grid) =
                 | Success -> Tokens.success :> IBrush
                 | Warning -> Tokens.warning :> IBrush
                 | Failure -> Tokens.danger :> IBrush
-            let bar = Border(Width = ControlMetrics.toastAccentWidth, CornerRadius = CornerRadius Tokens.radiusPill, Background = accentBrush)
+            // 语气条只做 2px 的弱提示：不抢正文，用现有不透明度阶梯压暗，无位移、无新 token。
+            let bar = Border(Width = ControlMetrics.toastAccentWidth, CornerRadius = CornerRadius Tokens.radiusPill, Background = accentBrush, Opacity = Tokens.opacitySubtle)
             let body =
                 TextBlock(
                     Text = message,

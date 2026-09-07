@@ -110,7 +110,7 @@ type Composer(actions: ComposerActions) as this =
     let shell =
         Border(
             Background = Tokens.surface,
-            BorderBrush = Tokens.border,
+            BorderBrush = Tokens.borderSoft,
             BorderThickness = Thickness 1.0,
             CornerRadius = CornerRadius Tokens.radiusLg)
 
@@ -118,7 +118,7 @@ type Composer(actions: ComposerActions) as this =
         Border(
             Background = Tokens.accentFaint,
             BorderBrush = Tokens.accentSoft,
-            BorderThickness = Thickness 1.5,
+            BorderThickness = Thickness 1.0,
             CornerRadius = CornerRadius Tokens.radiusLg,
             IsHitTestVisible = false,
             IsVisible = false)
@@ -194,7 +194,7 @@ type Composer(actions: ComposerActions) as this =
                     "输入消息…"
         else
             shell.Background <- Tokens.surface
-            shell.BorderBrush <- Tokens.border
+            shell.BorderBrush <- Tokens.borderSoft
             shell.BoxShadow <- Tokens.shadowSoft ()
             dropHintBanner.IsVisible <- false
             input.PlaceholderText <-
@@ -220,8 +220,12 @@ type Composer(actions: ComposerActions) as this =
         let uploading = attachments |> List.exists (fun a -> not a.ready)
         let canSend = enabled && not uploading && (hasText || hasAttachment)
         Ui.setEnabled sendButton (if generating then canStop else canSend)
-        queueButton.IsVisible <- generating
         Ui.setEnabled queueButton canSend
+        Ui.setReservedActionVisible queueButton generating
+        if generating && not canSend then
+            queueButton.Opacity <- Tokens.opacityDisabled
+            queueButton.IsHitTestVisible <- false
+            queueButton.Focusable <- false
         let sendTip =
             if generating then
                 "停止生成 (Escape)"
@@ -583,7 +587,9 @@ type Composer(actions: ComposerActions) as this =
 
     /// 窄屏只收紧已有控件，不增加第二套输入逻辑：隐藏键盘提示、压缩边距与模型标签。
     member this.SetCompactMode(value: bool) =
-        hintText.IsVisible <- not value
+        hintText.IsVisible <- true
+        hintText.Opacity <- if not value then 1.0 else 0.0
+        hintText.IsHitTestVisible <- not value
         modelCaption.MaxWidth <-
             if value then ControlMetrics.composerModelCompactMaxWidth else ControlMetrics.composerModelMaxWidth
         let actionSize = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton

@@ -33,7 +33,7 @@ type MarkdownRenderer(
     static member val DefaultCodeWrap = false with get, set
 
     /// 行内片段渲染成一个可选中的文本块。
-    member private _.RenderInlines(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily, ?textAlignment: TextAlignment) : Control =
+    member private _.RenderInlines(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily, ?textAlignment: TextAlignment, ?noBoldAccent: bool) : Control =
         let lh = defaultArg lineHeight (ReadingRhythm.proseLineHeight size)
         let block =
             SelectableTextBlock(
@@ -55,7 +55,9 @@ type MarkdownRenderer(
                 let run = Run text
                 // 不用合成加粗：内嵌字体只有 Regular，Skia 合成时 CJK 前进宽度会算错，
                 // 字形互相叠压。强调改由强调色承担，可读且不会渲染错乱。
-                if bold then run.Foreground <- Tokens.accent
+                // 表格内禁用加粗转强调色：表头本来就常是整行加粗，
+                // 全转强调色会让整行变成唯一的蓝色色块（blue grab）。
+                if bold && not (defaultArg noBoldAccent false) then run.Foreground <- Tokens.accent
                 if italic then run.FontStyle <- FontStyle.Italic
                 if strike then run.TextDecorations <- TextDecorations.Strikethrough
                 if code then
@@ -145,16 +147,16 @@ type MarkdownRenderer(
 
     /// 链接需要能点。整段文本共用一个 TextBlock 时无法逐字命中，
     /// 因此只在段落里存在链接时，把段落拆成「文本 + 可点链接」的 WrapPanel。
-    member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily, ?textAlignment: TextAlignment) : Control =
+    member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily, ?textAlignment: TextAlignment, ?noBoldAccent: bool) : Control =
         let hasLink = items |> List.exists (function MdLink _ -> true | _ -> false)
         if not hasLink then
-            this.RenderInlines(items, size, weight, brush, ?lineHeight = lineHeight, ?fontFamily = fontFamily, ?textAlignment = textAlignment)
+            this.RenderInlines(items, size, weight, brush, ?lineHeight = lineHeight, ?fontFamily = fontFamily, ?textAlignment = textAlignment, ?noBoldAccent = noBoldAccent)
         else
             let wrap = WrapPanel(Orientation = Orientation.Horizontal)
             let mutable buffer: MdInline list = []
             let flush () =
                 if not (List.isEmpty buffer) then
-                    let control = this.RenderInlines(List.rev buffer, size, weight, brush, ?lineHeight = lineHeight, ?fontFamily = fontFamily, ?textAlignment = textAlignment)
+                    let control = this.RenderInlines(List.rev buffer, size, weight, brush, ?lineHeight = lineHeight, ?fontFamily = fontFamily, ?textAlignment = textAlignment, ?noBoldAccent = noBoldAccent)
                     wrap.Children.Add control
                     buffer <- []
             let addLinkChunk (fullText: string) (chunk: string) (url: string) (focusable: bool) =
@@ -339,7 +341,8 @@ type MarkdownRenderer(
                 BorderThickness = Thickness 1.0,
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 ClipToBounds = true,
-                Margin = Thickness(0.0, ReadingRhythm.codeBlockVerticalMargin),
+                // 与段落同一节奏：只留底外边距一段 paragraphGap。
+                Margin = Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap),
                 Child = stack)
         root.DetachedFromVisualTree.Add(fun _ -> restoreDefaultState ())
         root
@@ -396,6 +399,9 @@ type MarkdownRenderer(
 
             let mutable gridRowIndex = 0
             let mutable dataRowIndex = 0
+            // 总行数（含表头）：除末行外每行底部分隔 hairline，
+            // 形成单线行分隔而不是逐格重边框。
+            let totalRowCount = (if List.isEmpty header then 0 else 1) + List.length rows
             let addRow (cells: MdInline list list) (isHeader: bool) =
                 grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
                 for columnIndex in 0 .. columnCount - 1 do
@@ -413,10 +419,11 @@ type MarkdownRenderer(
                             content,
                             fontSize - 0.5,
                             (if isHeader then FontWeight.Medium else FontWeight.Normal),
-                            (if isHeader then Tokens.text else Tokens.textMuted),
+                            Tokens.textMuted,
                             ?fontFamily = (if isNumeric && not isHeader then Some Tokens.monoFontFamily else None),
                             lineHeight = ReadingRhythm.proseLineHeight (fontSize - 0.5),
-                            ?textAlignment = textAlignment)
+                            ?textAlignment = textAlignment,
+                            noBoldAccent = true)
                     let hasBreak = content |> List.exists (function MdBreak -> true | _ -> false)
                     cell.VerticalAlignment <-
                         if isHeader then VerticalAlignment.Center
@@ -425,15 +432,15 @@ type MarkdownRenderer(
                     cell.HorizontalAlignment <- alignment
                     let background: IBrush =
                         if isHeader then Tokens.tableHeader
-                        // 隔行底色比逐行画线更轻：长表格里横线多了会变成网格纸
+                        // 隔行微底色 + 单 hairline 行分隔：横线只出现在行与行之间，
+                        // 不画逐格纵线，避免长表格变成网格纸。
                         elif dataRowIndex % 2 = 1 then Tokens.tableStripe
                         else Brushes.Transparent
-                    let hasRowsBelow = not (List.isEmpty rows)
                     let host =
                         Border(
                             Padding = Thickness(Tokens.blockPaddingX, Tokens.blockPaddingY),
                             BorderBrush = Tokens.borderSoft,
-                            BorderThickness = Thickness(0.0, 0.0, 0.0, (if isHeader && hasRowsBelow then 1.0 else 0.0)),
+                            BorderThickness = Thickness(0.0, 0.0, 0.0, (if gridRowIndex < totalRowCount - 1 then 1.0 else 0.0)),
                             Background = background,
                             ClipToBounds = true,
                             UseLayoutRounding = true,
@@ -462,7 +469,9 @@ type MarkdownRenderer(
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 ClipToBounds = true,
                 UseLayoutRounding = true,
-                Margin = Thickness(0.0, ReadingRhythm.tableVerticalMargin),
+                // 与段落同一节奏：只留底外边距一段 paragraphGap，
+                // 上沿贴住上一段的底间距，不再双倍叠加。
+                Margin = Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Child = tableContent)
             :> Control
@@ -471,7 +480,7 @@ type MarkdownRenderer(
         match MathRender.tryBlock (fontSize + 1.0) tex with
         | Some control ->
             control.HorizontalAlignment <- HorizontalAlignment.Center
-            control.Margin <- Thickness(0.0, Tokens.space3)
+            control.Margin <- Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap)
             [ control ]
         | None -> [ this.RenderCode("tex", tex) ]
 
@@ -509,7 +518,7 @@ type MarkdownRenderer(
                             Foreground = Tokens.textMuted,
                             MinWidth = ReadingRhythm.listMarkerWidth,
                             TextAlignment = TextAlignment.Right,
-                            Margin = Thickness(float depth * ReadingRhythm.listIndentStep, 1.0, Tokens.space2, 0.0),
+                            Margin = Thickness(float depth * ReadingRhythm.listIndentStep, 0.0, Tokens.space2, 0.0),
                             VerticalAlignment = VerticalAlignment.Top)
                         :> Control
                     else
@@ -577,13 +586,20 @@ type MarkdownRenderer(
                 let last = stack.Children[stack.Children.Count - 1]
                 let lm = last.Margin
                 last.Margin <- Thickness(lm.Left, lm.Top, lm.Right, 0.0)
+            // 嵌套引用向左退一整步 space2、顶部归零收进父内边距，
+            // 纵向只留一段 paragraphGap，与段落同节奏。
+            let quoteMargin =
+                if insideQuote then
+                    Thickness(Tokens.space2, 0.0, 0.0, ReadingRhythm.paragraphGap)
+                else
+                    Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap)
             [ Border(
-                  Background = Tokens.hover,
-                  CornerRadius = CornerRadius(0.0, Tokens.radiusSm, Tokens.radiusSm, 0.0),
+                  // 无卡片铬：只有左缘强调条 + 弱化文字，不加底色与圆角。
+                  Background = Brushes.Transparent,
                   BorderBrush = Tokens.accent,
                   BorderThickness = Thickness(3.0, 0.0, 0.0, 0.0),
                   Padding = Thickness(Tokens.space3, Tokens.space2, Tokens.space3, Tokens.space2),
-                  Margin = Thickness(0.0, (if insideQuote then Tokens.space2 else ReadingRhythm.quoteTopGap), 0.0, (if insideQuote then Tokens.space2 else ReadingRhythm.quoteBottomGap)),
+                  Margin = quoteMargin,
                   Child = stack)
               :> Control ]
         | MdCode(language, code) -> [ this.RenderCode(language, code) ]

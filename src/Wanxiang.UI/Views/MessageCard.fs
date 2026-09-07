@@ -47,6 +47,10 @@ module MessageCard =
 
     let private handCursor = new Cursor(StandardCursorType.Hand)
 
+    /// 用户气泡选中底：半透明白只把深底提亮一档，浅/深主题下暖白字都保持可读。
+    /// 主题无关因此不进 Tokens，只在气泡内使用。
+    let private userBubbleSelection = SolidColorBrush(Color.FromArgb(0x59uy, 255uy, 255uy, 255uy)) :> IBrush
+
     /// 大段详情统一使用“限高阅读窗 → 主动展开全文”的二阶段 contract。
     /// 首次展开不会把当前阅读位置瞬间推走数屏；需要全文时用户仍有明确入口。
     let private detailViewport (content: Control) (initiallyVisible: bool) : Control * (bool -> unit) =
@@ -173,8 +177,8 @@ module MessageCard =
                     Ui.setIcon button Icons.check Tokens.success
                     Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                     applyIconBaselineNudge button
-                    ToolTip.SetTip(button, "已复制！")
-                    Avalonia.Automation.AutomationProperties.SetName(button, "已复制！")
+                    ToolTip.SetTip(button, "已复制")
+                    Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
                     Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制到剪贴板")
                     let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
                     timer.Tick.Add(fun _ ->
@@ -317,10 +321,6 @@ module MessageCard =
         header.GotFocus.Add(fun _ -> updateHeaderVisual ())
         header.LostFocus.Add(fun _ -> updateHeaderVisual ())
         Ui.onClick header toggle
-        header.KeyDown.Add(fun e ->
-            if header.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
-                e.Handled <- true
-                toggle ())
         syncChevron ()
         syncHeaderName ()
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
@@ -605,11 +605,21 @@ module MessageCard =
                 Margin = Thickness(0.0, 0.0, 0.0, Tokens.space3),
                 Child = stack)
         let mutable detailVisible = false
+        let toolRotate = RotateTransform(if detailVisible then 90.0 else 0.0)
+        let toolChevronTransitions = Avalonia.Animation.Transitions()
+        let toolRotateTransition = Avalonia.Animation.DoubleTransition()
+        toolRotateTransition.Property <- RotateTransform.AngleProperty
+        toolRotateTransition.Duration <- MotionPolicy.duration 150
+        toolChevronTransitions.Add toolRotateTransition
+        toolRotate.Transitions <- toolChevronTransitions
+        let toolChevronGlyph = Icons.chevronRight Tokens.textFaint
+        toolChevronGlyph.HorizontalAlignment <- HorizontalAlignment.Center
+        toolChevronGlyph.VerticalAlignment <- VerticalAlignment.Center
+        toolChevronGlyph.RenderTransform <- toolRotate
+        toolChevronGlyph.RenderTransformOrigin <- RelativePoint.Center
+        chevronHost.Child <- toolChevronGlyph
         let syncChevron () =
-            let glyph = if detailVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
-            glyph.HorizontalAlignment <- HorizontalAlignment.Center
-            glyph.VerticalAlignment <- VerticalAlignment.Center
-            chevronHost.Child <- glyph
+            toolRotate.Angle <- if detailVisible then 90.0 else 0.0
         let syncToolName () =
             let statusText = statusBadgeText
             let argInfo =
@@ -783,8 +793,8 @@ module MessageCard =
                 Ui.setIcon button Icons.check Tokens.success
                 Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                 applyIconBaselineNudge button
-                ToolTip.SetTip(button, "已复制！")
-                Avalonia.Automation.AutomationProperties.SetName(button, "已复制！")
+                ToolTip.SetTip(button, "已复制")
+                Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
                 Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制消息正文")
                 let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
                 timer.Tick.Add(fun _ ->
@@ -893,28 +903,82 @@ module MessageCard =
             detailHost.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
             let mutable visible = false
             let mutable toggleDetail: unit -> unit = ignore
-            let detailButton = Ui.button Ui.Ghost "技术细节" (fun () -> toggleDetail ())
-            detailButton.Cursor <- handCursor
-            detailButton.Focusable <- true
-            detailButton.Margin <- Thickness 0.0
-            detailButton.Padding <- Thickness(Tokens.space4, ControlMetrics.textButtonPaddingY)
+            // 与思考过程/工具调用同一套 chevron 语法：字形常驻、只转 0°/90°；
+            // Ui.onClick 已含 Enter/Space 键盘激活，不再另挂 KeyDown（挂两份会触发两次）。
+            let detailChevronHost =
+                Border(
+                    Width = Tokens.iconGlyph,
+                    Height = Tokens.iconGlyph,
+                    MinWidth = Tokens.iconGlyph,
+                    MinHeight = Tokens.iconGlyph,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Center)
+            let detailRotate = RotateTransform(0.0)
+            let detailChevronTransitions = Avalonia.Animation.Transitions()
+            let detailRotateTransition = Avalonia.Animation.DoubleTransition()
+            detailRotateTransition.Property <- RotateTransform.AngleProperty
+            detailRotateTransition.Duration <- MotionPolicy.duration 150
+            detailChevronTransitions.Add detailRotateTransition
+            detailRotate.Transitions <- detailChevronTransitions
+            let detailChevronGlyph = Icons.chevronRight Tokens.textMuted
+            detailChevronGlyph.HorizontalAlignment <- HorizontalAlignment.Center
+            detailChevronGlyph.VerticalAlignment <- VerticalAlignment.Center
+            detailChevronGlyph.RenderTransform <- detailRotate
+            detailChevronGlyph.RenderTransformOrigin <- RelativePoint.Center
+            detailChevronHost.Child <- detailChevronGlyph
+            let detailCaption =
+                TextBlock(
+                    Text = "技术细节",
+                    FontSize = Tokens.fontSmall,
+                    FontWeight = FontWeight.Medium,
+                    Foreground = Tokens.textMuted,
+                    VerticalAlignment = VerticalAlignment.Center)
+            let detailHeaderRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+            detailHeaderRow.Children.Add detailChevronHost
+            detailHeaderRow.Children.Add detailCaption
+            let detailToggle =
+                ActionBorder(
+                    CornerRadius = CornerRadius Tokens.radiusSm,
+                    Padding = Thickness(Tokens.space1, 3.0),
+                    Margin = Thickness 0.0,
+                    Background = Brushes.Transparent,
+                    BorderBrush = Brushes.Transparent,
+                    BorderThickness = Thickness 1.0,
+                    Cursor = handCursor,
+                    Focusable = true,
+                    Child = detailHeaderRow)
             let syncDetailButton () =
-                Ui.setButtonText detailButton (if visible then "收起技术细节" else "技术细节")
-                ToolTip.SetTip(detailButton, if visible then "收起错误技术细节" else "展开查看技术细节")
-                Avalonia.Automation.AutomationProperties.SetName(detailButton, if visible then "收起技术细节" else "技术细节")
-                Avalonia.Automation.AutomationProperties.SetHelpText(detailButton, if visible then "收起错误技术细节" else "展开查看技术细节")
-                Avalonia.Automation.AutomationProperties.SetRole(detailButton, AutomationRole.Button)
-                Avalonia.Automation.AutomationProperties.SetExpanded(detailButton, visible)
-            detailButton.KeyDown.Add(fun e ->
-                if detailButton.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
-                    e.Handled <- true
-                    toggleDetail ())
+                detailRotate.Angle <- if visible then 90.0 else 0.0
+                detailCaption.Text <- if visible then "收起技术细节" else "技术细节"
+                ToolTip.SetTip(detailToggle, if visible then "收起错误技术细节" else "展开查看技术细节")
+                Avalonia.Automation.AutomationProperties.SetName(detailToggle, if visible then "收起技术细节" else "技术细节")
+                Avalonia.Automation.AutomationProperties.SetHelpText(detailToggle, if visible then "收起错误技术细节" else "展开查看技术细节")
+                Avalonia.Automation.AutomationProperties.SetRole(detailToggle, AutomationRole.Button)
+                Avalonia.Automation.AutomationProperties.SetExpanded(detailToggle, visible)
+            let updateDetailVisual () =
+                if detailToggle.IsFocused then
+                    detailToggle.BorderBrush <- Tokens.accent
+                    detailToggle.Background <- Tokens.hover
+                    detailToggle.Opacity <- 1.0
+                elif detailToggle.IsPointerOver then
+                    detailToggle.BorderBrush <- Tokens.line
+                    detailToggle.Background <- Tokens.hover
+                    detailToggle.Opacity <- 0.9
+                else
+                    detailToggle.BorderBrush <- Brushes.Transparent
+                    detailToggle.Background <- Brushes.Transparent
+                    detailToggle.Opacity <- 1.0
+            detailToggle.PointerEntered.Add(fun _ -> updateDetailVisual ())
+            detailToggle.PointerExited.Add(fun _ -> updateDetailVisual ())
+            detailToggle.GotFocus.Add(fun _ -> updateDetailVisual ())
+            detailToggle.LostFocus.Add(fun _ -> updateDetailVisual ())
+            Ui.onClick detailToggle (fun () -> toggleDetail ())
             toggleDetail <- fun () ->
                 visible <- not visible
                 setDetailVisible visible
                 syncDetailButton ()
             syncDetailButton ()
-            actionRow.Children.Add detailButton
+            actionRow.Children.Add detailToggle
             detailContainer.Children.Add detailHost
         | None -> ()
         let cardLayout = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
@@ -1052,7 +1116,7 @@ module MessageCard =
                 TextBlock(
                     Text = time,
                     FontSize = Tokens.fontMicro,
-                    Foreground = Tokens.textMuted,
+                    Foreground = Tokens.textFaint,
                     HorizontalAlignment =
                         (if MessageView.isUser message then HorizontalAlignment.Right else HorizontalAlignment.Left),
                     VerticalAlignment = VerticalAlignment.Center)
@@ -1066,7 +1130,7 @@ module MessageCard =
                     Spacing = Tokens.space1,
                     VerticalAlignment = VerticalAlignment.Center)
             let timeTb =
-                TextBlock(Text = time, FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted, VerticalAlignment = VerticalAlignment.Center)
+                TextBlock(Text = time, FontSize = Tokens.fontMicro, Foreground = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
             let sepTb =
                 TextBlock(Text = " · ", FontSize = Tokens.fontMicro, Foreground = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
             panel.Children.Add timeTb
@@ -1095,7 +1159,7 @@ module MessageCard =
                         FontSize = ctx.fontSize,
                         Foreground = Tokens.userBubbleText,
                         LineHeight = ReadingRhythm.proseLineHeight ctx.fontSize,
-                        SelectionBrush = Tokens.accentHover))
+                        SelectionBrush = userBubbleSelection))
             else
                 body.Children.Add(renderer.RenderText message.text)
 
@@ -1116,13 +1180,25 @@ module MessageCard =
 
         let bubble =
             if MessageView.isUser message then
-                Border(
-                    Background = Tokens.userBubble,
-                    CornerRadius = CornerRadius(Tokens.radiusLg, Tokens.radiusLg, Tokens.radiusSm, Tokens.radiusLg),
-                    Padding = Thickness(Tokens.space4, Tokens.space3),
-                    MaxWidth = LayoutPolicy.userMessageMaxWidth,
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    Child = body)
+                // 用户气泡可聚焦：键盘焦点环只用 focusRingSpread 外阴影，不加边框粗细，不抖动排版。
+                let host =
+                    Border(
+                        Background = Tokens.userBubble,
+                        CornerRadius = CornerRadius(Tokens.radiusLg, Tokens.radiusLg, Tokens.radiusSm, Tokens.radiusLg),
+                        Padding = Thickness(Tokens.space4, Tokens.space3),
+                        MaxWidth = LayoutPolicy.userMessageMaxWidth,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Focusable = true,
+                        Child = body)
+                Avalonia.Automation.AutomationProperties.SetName(host, "用户消息")
+                host.GotFocus.Add(fun e ->
+                    match e.NavigationMethod with
+                    | NavigationMethod.Tab
+                    | NavigationMethod.Directional ->
+                        host.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
+                    | _ -> ())
+                host.LostFocus.Add(fun _ -> host.BoxShadow <- BoxShadows())
+                host
             else
                 Border(
                     Background = Brushes.Transparent,

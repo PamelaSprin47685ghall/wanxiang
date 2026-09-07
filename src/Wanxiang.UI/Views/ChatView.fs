@@ -345,7 +345,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             restoreTitleActionFocus ()
 
     member private this.BeginTitleEdit() =
-        if titleEditable && titleAction.Focusable && not (String.IsNullOrWhiteSpace titleText.Text) then
+        if titleEditable && titleAction.Focusable then
             // 进编辑模式前先对齐几何：与 titleAction 同高同宽，右侧按钮不跳。
             ensureTitleEditGeometry ()
             editingTitle <- true
@@ -363,13 +363,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member this.SetTitle(text: string, editable: bool) =
         titleEditable <- editable
-        if titleEditShell.IsVisible then
-            editingTitle <- false
-            titleEditShell.IsVisible <- false
-            titleAction.IsVisible <- true
+        // 服务端标题在用户改名途中到达（首答自动标题）时，不能丢弃输入框里的草稿：
+        // 隐藏标签跟进最新值（取消会露出它），提交仍以草稿为准。
+        let editing = editable && editingTitle && titleEditShell.IsVisible
+        editingTitle <- editing
+        titleEditShell.IsVisible <- editing
+        titleAction.IsVisible <- not editing
         titleText.TextTrimming <- TextTrimming.CharacterEllipsis
         titleText.Text <- text
-        titleEditBox.Text <- text
+        if not editing then
+            titleEditBox.Text <- text
         titleAction.Focusable <- editable
         titleAction.Cursor <- if editable then new Cursor(StandardCursorType.Hand) else null
         syncTitleChrome text
