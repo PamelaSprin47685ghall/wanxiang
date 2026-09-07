@@ -33,14 +33,15 @@ type MarkdownRenderer(
     static member val DefaultCodeWrap = false with get, set
 
     /// 行内片段渲染成一个可选中的文本块。
-    member private _.RenderInlines(items: MdInline list, size: float, weight: FontWeight, brush: IBrush) : Control =
+    member private _.RenderInlines(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float) : Control =
+        let lh = defaultArg lineHeight (ReadingRhythm.proseLineHeight size)
         let block =
             SelectableTextBlock(
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = size,
                 FontWeight = weight,
                 Foreground = brush,
-                LineHeight = ReadingRhythm.proseLineHeight size,
+                LineHeight = lh,
                 SelectionBrush = Tokens.accentSoft)
         for item in items do
             match item with
@@ -58,6 +59,7 @@ type MarkdownRenderer(
                     run.Foreground <- Tokens.text
                     run.Background <- Tokens.inlineCodeBg
                     run.FontSize <- size - 0.5
+                    run.BaselineAlignment <- BaselineAlignment.Center
                 block.Inlines.Add run
             | MdLink(text, url) ->
                 let link = Run text
@@ -74,8 +76,12 @@ type MarkdownRenderer(
                 block.PointerReleased.Add(fun _ -> ())
                 ToolTip.SetTip(block, url)
             | MdMath(tex, display) ->
-                match MathRender.tryInline (if display then size + 1.0 else size) (ReadingRhythm.proseLineHeight size) tex with
-                | Some visual -> block.Inlines.Add(MathRender.inlineContainer visual)
+                match MathRender.tryInline (if display then size + 1.0 else size) lh tex with
+                | Some visual ->
+                    visual.VerticalAlignment <- VerticalAlignment.Center
+                    let container = MathRender.inlineContainer visual
+                    container.BaselineAlignment <- BaselineAlignment.Center
+                    block.Inlines.Add container
                 | None ->
                     // 没有脚本后端或 TeX 有语法错：按行内代码呈现原式，
                     // 至少让读者看得见作者写了什么
@@ -84,6 +90,7 @@ type MarkdownRenderer(
                     run.Foreground <- Tokens.text
                     run.Background <- Tokens.inlineCodeBg
                     run.FontSize <- size - 0.5
+                    run.BaselineAlignment <- BaselineAlignment.Center
                     block.Inlines.Add run
             | MdImage(alt, url) ->
                 // 默认不主动请求远程 Markdown 图片：避免阅读模型回复时向第三方
@@ -124,16 +131,16 @@ type MarkdownRenderer(
 
     /// 链接需要能点。整段文本共用一个 TextBlock 时无法逐字命中，
     /// 因此只在段落里存在链接时，把段落拆成「文本 + 可点链接」的 WrapPanel。
-    member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush) : Control =
+    member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float) : Control =
         let hasLink = items |> List.exists (function MdLink _ -> true | _ -> false)
         if not hasLink then
-            this.RenderInlines(items, size, weight, brush)
+            this.RenderInlines(items, size, weight, brush, ?lineHeight = lineHeight)
         else
             let wrap = WrapPanel(Orientation = Orientation.Horizontal)
             let mutable buffer: MdInline list = []
             let flush () =
                 if not (List.isEmpty buffer) then
-                    let control = this.RenderInlines(List.rev buffer, size, weight, brush)
+                    let control = this.RenderInlines(List.rev buffer, size, weight, brush, ?lineHeight = lineHeight)
                     wrap.Children.Add control
                     buffer <- []
             let addLinkChunk (fullText: string) (chunk: string) (url: string) (focusable: bool) =
@@ -361,18 +368,21 @@ type MarkdownRenderer(
         | Some control -> [ control ]
         | None -> [ this.RenderCode("tex", tex) ]
 
-    member private this.RenderBlock(block: MdBlock) : Control list =
+    member private this.RenderBlock(block: MdBlock, ?inQuote: bool) : Control list =
+        let insideQuote = defaultArg inQuote false
+        let textColor = if insideQuote then Tokens.textMuted else Tokens.text
+        let textLineHeight = if insideQuote then ReadingRhythm.secondaryLineHeight fontSize else ReadingRhythm.proseLineHeight fontSize
         match block with
         | MdMathBlock tex -> this.RenderMath tex
         // Markdig 把独立成段的 $$…$$ 也解析成行内公式；这里还原成块，否则不会居中
         | MdParagraph [ MdMath(tex, true) ] -> this.RenderMath tex
         | MdHeading(level, items) ->
             let size = headingSize level
-            let control = this.RenderInlineRow(items, size, FontWeight.Medium, Tokens.text)
+            let control = this.RenderInlineRow(items, size, FontWeight.Medium, textColor)
             control.Margin <- Thickness(0.0, ReadingRhythm.headingBefore level, 0.0, ReadingRhythm.headingAfter level)
             [ control ]
         | MdParagraph items ->
-            let control = this.RenderInlineRow(items, fontSize, FontWeight.Normal, Tokens.text)
+            let control = this.RenderInlineRow(items, fontSize, FontWeight.Normal, textColor, lineHeight = textLineHeight)
             control.Margin <- Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap)
             [ control ]
         | MdList(ordered, items) ->
@@ -411,7 +421,7 @@ type MarkdownRenderer(
                             HorizontalAlignment = HorizontalAlignment.Left,
                             Child = dot)
                         :> Control
-                let body = this.RenderInlineRow(content, fontSize, FontWeight.Normal, Tokens.text)
+                let body = this.RenderInlineRow(content, fontSize, FontWeight.Normal, textColor, lineHeight = textLineHeight)
                 let row = DockPanel()
                 DockPanel.SetDock(marker, Dock.Left)
                 row.Children.Add marker
@@ -440,7 +450,7 @@ type MarkdownRenderer(
                     mark.Width <- 10.0
                     mark.Height <- 10.0
                     box.Child <- mark
-                let body = this.RenderInlineRow(content, fontSize, FontWeight.Normal, (if isChecked then Tokens.textMuted else Tokens.text))
+                let body = this.RenderInlineRow(content, fontSize, FontWeight.Normal, (if isChecked then Tokens.textMuted else textColor), lineHeight = textLineHeight)
                 let row = DockPanel()
                 DockPanel.SetDock(box, Dock.Left)
                 row.Children.Add box
@@ -450,12 +460,12 @@ type MarkdownRenderer(
         | MdQuote inner ->
             let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
             for child in inner do
-                for control in this.RenderBlock child do
+                for control in this.RenderBlock(child, inQuote = true) do
                     stack.Children.Add control
             [ Border(
-                  BorderBrush = Tokens.accentSoft,
+                  BorderBrush = Tokens.accent,
                   BorderThickness = Thickness(3.0, 0.0, 0.0, 0.0),
-                  Padding = Thickness(Tokens.space4, Tokens.space1, 0.0, 0.0),
+                  Padding = Thickness(Tokens.space3, Tokens.space1, 0.0, Tokens.space1),
                   Margin = Thickness(0.0, Tokens.space1, 0.0, ReadingRhythm.quoteBottomGap),
                   Child = stack)
               :> Control ]
@@ -464,7 +474,7 @@ type MarkdownRenderer(
             [ Border(
                   Height = 1.0,
                   Background = Tokens.borderSoft,
-                  Margin = Thickness(0.0, ReadingRhythm.headingBefore 3),
+                  Margin = Thickness(0.0, ReadingRhythm.headingBefore 3, 0.0, ReadingRhythm.headingBefore 3),
                   HorizontalAlignment = HorizontalAlignment.Stretch)
               :> Control ]
         | MdTable(header, rows) -> [ this.RenderTable(header, rows) ]

@@ -10,6 +10,7 @@ open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Platform.Storage
 open Avalonia.Threading
+open Avalonia.VisualTree
 
 /// 输入区对外暴露的动作。
 type ComposerActions = {
@@ -113,11 +114,37 @@ type Composer(actions: ComposerActions) as this =
     let mutable generating = false
     let mutable canStop = true
     let mutable enabled = false
+    let mutable disabledReason = ""
+    let mutable wasActiveBeforeDisabled = false
+    let mutable isDraggingOver = false
     let promptHistory = ResizeArray<string>()
     let mutable historyIndex = -1
     let mutable uncommittedDraft = ""
     let maxHistoryCount = 100
     let mutable attachments: PendingAttachment list = []
+
+    let tryFocusInput () =
+        let act () =
+            try
+                if VisualExtensions.IsAttachedToVisualTree input && input.IsEffectivelyVisible && input.IsEnabled then
+                    input.Focus() |> ignore
+            with _ -> ()
+        if Dispatcher.UIThread.CheckAccess() then act ()
+        else Dispatcher.UIThread.Post(fun () -> act ())
+
+    let updateShellVisual () =
+        if isDraggingOver then
+            shell.Background <- Tokens.accentSoft
+            shell.BorderBrush <- Tokens.accent
+            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
+        elif input.IsFocused then
+            shell.Background <- Tokens.surface
+            shell.BorderBrush <- Tokens.accent
+            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
+        else
+            shell.Background <- Tokens.surface
+            shell.BorderBrush <- Tokens.border
+            shell.BoxShadow <- Tokens.shadowSoft ()
 
     let refreshSendState () =
         let hasText = not (String.IsNullOrWhiteSpace input.Text)
@@ -127,7 +154,25 @@ type Composer(actions: ComposerActions) as this =
         Ui.setEnabled sendButton (if generating then canStop else canSend)
         queueButton.IsVisible <- generating
         Ui.setEnabled queueButton canSend
-        ToolTip.SetTip(sendButton, if generating then "停止生成" elif uploading then "等待附件上传完成" else "发送")
+        let sendTip =
+            if generating then "停止生成"
+            elif not enabled then
+                if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
+            elif uploading then "等待附件上传完成"
+            elif not hasText && not hasAttachment then "未输入内容"
+            else "发送"
+        ToolTip.SetTip(sendButton, sendTip)
+        Avalonia.Automation.AutomationProperties.SetName(sendButton, if generating then "停止生成" else "发送")
+
+        if generating then
+            let queueTip =
+                if not enabled then
+                    if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
+                elif uploading then "等待附件上传完成"
+                elif not hasText && not hasAttachment then "未输入内容"
+                else "排队发送"
+            ToolTip.SetTip(queueButton, queueTip)
+            Avalonia.Automation.AutomationProperties.SetName(queueButton, "排队发送")
 
     do
         modelChip.Child <-
@@ -215,9 +260,11 @@ type Composer(actions: ComposerActions) as this =
                     historyIndex <- -1
                     uncommittedDraft <- ""
                     // 所有权已经移交；回调若切到了另一份草稿，不清它的内容。
-                    if input.Text = text then input.Text <- ""
+                    if input.Text = text then
+                        input.Text <- ""
+                        input.CaretIndex <- 0
                     refreshSendState ()
-                    input.Focus() |> ignore
+                    tryFocusInput ()
 
     member private this.RenderAttachments() =
         attachmentStrip.Children.Clear()
@@ -255,7 +302,7 @@ type Composer(actions: ComposerActions) as this =
             let remove = Ui.iconButton Icons.close "移除"
             Ui.onClick remove (fun () ->
                 actions.removeAttachment attachment.attachmentId
-                Dispatcher.UIThread.Post(fun () -> input.Focus() |> ignore))
+                tryFocusInput ())
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1, VerticalAlignment = VerticalAlignment.Center)
             row.Children.Add iconSlot
             row.Children.Add name
@@ -334,7 +381,11 @@ type Composer(actions: ComposerActions) as this =
 
     /// 启用输入。`reason` 在禁用时说明为什么不能发。
     member this.SetEnabled(value: bool, reason: string) =
+        let wasEnabled = enabled
+        if not value && (input.IsFocused || wasActiveBeforeDisabled) then
+            wasActiveBeforeDisabled <- true
         enabled <- value
+        disabledReason <- reason
         // 连接暂不可用时仍能写草稿；只限制发送与上传。
         input.IsEnabled <- true
         Ui.setEnabled attachButton value
@@ -342,6 +393,9 @@ type Composer(actions: ComposerActions) as this =
         disabledNotice.Text <- reason
         disabledNotice.IsVisible <- not value && not (String.IsNullOrWhiteSpace reason)
         refreshSendState ()
+        if not wasEnabled && value && wasActiveBeforeDisabled then
+            wasActiveBeforeDisabled <- false
+            tryFocusInput ()
 
     member _.SetModelLabel(text: string) = modelCaption.Text <- text
 
@@ -363,13 +417,13 @@ type Composer(actions: ComposerActions) as this =
             if value then Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space2)
             else Thickness(Tokens.shellInset, Tokens.space4, Tokens.shellInset, Tokens.space3)
 
-    member _.Focus() = input.Focus() |> ignore
+    member _.Focus() = tryFocusInput ()
 
     /// 把文本塞进输入框（编辑重发、提示词模板）。
     member _.SetText(text: string) =
         input.Text <- text
         input.CaretIndex <- if isNull text then 0 else text.Length
-        input.Focus() |> ignore
+        tryFocusInput ()
 
     member this.Build() =
         this.Background <- Brushes.Transparent
@@ -407,14 +461,23 @@ type Composer(actions: ComposerActions) as this =
         shell.BoxShadow <- Tokens.shadowSoft ()
 
         input.GotFocus.Add(fun _ ->
-            shell.BorderBrush <- Tokens.accent
-            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color)))
+            wasActiveBeforeDisabled <- true
+            updateShellVisual ())
         input.LostFocus.Add(fun _ ->
-            shell.BorderBrush <- Tokens.border
-            shell.BoxShadow <- Tokens.shadowSoft ())
+            if enabled then wasActiveBeforeDisabled <- false
+            updateShellVisual ())
 
         DragDrop.SetAllowDrop(shell, true)
         DragDrop.SetAllowDrop(this, true)
+
+        let isWithinBounds (visual: Visual) (e: DragEventArgs) =
+            try
+                let bounds = visual.Bounds
+                if bounds.Width > 0.0 && bounds.Height > 0.0 then
+                    let pos = e.GetPosition visual
+                    Rect(0.0, 0.0, bounds.Width, bounds.Height).Contains pos
+                else false
+            with _ -> false
 
         let handleDragOver (e: DragEventArgs) =
             let hasFiles =
@@ -422,20 +485,25 @@ type Composer(actions: ComposerActions) as this =
                 (e.DataTransfer.Contains(DataFormat.File) || e.DataTransfer.TryGetFiles() <> null)
             if hasFiles then
                 e.DragEffects <- DragDropEffects.Copy
-                shell.BorderBrush <- Tokens.accent
-                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
+                if not isDraggingOver then
+                    isDraggingOver <- true
+                    updateShellVisual ()
             else
                 e.DragEffects <- DragDropEffects.None
+                if isDraggingOver then
+                    isDraggingOver <- false
+                    updateShellVisual ()
 
-        let handleDragLeave (_: DragEventArgs) =
-            if not input.IsFocused then
-                shell.BorderBrush <- Tokens.border
-                shell.BoxShadow <- Tokens.shadowSoft ()
+        let handleDragLeave (e: DragEventArgs) =
+            if not (isWithinBounds this e || isWithinBounds shell e) then
+                if isDraggingOver then
+                    isDraggingOver <- false
+                    updateShellVisual ()
 
         let handleDrop (e: DragEventArgs) =
-            if not input.IsFocused then
-                shell.BorderBrush <- Tokens.border
-                shell.BoxShadow <- Tokens.shadowSoft ()
+            if isDraggingOver then
+                isDraggingOver <- false
+                updateShellVisual ()
             if e.DataTransfer <> null then
                 let files =
                     let multi = e.DataTransfer.TryGetFiles()
@@ -446,6 +514,7 @@ type Composer(actions: ComposerActions) as this =
                 if not (List.isEmpty files) then
                     e.Handled <- true
                     actions.dropFiles files
+                    tryFocusInput ()
 
         shell.AddHandler(DragDrop.DragOverEvent, EventHandler<DragEventArgs>(fun _ e -> handleDragOver e))
         shell.AddHandler(DragDrop.DragLeaveEvent, EventHandler<DragEventArgs>(fun _ e -> handleDragLeave e))

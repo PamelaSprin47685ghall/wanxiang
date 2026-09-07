@@ -34,6 +34,8 @@ module ReadingRhythm =
     let listItemGap = Tokens.space1
     let listBlockGap = Tokens.space2
     let blockGap = Tokens.space2
+    let codeBlockVerticalMargin = Tokens.space3
+    let tableVerticalMargin = Tokens.space3
     let quoteBottomGap = Tokens.space3
 
     let headingBefore (level: int) =

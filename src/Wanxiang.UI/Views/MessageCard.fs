@@ -321,26 +321,35 @@ module MessageCard =
         let row =
             StackPanel(
                 Orientation = Orientation.Horizontal,
-                Spacing = 0.0,
+                Spacing = 2.0,
                 Opacity = idleActionOpacity,
                 VerticalAlignment = VerticalAlignment.Center)
         let addButton (icon: IBrush -> Control) (tip: string) (action: unit -> unit) =
             let button = Ui.iconButton icon tip
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+            ToolTip.SetTip(button, tip)
+            Avalonia.Automation.AutomationProperties.SetName(button, tip)
             Ui.onClick button action
             row.Children.Add button
         let addCopyButton (text: string) =
             let button = Ui.iconButton Icons.copy "复制"
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+            ToolTip.SetTip(button, "复制")
+            Avalonia.Automation.AutomationProperties.SetName(button, "复制")
+            let mutable copyTimer: DispatcherTimer option = None
             let doCopy () =
                 actions.copyText text
+                copyTimer |> Option.iter (fun t -> t.Stop())
                 Ui.setIcon button Icons.check Tokens.success
                 ToolTip.SetTip(button, "已复制！")
+                Avalonia.Automation.AutomationProperties.SetName(button, "已复制！")
                 let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
                 timer.Tick.Add(fun _ ->
                     timer.Stop()
                     Ui.setIcon button Icons.copy Tokens.textMuted
-                    ToolTip.SetTip(button, "复制"))
+                    ToolTip.SetTip(button, "复制")
+                    Avalonia.Automation.AutomationProperties.SetName(button, "复制"))
+                copyTimer <- Some timer
                 timer.Start()
             Ui.onClick button doCopy
             row.Children.Add button
@@ -394,7 +403,10 @@ module MessageCard =
                 Spacing = Tokens.space2,
                 Margin = Thickness(0.0, Tokens.space3, 0.0, 0.0))
         if error.retryable then
-            actionRow.Children.Add(Ui.button Ui.Secondary "重试" onRetry)
+            let retryButton = Ui.button Ui.Secondary "重试" onRetry
+            Avalonia.Automation.AutomationProperties.SetName(retryButton, "重试生成")
+            ToolTip.SetTip(retryButton, "重新尝试生成")
+            actionRow.Children.Add retryButton
         match error.detail with
         | Some detail ->
             let detailText = technicalText detail Tokens.fontMicro Tokens.textFaint
@@ -573,7 +585,7 @@ module MessageCard =
                     VerticalAlignment = VerticalAlignment.Center)
             if MessageView.isUser message then
                 line.HorizontalAlignment <- HorizontalAlignment.Right
-                line.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, gutter - 5.0, 0.0)
+                line.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, gutter, 0.0)
                 match metaText with
                 | Some text -> line.Children.Add text
                 | None -> ()
