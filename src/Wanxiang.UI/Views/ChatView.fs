@@ -270,16 +270,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         sessionSettingsButton.IsVisible <- hasConversation
         if not (isNull (box headerBar)) then headerBar.IsVisible <- true
 
-    member _.SetCompactMode(value: bool) =
+    member this.SetCompactMode(value: bool) =
         compactMode <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         for button in [ sidebarToggleButton; stopButton; forkButton; sessionSettingsButton; scrollToBottomButton ] do
             Ui.setSquareTarget button size
         stopButton.IsVisible <- isGenerating
         sessionSettingsButton.IsVisible <- hasConversationChrome
-        if not value && unreadSinceScrolledUp > 0 then
-            scrollToBottomButton.Width <- Double.NaN
-            scrollToBottomButton.MinWidth <- Tokens.iconButton
+        this.UpdateScrollToBottomAppearance()
         Ui.setReservedActionVisible generatingChip (isGenerating && not value)
         forkButton.IsVisible <- hasConversationChrome && not value
 
@@ -556,6 +554,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member private this.UpdateScrollToBottomAppearance() =
         let extent = scroller.Extent.Height
         let viewport = scroller.Viewport.Height
+        scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Tokens.space5, Tokens.space4)
         if atBottom then
             unreadSinceScrolledUp <- 0
             scrollToBottomButton.IsVisible <- false
@@ -569,9 +568,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         else
             scrollToBottomButton.IsVisible <- extent > viewport + ContentMetrics.scrollBottomRevealThreshold
             if unreadSinceScrolledUp > 0 then
-                let text =
-                    if unreadSinceScrolledUp = 1 then "新消息"
-                    else sprintf "%d 条新消息" unreadSinceScrolledUp
+                let text = sprintf "%d 条新消息" unreadSinceScrolledUp
                 scrollToBottomLabel.Text <- text
                 scrollToBottomLabel.IsVisible <- not compactMode
                 ToolTip.SetTip(scrollToBottomButton, text)
@@ -581,9 +578,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                     Ui.setSquareTarget scrollToBottomButton size
                     scrollToBottomButton.Padding <- Thickness 0.0
                 else
+                    let height = Tokens.iconButton
                     scrollToBottomButton.Width <- Double.NaN
-                    scrollToBottomButton.MinWidth <- Tokens.iconButton
-                    scrollToBottomButton.Height <- Tokens.iconButton
+                    scrollToBottomButton.MinWidth <- 96.0
+                    scrollToBottomButton.Height <- height
+                    scrollToBottomButton.MinHeight <- height
                     scrollToBottomButton.Padding <- Thickness(Tokens.space3, 0.0, Tokens.space4, 0.0)
             else
                 scrollToBottomLabel.Text <- "回到最新"
@@ -624,11 +623,15 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         else
             let startOffset = scroller.Offset.Y
             let maxTarget = max 0.0 (scroller.Extent.Height - scroller.Viewport.Height)
-            if maxTarget <= startOffset then
+            let distance = maxTarget - startOffset
+            if distance < 5.0 then
+                atBottom <- true
+                unreadSinceScrolledUp <- 0
                 this.ScrollToEndDeferred()
+                this.UpdateScrollToBottomAppearance()
             else
                 let startTime = DateTime.UtcNow
-                let durationMs = 240.0
+                let durationMs = 180.0
                 let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 16.0)
                 timer.Tick.Add(fun _ ->
                     let elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds
@@ -639,10 +642,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                         timer.Stop()
                         smoothScrollTimer <- None
                         atBottom <- true
+                        unreadSinceScrolledUp <- 0
                         scroller.ScrollToEnd()
                         this.UpdateScrollToBottomAppearance()
                     else
-                        let progress = elapsed / durationMs
+                        let progress = min 1.0 (elapsed / durationMs)
                         // Ease-out cubic: 1 - (1 - t)^3
                         let eased = 1.0 - Math.Pow(1.0 - progress, 3.0)
                         let newY = startOffset + (target - startOffset) * eased
@@ -745,17 +749,26 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         // `MaxWidth + Stretch` 取代手工监听 Viewport 后写 Width，避免 resize/scale 时
         // 维护第二套宽度同步逻辑。
         scroller.Content <- messagePanel
-        scroller.ScrollChanged.Add(fun _ ->
+        scroller.ScrollChanged.Add(fun e ->
             let extent = scroller.Extent.Height
             let viewport = scroller.Viewport.Height
             let offset = scroller.Offset.Y
+            // 用户手动向上滚动（或滚轮/触控向上拉），立即打断平滑自动滚动，不与用户手势冲突
+            if e.OffsetDelta.Y < -0.1 then
+                smoothScrollTimer |> Option.iter (fun t -> t.Stop())
+                smoothScrollTimer <- None
             let wasAtBottom = atBottom
             let nowAtBottom = extent - viewport - offset < ContentMetrics.scrollBottomThreshold
             atBottom <- nowAtBottom
             if nowAtBottom then
                 unreadSinceScrolledUp <- 0
+                scrollToBottomButton.IsVisible <- false
             this.UpdateScrollToBottomAppearance()
             if offset <= 0.5 && extent > viewport then actions.requestOlderHistory ())
+        scroller.PointerWheelChanged.Add(fun e ->
+            if e.Delta.Y > 0.0 then
+                smoothScrollTimer |> Option.iter (fun t -> t.Stop())
+                smoothScrollTimer <- None)
 
         scrollToBottomButton.Child <- scrollToBottomContent
         scrollToBottomLabel.IsVisible <- false

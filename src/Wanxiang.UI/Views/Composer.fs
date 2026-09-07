@@ -282,6 +282,11 @@ type Composer(actions: ComposerActions) as this =
                         if input.SelectionStart <> input.SelectionEnd then
                             e.Handled <- true
                             input.ClearSelection()
+                        elif historyIndex <> -1 then
+                            historyIndex <- -1
+                            input.Text <- uncommittedDraft
+                            input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
+                            e.Handled <- true
                         elif input.IsFocused then
                             e.Handled <- true
                             match TopLevel.GetTopLevel input with
@@ -303,28 +308,37 @@ type Composer(actions: ComposerActions) as this =
                         if actions.pasteFromClipboard () then
                             e.Handled <- true
                 elif e.Key = Key.Up && e.KeyModifiers = KeyModifiers.None then
-                    let currentText = if isNull input.Text then "" else input.Text
-                    // Caret is at line 0 if CaretIndex = 0 or if there is no newline before CaretIndex
-                    let isAtBeginning =
-                        input.CaretIndex = 0 ||
-                        let idx = Math.Min(input.CaretIndex, currentText.Length)
-                        not (currentText.Substring(0, idx).Contains('\n'))
-                    if isAtBeginning && promptHistory.Count > 0 then
-                        if historyIndex = -1 then
-                            uncommittedDraft <- currentText
-                            historyIndex <- promptHistory.Count - 1
-                        elif historyIndex > 0 then
-                            historyIndex <- historyIndex - 1
-                        input.Text <- promptHistory.[historyIndex]
-                        input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
-                        e.Handled <- true
-                elif e.Key = Key.Down && e.KeyModifiers = KeyModifiers.None then
-                    if historyIndex <> -1 then
+                    let hasSelection = input.SelectionStart <> input.SelectionEnd
+                    if not hasSelection && promptHistory.Count > 0 then
                         let currentText = if isNull input.Text then "" else input.Text
-                        let isAtEnd =
-                            input.CaretIndex >= currentText.Length ||
-                            let idx = Math.Clamp(input.CaretIndex, 0, currentText.Length)
-                            not (currentText.Substring(idx).Contains('\n'))
+                        let isMultiline = currentText.IndexOfAny([| '\n'; '\r' |]) >= 0
+                        let caret = input.CaretIndex
+                        let hasNewlineBeforeCaret =
+                            let idx = Math.Clamp(caret, 0, currentText.Length)
+                            currentText.Substring(0, idx).IndexOfAny([| '\n'; '\r' |]) >= 0
+
+                        let canRecall =
+                            if isMultiline then
+                                not hasNewlineBeforeCaret && caret = 0
+                            elif historyIndex <> -1 then
+                                true
+                            else
+                                currentText.Length = 0 || caret = 0
+
+                        if canRecall then
+                            if historyIndex = -1 then
+                                uncommittedDraft <- currentText
+                                historyIndex <- promptHistory.Count - 1
+                            elif historyIndex > 0 then
+                                historyIndex <- historyIndex - 1
+                            input.Text <- promptHistory.[historyIndex]
+                            input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
+                            e.Handled <- true
+                elif e.Key = Key.Down && e.KeyModifiers = KeyModifiers.None then
+                    let hasSelection = input.SelectionStart <> input.SelectionEnd
+                    if not hasSelection && historyIndex <> -1 then
+                        let currentText = if isNull input.Text then "" else input.Text
+                        let isAtEnd = input.CaretIndex >= currentText.Length
                         if isAtEnd then
                             if historyIndex < promptHistory.Count - 1 then
                                 historyIndex <- historyIndex + 1
@@ -346,7 +360,8 @@ type Composer(actions: ComposerActions) as this =
             if not (String.IsNullOrWhiteSpace text) || attachments |> List.exists (fun a -> a.ready) then
                 if actions.submit text then
                     if not (String.IsNullOrWhiteSpace text) then
-                        if promptHistory.Count = 0 || promptHistory.[promptHistory.Count - 1] <> text then
+                        let isDuplicate = promptHistory.Count > 0 && promptHistory.[promptHistory.Count - 1] = text
+                        if not isDuplicate then
                             promptHistory.Add text
                             if promptHistory.Count > maxHistoryCount then
                                 promptHistory.RemoveAt 0
@@ -572,6 +587,8 @@ type Composer(actions: ComposerActions) as this =
     member _.SetText(text: string) =
         input.Text <- text
         input.CaretIndex <- if isNull text then 0 else text.Length
+        historyIndex <- -1
+        uncommittedDraft <- ""
         tryFocusInput ()
 
     member this.Build() =

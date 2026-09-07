@@ -8,6 +8,8 @@ open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Threading
+open Avalonia.Interactivity
+open Avalonia.Automation
 open Wanxiang.Core
 
 /// 连接对话框的回调。
@@ -22,6 +24,14 @@ type ConnectRequest = {
 module Dialogs =
 
     let private captureOpener (overlay: OverlayHost) =
+        let popupFocus =
+            match overlay.LastPopupFocus with
+            | Some (:? Control as c) when c.IsEffectivelyVisible && c.IsEnabled -> Some c
+            | _ -> None
+        let popupAnchor =
+            match overlay.LastPopupAnchor with
+            | Some c when c.IsEffectivelyVisible && c.IsEnabled -> Some c
+            | _ -> None
         let opener =
             match TopLevel.GetTopLevel overlay.Root with
             | null -> None
@@ -32,25 +42,54 @@ module Dialogs =
                     match fm.GetFocusedElement() with
                     | :? Control as c when c.IsEffectivelyVisible && c.IsEnabled -> Some c
                     | _ -> None
-        let restore () =
+        let preferredOpener =
             match opener with
-            | Some c when c.IsEffectivelyVisible && c.IsEnabled ->
-                Dispatcher.UIThread.Post(fun () ->
-                    if c.IsEffectivelyVisible && c.IsEnabled then
-                        c.Focus() |> ignore)
-            | _ -> ()
+            | Some c -> Some c
+            | None ->
+                match popupAnchor with
+                | Some a -> Some a
+                | None -> popupFocus
+        let restore () =
+            Dispatcher.UIThread.Post(fun () ->
+                let target =
+                    match preferredOpener with
+                    | Some c when c.IsEffectivelyVisible && c.IsEnabled -> Some c
+                    | _ ->
+                        match popupAnchor with
+                        | Some a when a.IsEffectivelyVisible && a.IsEnabled -> Some a
+                        | _ ->
+                            match popupFocus with
+                            | Some pf when pf.IsEffectivelyVisible && pf.IsEnabled -> Some pf
+                            | _ ->
+                                // Fallback to composer or first focusable in root
+                                overlay.Descendants overlay.Root
+                                |> Seq.tryPick (fun (c: Control) ->
+                                    match c with
+                                    | :? Composer as comp when comp.IsEffectivelyVisible && comp.IsEnabled -> Some(comp :> Control)
+                                    | _ -> None)
+                                |> Option.orElseWith (fun () ->
+                                    overlay.Focusables overlay.Root
+                                    |> Array.tryFind (fun c -> c.IsEffectivelyVisible && c.IsEnabled))
+                match target with
+                | Some (:? Composer as comp) -> comp.Focus()
+                | Some c -> c.Focus() |> ignore
+                | None -> ())
         restore
 
     /// 返回按钮行与主操作按钮：调用方可在 ShowDialog 之后把焦点 post 到主按钮上
     ///（ShowDialog 内部的 focusFirst 会先聚焦第一个可聚焦项，后 post 者胜出）。
     let private actionRow (overlay: OverlayHost) (confirmLabel: string) (tone: Ui.ButtonTone) (onConfirm: unit -> unit) =
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        AutomationProperties.SetName(cancelButton, "取消")
+        AutomationProperties.SetHelpText(cancelButton, "取消并关闭对话框 (Esc)")
         ToolTip.SetTip(cancelButton, "取消并关闭对话框 (Esc)")
         let confirmButton = Ui.button tone confirmLabel onConfirm
+        AutomationProperties.SetName(confirmButton, confirmLabel)
         let confirmTip =
             match tone with
             | Ui.Danger -> sprintf "确认“%s”，此操作可能无法撤销" confirmLabel
             | _ -> confirmLabel
+        AutomationProperties.SetHelpText(confirmButton, confirmTip)
         ToolTip.SetTip(confirmButton, confirmTip)
         let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
         row.Children.Add cancelButton
@@ -59,7 +98,7 @@ module Dialogs =
             if e.Key = Key.Escape then
                 e.Handled <- true
                 overlay.CloseDialog()
-            elif e.Key = Key.Enter && not cancelButton.IsFocused then
+            elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
                 e.Handled <- true
                 onConfirm ())
         row, confirmButton
@@ -95,8 +134,12 @@ module Dialogs =
                 e.Handled <- true
                 overlay.CloseDialog())
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        AutomationProperties.SetName(cancelButton, "取消")
+        AutomationProperties.SetHelpText(cancelButton, "取消并关闭对话框 (Esc)")
         ToolTip.SetTip(cancelButton, "取消并关闭对话框 (Esc)")
         let confirmButton = Ui.button Ui.Primary confirmLabel submit
+        AutomationProperties.SetName(confirmButton, confirmLabel)
+        AutomationProperties.SetHelpText(confirmButton, sprintf "确认“%s”(Enter)" confirmLabel)
         ToolTip.SetTip(confirmButton, sprintf "确认“%s”(Enter)" confirmLabel)
         Ui.preparePendingButton confirmButton
         setPending <- fun value ->
@@ -110,7 +153,7 @@ module Dialogs =
             if e.Key = Key.Escape then
                 e.Handled <- true
                 overlay.CloseDialog()
-            elif e.Key = Key.Enter && not cancelButton.IsFocused then
+            elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
                 e.Handled <- true
                 submit ())
         let content =
@@ -136,12 +179,15 @@ module Dialogs =
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = ReadingRhythm.uiBodyLineHeight)
+        AutomationProperties.SetName(message, body)
+        AutomationProperties.SetHelpText(message, body)
         let cancelAction () = overlay.CloseDialog()
         let confirmAction () =
             overlay.CloseDialog()
             onConfirm ()
         let buttons, dangerButton =
             actionRow overlay confirmLabel Ui.Danger confirmAction
+        AutomationProperties.SetHelpText(dangerButton, sprintf "%s · %s" (ToolTip.GetTip dangerButton :?> string) body)
         let content =
             Ui.vstack
                 Tokens.space4
@@ -152,7 +198,7 @@ module Dialogs =
             if e.Key = Key.Escape then
                 e.Handled <- true
                 cancelAction ()
-            elif e.Key = Key.Enter && not buttons.Children[0].IsFocused then
+            elif (e.Key = Key.Enter || e.Key = Key.Space) && not buttons.Children[0].IsFocused then
                 e.Handled <- true
                 confirmAction ())
         overlay.ShowDialog(content :> Control, 420.0, onClosed = restoreOpener)
@@ -300,8 +346,23 @@ module Dialogs =
                   codeSection :> Control
                   codeButton :> Control
                   (let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
-                   row.Children.Add(Ui.button Ui.Ghost "稍后再说" (fun () -> overlay.CloseDialog()))
-                   row.Children.Add(Ui.button Ui.Primary "连接" connectAction)
+                   let cancelBtn = Ui.button Ui.Ghost "稍后再说" (fun () -> overlay.CloseDialog())
+                   AutomationProperties.SetName(cancelBtn, "稍后再说")
+                   AutomationProperties.SetHelpText(cancelBtn, "取消并关闭连接对话框 (Esc)")
+                   ToolTip.SetTip(cancelBtn, "取消并关闭连接对话框 (Esc)")
+                   let connectBtn = Ui.button Ui.Primary "连接" connectAction
+                   AutomationProperties.SetName(connectBtn, "连接")
+                   AutomationProperties.SetHelpText(connectBtn, "连接至服务器 (Enter)")
+                   ToolTip.SetTip(connectBtn, "连接至服务器 (Enter)")
+                   row.Children.Add cancelBtn
+                   row.Children.Add connectBtn
+                   row.KeyDown.Add(fun e ->
+                       if e.Key = Key.Escape then
+                           e.Handled <- true
+                           overlay.CloseDialog()
+                       elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelBtn.IsFocused then
+                           e.Handled <- true
+                           connectAction ())
                    row :> Control) ]
         content.KeyDown.Add(fun e ->
             if e.Key = Key.Escape then
@@ -359,6 +420,24 @@ module Dialogs =
         maxTokensBox.Text <- (match current.maxTokens with Some m -> string m | None -> "")
         let _, thinkingBudgetBox = Ui.textField "留空跟随默认；0 关闭思维链"
         thinkingBudgetBox.Text <- (match current.thinkingBudget with Some b -> string b | None -> "")
+
+        // 隧道监听 Escape：当子控件（输入框等）拥有焦点时，若当前有文本选中则清除选中，
+        // 无选中时按 Escape 立即关闭对话框，避免子控件吞掉 Escape 事件。
+        let wireEscapeForSubBox (box: TextBox) =
+            box.AddHandler(
+                InputElement.KeyDownEvent,
+                EventHandler<KeyEventArgs>(fun _ e ->
+                    if e.Key = Key.Escape then
+                        if box.SelectionStart <> box.SelectionEnd then
+                            e.Handled <- true
+                            box.ClearSelection()
+                        else
+                            e.Handled <- true
+                            overlay.CloseDialog()),
+                RoutingStrategies.Tunnel)
+
+        for box in [ instructionsBox; temperatureBox; topPBox; maxTokensBox; thinkingBudgetBox ] do
+            wireEscapeForSubBox box
 
         let selectedTools = System.Collections.Generic.HashSet<string>(current.tools)
         let toolsPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
@@ -418,8 +497,12 @@ module Dialogs =
                 if String.IsNullOrWhiteSpace text then None else Some text
             match firstInvalid with
             | Some box ->
-                box.Focus(NavigationMethod.Directional) |> ignore
                 box.BringIntoView()
+                box.Focus(NavigationMethod.Directional) |> ignore
+                Dispatcher.UIThread.Post(fun () ->
+                    if box.IsEffectivelyVisible && box.IsEnabled then
+                        box.BringIntoView()
+                        box.Focus(NavigationMethod.Directional) |> ignore)
             | None ->
                 if not pending then
                     setPending true
@@ -471,8 +554,12 @@ module Dialogs =
             if args.Property = Visual.BoundsProperty then applyParamLayout paramGrid.Bounds.Width)
 
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        AutomationProperties.SetName(cancelButton, "取消")
+        AutomationProperties.SetHelpText(cancelButton, "取消并关闭对话框 (Esc)")
         ToolTip.SetTip(cancelButton, "取消并关闭对话框 (Esc)")
         let saveButton = Ui.button Ui.Primary "保存" save
+        AutomationProperties.SetName(saveButton, "保存")
+        AutomationProperties.SetHelpText(saveButton, "保存会话设置 (Ctrl+Enter)")
         ToolTip.SetTip(saveButton, "保存会话设置 (Ctrl+Enter)")
         Ui.preparePendingButton saveButton
         setPending <- fun value ->
@@ -486,7 +573,7 @@ module Dialogs =
             if e.Key = Key.Escape then
                 e.Handled <- true
                 overlay.CloseDialog()
-            elif e.Key = Key.Enter && not cancelButton.IsFocused then
+            elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
                 e.Handled <- true
                 save ())
         let content =
@@ -566,11 +653,13 @@ module Dialogs =
                 groupRows.Children.Add(Ui.hstack Tokens.space3 [ key :> Control; caption :> Control ])
             contentPanel.Children.Add groupRows
         let closeBtn = Ui.button Ui.Primary "关闭" (fun () -> overlay.CloseDialog())
+        AutomationProperties.SetName(closeBtn, "关闭")
+        AutomationProperties.SetHelpText(closeBtn, "关闭快捷键帮助 (Esc / Enter)")
         ToolTip.SetTip(closeBtn, "关闭快捷键帮助 (Esc / Enter)")
         closeBtn.HorizontalAlignment <- HorizontalAlignment.Right
         let content = Ui.vstack Tokens.space4 [ Ui.title "键盘快捷键" :> Control; contentPanel :> Control; closeBtn :> Control ]
         content.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape || e.Key = Key.Enter then
+            if e.Key = Key.Escape || e.Key = Key.Enter || (e.Key = Key.Space && closeBtn.IsFocused) then
                 e.Handled <- true
                 overlay.CloseDialog())
         let scroller =
@@ -579,4 +668,11 @@ module Dialogs =
                 MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
+        content.Focusable <- true
+        closeBtn.Focusable <- true
         overlay.ShowDialog(scroller :> Control, 460.0, onClosed = restoreOpener)
+        Dispatcher.UIThread.Post(fun () ->
+            if closeBtn.IsEffectivelyVisible && closeBtn.IsEnabled then
+                closeBtn.Focus() |> ignore
+            elif content.IsEffectivelyVisible && content.IsEnabled then
+                content.Focus() |> ignore)

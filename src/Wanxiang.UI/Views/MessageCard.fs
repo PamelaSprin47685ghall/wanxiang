@@ -6,6 +6,7 @@ open Avalonia
 open Avalonia.Controls
 open Avalonia.Controls.Documents
 open Avalonia.Controls.Primitives
+open Avalonia.Automation
 open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
@@ -485,6 +486,7 @@ module MessageCard =
             ToolTip.SetTip(button, "复制")
             Avalonia.Automation.AutomationProperties.SetName(button, "复制")
             Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
+            Avalonia.Automation.AutomationProperties.SetLiveSetting(button, AutomationLiveSetting.Polite)
             let mutable copyTimer: DispatcherTimer option = None
             let stopTimer () =
                 match copyTimer with
@@ -495,6 +497,7 @@ module MessageCard =
             let restoreDefaultState () =
                 stopTimer ()
                 Ui.setIcon button Icons.copy Tokens.textMuted
+                Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                 ToolTip.SetTip(button, "复制")
                 Avalonia.Automation.AutomationProperties.SetName(button, "复制")
                 Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
@@ -502,6 +505,7 @@ module MessageCard =
                 actions.copyText text
                 stopTimer ()
                 Ui.setIcon button Icons.check Tokens.success
+                Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                 ToolTip.SetTip(button, "已复制！")
                 Avalonia.Automation.AutomationProperties.SetName(button, "已复制！")
                 Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制消息正文")
@@ -517,12 +521,15 @@ module MessageCard =
         if not (String.IsNullOrWhiteSpace message.text) then
             addCopyButton message.text
         if MessageView.isUser message && not ctx.streaming then
-            addButton Icons.pencil "编辑并分叉" "编辑并分叉" "以编辑后的消息创建分叉会话" (fun () -> actions.editAndFork message)
+            addButton Icons.pencil "编辑并分叉" "编辑并分叉" "以编辑后的消息创建分叉会话" (fun () ->
+                actions.editAndFork message)
         if not (MessageView.isUser message) && ctx.isLastAssistant && not ctx.streaming then
-            addButton Icons.refresh "重新生成" "重新生成" "丢弃最后一次回复并重新生成" actions.regenerate
+            addButton Icons.refresh "重新生成" "重新生成" "丢弃最后一次回复并重新生成" (fun () ->
+                actions.regenerate ())
         match message.commitId with
         | Some commitId when not ctx.streaming ->
-            addButton Icons.trash "删除这条消息" "删除这条消息" "从会话历史中删除这条消息" (fun () -> actions.deleteMessage commitId)
+            addButton Icons.trash "删除这条消息" "删除这条消息" "从会话历史中删除这条消息" (fun () ->
+                actions.deleteMessage commitId)
         | _ -> ()
         row
 
@@ -570,6 +577,8 @@ module MessageCard =
         if error.retryable then
             let retryButton = Ui.button Ui.Secondary "重试" onRetry
             retryButton.Focusable <- true
+            retryButton.Margin <- Thickness 0.0
+            retryButton.Padding <- Thickness(Tokens.space4, ControlMetrics.textButtonPaddingY)
             retryButton.Cursor <- handCursor
             Avalonia.Automation.AutomationProperties.SetName(retryButton, "重试生成")
             Avalonia.Automation.AutomationProperties.SetHelpText(retryButton, "重新尝试生成")
@@ -585,6 +594,8 @@ module MessageCard =
             let detailButton = Ui.button Ui.Ghost "技术细节" (fun () -> toggleDetail ())
             detailButton.Cursor <- handCursor
             detailButton.Focusable <- true
+            detailButton.Margin <- Thickness 0.0
+            detailButton.Padding <- Thickness(Tokens.space4, ControlMetrics.textButtonPaddingY)
             let syncDetailButton () =
                 Ui.setButtonText detailButton (if visible then "收起技术细节" else "技术细节")
                 ToolTip.SetTip(detailButton, if visible then "收起错误技术细节" else "展开查看技术细节")

@@ -33,7 +33,7 @@ type MarkdownRenderer(
     static member val DefaultCodeWrap = false with get, set
 
     /// 行内片段渲染成一个可选中的文本块。
-    member private _.RenderInlines(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float) : Control =
+    member private _.RenderInlines(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily) : Control =
         let lh = defaultArg lineHeight (ReadingRhythm.proseLineHeight size)
         let block =
             SelectableTextBlock(
@@ -43,6 +43,9 @@ type MarkdownRenderer(
                 Foreground = brush,
                 LineHeight = lh,
                 SelectionBrush = Tokens.accentSoft)
+        match fontFamily with
+        | Some ff -> block.FontFamily <- ff
+        | None -> ()
         for item in items do
             match item with
             | MdText(text, bold, italic, strike, code) ->
@@ -138,16 +141,16 @@ type MarkdownRenderer(
 
     /// 链接需要能点。整段文本共用一个 TextBlock 时无法逐字命中，
     /// 因此只在段落里存在链接时，把段落拆成「文本 + 可点链接」的 WrapPanel。
-    member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float) : Control =
+    member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily) : Control =
         let hasLink = items |> List.exists (function MdLink _ -> true | _ -> false)
         if not hasLink then
-            this.RenderInlines(items, size, weight, brush, ?lineHeight = lineHeight)
+            this.RenderInlines(items, size, weight, brush, ?lineHeight = lineHeight, ?fontFamily = fontFamily)
         else
             let wrap = WrapPanel(Orientation = Orientation.Horizontal)
             let mutable buffer: MdInline list = []
             let flush () =
                 if not (List.isEmpty buffer) then
-                    let control = this.RenderInlines(List.rev buffer, size, weight, brush, ?lineHeight = lineHeight)
+                    let control = this.RenderInlines(List.rev buffer, size, weight, brush, ?lineHeight = lineHeight, ?fontFamily = fontFamily)
                     wrap.Children.Add control
                     buffer <- []
             let addLinkChunk (fullText: string) (chunk: string) (url: string) (focusable: bool) =
@@ -161,6 +164,9 @@ type MarkdownRenderer(
                         Foreground = Tokens.accent,
                         TextDecorations = TextDecorations.Underline,
                         VerticalAlignment = VerticalAlignment.Center)
+                match fontFamily with
+                | Some ff -> linkText.FontFamily <- ff
+                | None -> ()
                 let link =
                     ActionBorder(
                         Background = Brushes.Transparent,
@@ -345,35 +351,58 @@ type MarkdownRenderer(
             // 窄表（<= 4 列）采用 1.0 Star 自然撑满阅读列宽；
             // 多列宽表（> 4 列）设置每列最小宽度（120px），并放入横向 ScrollViewer，
             // 避免在 748px 阅读宽度下被强行压成挤压错乱的细条。
-            if columnCount > 4 then
-                for _ in 1 .. columnCount do
-                    let col = ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star))
-                    col.MinWidth <- 120.0
-                    grid.ColumnDefinitions.Add col
-            else
-                for _ in 1 .. columnCount do
-                    grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-            let mutable rowIndex = 0
+            let minColumnWidth =
+                match columnCount with
+                | 1 | 2 -> 100.0
+                | 3 -> 90.0
+                | 4 -> 80.0
+                | _ -> 120.0
+            for _ in 1 .. columnCount do
+                let col = ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star))
+                col.MinWidth <- minColumnWidth
+                grid.ColumnDefinitions.Add col
+
+            let isNumericCell (items: MdInline list) =
+                match items with
+                | [ MdText(text, _, _, _, false) ] ->
+                    let s = text.Trim()
+                    if String.IsNullOrEmpty s then false
+                    else
+                        let clean =
+                            s.TrimStart('$', '¥', '€', '£', '+', '-')
+                             .TrimEnd('%')
+                             .Replace(",", "")
+                             .Trim()
+                        match Double.TryParse(clean, NumberStyles.Float, CultureInfo.InvariantCulture) with
+                        | true, _ -> true
+                        | _ -> false
+                | _ -> false
+
+            let mutable gridRowIndex = 0
+            let mutable dataRowIndex = 0
             let addRow (cells: MdInline list list) (isHeader: bool) =
                 grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
                 for columnIndex in 0 .. columnCount - 1 do
                     let content =
                         if columnIndex < List.length cells then cells[columnIndex] else []
+                    let isNumeric = not isHeader && isNumericCell content
                     let cell =
                         this.RenderInlineRow(
                             content,
                             fontSize - 0.5,
                             (if isHeader then FontWeight.Medium else FontWeight.Normal),
-                            (if isHeader then Tokens.text else Tokens.textMuted))
+                            (if isHeader then Tokens.text else Tokens.textMuted),
+                            ?fontFamily = (if isNumeric then Some Tokens.monoFontFamily else None))
                     let hasBreak = content |> List.exists (function MdBreak -> true | _ -> false)
                     cell.VerticalAlignment <-
                         if isHeader then VerticalAlignment.Center
                         elif hasBreak then VerticalAlignment.Top
                         else VerticalAlignment.Center
+                    cell.HorizontalAlignment <- HorizontalAlignment.Left
                     let background: IBrush =
                         if isHeader then Tokens.tableHeader
                         // 隔行底色比逐行画线更轻：长表格里横线多了会变成网格纸
-                        elif rowIndex % 2 = 0 then Tokens.tableStripe
+                        elif dataRowIndex % 2 = 1 then Tokens.tableStripe
                         else Brushes.Transparent
                     let hasRowsBelow = not (List.isEmpty rows)
                     let host =
@@ -382,12 +411,15 @@ type MarkdownRenderer(
                             BorderBrush = Tokens.borderSoft,
                             BorderThickness = Thickness(0.0, 0.0, 0.0, (if isHeader && hasRowsBelow then 1.0 else 0.0)),
                             Background = background,
+                            ClipToBounds = true,
                             UseLayoutRounding = true,
                             Child = cell)
-                    Grid.SetRow(host, rowIndex)
+                    Grid.SetRow(host, gridRowIndex)
                     Grid.SetColumn(host, columnIndex)
                     grid.Children.Add host
-                rowIndex <- rowIndex + 1
+                gridRowIndex <- gridRowIndex + 1
+                if not isHeader then
+                    dataRowIndex <- dataRowIndex + 1
             if not (List.isEmpty header) then addRow header true
             for row in rows do addRow row false
             let tableContent: Control =

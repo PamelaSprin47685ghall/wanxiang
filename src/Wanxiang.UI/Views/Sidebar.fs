@@ -32,6 +32,13 @@ type private SidebarListItem =
     | ConversationRow of ConversationSummary
     | ArchivedToggle
 
+    member this.isItem =
+        match this with
+        | ConversationRow _ -> true
+        | SectionHeader _ | ArchivedToggle -> false
+
+    member this.IsItem = this.isItem
+
 /// 会话侧栏。
 ///
 /// 旧版是一个平铺 ListBox：没有分组、没有置顶、没有空态、右键只有两项。
@@ -322,22 +329,23 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
             Nullable Avalonia.Automation.Peers.AutomationControlType.ListItem)
-        let openMenu () =
+        let openMenu (target: Control) (alignRight: bool) =
             Menu.show
                 overlay
-                (host :> Control)
-                false
-                [ MenuEntry.create "重命名" (fun () -> actions.renameConversation summary) |> MenuEntry.withIcon Icons.pencil
+                target
+                alignRight
+                [ MenuEntry.create "重命名 (F2)" (fun () -> actions.renameConversation summary)
+                  |> MenuEntry.withIcon Icons.pencil
                   MenuEntry.create (if summary.pinned then "取消置顶" else "置顶") (fun () -> actions.setPinned summary (not summary.pinned))
                   |> MenuEntry.withIcon Icons.pin
                   MenuEntry.create (if summary.archived then "取消归档" else "归档") (fun () -> actions.setArchived summary (not summary.archived))
                   |> MenuEntry.withIcon Icons.archive
                   MenuEntry.create "从此分叉" (fun () -> actions.duplicateAsFork summary) |> MenuEntry.withIcon Icons.fork
                   MenuEntry.create "导出为 Markdown" (fun () -> actions.exportConversation summary) |> MenuEntry.withIcon Icons.download
-                  MenuEntry.create "删除" (fun () -> actions.deleteConversation summary)
+                  MenuEntry.create "删除 (Delete)" (fun () -> actions.deleteConversation summary)
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ]
-        Ui.onClick moreButton (fun () -> openMenu ())
+        Ui.onClick moreButton (fun () -> openMenu (moreButton :> Control) true)
         moreButton.GotFocus.Add(fun _ ->
             Ui.setReservedActionVisible moreButton true)
         moreButton.LostFocus.Add(fun _ ->
@@ -349,6 +357,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             this.ApplyRowState(summary, host)
             if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
         host.GotFocus.Add(fun _ ->
+            this.ApplyRowState(summary, host)
             if activeId <> Some summary.id then host.Background <- Tokens.hover
             Ui.setReservedActionVisible moreButton true)
         host.LostFocus.Add(fun _ ->
@@ -359,6 +368,12 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             if e.Key = Key.Enter || e.Key = Key.Space then
                 e.Handled <- true
                 actions.openConversation summary.id
+            elif e.Key = Key.F2 then
+                e.Handled <- true
+                actions.renameConversation summary
+            elif e.Key = Key.Delete then
+                e.Handled <- true
+                actions.deleteConversation summary
             elif e.Key = Key.Down then
                 e.Handled <- true
                 this.MoveRowFocus(summary.id, 1)
@@ -379,12 +394,18 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 this.FocusRowAt(visibleRowIds.Length - 1)
             elif (e.Key = Key.F10 && e.KeyModifiers.HasFlag KeyModifiers.Shift) || e.Key = Key.Apps then
                 e.Handled <- true
-                openMenu ())
+                openMenu (host :> Control) false)
+        host.PointerPressed.Add(fun e ->
+            let props = e.GetCurrentPoint(host).Properties
+            if props.IsRightButtonPressed then
+                host.Focus NavigationMethod.Pointer |> ignore
+                this.ApplyRowState(summary, host))
         host.PointerReleased.Add(fun e ->
             if e.InitialPressMouseButton = MouseButton.Right then
                 e.Handled <- true
                 host.Focus NavigationMethod.Pointer |> ignore
-                openMenu ())
+                this.ApplyRowState(summary, host)
+                openMenu (host :> Control) false)
         ToolTip.SetTip(
             host,
             sprintf
@@ -406,7 +427,6 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             |> List.filter (fun s -> showArchived || not s.archived)
             |> List.filter (ConversationSummary.matches query)
         let groups = ConversationSummary.group DateTimeOffset.Now visible
-        visibleRowIds <- groups |> List.collect (fun group -> group.items |> List.map (fun item -> item.id)) |> Array.ofList
         let flattened = ResizeArray<SidebarListItem>()
         for group in groups do
             flattened.Add(SectionHeader group.label)
@@ -417,6 +437,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         if hasArchived && not showArchived then
             flattened.Add ArchivedToggle
         conversationList.ItemsSource <- flattened
+        visibleRowIds <-
+            flattened
+            |> Seq.choose (fun item ->
+                if item.isItem then
+                    match item with
+                    | ConversationRow summary -> Some summary.id
+                    | _ -> None
+                else None)
+            |> Array.ofSeq
         let isSearchEmpty = not (String.IsNullOrWhiteSpace query) && List.isEmpty visible
         searchEmptyHint.IsVisible <- isSearchEmpty
         emptyState.IsVisible <- List.isEmpty visible && not isSearchEmpty
@@ -557,6 +586,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                         header.LetterSpacing <- 0.8
                         header.Foreground <- Tokens.textMuted
                         header.FontSize <- Tokens.fontMicro
+                        header.Focusable <- false
                         header :> Control
                     | ConversationRow summary -> this.RenderRow summary
                     | ArchivedToggle ->

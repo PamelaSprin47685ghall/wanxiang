@@ -73,6 +73,8 @@ type OverlayHost(root: Grid) =
     let mutable onDialogClosed: unit -> unit = id
     let mutable previousDialogFocus: IInputElement option = None
     let mutable previousPopupFocus: IInputElement option = None
+    let mutable lastPopupFocus: IInputElement option = None
+    let mutable lastPopupAnchor: Control option = None
     let mutable dialogPreferredWidth = 0.0
     let mutable popupPreferredMinWidth = 180.0
     let mutable popupAnchor: Control option = None
@@ -100,7 +102,9 @@ type OverlayHost(root: Grid) =
         previousDialogFocus <- currentFocus ()
 
     let rememberPopupFocus () =
-        previousPopupFocus <- currentFocus ()
+        let cur = currentFocus ()
+        previousPopupFocus <- cur
+        if cur.IsSome then lastPopupFocus <- cur
 
     let restoreDialogFocus () =
         let previous = previousDialogFocus
@@ -277,6 +281,7 @@ type OverlayHost(root: Grid) =
         if not popupCard.IsVisible then rememberPopupFocus ()
         popupCard.Child <- content
         popupAnchor <- Some anchor
+        lastPopupAnchor <- Some anchor
         popupAlignRight <- alignRight
         popupPreferredMinWidth <- defaultArg minWidth 180.0
         fitPopupToViewport ()
@@ -290,6 +295,12 @@ type OverlayHost(root: Grid) =
             focusFirst content)
 
     member _.IsPopupOpen = popupCard.IsVisible
+
+    member _.LastPopupFocus: IInputElement option = lastPopupFocus
+    member _.LastPopupAnchor: Control option = lastPopupAnchor
+
+    member _.Descendants(control: Control) = descendants control
+    member _.Focusables(content: Control) = focusables content
 
     /// 提示条：自动消失，可叠加多条。错误默认停留更久。
     member _.Toast(message: string, tone: ToastTone) =
