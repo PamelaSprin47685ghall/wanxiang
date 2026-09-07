@@ -121,6 +121,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Spacing = Tokens.space3,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
+            Margin = Thickness(Tokens.space4, 0.0, Tokens.space4, ContentMetrics.messageEndBreathing / 2.0),
             MaxWidth = ContentMetrics.emptyStateMaxWidth,
             IsVisible = false)
     let emptyTitle =
@@ -286,6 +287,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             match onPrimary with
             | Some(label, action) ->
                 let button = Ui.button Ui.Primary label action
+                button.Focusable <- true
+                ToolTip.SetTip(button, label)
+                Avalonia.Automation.AutomationProperties.SetName(button, label)
+                Avalonia.Automation.AutomationProperties.SetHelpText(button, label)
                 button.HorizontalAlignment <- HorizontalAlignment.Center
                 button.VerticalAlignment <- VerticalAlignment.Center
                 emptyActions.Children.Add button

@@ -102,13 +102,42 @@ type Composer(actions: ComposerActions) as this =
             BorderThickness = Thickness 1.0,
             CornerRadius = CornerRadius Tokens.radiusLg)
 
-    let disabledNotice =
+    let dropHintBanner =
+        Border(
+            Background = Tokens.accentSoft,
+            BorderBrush = Tokens.accent,
+            BorderThickness = Thickness 1.0,
+            CornerRadius = CornerRadius Tokens.radiusMd,
+            Padding = Thickness(Tokens.space3, Tokens.space2),
+            Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2),
+            IsVisible = false)
+    let dropHintText =
+        TextBlock(
+            Text = "释放文件以添加到当前会话附件",
+            FontSize = Tokens.fontSmall,
+            FontWeight = FontWeight.Medium,
+            Foreground = Tokens.accent,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center)
+
+    let disabledNoticeText =
         TextBlock(
             Text = "",
-            FontSize = Tokens.fontSmall,
-            Foreground = Tokens.textFaint,
+            FontSize = Tokens.fontCaption,
+            Foreground = Tokens.textMuted,
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
+            LineHeight = ReadingRhythm.captionLineHeight)
+    let disabledNotice =
+        Border(
+            Background = Tokens.surfaceRaised,
+            BorderBrush = Tokens.borderSoft,
+            BorderThickness = Thickness 1.0,
+            CornerRadius = CornerRadius Tokens.radiusMd,
+            Padding = Thickness(Tokens.space3, Tokens.space2),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Child = disabledNoticeText,
+            Opacity = 0.9,
             IsVisible = false)
 
     let mutable enterSends = true
@@ -140,14 +169,28 @@ type Composer(actions: ComposerActions) as this =
             shell.Background <- Tokens.accentSoft
             shell.BorderBrush <- Tokens.accent
             shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
+            dropHintBanner.IsVisible <- true
+            input.PlaceholderText <- "释放文件以添加到当前会话附件"
         elif input.IsFocused then
             shell.Background <- Tokens.surface
             shell.BorderBrush <- Tokens.accent
             shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
+            dropHintBanner.IsVisible <- false
+            input.PlaceholderText <-
+                if not enabled && not (String.IsNullOrWhiteSpace disabledReason) then
+                    disabledReason
+                else
+                    "输入消息…"
         else
             shell.Background <- Tokens.surface
             shell.BorderBrush <- Tokens.border
             shell.BoxShadow <- Tokens.shadowSoft ()
+            dropHintBanner.IsVisible <- false
+            input.PlaceholderText <-
+                if not enabled && not (String.IsNullOrWhiteSpace disabledReason) then
+                    disabledReason
+                else
+                    "输入消息…"
 
     let refreshSendState () =
         let hasText = not (String.IsNullOrWhiteSpace input.Text)
@@ -455,8 +498,9 @@ type Composer(actions: ComposerActions) as this =
         input.IsEnabled <- true
         Ui.setEnabled attachButton value
         shell.Opacity <- if value then 1.0 else Tokens.opacityComposerDisabled
-        disabledNotice.Text <- reason
+        disabledNoticeText.Text <- reason
         disabledNotice.IsVisible <- not value && not (String.IsNullOrWhiteSpace reason)
+        updateShellVisual ()
         refreshSendState ()
         if not wasEnabled && value && wasActiveBeforeDisabled then
             wasActiveBeforeDisabled <- false
@@ -512,6 +556,8 @@ type Composer(actions: ComposerActions) as this =
         footerRow.Children.Add hintText
 
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
+        dropHintBanner.Child <- dropHintText
+        column.Children.Add dropHintBanner
         column.Children.Add attachmentScroller
         column.Children.Add inputRow
         column.Children.Add(Ui.hairline ())
@@ -561,7 +607,9 @@ type Composer(actions: ComposerActions) as this =
                     updateShellVisual ()
 
         let handleDragLeave (e: DragEventArgs) =
-            if not (isWithinBounds this e || isWithinBounds shell e) then
+            // DragLeave fires on this or shell when exiting or entering child elements.
+            // Only reset when pointer truly leaves both this and shell bounds.
+            if not (isWithinBounds this e) && not (isWithinBounds shell e) then
                 if isDraggingOver then
                     isDraggingOver <- false
                     updateShellVisual ()

@@ -182,7 +182,9 @@ module GenerationError =
     /// 供 UI 单行展示：说明 + 行动建议。
     let display (e: GenerationError) : string =
         let hint = GenerationErrorKind.hint e.kind
-        if e.message.Contains hint then e.message else e.message.TrimEnd() + hint
+        if e.message.Contains hint then e.message
+        elif e.message.EndsWith("。") || e.message.EndsWith(" ") then e.message + hint
+        else e.message.TrimEnd() + " " + hint
 
 type WanxiangError =
     | ValidationError of string

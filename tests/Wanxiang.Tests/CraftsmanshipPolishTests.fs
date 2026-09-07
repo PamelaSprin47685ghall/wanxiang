@@ -124,6 +124,19 @@ let ``ProviderFailure.classify accurately formats network connection failure cop
     Assert.True(socketError.retryable)
     Assert.Equal("无法连接「OpenAI」，请检查网络或地址。", socketError.message)
 
+    // 3. Detail HTML tag stripping & newline trimming
+    let htmlEx = new HttpRequestException("<html><body><h1>502 Bad Gateway</h1>\n<p>nginx</p>\n</body></html>", null, HttpStatusCode.BadGateway)
+    let htmlError = ProviderFailure.classify "OpenAI" "gpt-4o" htmlEx
+    Assert.Equal(ProviderUnavailable, htmlError.kind)
+    Assert.True(htmlError.retryable)
+    match htmlError.detail with
+    | Some detail ->
+        Assert.DoesNotContain("<", detail)
+        Assert.DoesNotContain(">", detail)
+        Assert.DoesNotContain("\n", detail)
+        Assert.Contains("502 Bad Gateway nginx", detail)
+    | None -> Assert.Fail("Expected detail to be present")
+
 // =========================================================================
 // 3. Conversation Activity Tracking & Bucket Grouping
 // =========================================================================
@@ -330,6 +343,110 @@ let ``Composer handles dropFiles hook when files are dropped`` () =
     Assert.NotEmpty dropped
     Assert.Equal("test.png", dropped[0].Name)
     Assert.True(dropArgs.Handled)
+
+[<Fact>]
+let ``Composer drag over and drag leave updates visual affordance and resets cleanly`` () =
+    Headless.ensure ()
+    let composerActions =
+        { submit = fun _ -> true
+          stopGeneration = ignore
+          pickAttachment = ignore
+          removeAttachment = ignore
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
+
+    let composer = Composer(composerActions)
+    composer.Build()
+    composer.SetEnabled(true, "")
+
+    let rec findTextBox (c: Control) : TextBox option =
+        match c with
+        | :? TextBox as tb -> Some tb
+        | :? Panel as p -> p.Children |> Seq.tryPick findTextBox
+        | :? Decorator as d when not (isNull d.Child) -> findTextBox d.Child
+        | _ -> None
+
+    let input = findTextBox composer |> Option.defaultWith (fun () -> failwith "TextBox not found")
+    Assert.Equal("输入消息…", input.PlaceholderText)
+
+    let mockFile =
+        { new IStorageFile with
+            member _.Name = "photo.jpg"
+            member _.Path = Uri("file:///tmp/photo.jpg")
+            member _.CanBookmark = false
+            member _.SaveBookmarkAsync() = Task.FromResult(null: string)
+            member _.OpenReadAsync() = Task.FromResult(new System.IO.MemoryStream() :> System.IO.Stream)
+            member _.OpenWriteAsync() = Task.FromResult(new System.IO.MemoryStream() :> System.IO.Stream)
+            member _.DeleteAsync() = Task.CompletedTask
+            member _.MoveAsync(_: IStorageFolder) = Task.FromResult(null: IStorageItem)
+            member _.GetParentAsync() = Task.FromResult(null: IStorageFolder)
+            member _.GetBasicPropertiesAsync() = Task.FromResult(null: StorageItemProperties)
+            member _.Dispose() = () }
+
+    use dataTransfer = new DataTransfer()
+    dataTransfer.Add(DataTransferItem.CreateFile(mockFile))
+
+    let dragOverArgs = DragEventArgs(
+        DragDrop.DragOverEvent,
+        dataTransfer,
+        composer,
+        Point(10.0, 10.0),
+        KeyModifiers.None)
+    composer.RaiseEvent dragOverArgs
+    Assert.Equal(DragDropEffects.Copy, dragOverArgs.DragEffects)
+    Assert.Equal("释放文件以添加到当前会话附件", input.PlaceholderText)
+
+    let dragLeaveArgs = DragEventArgs(
+        DragDrop.DragLeaveEvent,
+        dataTransfer,
+        composer,
+        Point(-100.0, -100.0),
+        KeyModifiers.None)
+    composer.RaiseEvent dragLeaveArgs
+    Assert.Equal("输入消息…", input.PlaceholderText)
+
+    // When disabled with a disabledReason
+    composer.SetEnabled(false, "连接已断开，请检查网络")
+    Assert.Equal("连接已断开，请检查网络", input.PlaceholderText)
+
+[<Fact>]
+let ``ChatView empty state renders balanced optical layout and accessible primary button`` () =
+    Headless.ensure ()
+    let chatActions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message =
+            { copyText = ignore
+              regenerate = ignore
+              editAndFork = ignore
+              deleteMessage = ignore
+              downloadAttachment = ignore
+              openLink = ignore } }
+
+    let chat = ChatView(chatActions, Brand.logo)
+    chat.Build()
+    let mutable clicked = false
+    chat.ShowEmpty(EmptyConversation, Some("开始对话", fun () -> clicked <- true))
+
+    let rec findButtons (c: Control) : Border list = [
+        match c with
+        | :? Border as b when b.Focusable && Avalonia.Automation.AutomationProperties.GetName b = "开始对话" ->
+            yield b
+        | :? Panel as p ->
+            for child in p.Children do yield! findButtons child
+        | :? Decorator as d when not (isNull d.Child) ->
+            yield! findButtons d.Child
+        | _ -> ()
+    ]
+    let buttons = findButtons chat
+    Assert.NotEmpty buttons
+    Assert.True(buttons[0].Focusable)
 
 // =========================================================================
 // 6. Markdown Table Layout (<4 vs >4 columns)
@@ -942,5 +1059,39 @@ let ``Composer restores focus to input when removing last attachment and support
             |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "停止生成")
         let tip = ToolTip.GetTip(sendBtn) :?> string
         Assert.Contains("停止生成 (Escape)", tip)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``ChatView ShowEmpty configures action button accessibility properties`` () =
+    Headless.ensure ()
+    let actions: ChatActions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message =
+            { copyText = ignore
+              regenerate = ignore
+              editAndFork = ignore
+              deleteMessage = ignore
+              downloadAttachment = ignore
+              openLink = ignore } }
+    let chat = ChatView(actions, fun _ -> Border() :> Control)
+    chat.Build()
+    let window = Window(Width = 800.0, Height = 600.0, Content = chat)
+    window.Show()
+    try
+        let mutable clicked = false
+        chat.ShowEmpty(EmptyConversation, Some("新建对话", fun () -> clicked <- true))
+        Dispatcher.UIThread.RunJobs()
+        let button =
+            descendants chat
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "新建对话")
+        Assert.True button.Focusable
+        Assert.Equal("新建对话", ToolTip.GetTip(button) :?> string)
     finally
         window.Close()

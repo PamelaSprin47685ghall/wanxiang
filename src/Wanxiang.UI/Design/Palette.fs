@@ -182,7 +182,7 @@ module Palette =
           success = c "#7FBF9C"
           warning = c "#D6A75E"
           danger = c "#E09385"
-          dangerSoft = c "#3A2622"
+          dangerSoft = c "#422421"
 
           codeBg = c "#101013"
           codeHeaderBg = c "#18181C"

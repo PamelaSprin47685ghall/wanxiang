@@ -5,6 +5,7 @@ open System.Collections.Generic
 open System.Net
 open System.Net.Http
 open System.Net.Sockets
+open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Agents.AI
@@ -40,8 +41,13 @@ module ProviderFailure =
           "incorrect api key", ProviderAuthFailed ]
 
     let private detailOf (text: string) : string =
+        let cleanHtml (s: string) =
+            Regex.Replace(s, @"<[^>]+>", " ")
+        let normalizeSpaces (s: string) =
+            Regex.Replace(s, @"[\r\n\t ]+", " ")
         // 只保留前若干字符：足够定位问题，又不至于把整份上游响应灌进 UI
-        let trimmed = if isNull text then "" else text.Trim()
+        let sanitized = if isNull text then "" else text |> cleanHtml |> normalizeSpaces
+        let trimmed = sanitized.Trim()
         if trimmed.Length > 600 then trimmed.Substring(0, 600) + "…" else trimmed
 
     let private signalFromBody (text: string) : GenerationErrorKind option =
