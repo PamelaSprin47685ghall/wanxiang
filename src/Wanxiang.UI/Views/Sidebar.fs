@@ -99,6 +99,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
     do
         Ui.setReservedActionVisible clearSearchButton false
+        ToolTip.SetTip(clearSearchButton, "清空搜索")
+        Avalonia.Automation.AutomationProperties.SetName(clearSearchButton, "清空搜索")
         compactBackButton.IsVisible <- false
         Ui.onClick compactBackButton actions.closeNavigation
         Ui.onClick newConversationButton actions.newConversation
@@ -128,6 +130,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     member private _.ApplyRowState(summary: ConversationSummary, host: Border) =
         let isActive = activeId = Some summary.id
         host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
+        if host.IsFocused then
+            host.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
         host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
         let status =
             if isActive then "当前会话"
@@ -146,6 +150,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             | _ ->
                 let isActive = activeId = Some id
                 host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
+                if host.IsFocused then
+                    host.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
                 host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
                 Avalonia.Automation.AutomationProperties.SetItemStatus(host, if isActive then "当前会话" else "")
 
@@ -486,6 +492,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     | SectionHeader label ->
                         let header = Ui.sectionLabel label
                         header.Margin <- Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space1)
+                        header.LetterSpacing <- 0.8
+                        header.Foreground <- Tokens.textMuted
                         header :> Control
                     | ConversationRow summary -> this.RenderRow summary
                     | ArchivedToggle ->

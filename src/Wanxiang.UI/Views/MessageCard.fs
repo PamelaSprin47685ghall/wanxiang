@@ -432,6 +432,9 @@ module MessageCard =
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = 3.0)
         column.Children.Add title
         column.Children.Add hint
+        let topRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)
+        topRow.Children.Add icon
+        topRow.Children.Add column
         match error.retryAfterSeconds with
         | Some seconds ->
             column.Children.Add(
@@ -447,8 +450,10 @@ module MessageCard =
                 Orientation = Orientation.Horizontal,
                 Spacing = Tokens.space2,
                 Margin = Thickness(0.0, Tokens.space3, 0.0, 0.0))
+        let detailContainer = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         if error.retryable then
             let retryButton = Ui.button Ui.Secondary "重试" onRetry
+            retryButton.Focusable <- true
             Avalonia.Automation.AutomationProperties.SetName(retryButton, "重试生成")
             ToolTip.SetTip(retryButton, "重新尝试生成")
             actionRow.Children.Add retryButton
@@ -472,19 +477,19 @@ module MessageCard =
                 syncDetailButton ()
             syncDetailButton ()
             actionRow.Children.Add detailButton
-            if actionRow.Children.Count > 0 then column.Children.Add actionRow
-            column.Children.Add detailHost
-        | None -> if actionRow.Children.Count > 0 then column.Children.Add actionRow
-        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)
-        row.Children.Add icon
-        row.Children.Add column
+            detailContainer.Children.Add detailHost
+        | None -> ()
+        let cardLayout = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
+        cardLayout.Children.Add topRow
+        if actionRow.Children.Count > 0 then cardLayout.Children.Add actionRow
+        if detailContainer.Children.Count > 0 then cardLayout.Children.Add detailContainer
         Border(
             Background = Tokens.dangerSoft,
             CornerRadius = CornerRadius Tokens.radiusLg,
             Padding = Thickness(Tokens.space4, Tokens.space3),
             Margin = Thickness(0.0, Tokens.space2, 0.0, 0.0),
             MaxWidth = Tokens.readingWidth,
-            Child = row)
+            Child = cardLayout)
         :> Control
 
     /// 消息时间的展示形式：今天只给时刻，昨天加前缀，更早给日期。
@@ -500,27 +505,50 @@ module MessageCard =
 
     /// 脚注：时间 + 可选用量。合成一行，避免两条弱字上下堆叠。
     let private footer (message: MessageView) (usage: GenerationUsage option) : Control option =
-        let parts =
-            [ match message.committedAt with
-              | Some at -> formatTimestamp at
-              | None -> ()
-              match usage |> Option.bind GenerationUsage.formatSummary with
-              | Some summary -> summary
-              | None -> () ]
-        if List.isEmpty parts then None
-        else
+        let timeText = message.committedAt |> Option.map formatTimestamp
+        let usageSummary = usage |> Option.bind GenerationUsage.formatSummary
+        match timeText, usageSummary with
+        | None, None -> None
+        | Some time, None ->
             let text =
                 TextBlock(
-                    Text = String.Join(" · ", parts),
+                    Text = time,
                     FontSize = Tokens.fontMicro,
                     Foreground = Tokens.textMuted,
                     HorizontalAlignment =
                         (if MessageView.isUser message then HorizontalAlignment.Right else HorizontalAlignment.Left),
                     VerticalAlignment = VerticalAlignment.Center)
-            match usage with
-            | Some value -> ToolTip.SetTip(text, GenerationUsage.formatDetail value)
-            | None -> ()
             Some(text :> Control)
+        | None, Some summary ->
+            let usageTb =
+                TextBlock(
+                    Text = summary,
+                    FontSize = Tokens.fontMicro,
+                    Foreground = Tokens.textMuted,
+                    VerticalAlignment = VerticalAlignment.Center)
+            usage |> Option.iter (fun u -> ToolTip.SetTip(usageTb, GenerationUsage.formatDetail u))
+            usageTb.PointerEntered.Add(fun _ -> usageTb.Foreground <- Tokens.text)
+            usageTb.PointerExited.Add(fun _ -> usageTb.Foreground <- Tokens.textMuted)
+            Some(usageTb :> Control)
+        | Some time, Some summary ->
+            let panel =
+                StackPanel(
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 0.0,
+                    VerticalAlignment = VerticalAlignment.Center)
+            let timeTb =
+                TextBlock(Text = time, FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted, VerticalAlignment = VerticalAlignment.Center)
+            let sepTb =
+                TextBlock(Text = " · ", FontSize = Tokens.fontMicro, Foreground = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
+            let usageTb =
+                TextBlock(Text = summary, FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted, VerticalAlignment = VerticalAlignment.Center)
+            usage |> Option.iter (fun u -> ToolTip.SetTip(usageTb, GenerationUsage.formatDetail u))
+            usageTb.PointerEntered.Add(fun _ -> usageTb.Foreground <- Tokens.text)
+            usageTb.PointerExited.Add(fun _ -> usageTb.Foreground <- Tokens.textMuted)
+            panel.Children.Add timeTb
+            panel.Children.Add sepTb
+            panel.Children.Add usageTb
+            Some(panel :> Control)
 
     /// 渲染一条消息。返回可直接塞进消息列表的控件。
     let render (message: MessageView) (ctx: MessageContext) (actions: MessageActions) : Control =
@@ -655,10 +683,14 @@ module MessageCard =
         host.Children.Add row
         host.Children.Add metaRow
         let highlight () = buttons.Opacity <- 1.0
-        let dim () = buttons.Opacity <- idleActionOpacity
+        let dim () =
+            if not host.IsPointerOver && not buttons.IsKeyboardFocusWithin then
+                buttons.Opacity <- idleActionOpacity
         host.PointerEntered.Add(fun _ -> highlight ())
         host.PointerExited.Add(fun _ -> dim ())
         // 键盘走查也要能把按钮点亮，否则 Tab 到它上面时还是半透明的
         buttons.GotFocus.Add(fun _ -> highlight ())
-        buttons.LostFocus.Add(fun _ -> dim ())
+        buttons.LostFocus.Add(fun _ ->
+            // 焦点切到同一条 toolbar 内的下一个按钮时，异步检查 IsKeyboardFocusWithin
+            Dispatcher.UIThread.Post(fun () -> dim ()))
         host :> Control

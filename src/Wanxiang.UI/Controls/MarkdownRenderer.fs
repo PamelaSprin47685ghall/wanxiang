@@ -167,6 +167,10 @@ type MarkdownRenderer(
                     link,
                     Nullable Avalonia.Automation.Peers.AutomationControlType.Hyperlink)
                 ToolTip.SetTip(link, url)
+                link.KeyDown.Add(fun e ->
+                    if link.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
+                        e.Handled <- true
+                        openLink url)
                 Ui.onClick link (fun () -> openLink url)
                 wrap.Children.Add link
             for item in items do
@@ -298,7 +302,7 @@ type MarkdownRenderer(
             BorderThickness = Thickness 1.0,
             CornerRadius = CornerRadius Tokens.radiusMd,
             ClipToBounds = true,
-            Margin = Thickness(0.0, ReadingRhythm.blockGap),
+            Margin = Thickness(0.0, ReadingRhythm.codeBlockVerticalMargin),
             Child = stack)
         :> Control
 
@@ -365,7 +369,7 @@ type MarkdownRenderer(
                 BorderThickness = Thickness 1.0,
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 ClipToBounds = true,
-                Margin = Thickness(0.0, ReadingRhythm.blockGap),
+                Margin = Thickness(0.0, ReadingRhythm.tableVerticalMargin),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Child = tableContent)
             :> Control
@@ -469,10 +473,20 @@ type MarkdownRenderer(
             for child in inner do
                 for control in this.RenderBlock(child, inQuote = true) do
                     stack.Children.Add control
+            // 引用块首子项清空顶外边距，末子项清空底外边距，保证内部留白紧凑一致
+            if stack.Children.Count > 0 then
+                let first = stack.Children[0]
+                let fm = first.Margin
+                first.Margin <- Thickness(fm.Left, 0.0, fm.Right, fm.Bottom)
+                let last = stack.Children[stack.Children.Count - 1]
+                let lm = last.Margin
+                last.Margin <- Thickness(lm.Left, lm.Top, lm.Right, 0.0)
             [ Border(
+                  Background = Tokens.hover,
+                  CornerRadius = CornerRadius(0.0, Tokens.radiusSm, Tokens.radiusSm, 0.0),
                   BorderBrush = Tokens.accent,
                   BorderThickness = Thickness(3.0, 0.0, 0.0, 0.0),
-                  Padding = Thickness(Tokens.space3, Tokens.space1, 0.0, Tokens.space1),
+                  Padding = Thickness(Tokens.space3, Tokens.space2, Tokens.space3, Tokens.space2),
                   Margin = Thickness(0.0, Tokens.space1, 0.0, ReadingRhythm.quoteBottomGap),
                   Child = stack)
               :> Control ]

@@ -482,6 +482,63 @@ let ``ChatView tracks unread messages when scrolled away from bottom`` () =
     finally
         window.Close()
 
+[<Fact>]
+let ``Markdown hyperlink responds to Enter and Space key to openLink`` () =
+    Headless.ensure ()
+    let mutable opened = None
+    let renderer = MarkdownRenderer(14.0, ignore, (fun url -> opened <- Some url), false)
+    let doc =
+        [ MdParagraph [ MdText("Click this ", false, false, false, false); MdLink("example link", "https://wanxiang.ai") ] ]
+    let rendered = renderer.Render doc
+    let window = Window(Width = 600.0, Height = 400.0, Content = rendered)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        let link =
+            descendants rendered
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "example link")
+        Assert.True link.Focusable
+
+        // Press Enter
+        link.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal(Some "https://wanxiang.ai", opened)
+
+        opened <- None
+        // Press Space
+        link.RaiseEvent(KeyEventArgs(Key = Key.Space, RoutedEvent = InputElement.KeyDownEvent))
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal(Some "https://wanxiang.ai", opened)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``Sidebar search clear button has accessible tooltip and automation properties`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let actions: SidebarActions =
+        { newConversation = ignore
+          openConversation = ignore
+          deleteConversation = ignore
+          renameConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    let clearBtn =
+        descendants sidebar
+        |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "清空搜索")
+    let tip = ToolTip.GetTip(clearBtn) :?> string
+    Assert.Equal("清空搜索", tip)
+    Assert.Equal("清空搜索", Avalonia.Automation.AutomationProperties.GetName(clearBtn))
+
 // =========================================================================
 // 8. Composer Prompt History & Draft Restoration
 // =========================================================================
