@@ -33,7 +33,7 @@ type MarkdownRenderer(
     static member val DefaultCodeWrap = false with get, set
 
     /// 行内片段渲染成一个可选中的文本块。
-    member private _.RenderInlines(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily) : Control =
+    member private _.RenderInlines(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily, ?textAlignment: TextAlignment) : Control =
         let lh = defaultArg lineHeight (ReadingRhythm.proseLineHeight size)
         let block =
             SelectableTextBlock(
@@ -45,6 +45,9 @@ type MarkdownRenderer(
                 SelectionBrush = Tokens.accentSoft)
         match fontFamily with
         | Some ff -> block.FontFamily <- ff
+        | None -> ()
+        match textAlignment with
+        | Some align -> block.TextAlignment <- align
         | None -> ()
         for item in items do
             match item with
@@ -97,6 +100,7 @@ type MarkdownRenderer(
                     // 至少让读者看得见作者写了什么
                     let run = Run tex
                     run.FontFamily <- Tokens.monoFontFamily
+                    run.FontStyle <- FontStyle.Italic
                     run.Foreground <- Tokens.text
                     run.Background <- Tokens.inlineCodeBg
                     run.FontSize <- size - 0.5
@@ -141,16 +145,16 @@ type MarkdownRenderer(
 
     /// 链接需要能点。整段文本共用一个 TextBlock 时无法逐字命中，
     /// 因此只在段落里存在链接时，把段落拆成「文本 + 可点链接」的 WrapPanel。
-    member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily) : Control =
+    member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush, ?lineHeight: float, ?fontFamily: FontFamily, ?textAlignment: TextAlignment) : Control =
         let hasLink = items |> List.exists (function MdLink _ -> true | _ -> false)
         if not hasLink then
-            this.RenderInlines(items, size, weight, brush, ?lineHeight = lineHeight, ?fontFamily = fontFamily)
+            this.RenderInlines(items, size, weight, brush, ?lineHeight = lineHeight, ?fontFamily = fontFamily, ?textAlignment = textAlignment)
         else
             let wrap = WrapPanel(Orientation = Orientation.Horizontal)
             let mutable buffer: MdInline list = []
             let flush () =
                 if not (List.isEmpty buffer) then
-                    let control = this.RenderInlines(List.rev buffer, size, weight, brush, ?lineHeight = lineHeight, ?fontFamily = fontFamily)
+                    let control = this.RenderInlines(List.rev buffer, size, weight, brush, ?lineHeight = lineHeight, ?fontFamily = fontFamily, ?textAlignment = textAlignment)
                     wrap.Children.Add control
                     buffer <- []
             let addLinkChunk (fullText: string) (chunk: string) (url: string) (focusable: bool) =
@@ -378,6 +382,18 @@ type MarkdownRenderer(
                         | _ -> false
                 | _ -> false
 
+            let isNumericColumn =
+                Array.init columnCount (fun c ->
+                    if List.isEmpty rows then false
+                    else
+                        rows
+                        |> List.forall (fun row ->
+                            if c < List.length row then
+                                match row[c] with
+                                | [] -> true
+                                | cells -> isNumericCell cells
+                            else true))
+
             let mutable gridRowIndex = 0
             let mutable dataRowIndex = 0
             let addRow (cells: MdInline list list) (isHeader: bool) =
@@ -385,20 +401,27 @@ type MarkdownRenderer(
                 for columnIndex in 0 .. columnCount - 1 do
                     let content =
                         if columnIndex < List.length cells then cells[columnIndex] else []
-                    let isNumeric = not isHeader && isNumericCell content
+                    let isNumeric =
+                        if isHeader then
+                            isNumericColumn[columnIndex] && (isNumericCell content || List.length content <= 1)
+                        else
+                            isNumericCell content
+                    let alignment = if isNumeric then HorizontalAlignment.Right else HorizontalAlignment.Left
+                    let textAlignment = if isNumeric then Some TextAlignment.Right else None
                     let cell =
                         this.RenderInlineRow(
                             content,
                             fontSize - 0.5,
                             (if isHeader then FontWeight.Medium else FontWeight.Normal),
                             (if isHeader then Tokens.text else Tokens.textMuted),
-                            ?fontFamily = (if isNumeric then Some Tokens.monoFontFamily else None))
+                            ?fontFamily = (if isNumeric && not isHeader then Some Tokens.monoFontFamily else None),
+                            ?textAlignment = textAlignment)
                     let hasBreak = content |> List.exists (function MdBreak -> true | _ -> false)
                     cell.VerticalAlignment <-
                         if isHeader then VerticalAlignment.Center
                         elif hasBreak then VerticalAlignment.Top
                         else VerticalAlignment.Center
-                    cell.HorizontalAlignment <- HorizontalAlignment.Left
+                    cell.HorizontalAlignment <- alignment
                     let background: IBrush =
                         if isHeader then Tokens.tableHeader
                         // 隔行底色比逐行画线更轻：长表格里横线多了会变成网格纸
@@ -445,7 +468,10 @@ type MarkdownRenderer(
 
     member private this.RenderMath(tex: string) : Control list =
         match MathRender.tryBlock (fontSize + 1.0) tex with
-        | Some control -> [ control ]
+        | Some control ->
+            control.HorizontalAlignment <- HorizontalAlignment.Center
+            control.Margin <- Thickness(0.0, Tokens.space3)
+            [ control ]
         | None -> [ this.RenderCode("tex", tex) ]
 
     member private this.RenderBlock(block: MdBlock, ?inQuote: bool) : Control list =

@@ -70,12 +70,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let titleAction =
         ActionBorder(
             Background = Brushes.Transparent,
+            BorderBrush = Brushes.Transparent,
+            BorderThickness = Thickness 1.0,
+            CornerRadius = CornerRadius Tokens.radiusSm,
             Height = Tokens.iconButton,
             MinHeight = Tokens.iconButton,
             MaxHeight = Tokens.iconButton,
+            MinWidth = 120.0,
             VerticalAlignment = VerticalAlignment.Center,
             Padding = Thickness(Tokens.space3, 0.0),
-            Focusable = true,
+            Focusable = false,
             Child = titleText)
 
     let generatingChip =
@@ -203,6 +207,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable hasConversationChrome = false
     let mutable isGenerating = false
     let mutable titleEditable = false
+    let mutable editingTitle = false
 
     do
         generatingChip.Child <-
@@ -220,11 +225,20 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleEditShell.Height <- Tokens.iconButton
         titleEditShell.MinHeight <- Tokens.iconButton
         titleEditShell.MaxHeight <- Tokens.iconButton
+        titleEditShell.MinWidth <- 120.0
         titleEditShell.Padding <- Thickness(Tokens.space3, 0.0)
+        titleEditShell.CornerRadius <- CornerRadius Tokens.radiusSm
+        titleEditShell.Background <- Tokens.surface
+        titleEditShell.BorderBrush <- Tokens.border
+        titleEditShell.BorderThickness <- Thickness 1.0
         titleEditShell.VerticalAlignment <- VerticalAlignment.Center
         titleEditBox.FontSize <- Tokens.fontTitle
         titleEditBox.FontWeight <- FontWeight.Medium
         titleEditBox.VerticalAlignment <- VerticalAlignment.Center
+        titleEditBox.VerticalContentAlignment <- VerticalAlignment.Center
+        titleEditBox.Padding <- Thickness 0.0
+        titleEditBox.MinHeight <- 0.0
+        titleEditBox.Margin <- Thickness 0.0
         ToolTip.SetTip(generatingChip, "正在生成回答")
         Avalonia.Automation.AutomationProperties.SetName(generatingChip, "正在生成回答")
         emptyActions.Margin <- Thickness 0.0
@@ -232,38 +246,82 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleHost.Children.Add titleEditShell
         titleEditShell.IsVisible <- false
 
-    member private this.CommitTitle(restoreFocus: bool) =
-        let next = if isNull titleEditBox.Text then "" else titleEditBox.Text.Trim()
-        titleEditShell.IsVisible <- false
-        titleAction.IsVisible <- true
-        if not (String.IsNullOrWhiteSpace next) && next <> titleText.Text then
-            actions.renameTitle next
-        if restoreFocus then
-            Dispatcher.UIThread.Post(fun () -> titleAction.Focus(NavigationMethod.Tab) |> ignore)
+    let updateTitleActionVisual () =
+        if not titleEditable then
+            titleAction.BorderBrush <- Brushes.Transparent
+            titleAction.BoxShadow <- BoxShadows()
+            titleText.Foreground <- Tokens.textFaint
+        elif titleAction.IsFocused then
+            titleAction.BorderBrush <- Tokens.accent
+            titleAction.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
+            titleText.Foreground <- Tokens.accent
+        elif titleAction.IsPointerOver then
+            titleAction.BorderBrush <- Tokens.line
+            titleAction.BoxShadow <- BoxShadows()
+            titleText.Foreground <- Tokens.accent
         else
-            Dispatcher.UIThread.Post(fun () -> titleAction.Focus(NavigationMethod.Unspecified) |> ignore)
+            titleAction.BorderBrush <- Brushes.Transparent
+            titleAction.BoxShadow <- BoxShadows()
+            titleText.Foreground <- Tokens.text
+
+    member private this.CommitTitle(restoreFocus: bool) =
+        if editingTitle || titleEditShell.IsVisible then
+            editingTitle <- false
+            let next = if isNull titleEditBox.Text then "" else titleEditBox.Text.Trim()
+            titleAction.IsVisible <- true
+            titleEditShell.IsVisible <- false
+            if not (String.IsNullOrWhiteSpace next) && next <> titleText.Text then
+                actions.renameTitle next
+            else
+                titleEditBox.Text <- titleText.Text
+            if restoreFocus then
+                titleAction.Focus(NavigationMethod.Tab) |> ignore
+                Dispatcher.UIThread.Post(
+                    (fun () ->
+                        if titleAction.IsVisible && titleAction.Focusable && not titleAction.IsFocused then
+                            titleAction.Focus(NavigationMethod.Tab) |> ignore),
+                    DispatcherPriority.Input)
 
     member private this.CancelTitleEdit() =
-        titleEditShell.IsVisible <- false
-        titleAction.IsVisible <- true
-        Dispatcher.UIThread.Post(fun () -> titleAction.Focus(NavigationMethod.Tab) |> ignore)
+        if editingTitle || titleEditShell.IsVisible then
+            editingTitle <- false
+            titleEditBox.Text <- titleText.Text
+            titleAction.IsVisible <- true
+            titleEditShell.IsVisible <- false
+            titleAction.Focus(NavigationMethod.Tab) |> ignore
+            Dispatcher.UIThread.Post(
+                (fun () ->
+                    if titleAction.IsVisible && titleAction.Focusable && not titleAction.IsFocused then
+                        titleAction.Focus(NavigationMethod.Tab) |> ignore),
+                DispatcherPriority.Input)
 
     member private this.BeginTitleEdit() =
-        if titleAction.IsVisible && titleAction.Focusable && not (String.IsNullOrWhiteSpace titleText.Text) then
+        if titleEditable && titleAction.Focusable && not (String.IsNullOrWhiteSpace titleText.Text) then
+            editingTitle <- true
             titleEditBox.Text <- titleText.Text
             titleAction.IsVisible <- false
             titleEditShell.IsVisible <- true
-            Dispatcher.UIThread.Post(fun () ->
-                titleEditBox.Focus() |> ignore
-                titleEditBox.SelectAll())
+            titleEditBox.Focus() |> ignore
+            titleEditBox.SelectAll()
+            Dispatcher.UIThread.Post(
+                (fun () ->
+                    if titleEditShell.IsVisible then
+                        titleEditBox.Focus() |> ignore
+                        titleEditBox.SelectAll()),
+                DispatcherPriority.Input)
 
     member this.SetTitle(text: string, editable: bool) =
         titleEditable <- editable
+        if titleEditShell.IsVisible then
+            editingTitle <- false
+            titleEditShell.IsVisible <- false
+            titleAction.IsVisible <- true
         titleText.TextTrimming <- TextTrimming.CharacterEllipsis
         titleText.Text <- text
-        titleText.Foreground <- if editable then Tokens.text else Tokens.textFaint
+        titleEditBox.Text <- text
         titleAction.Focusable <- editable
         titleAction.Cursor <- if editable then new Cursor(StandardCursorType.Hand) else null
+        updateTitleActionVisual ()
         ToolTip.SetTip(titleAction, text)
         ToolTip.SetTip(titleText, text)
         Avalonia.Automation.AutomationProperties.SetName(titleText, text)
@@ -704,10 +762,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             if (e.Key = Key.F2 || e.Key = Key.Enter) && titleEditable then
                 e.Handled <- true
                 this.BeginTitleEdit())
-        titleAction.PointerEntered.Add(fun _ ->
-            if titleEditable then titleText.Foreground <- Tokens.accent)
-        titleAction.PointerExited.Add(fun _ ->
-            titleText.Foreground <- if titleEditable then Tokens.text else Tokens.textFaint)
+        titleAction.PointerEntered.Add(fun _ -> updateTitleActionVisual ())
+        titleAction.PointerExited.Add(fun _ -> updateTitleActionVisual ())
+        titleAction.GotFocus.Add(fun _ -> updateTitleActionVisual ())
+        titleAction.LostFocus.Add(fun _ -> updateTitleActionVisual ())
         titleEditBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
@@ -715,7 +773,21 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             elif e.Key = Key.Escape then
                 e.Handled <- true
                 this.CancelTitleEdit())
-        titleEditBox.LostFocus.Add(fun _ -> if titleEditShell.IsVisible then this.CommitTitle false)
+        titleEditBox.GotFocus.Add(fun _ ->
+            titleEditShell.BorderBrush <- Tokens.accent
+            titleEditShell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color)))
+        titleEditBox.LostFocus.Add(fun _ ->
+            titleEditShell.BorderBrush <- Tokens.border
+            titleEditShell.BoxShadow <- BoxShadows()
+            if editingTitle then
+                let top = TopLevel.GetTopLevel(this)
+                let newFocus = if isNull top || isNull top.FocusManager then null else top.FocusManager.GetFocusedElement()
+                let shouldRestoreFocus = isNull newFocus || obj.ReferenceEquals(newFocus, top) || obj.ReferenceEquals(newFocus, this)
+                this.CommitTitle shouldRestoreFocus)
+        titleEditShell.PointerEntered.Add(fun _ ->
+            if not titleEditBox.IsFocused then titleEditShell.BorderBrush <- Tokens.line)
+        titleEditShell.PointerExited.Add(fun _ ->
+            if not titleEditBox.IsFocused then titleEditShell.BorderBrush <- Tokens.border)
 
         Ui.onClick stopButton (fun () -> actions.stopGeneration ())
         Ui.onClick forkButton (fun () -> actions.forkFromHere ())
@@ -735,6 +807,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleHost.HorizontalAlignment <- HorizontalAlignment.Stretch
         titleHost.VerticalAlignment <- VerticalAlignment.Center
         titleText.HorizontalAlignment <- HorizontalAlignment.Stretch
+        titleAction.HorizontalAlignment <- HorizontalAlignment.Stretch
         titleEditShell.HorizontalAlignment <- HorizontalAlignment.Stretch
         Grid.SetColumn(sidebarToggleButton, 0)
         Grid.SetColumn(titleHost, 1)

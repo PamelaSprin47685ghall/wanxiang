@@ -124,6 +124,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let summaryById = System.Collections.Generic.Dictionary<Guid, ConversationSummary>()
     let mutable visibleRowIds: Guid array = [||]
     let flatIndexByConversation = System.Collections.Generic.Dictionary<Guid, int>()
+    let mutable archivedCount = 0
+    let mutable hasArchivedToggle = false
+    let mutable archivedToggleFlatIndex: int option = None
+    let mutable archivedToggleHost: Border option = None
 
     do
         Ui.setReservedActionVisible clearSearchButton false
@@ -213,8 +217,25 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         | Some 0 when delta < 0 ->
             this.FocusSearch()
         | Some index ->
-            let targetIndex = Math.Clamp(index + delta, 0, visibleRowIds.Length - 1)
-            this.FocusRowAt targetIndex
+            let targetIndex = index + delta
+            // 末行继续 Down 就落到已归档开关上，而不是钳在原地；
+            // 开关是列表最后一项，Up 会再桥回末行，来回都不断。
+            if targetIndex >= visibleRowIds.Length && hasArchivedToggle then
+                this.FocusArchivedToggle()
+            else
+                this.FocusRowAt(Math.Clamp(targetIndex, 0, visibleRowIds.Length - 1))
+        | None -> ()
+
+    member private _.FocusArchivedToggle() =
+        match archivedToggleFlatIndex with
+        | Some flatIndex ->
+            conversationList.ScrollIntoView flatIndex
+            let focusHost () =
+                match archivedToggleHost with
+                | Some host -> host.Focus NavigationMethod.Directional |> ignore
+                | None -> ()
+            focusHost ()
+            Dispatcher.UIThread.Post focusHost
         | None -> ()
 
     member private this.FocusActiveConversation() =
@@ -238,6 +259,92 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         this.Rebuild()
         if shouldFocus then
             this.FocusSearch()
+
+    /// 已归档开关：与会话行同高同圆角的弱操作行。
+    /// 折叠时显示计数（展开入口），展开时变成收起入口；
+    /// 图标 + 文案 + 人字形指示器，键盘与自动化行为都是按钮。
+    member private this.RenderArchivedToggle() : Control =
+        let expanded = showArchived
+        let labelText =
+            if expanded then "收起已归档会话"
+            else sprintf "已归档会话 (%d)" archivedCount
+        let archiveGlyph = Icons.archive Tokens.textMuted
+        archiveGlyph.Width <- Tokens.iconGlyph
+        archiveGlyph.Height <- Tokens.iconGlyph
+        archiveGlyph.VerticalAlignment <- VerticalAlignment.Center
+        let label =
+            TextBlock(
+                Text = labelText,
+                FontSize = Tokens.fontSmall,
+                Foreground = Tokens.textMuted,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis)
+        let chevronGlyph = (if expanded then Icons.chevronUp else Icons.chevronDown) Tokens.textFaint
+        chevronGlyph.Width <- Tokens.iconGlyph
+        chevronGlyph.Height <- Tokens.iconGlyph
+        chevronGlyph.VerticalAlignment <- VerticalAlignment.Center
+        let leading = Ui.hstack Tokens.space2 [ archiveGlyph :> Control; label :> Control ]
+        leading.VerticalAlignment <- VerticalAlignment.Center
+        DockPanel.SetDock(chevronGlyph, Dock.Right)
+        let row = DockPanel(LastChildFill = true)
+        row.Children.Add chevronGlyph
+        row.Children.Add leading
+        row.VerticalAlignment <- VerticalAlignment.Center
+        let host =
+            ActionBorder(
+                Padding = Thickness(Tokens.space3, ControlMetrics.sidebarRowPaddingY),
+                CornerRadius = CornerRadius Tokens.radiusMd,
+                Background = Brushes.Transparent,
+                Cursor = handCursor,
+                Focusable = true,
+                MinHeight = ControlMetrics.sidebarRowMinHeight,
+                Child = row)
+        archivedToggleHost <- Some(host :> Border)
+        host.DetachedFromVisualTree.Add(fun _ ->
+            match archivedToggleHost with
+            | Some current when obj.ReferenceEquals(current, host) -> archivedToggleHost <- None
+            | _ -> ())
+        let accessibleName =
+            if expanded then "收起已归档会话"
+            else sprintf "已归档会话，共 %d 个，点击展开" archivedCount
+        Avalonia.Automation.AutomationProperties.SetName(host, accessibleName)
+        Avalonia.Automation.AutomationProperties.SetRole(host, AutomationRole.Button)
+        Avalonia.Automation.AutomationProperties.SetExpanded(host, expanded)
+        ToolTip.SetTip(host, accessibleName)
+        host.PointerEntered.Add(fun _ -> host.Background <- Tokens.hover)
+        host.PointerExited.Add(fun _ ->
+            if not host.IsFocused then host.Background <- Brushes.Transparent)
+        host.GotFocus.Add(fun _ -> host.Background <- Tokens.hover)
+        host.LostFocus.Add(fun _ -> host.Background <- Brushes.Transparent)
+        // Ui.onClick 已接管 Enter/Space；切换会触发 Rebuild 重建本行，
+        // Post 回来把焦点还给新行，键盘连按展开/收起不断线。
+        Ui.onClick host (fun () ->
+            actions.toggleArchivedVisibility ()
+            Dispatcher.UIThread.Post(fun () ->
+                match archivedToggleHost with
+                | Some current -> current.Focus NavigationMethod.Directional |> ignore
+                | None -> ()))
+        host.KeyDown.Add(fun e ->
+            if e.Key = Key.Up then
+                e.Handled <- true
+                if visibleRowIds.Length > 0 then
+                    this.FocusRowAt(visibleRowIds.Length - 1)
+                else
+                    this.FocusSearch()
+            elif e.Key = Key.Down then
+                // 已经是列表最后一项：吞掉，避免 ListBox 默认导航把焦点吸走。
+                e.Handled <- true
+            elif e.Key = Key.Home then
+                e.Handled <- true
+                if visibleRowIds.Length > 0 then this.FocusRowAt 0
+                else this.FocusSearch()
+            elif e.Key = Key.End then
+                e.Handled <- true
+            elif e.Key = Key.Escape then
+                if not (String.IsNullOrEmpty searchBox.Text) then
+                    e.Handled <- true
+                    this.ResetSearch true)
+        host :> Control
 
     /// 一行会话。选中态用强调色浅底 + 左缘，生成中用一个呼吸点。
     member private this.RenderRow(summary: ConversationSummary) : Control =
@@ -433,8 +540,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             for item in group.items do
                 flatIndexByConversation[item.id] <- flattened.Count
                 flattened.Add(ConversationRow item)
-        let hasArchived = summaries |> List.exists (fun s -> s.archived)
-        if hasArchived && not showArchived then
+        let archived = summaries |> List.filter (fun s -> s.archived)
+        archivedCount <- archived.Length
+        // 折叠时它是展开入口，展开时它是收起入口：两种状态都留在列表末尾，
+        // 键盘 Up/Down 才能在行与它之间连续走通，展开后也有地方收起。
+        hasArchivedToggle <- not (List.isEmpty archived)
+        archivedToggleHost <- None
+        archivedToggleFlatIndex <- None
+        if hasArchivedToggle then
+            archivedToggleFlatIndex <- Some flattened.Count
             flattened.Add ArchivedToggle
         conversationList.ItemsSource <- flattened
         visibleRowIds <-
@@ -589,11 +703,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                         header.Focusable <- false
                         header :> Control
                     | ConversationRow summary -> this.RenderRow summary
-                    | ArchivedToggle ->
-                        let toggle = Ui.button Ui.Ghost "显示已归档会话" actions.toggleArchivedVisibility
-                        toggle.Margin <- Thickness(Tokens.space2, Tokens.space2, Tokens.space2, 0.0)
-                        toggle.HorizontalAlignment <- HorizontalAlignment.Left
-                        toggle :> Control),
+                    | ArchivedToggle -> this.RenderArchivedToggle()),
                 true)
         conversationList.ContainerPrepared.Add(fun args ->
             match args.Container with

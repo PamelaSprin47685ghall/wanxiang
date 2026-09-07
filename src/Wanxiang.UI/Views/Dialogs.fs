@@ -78,7 +78,14 @@ module Dialogs =
 
     /// 返回按钮行与主操作按钮：调用方可在 ShowDialog 之后把焦点 post 到主按钮上
     ///（ShowDialog 内部的 focusFirst 会先聚焦第一个可聚焦项，后 post 者胜出）。
-    let private actionRow (overlay: OverlayHost) (confirmLabel: string) (tone: Ui.ButtonTone) (onConfirm: unit -> unit) =
+    /// 返回按钮行与主操作按钮，可指定默认聚焦按钮（true 聚焦确认按钮，false 聚焦取消按钮）。
+    let private actionRowWithDefault
+        (overlay: OverlayHost)
+        (confirmLabel: string)
+        (tone: Ui.ButtonTone)
+        (onConfirm: unit -> unit)
+        (defaultFocusConfirm: bool)
+        =
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
         AutomationProperties.SetName(cancelButton, "取消")
         AutomationProperties.SetHelpText(cancelButton, "取消并关闭对话框 (Esc)")
@@ -92,6 +99,17 @@ module Dialogs =
         AutomationProperties.SetHelpText(confirmButton, confirmTip)
         ToolTip.SetTip(confirmButton, confirmTip)
         let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+        let wireArrowNavigation (leftBtn: Border) (rightBtn: Border) =
+            leftBtn.KeyDown.Add(fun e ->
+                if e.Key = Key.Right && rightBtn.IsEnabled then
+                    e.Handled <- true
+                    rightBtn.Focus(NavigationMethod.Directional) |> ignore)
+            rightBtn.KeyDown.Add(fun e ->
+                if e.Key = Key.Left && leftBtn.IsEnabled then
+                    e.Handled <- true
+                    leftBtn.Focus(NavigationMethod.Directional) |> ignore)
+        wireArrowNavigation cancelButton confirmButton
+
         row.Children.Add cancelButton
         row.Children.Add confirmButton
         row.KeyDown.Add(fun e ->
@@ -100,8 +118,14 @@ module Dialogs =
                 overlay.CloseDialog()
             elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
                 e.Handled <- true
-                onConfirm ())
+                onConfirm ()
+            elif (e.Key = Key.Enter || e.Key = Key.Space) && cancelButton.IsFocused then
+                e.Handled <- true
+                overlay.CloseDialog())
         row, confirmButton
+
+    let private actionRow (overlay: OverlayHost) (confirmLabel: string) (tone: Ui.ButtonTone) (onConfirm: unit -> unit) =
+        actionRowWithDefault overlay confirmLabel tone onConfirm false
 
     /// 单行输入对话框（重命名等）。
     let prompt
@@ -115,12 +139,43 @@ module Dialogs =
         let restoreOpener = captureOpener overlay
         let shell, box = Ui.textField hint
         box.Text <- initial
+        let validation = Ui.fieldValidationMessage box
+        let helper = Ui.caption "请输入非空内容"
+        helper.Margin <- Thickness(2.0, Tokens.space1, 0.0, 0.0)
+        helper.IsVisible <- false
         let mutable active = true
         let mutable pending = false
         let mutable setPending: bool -> unit = ignore
+        let mutable isConfirmEnabled = false
+        let mutable updateConfirmState: unit -> unit = ignore
+        let mutable canSubmit = false
+
+        let updateValidity () =
+            let raw = if isNull box.Text then "" else box.Text
+            let trimmed = raw.Trim()
+            let isEmpty = String.IsNullOrWhiteSpace trimmed
+            if isEmpty then
+                if raw.Length > 0 then
+                    Ui.setFieldError box "输入内容不能全为空白字符。"
+                    helper.IsVisible <- false
+                else
+                    Ui.clearFieldError box
+                    helper.Text <- "内容不能为空，请输入有效文本。"
+                    helper.IsVisible <- true
+            else
+                Ui.clearFieldError box
+                helper.IsVisible <- false
+            let canSubmit = not pending && not isEmpty
+            isConfirmEnabled <- canSubmit
+            updateConfirmState ()
+            canSubmit
+
+        box.GetObservable(TextBox.TextProperty).Subscribe(fun _ ->
+            updateValidity () |> ignore) |> ignore
+
         let submit () =
             let value = if isNull box.Text then "" else box.Text.Trim()
-            if not pending && not (String.IsNullOrWhiteSpace value) then
+            if not pending && isConfirmEnabled && not (String.IsNullOrWhiteSpace value) then
                 setPending true
                 onConfirm value (fun ok ->
                     if active then
@@ -147,6 +202,20 @@ module Dialogs =
             Ui.setButtonPending confirmButton value confirmLabel "正在保存…"
             Ui.setEnabled cancelButton (not value)
         let buttons = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+        let wireArrowNavigation (leftBtn: Border) (rightBtn: Border) =
+            leftBtn.KeyDown.Add(fun e ->
+                if e.Key = Key.Right && rightBtn.IsEnabled then
+                    e.Handled <- true
+                    rightBtn.Focus(NavigationMethod.Directional) |> ignore)
+            rightBtn.KeyDown.Add(fun e ->
+                if e.Key = Key.Left && leftBtn.IsEnabled then
+                    e.Handled <- true
+                    leftBtn.Focus(NavigationMethod.Directional) |> ignore)
+        wireArrowNavigation cancelButton confirmButton
+        updateConfirmState <- fun () ->
+            Ui.setEnabled confirmButton isConfirmEnabled
+        updateValidity () |> ignore
+
         buttons.Children.Add cancelButton
         buttons.Children.Add confirmButton
         buttons.KeyDown.Add(fun e ->
@@ -155,9 +224,13 @@ module Dialogs =
                 overlay.CloseDialog()
             elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
                 e.Handled <- true
-                submit ())
+                submit ()
+            elif (e.Key = Key.Enter || e.Key = Key.Space) && cancelButton.IsFocused then
+                e.Handled <- true
+                overlay.CloseDialog())
         let content =
-            Ui.vstack Tokens.space4 [ Ui.title title :> Control; shell :> Control; buttons :> Control ]
+            let fieldBox = Ui.vstack 0.0 [ shell :> Control; validation :> Control; helper :> Control ]
+            Ui.vstack Tokens.space4 [ Ui.title title :> Control; fieldBox :> Control; buttons :> Control ]
         content.KeyDown.Add(fun e ->
             if e.Key = Key.Escape then
                 e.Handled <- true
@@ -169,8 +242,15 @@ module Dialogs =
             box.Focus() |> ignore
             box.SelectAll())
 
-    /// 破坏性操作确认：主按钮用 Danger 语气 + 警示 tooltip，打开后焦点直接落在它上面。
-    let confirm (overlay: OverlayHost) (title: string) (body: string) (confirmLabel: string) (onConfirm: unit -> unit) =
+    /// 破坏性或常规操作确认，可显式指定打开时默认聚焦主按钮或取消按钮。
+    let confirmWithFocus
+        (overlay: OverlayHost)
+        (title: string)
+        (body: string)
+        (confirmLabel: string)
+        (onConfirm: unit -> unit)
+        (defaultFocusDanger: bool)
+        =
         let restoreOpener = captureOpener overlay
         let message =
             TextBlock(
@@ -186,7 +266,7 @@ module Dialogs =
             overlay.CloseDialog()
             onConfirm ()
         let buttons, dangerButton =
-            actionRow overlay confirmLabel Ui.Danger confirmAction
+            actionRowWithDefault overlay confirmLabel Ui.Danger confirmAction defaultFocusDanger
         AutomationProperties.SetHelpText(dangerButton, sprintf "%s · %s" (ToolTip.GetTip dangerButton :?> string) body)
         let content =
             Ui.vstack
@@ -202,7 +282,14 @@ module Dialogs =
                 e.Handled <- true
                 confirmAction ())
         overlay.ShowDialog(content :> Control, 420.0, onClosed = restoreOpener)
-        Dispatcher.UIThread.Post(fun () -> dangerButton.Focus() |> ignore)
+        Dispatcher.UIThread.Post(fun () ->
+            let target = if defaultFocusDanger then dangerButton else buttons.Children[0] :?> Border
+            target.Focus(NavigationMethod.Directional) |> ignore)
+
+
+    /// 破坏性操作确认：主按钮用 Danger 语气 + 警示 tooltip，打开后焦点直接落在它上面。
+    let confirm (overlay: OverlayHost) (title: string) (body: string) (confirmLabel: string) (onConfirm: unit -> unit) =
+        confirmWithFocus overlay title body confirmLabel onConfirm true
 
     /// 长文本编辑（编辑消息并分叉）。
     let editText (overlay: OverlayHost) (title: string) (initial: string) (confirmLabel: string) (onConfirm: string -> unit) =
