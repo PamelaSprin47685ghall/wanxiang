@@ -12,6 +12,7 @@ open Avalonia
 open Avalonia.Controls
 open Avalonia.Controls.Primitives
 open Avalonia.Threading
+open Avalonia.VisualTree
 open Avalonia.Input
 open Avalonia.Platform.Storage
 open Xunit
@@ -1093,5 +1094,157 @@ let ``ChatView ShowEmpty configures action button accessibility properties`` () 
             |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "新建对话")
         Assert.True button.Focusable
         Assert.Equal("新建对话", ToolTip.GetTip(button) :?> string)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``Markdown code block copy button confirms visually with check icon and tooltip`` () =
+    Headless.ensure ()
+    let mutable copiedText = ""
+    let renderer = MarkdownRenderer(14.0, (fun t -> copiedText <- t), ignore, false)
+    let markdown = "```fsharp\nlet x = 42\n```"
+    let controls = renderer.RenderText markdown
+    let window = Window(Width = 600.0, Height = 400.0, Content = controls)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        let copyButton =
+            descendants controls
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "复制代码")
+        Assert.True copyButton.Focusable
+        Assert.Equal("复制代码", ToolTip.GetTip(copyButton) :?> string)
+
+        // Invoke copy
+        let invoke =
+            Avalonia.Automation.Peers.ControlAutomationPeer.CreatePeerForElement copyButton
+            |> Assert.IsAssignableFrom<Avalonia.Automation.Provider.IInvokeProvider>
+        invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+
+        Assert.Equal("let x = 42", copiedText.Trim())
+        Assert.Equal("已复制！", Avalonia.Automation.AutomationProperties.GetName(copyButton))
+        Assert.Equal("已复制！", ToolTip.GetTip(copyButton) :?> string)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``Sidebar conversation row activates on Enter and Space keys`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let mutable openedId: Guid option = None
+    let actions: SidebarActions =
+        { newConversation = ignore
+          openConversation = fun id -> openedId <- Some id
+          deleteConversation = ignore
+          renameConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    let testId1 = Guid.NewGuid()
+    let testId2 = Guid.NewGuid()
+    let now = DateTimeOffset.Now
+    let items =
+        [ { id = testId1
+            title = "Alpha Session"
+            preview = "Hello world"
+            messageCount = 2
+            pinned = false
+            running = false
+            archived = false
+            isFork = false
+            providerId = "openai"
+            model = "gpt-4o"
+            lastCommitId = 1UL
+            createdAt = now
+            updatedAt = now }
+          { id = testId2
+            title = "Beta Session"
+            preview = "Testing keyboard"
+            messageCount = 5
+            pinned = false
+            running = false
+            archived = false
+            isFork = false
+            providerId = "openai"
+            model = "gpt-4o"
+            lastCommitId = 2UL
+            createdAt = now
+            updatedAt = now } ]
+    sidebar.SetConversations items
+    sidebar.SetConnection(true, "已连接")
+    root.Children.Insert(0, sidebar)
+    let window = Window(Width = 360.0, Height = 600.0, Content = root)
+    window.Show()
+    try
+        let rec visualControls (visual: Visual) =
+            seq {
+                match visual with
+                | :? Control as control -> yield control
+                | _ -> ()
+                for child in visual.GetVisualChildren() do
+                    yield! visualControls child
+            }
+        Dispatcher.UIThread.RunJobs()
+        let list =
+            descendants sidebar
+            |> Seq.pick (function :? ListBox as lb -> Some lb | _ -> None)
+        let row1 =
+            list.GetRealizedContainers()
+            |> Seq.collect visualControls
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "Alpha Session")
+        Assert.True row1.Focusable
+
+        // Press Enter on row 1
+        row1.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal(Some testId1, openedId)
+
+        // Press Space on row 1
+        openedId <- None
+        row1.RaiseEvent(KeyEventArgs(Key = Key.Space, RoutedEvent = InputElement.KeyDownEvent))
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal(Some testId1, openedId)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``ChatView header title tooltip reflects full title and preserves character ellipsis`` () =
+    Headless.ensure ()
+    let actions: ChatActions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message =
+            { copyText = ignore
+              regenerate = ignore
+              editAndFork = ignore
+              deleteMessage = ignore
+              downloadAttachment = ignore
+              openLink = ignore } }
+    let chat = ChatView(actions, fun _ -> Border() :> Control)
+    chat.Build()
+    let fullTitle = "An extremely long conversation title that requires ellipsis and full tooltip for desktop inspection"
+    chat.SetConversationChrome true
+    chat.SetTitle(fullTitle, true)
+    let window = Window(Width = 800.0, Height = 600.0, Content = chat)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        let titleAction =
+            descendants chat
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = sprintf "重命名会话：%s" fullTitle)
+        Assert.Equal(fullTitle, ToolTip.GetTip(titleAction) :?> string)
     finally
         window.Close()

@@ -44,7 +44,7 @@ type Composer(actions: ComposerActions) as this =
             Foreground = Tokens.text,
             CaretBrush = Tokens.accent,
             FontSize = Tokens.fontReading,
-            Padding = Thickness 0.0,
+            Padding = Thickness(0.0, 2.0, 0.0, 2.0),
             MinHeight = ControlMetrics.composerInputMinHeight,
             MaxHeight = ControlMetrics.composerInputMaxHeight,
             VerticalContentAlignment = VerticalAlignment.Center)
@@ -193,6 +193,12 @@ type Composer(actions: ComposerActions) as this =
                     "输入消息…"
 
     let refreshSendState () =
+        let text = input.Text
+        let isMultiLine =
+            not (isNull text) && (text.Contains('\n') || text.Contains('\r'))
+        input.VerticalContentAlignment <-
+            if isMultiLine then VerticalAlignment.Top else VerticalAlignment.Center
+
         let hasText = not (String.IsNullOrWhiteSpace input.Text)
         let hasAttachment = attachments |> List.exists (fun a -> a.ready)
         let uploading = attachments |> List.exists (fun a -> not a.ready)
@@ -212,8 +218,11 @@ type Composer(actions: ComposerActions) as this =
             else
                 if enterSends then "发送 (Enter)" else "发送 (Ctrl+Enter / ⌘Enter)"
         ToolTip.SetTip(sendButton, sendTip)
-        Avalonia.Automation.AutomationProperties.SetName(sendButton, if generating then "停止生成" else "发送")
+        let sendLabel = if generating then "停止生成" else "发送"
+        Avalonia.Automation.AutomationProperties.SetName(sendButton, sendLabel)
         Avalonia.Automation.AutomationProperties.SetHelpText(sendButton, sendTip)
+        if not (isNull sendButton.Child) then
+            Avalonia.Automation.AutomationProperties.SetName(sendButton.Child, sendLabel)
 
         if generating then
             let queueTip =
@@ -225,6 +234,8 @@ type Composer(actions: ComposerActions) as this =
             ToolTip.SetTip(queueButton, queueTip)
             Avalonia.Automation.AutomationProperties.SetName(queueButton, "排队发送")
             Avalonia.Automation.AutomationProperties.SetHelpText(queueButton, queueTip)
+            if not (isNull queueButton.Child) then
+                Avalonia.Automation.AutomationProperties.SetName(queueButton.Child, "排队发送")
 
     do
         modelChip.Child <-

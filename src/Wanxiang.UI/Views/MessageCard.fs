@@ -154,6 +154,8 @@ module MessageCard =
             let actionName = if bodyVisible then "收起思考过程" else "展开思考过程"
             Avalonia.Automation.AutomationProperties.SetName(
                 header, actionName)
+            Avalonia.Automation.AutomationProperties.SetHelpText(
+                header, actionName)
             ToolTip.SetTip(header, if bodyVisible then "收起思考过程" else "展开思考过程")
         let toggle () =
             bodyVisible <- not bodyVisible
@@ -371,6 +373,8 @@ module MessageCard =
                 VerticalAlignment = VerticalAlignment.Center)
         let addButton (icon: IBrush -> Control) (tip: string) (action: unit -> unit) =
             let button = Ui.iconButton icon tip
+            button.Focusable <- true
+            button.Cursor <- handCursor
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             ToolTip.SetTip(button, tip)
             Avalonia.Automation.AutomationProperties.SetName(button, tip)
@@ -378,6 +382,8 @@ module MessageCard =
             row.Children.Add button
         let addCopyButton (text: string) =
             let button = Ui.iconButton Icons.copy "复制"
+            button.Focusable <- true
+            button.Cursor <- handCursor
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             ToolTip.SetTip(button, "复制")
             Avalonia.Automation.AutomationProperties.SetName(button, "复制")
@@ -682,15 +688,18 @@ module MessageCard =
         let host = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0, HorizontalAlignment = HorizontalAlignment.Stretch)
         host.Children.Add row
         host.Children.Add metaRow
-        let highlight () = buttons.Opacity <- 1.0
-        let dim () =
-            if not host.IsPointerOver && not buttons.IsKeyboardFocusWithin then
+        let syncVisual () =
+            if host.IsPointerOver || buttons.IsKeyboardFocusWithin then
+                buttons.Opacity <- 1.0
+            else
                 buttons.Opacity <- idleActionOpacity
+        let highlight () =
+            buttons.Opacity <- 1.0
+        let dim () =
+            Dispatcher.UIThread.Post(fun () -> syncVisual ())
         host.PointerEntered.Add(fun _ -> highlight ())
         host.PointerExited.Add(fun _ -> dim ())
-        // 键盘走查也要能把按钮点亮，否则 Tab 到它上面时还是半透明的
-        buttons.GotFocus.Add(fun _ -> highlight ())
+        buttons.GotFocus.Add(fun _ -> syncVisual ())
         buttons.LostFocus.Add(fun _ ->
-            // 焦点切到同一条 toolbar 内的下一个按钮时，异步检查 IsKeyboardFocusWithin
-            Dispatcher.UIThread.Post(fun () -> dim ()))
+            dim ())
         host :> Control

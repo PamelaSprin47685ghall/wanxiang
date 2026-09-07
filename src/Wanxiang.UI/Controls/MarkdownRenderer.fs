@@ -242,23 +242,39 @@ type MarkdownRenderer(
             button
 
         let copyButton = headerButton Icons.copy "复制代码"
+        copyButton.Focusable <- true
+        copyButton.Cursor <- handCursor
         Avalonia.Automation.AutomationProperties.SetName(copyButton, "复制代码")
+        ToolTip.SetTip(copyButton, "复制代码")
+
         let mutable copyTimer: DispatcherTimer option = None
+        let stopTimer () =
+            match copyTimer with
+            | Some t ->
+                t.Stop()
+                copyTimer <- None
+            | None -> ()
+
+        let restoreDefaultState () =
+            stopTimer ()
+            Ui.setIcon copyButton Icons.copy Tokens.codeMuted
+            ToolTip.SetTip(copyButton, "复制代码")
+            Avalonia.Automation.AutomationProperties.SetName(copyButton, "复制代码")
+
         let doCopy () =
             copyText code
-            copyTimer |> Option.iter (fun t -> t.Stop())
+            stopTimer ()
             Ui.setIcon copyButton Icons.check Tokens.success
             ToolTip.SetTip(copyButton, "已复制！")
             Avalonia.Automation.AutomationProperties.SetName(copyButton, "已复制！")
             let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
-            timer.Tick.Add(fun _ ->
-                timer.Stop()
-                Ui.setIcon copyButton Icons.copy Tokens.codeMuted
-                ToolTip.SetTip(copyButton, "复制代码")
-                Avalonia.Automation.AutomationProperties.SetName(copyButton, "复制代码"))
+            timer.Tick.Add(fun _ -> restoreDefaultState ())
             copyTimer <- Some timer
             timer.Start()
         Ui.onClick copyButton doCopy
+
+        copyButton.DetachedFromVisualTree.Add(fun _ ->
+            restoreDefaultState ())
 
         // 长行原来只能横向滚动：一行长命令要么看不全，要么读一行拖一次。
         // 折行是逐块开关，初值取自 UI 偏好。
@@ -296,14 +312,17 @@ type MarkdownRenderer(
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         stack.Children.Add header
         stack.Children.Add scroll
-        Border(
-            Background = Tokens.codeBg,
-            BorderBrush = Tokens.codeBorder,
-            BorderThickness = Thickness 1.0,
-            CornerRadius = CornerRadius Tokens.radiusMd,
-            ClipToBounds = true,
-            Margin = Thickness(0.0, ReadingRhythm.codeBlockVerticalMargin),
-            Child = stack)
+        let root =
+            Border(
+                Background = Tokens.codeBg,
+                BorderBrush = Tokens.codeBorder,
+                BorderThickness = Thickness 1.0,
+                CornerRadius = CornerRadius Tokens.radiusMd,
+                ClipToBounds = true,
+                Margin = Thickness(0.0, ReadingRhythm.codeBlockVerticalMargin),
+                Child = stack)
+        root.DetachedFromVisualTree.Add(fun _ -> restoreDefaultState ())
+        root
         :> Control
 
     member private this.RenderTable(header: MdInline list list, rows: MdInline list list list) : Control =

@@ -202,6 +202,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             row
         titleEditShell.Height <- Tokens.iconButton
         titleEditShell.MinHeight <- Tokens.iconButton
+        titleEditShell.MaxHeight <- Tokens.iconButton
         titleEditShell.VerticalAlignment <- VerticalAlignment.Center
         ToolTip.SetTip(generatingChip, "正在生成回答")
         Avalonia.Automation.AutomationProperties.SetName(generatingChip, "正在生成回答")
@@ -235,11 +236,13 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member this.SetTitle(text: string, editable: bool) =
         titleEditable <- editable
+        titleText.TextTrimming <- TextTrimming.CharacterEllipsis
         titleText.Text <- text
         titleText.Foreground <- if editable then Tokens.text else Tokens.textFaint
         titleAction.Focusable <- editable
         titleAction.Cursor <- if editable then new Cursor(StandardCursorType.Hand) else null
-        ToolTip.SetTip(titleAction, if editable then "点击重命名" else null)
+        ToolTip.SetTip(titleAction, text)
+        ToolTip.SetTip(titleText, text)
         Avalonia.Automation.AutomationProperties.SetName(
             titleAction,
             if editable then sprintf "重命名会话：%s" text else text)
@@ -264,6 +267,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         for button in [ sidebarToggleButton; stopButton; forkButton; sessionSettingsButton; scrollToBottomButton ] do
             Ui.setSquareTarget button size
+        stopButton.IsVisible <- isGenerating
+        sessionSettingsButton.IsVisible <- hasConversationChrome
         if not value && unreadSinceScrolledUp > 0 then
             scrollToBottomButton.Width <- Double.NaN
             scrollToBottomButton.MinWidth <- Tokens.iconButton
@@ -695,6 +700,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
         titleHost.MinWidth <- 0.0
         titleHost.HorizontalAlignment <- HorizontalAlignment.Stretch
+        titleHost.VerticalAlignment <- VerticalAlignment.Center
         titleText.HorizontalAlignment <- HorizontalAlignment.Stretch
         titleEditShell.HorizontalAlignment <- HorizontalAlignment.Stretch
         Grid.SetColumn(sidebarToggleButton, 0)

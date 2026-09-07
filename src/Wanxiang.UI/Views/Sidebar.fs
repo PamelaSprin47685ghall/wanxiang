@@ -169,7 +169,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
     member private this.MoveRowFocus(id: Guid, delta: int) =
         match visibleRowIds |> Array.tryFindIndex ((=) id) with
-        | Some index -> this.FocusRowAt(Math.Clamp(index + delta, 0, visibleRowIds.Length - 1))
+        | Some 0 when delta < 0 ->
+            this.FocusSearch()
+        | Some index ->
+            this.FocusRowAt(Math.Clamp(index + delta, 0, visibleRowIds.Length - 1))
         | None -> ()
 
     /// 一行会话。选中态用强调色浅底 + 左缘，生成中用一个呼吸点。
@@ -295,12 +298,22 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
         Ui.onClick host (fun () -> actions.openConversation summary.id)
         host.KeyDown.Add(fun e ->
-            if e.Key = Key.Down then
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                actions.openConversation summary.id
+            elif e.Key = Key.Down then
                 e.Handled <- true
                 this.MoveRowFocus(summary.id, 1)
             elif e.Key = Key.Up then
                 e.Handled <- true
-                this.MoveRowFocus(summary.id, -1)
+                match visibleRowIds |> Array.tryFindIndex ((=) summary.id) with
+                | Some 0 -> this.FocusSearch()
+                | _ -> this.MoveRowFocus(summary.id, -1)
+            elif e.Key = Key.Escape then
+                e.Handled <- true
+                if not (String.IsNullOrEmpty searchBox.Text) then
+                    searchBox.Text <- ""
+                    this.FocusSearch()
             elif e.Key = Key.Home then
                 e.Handled <- true
                 this.FocusRowAt 0
@@ -433,7 +446,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 if visibleRowIds.Length > 0 then
                     e.Handled <- true
                     this.FocusRowAt 0
-            elif e.Key = Key.Escape then
+            elif e.Key = Key.Escape || (searchEmptyHint.IsVisible && e.Key = Key.Escape) then
                 e.Handled <- true
                 if not (String.IsNullOrEmpty searchBox.Text) then
                     searchBox.Text <- ""
