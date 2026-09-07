@@ -151,8 +151,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let idleSaveText = if existing.IsSome then "保存" else "添加"
         let mutable setPending: bool -> unit = ignore
         let save () =
-            for box in [ idBox; urlBox; modelsBox ] do Ui.clearFieldError box
+            for box in [ idBox; labelBox; urlBox; keyBox; modelsBox ] do Ui.clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
+            let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
             let models =
                 (if isNull modelsBox.Text then "" else modelsBox.Text)
                     .Split([| '\n'; '\r'; ',' |], StringSplitOptions.RemoveEmptyEntries)
@@ -160,16 +161,31 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 |> Array.filter (String.IsNullOrWhiteSpace >> not)
                 |> Array.distinct
                 |> List.ofArray
+            let mutable firstInvalid: TextBox option = None
+            let fail (box: TextBox) msg =
+                Ui.setFieldError box msg
+                if firstInvalid.IsNone then firstInvalid <- Some box
+
             if String.IsNullOrWhiteSpace id then
-                Ui.setFieldError idBox "稳定标识不能为空。"
-                idBox.Focus() |> ignore
-            elif String.IsNullOrWhiteSpace urlBox.Text then
-                Ui.setFieldError urlBox "端点地址不能为空。"
-                urlBox.Focus() |> ignore
-            elif List.isEmpty models then
-                Ui.setFieldError modelsBox "至少填写一个模型名。"
-                modelsBox.Focus() |> ignore
+                fail idBox "稳定标识不能为空。"
+            elif existing.IsNone && List.contains id takenIds then
+                fail idBox "该标识已存在，请换一个。"
+
+            if String.IsNullOrWhiteSpace url then
+                fail urlBox "端点地址不能为空。"
             else
+                match Uri.TryCreate(url, UriKind.Absolute) with
+                | true, uri when uri.Scheme = "http" || uri.Scheme = "https" -> ()
+                | _ -> fail urlBox "请输入合法的 HTTP/HTTPS 地址（例如 https://api.openai.com/v1）。"
+
+            if List.isEmpty models then
+                fail modelsBox "至少填写一个模型名（每行一个）。"
+
+            match firstInvalid with
+            | Some box ->
+                box.Focus(NavigationMethod.Directional) |> ignore
+                box.BringIntoView()
+            | None ->
                 let defaultModel =
                     match existing with
                     | Some p when List.contains p.defaultModel models -> p.defaultModel
@@ -179,7 +195,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         id
                         (if isNull labelBox.Text then "" else labelBox.Text.Trim())
                         selectedKind
-                        (urlBox.Text.Trim())
+                        url
                         (if isNull keyBox.Text then None else Some(keyBox.Text.Trim()))
                         models
                         defaultModel
@@ -192,7 +208,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                     if ok && editorActive then overlay.CloseDialog())
 
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        ToolTip.SetTip(cancelButton, "取消并关闭 (Esc)")
         let saveButton = Ui.button Ui.Primary idleSaveText save
+        ToolTip.SetTip(saveButton, sprintf "确认%s (Ctrl+Enter)" idleSaveText)
         Ui.preparePendingButton saveButton
         setPending <- fun pending ->
             Ui.setButtonPending saveButton pending idleSaveText "正在保存…"
@@ -201,6 +219,13 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
             row.Children.Add cancelButton
             row.Children.Add saveButton
+            row.KeyDown.Add(fun e ->
+                if e.Key = Key.Escape then
+                    e.Handled <- true
+                    overlay.CloseDialog()
+                elif e.Key = Key.Enter && not cancelButton.IsFocused then
+                    e.Handled <- true
+                    save ())
             row
 
         let form =
@@ -218,6 +243,14 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                   enabledRow :> Control
                   Ui.hairline () :> Control
                   buttons :> Control ]
+        form.KeyDown.Add(fun e ->
+            let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog()
+            elif e.Key = Key.Enter && ctrl then
+                e.Handled <- true
+                save ())
         let scroller =
             ScrollViewer(
                 Content = form,

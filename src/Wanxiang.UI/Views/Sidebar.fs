@@ -37,7 +37,7 @@ type private SidebarListItem =
 /// 旧版是一个平铺 ListBox：没有分组、没有置顶、没有空态、右键只有两项。
 /// 这里按时间分组、置顶提前、搜索常驻、每行可右键操作，
 /// 并且在「没有会话」「搜不到」「未连接」三种空态下说不同的话。
-type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> Control) =
+type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> Control) as this =
     inherit Border()
 
     let handCursor = new Cursor(StandardCursorType.Hand)
@@ -47,6 +47,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let compactBackButton = Ui.iconButton Icons.arrowLeft "返回对话"
     let newConversationButton = Ui.iconButtonAccent Icons.plus "新建会话（Ctrl+N）"
     let settingsButton = Ui.iconButton Icons.gear "设置（Ctrl+,）"
+    let searchDebounce = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 160.0)
     let conversationList =
         ListBox(
             Background = Brushes.Transparent,
@@ -69,14 +70,34 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
             LineHeight = ControlMetrics.sidebarStatusLineHeight)
-    let searchEmptyHint =
+    let searchEmptyHintTitle =
         TextBlock(
             Text = "未找到匹配会话",
-            Foreground = Tokens.textMuted,
             FontSize = Tokens.fontSmall,
+            FontWeight = FontWeight.Medium,
+            Foreground = Tokens.textMuted,
+            TextAlignment = TextAlignment.Center)
+    let searchEmptyHintSub =
+        TextBlock(
+            Text = "点击清空或按 Esc 恢复",
+            FontSize = Tokens.fontMicro,
+            Foreground = Tokens.textFaint,
+            TextAlignment = TextAlignment.Center)
+    let searchEmptyHintPanel =
+        StackPanel(
+            Orientation = Orientation.Vertical,
+            Spacing = Tokens.space1,
+            HorizontalAlignment = HorizontalAlignment.Center)
+    let searchEmptyHint =
+        ActionBorder(
+            CornerRadius = CornerRadius Tokens.radiusMd,
+            Padding = Thickness(Tokens.space4, Tokens.space3),
+            Margin = Thickness(Tokens.space4, Tokens.space8, Tokens.space4, 0.0),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Top,
-            Margin = Thickness(0.0, Tokens.space4, 0.0, 0.0),
+            Background = Brushes.Transparent,
+            Cursor = handCursor,
+            Focusable = true,
             IsVisible = false)
 
     let statusDot = Ui.statusDot 7.0
@@ -105,9 +126,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         Ui.onClick compactBackButton actions.closeNavigation
         Ui.onClick newConversationButton actions.newConversation
         Ui.onClick settingsButton actions.openSettings
-        Ui.onClick clearSearchButton (fun () ->
-            searchBox.Text <- ""
-            searchBox.Focus() |> ignore)
+        Ui.onClick clearSearchButton (fun () -> this.ResetSearch true)
         // `Ui.textField` 创建时 TextBox 已挂在 shell 下。这里要把图标和清空按钮
         // 合进同一输入壳，必须先解除原父子关系，否则 Avalonia 会因重复视觉父级
         // 在 MainView.Build 阶段直接抛异常，浏览器表现为整页白屏。
@@ -125,7 +144,20 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
         emptyState.Children.Add emptyTitle
         emptyState.Children.Add emptyHint
-        Avalonia.Automation.AutomationProperties.SetName(searchEmptyHint, "未找到匹配会话")
+        searchEmptyHintPanel.Children.Add searchEmptyHintTitle
+        searchEmptyHintPanel.Children.Add searchEmptyHintSub
+        searchEmptyHint.Child <- searchEmptyHintPanel
+        ToolTip.SetTip(searchEmptyHint, "点击清空搜索（Esc）")
+        Avalonia.Automation.AutomationProperties.SetName(searchEmptyHint, "未找到匹配会话，点击清空搜索")
+        searchEmptyHint.PointerEntered.Add(fun _ ->
+            searchEmptyHint.Background <- Tokens.hover)
+        searchEmptyHint.PointerExited.Add(fun _ ->
+            searchEmptyHint.Background <- Brushes.Transparent)
+        Ui.onClick searchEmptyHint (fun () -> this.ResetSearch true)
+        searchEmptyHint.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                this.ResetSearch true)
 
     member private _.ApplyRowState(summary: ConversationSummary, host: Border) =
         let isActive = activeId = Some summary.id
@@ -161,10 +193,12 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             match flatIndexByConversation.TryGetValue id with
             | true, flatIndex ->
                 conversationList.ScrollIntoView flatIndex
-                Dispatcher.UIThread.Post(fun () ->
+                let focusHost () =
                     match rowHosts.TryGetValue id with
                     | true, host -> host.Focus NavigationMethod.Directional |> ignore
-                    | _ -> ())
+                    | _ -> ()
+                focusHost ()
+                Dispatcher.UIThread.Post focusHost
             | _ -> ()
 
     member private this.MoveRowFocus(id: Guid, delta: int) =
@@ -172,8 +206,31 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         | Some 0 when delta < 0 ->
             this.FocusSearch()
         | Some index ->
-            this.FocusRowAt(Math.Clamp(index + delta, 0, visibleRowIds.Length - 1))
+            let targetIndex = Math.Clamp(index + delta, 0, visibleRowIds.Length - 1)
+            this.FocusRowAt targetIndex
         | None -> ()
+
+    member private this.FocusActiveConversation() =
+        match activeId with
+        | Some id ->
+            match visibleRowIds |> Array.tryFindIndex ((=) id) with
+            | Some idx -> this.FocusRowAt idx
+            | None ->
+                match rowHosts.TryGetValue id with
+                | true, host -> host.Focus NavigationMethod.Directional |> ignore
+                | _ -> ()
+        | None ->
+            if visibleRowIds.Length > 0 then
+                this.FocusRowAt 0
+
+    member this.ResetSearch(?focusSearch: bool) =
+        let shouldFocus = defaultArg focusSearch true
+        if not (String.IsNullOrEmpty searchBox.Text) then
+            searchBox.Text <- ""
+        searchDebounce.Stop()
+        this.Rebuild()
+        if shouldFocus then
+            this.FocusSearch()
 
     /// 一行会话。选中态用强调色浅底 + 左缘，生成中用一个呼吸点。
     member private this.RenderRow(summary: ConversationSummary) : Control =
@@ -235,6 +292,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let moreButton = Ui.iconButton Icons.more "更多操作"
         ToolTip.SetTip(moreButton, "更多操作")
         Avalonia.Automation.AutomationProperties.SetName(moreButton, sprintf "会话“%s”的操作菜单" summary.title)
+        Avalonia.Automation.AutomationProperties.SetHelpText(moreButton, "打开会话操作菜单")
         Ui.setReservedActionVisible moreButton false
         DockPanel.SetDock(moreButton, Dock.Right)
         titleRow.Children.Add moreButton
@@ -310,10 +368,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 | Some 0 -> this.FocusSearch()
                 | _ -> this.MoveRowFocus(summary.id, -1)
             elif e.Key = Key.Escape then
-                e.Handled <- true
                 if not (String.IsNullOrEmpty searchBox.Text) then
-                    searchBox.Text <- ""
-                    this.FocusSearch()
+                    e.Handled <- true
+                    this.ResetSearch true
             elif e.Key = Key.Home then
                 e.Handled <- true
                 this.FocusRowAt 0
@@ -326,6 +383,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         host.PointerReleased.Add(fun e ->
             if e.InitialPressMouseButton = MouseButton.Right then
                 e.Handled <- true
+                host.Focus NavigationMethod.Pointer |> ignore
                 openMenu ())
         ToolTip.SetTip(
             host,
@@ -366,9 +424,6 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             if not connected then
                 emptyTitle.Text <- "尚未连接服务器"
                 emptyHint.Text <- "连接后即可看到会话记录。"
-            elif isSearchEmpty then
-                emptyTitle.Text <- "未找到匹配会话"
-                emptyHint.Text <- sprintf "换个关键词，或清空「%s」重新看全部。" (query.Trim())
             else
                 emptyTitle.Text <- "还没有会话"
                 emptyHint.Text <- "点右上角的加号开始第一次对话。"
@@ -446,22 +501,16 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 if visibleRowIds.Length > 0 then
                     e.Handled <- true
                     this.FocusRowAt 0
-            elif e.Key = Key.Escape || (searchEmptyHint.IsVisible && e.Key = Key.Escape) then
-                e.Handled <- true
-                if not (String.IsNullOrEmpty searchBox.Text) then
-                    searchBox.Text <- ""
-                else
-                    match activeId with
-                    | Some id ->
-                        match rowHosts.TryGetValue id with
-                        | true, host -> host.Focus(NavigationMethod.Tab) |> ignore
-                        | _ -> ()
-                    | None -> ()
             elif e.Key = Key.Enter then
                 if visibleRowIds.Length > 0 then
                     e.Handled <- true
-                    actions.openConversation visibleRowIds.[0])
-        let searchDebounce = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 160.0)
+                    actions.openConversation visibleRowIds.[0]
+            elif e.Key = Key.Escape then
+                e.Handled <- true
+                if not (String.IsNullOrEmpty searchBox.Text) then
+                    this.ResetSearch true
+                else
+                    this.FocusActiveConversation())
         searchDebounce.Tick.Add(fun _ ->
             searchDebounce.Stop()
             this.Rebuild()

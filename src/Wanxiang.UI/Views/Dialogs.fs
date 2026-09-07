@@ -21,6 +21,26 @@ type ConnectRequest = {
 /// 应用内对话框。桌面与 PWA 共用，全部画在 OverlayHost 上。
 module Dialogs =
 
+    let private captureOpener (overlay: OverlayHost) =
+        let opener =
+            match TopLevel.GetTopLevel overlay.Root with
+            | null -> None
+            | top ->
+                match top.FocusManager with
+                | null -> None
+                | fm ->
+                    match fm.GetFocusedElement() with
+                    | :? Control as c when c.IsEffectivelyVisible && c.IsEnabled -> Some c
+                    | _ -> None
+        let restore () =
+            match opener with
+            | Some c when c.IsEffectivelyVisible && c.IsEnabled ->
+                Dispatcher.UIThread.Post(fun () ->
+                    if c.IsEffectivelyVisible && c.IsEnabled then
+                        c.Focus() |> ignore)
+            | _ -> ()
+        restore
+
     /// 返回按钮行与主操作按钮：调用方可在 ShowDialog 之后把焦点 post 到主按钮上
     ///（ShowDialog 内部的 focusFirst 会先聚焦第一个可聚焦项，后 post 者胜出）。
     let private actionRow (overlay: OverlayHost) (confirmLabel: string) (tone: Ui.ButtonTone) (onConfirm: unit -> unit) =
@@ -35,6 +55,13 @@ module Dialogs =
         let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
         row.Children.Add cancelButton
         row.Children.Add confirmButton
+        row.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog()
+            elif e.Key = Key.Enter && not cancelButton.IsFocused then
+                e.Handled <- true
+                onConfirm ())
         row, confirmButton
 
     /// 单行输入对话框（重命名等）。
@@ -46,6 +73,7 @@ module Dialogs =
         (confirmLabel: string)
         (onConfirm: string -> (bool -> unit) -> unit)
         =
+        let restoreOpener = captureOpener overlay
         let shell, box = Ui.textField hint
         box.Text <- initial
         let mutable active = true
@@ -62,7 +90,10 @@ module Dialogs =
         box.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
-                submit ())
+                submit ()
+            elif e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog())
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
         ToolTip.SetTip(cancelButton, "取消并关闭对话框 (Esc)")
         let confirmButton = Ui.button Ui.Primary confirmLabel submit
@@ -75,15 +106,29 @@ module Dialogs =
         let buttons = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
         buttons.Children.Add cancelButton
         buttons.Children.Add confirmButton
+        buttons.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog()
+            elif e.Key = Key.Enter && not cancelButton.IsFocused then
+                e.Handled <- true
+                submit ())
         let content =
             Ui.vstack Tokens.space4 [ Ui.title title :> Control; shell :> Control; buttons :> Control ]
-        overlay.ShowDialog(content :> Control, 420.0, onClosed = (fun () -> active <- false))
+        content.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog())
+        overlay.ShowDialog(content :> Control, 420.0, onClosed = (fun () ->
+            active <- false
+            restoreOpener ()))
         Dispatcher.UIThread.Post(fun () ->
             box.Focus() |> ignore
             box.SelectAll())
 
     /// 破坏性操作确认：主按钮用 Danger 语气 + 警示 tooltip，打开后焦点直接落在它上面。
     let confirm (overlay: OverlayHost) (title: string) (body: string) (confirmLabel: string) (onConfirm: unit -> unit) =
+        let restoreOpener = captureOpener overlay
         let message =
             TextBlock(
                 Text = body,
@@ -91,28 +136,48 @@ module Dialogs =
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = ReadingRhythm.uiBodyLineHeight)
+        let cancelAction () = overlay.CloseDialog()
+        let confirmAction () =
+            overlay.CloseDialog()
+            onConfirm ()
         let buttons, dangerButton =
-            actionRow overlay confirmLabel Ui.Danger (fun () ->
-                overlay.CloseDialog()
-                onConfirm ())
+            actionRow overlay confirmLabel Ui.Danger confirmAction
         let content =
             Ui.vstack
                 Tokens.space4
                 [ Ui.title title :> Control
                   message :> Control
                   buttons :> Control ]
-        overlay.ShowDialog(content :> Control, 420.0)
+        content.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                cancelAction ()
+            elif e.Key = Key.Enter && not buttons.Children[0].IsFocused then
+                e.Handled <- true
+                confirmAction ())
+        overlay.ShowDialog(content :> Control, 420.0, onClosed = restoreOpener)
         Dispatcher.UIThread.Post(fun () -> dangerButton.Focus() |> ignore)
 
     /// 长文本编辑（编辑消息并分叉）。
     let editText (overlay: OverlayHost) (title: string) (initial: string) (confirmLabel: string) (onConfirm: string -> unit) =
+        let restoreOpener = captureOpener overlay
         let shell, box = Ui.textArea "消息内容" 160.0
         box.Text <- initial
-        let buttons, _ =
-            actionRow overlay confirmLabel Ui.Primary (fun () ->
-                let value = if isNull box.Text then "" else box.Text
+        let submit () =
+            let value = if isNull box.Text then "" else box.Text
+            overlay.CloseDialog()
+            onConfirm value
+        let buttons, confirmButton =
+            actionRow overlay confirmLabel Ui.Primary submit
+        ToolTip.SetTip(confirmButton, sprintf "确认“%s”(Ctrl+Enter)" confirmLabel)
+        box.KeyDown.Add(fun e ->
+            let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
+            if e.Key = Key.Escape then
+                e.Handled <- true
                 overlay.CloseDialog()
-                onConfirm value)
+            elif e.Key = Key.Enter && ctrl then
+                e.Handled <- true
+                submit ())
         let content =
             Ui.vstack
                 Tokens.space4
@@ -120,8 +185,14 @@ module Dialogs =
                   Ui.caption "会以你编辑后的内容新建一个分叉会话，原会话保持不变。" :> Control
                   shell :> Control
                   buttons :> Control ]
-        overlay.ShowDialog(content :> Control, 520.0)
-        Dispatcher.UIThread.Post(fun () -> box.Focus() |> ignore)
+        content.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog())
+        overlay.ShowDialog(content :> Control, 520.0, onClosed = restoreOpener)
+        Dispatcher.UIThread.Post(fun () ->
+            box.Focus() |> ignore
+            box.CaretIndex <- (if isNull box.Text then 0 else box.Text.Length))
 
     /// 连接对话框：地址 + 令牌，或走配对码。
     let connect
@@ -130,6 +201,7 @@ module Dialogs =
         (onConnect: ConnectRequest -> unit)
         (onSubmitCode: string -> unit)
         : (string -> unit) =
+        let restoreOpener = captureOpener overlay
         let urlField, urlBox = Ui.labeledField "服务器地址" "ws://127.0.0.1:8765/ws"
         urlBox.Text <- defaultUrl
         let tokenField, tokenBox = Ui.labeledField "访问令牌" "有令牌就粘贴，没有就用配对码"
@@ -164,7 +236,10 @@ module Dialogs =
         codeBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
-                submitCode ())
+                submitCode ()
+            elif e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog())
 
         let codeButton = Ui.button Ui.Secondary "提交配对码" submitCode
         codeButton.IsVisible <- false
@@ -194,6 +269,21 @@ module Dialogs =
                       token = (if String.IsNullOrWhiteSpace token then None else Some token)
                       usePairing = false }
 
+        urlBox.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter then
+                e.Handled <- true
+                connectAction ()
+            elif e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog())
+        tokenBox.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter then
+                e.Handled <- true
+                connectAction ()
+            elif e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog())
+
         let content =
             Ui.vstack
                 Tokens.space4
@@ -213,7 +303,11 @@ module Dialogs =
                    row.Children.Add(Ui.button Ui.Ghost "稍后再说" (fun () -> overlay.CloseDialog()))
                    row.Children.Add(Ui.button Ui.Primary "连接" connectAction)
                    row :> Control) ]
-        overlay.ShowDialog(content :> Control, 460.0)
+        content.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog())
+        overlay.ShowDialog(content :> Control, 460.0, onClosed = restoreOpener)
         Dispatcher.UIThread.Post(fun () -> urlBox.Focus() |> ignore)
         fun message ->
             status.Text <- message
@@ -226,6 +320,7 @@ module Dialogs =
         (current: SessionConfig)
         (onSave: SessionConfig -> (bool -> unit) -> unit)
         =
+        let restoreOpener = captureOpener overlay
         let mutable dialogActive = true
         let mutable pending = false
         let mutable setPending: bool -> unit = ignore
@@ -322,7 +417,9 @@ module Dialogs =
                 let text = if isNull instructionsBox.Text then "" else instructionsBox.Text.Trim()
                 if String.IsNullOrWhiteSpace text then None else Some text
             match firstInvalid with
-            | Some box -> box.Focus() |> ignore
+            | Some box ->
+                box.Focus(NavigationMethod.Directional) |> ignore
+                box.BringIntoView()
             | None ->
                 if not pending then
                     setPending true
@@ -345,10 +442,10 @@ module Dialogs =
         paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         for _ in 1 .. 4 do paramGrid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-        let temperatureColumn = Ui.inputFieldGroup "Temperature" "" temperatureBox
-        let topPColumn = Ui.inputFieldGroup "Top P" "" topPBox
-        let maxTokensColumn = Ui.inputFieldGroup "最大输出 token" "" maxTokensBox
-        let thinkingBudgetColumn = Ui.inputFieldGroup "思维链预算（token）" "" thinkingBudgetBox
+        let temperatureColumn = Ui.inputFieldGroup "Temperature" "0–2，留空跟随服务端默认" temperatureBox
+        let topPColumn = Ui.inputFieldGroup "Top P" "0–1，留空跟随服务端默认" topPBox
+        let maxTokensColumn = Ui.inputFieldGroup "最大输出 token" "限制单次回复，留空不限制" maxTokensBox
+        let thinkingBudgetColumn = Ui.inputFieldGroup "思维链预算（token）" "0 关闭思维链，留空跟随默认" thinkingBudgetBox
         paramGrid.Children.Add temperatureColumn
         paramGrid.Children.Add topPColumn
         paramGrid.Children.Add maxTokensColumn
@@ -374,7 +471,9 @@ module Dialogs =
             if args.Property = Visual.BoundsProperty then applyParamLayout paramGrid.Bounds.Width)
 
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        ToolTip.SetTip(cancelButton, "取消并关闭对话框 (Esc)")
         let saveButton = Ui.button Ui.Primary "保存" save
+        ToolTip.SetTip(saveButton, "保存会话设置 (Ctrl+Enter)")
         Ui.preparePendingButton saveButton
         setPending <- fun value ->
             pending <- value
@@ -383,6 +482,13 @@ module Dialogs =
         let footer = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
         footer.Children.Add cancelButton
         footer.Children.Add saveButton
+        footer.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog()
+            elif e.Key = Key.Enter && not cancelButton.IsFocused then
+                e.Handled <- true
+                save ())
         let content =
             Ui.vstack
                 Tokens.space4
@@ -394,6 +500,14 @@ module Dialogs =
                   Ui.vstack Tokens.space2 [ Ui.sectionLabel "可用工具" :> Control; toolsPanel :> Control ] :> Control
                   Ui.hairline () :> Control
                   footer :> Control ]
+        content.KeyDown.Add(fun e ->
+            let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog()
+            elif e.Key = Key.Enter && ctrl then
+                e.Handled <- true
+                save ())
         let scroller =
             ScrollViewer(
                 Content = content,
@@ -401,10 +515,13 @@ module Dialogs =
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
         applyParamLayout paramGrid.Bounds.Width
-        overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () -> dialogActive <- false))
+        overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () ->
+            dialogActive <- false
+            restoreOpener ()))
 
     /// 快捷键帮助（分类清晰、对标桌面端成熟软件）。
     let shortcuts (overlay: OverlayHost) =
+        let restoreOpener = captureOpener overlay
         let sections =
             [ "全局与导航",
               [ "Ctrl / ⌘ + N", "新建会话"
@@ -449,11 +566,17 @@ module Dialogs =
                 groupRows.Children.Add(Ui.hstack Tokens.space3 [ key :> Control; caption :> Control ])
             contentPanel.Children.Add groupRows
         let closeBtn = Ui.button Ui.Primary "关闭" (fun () -> overlay.CloseDialog())
+        ToolTip.SetTip(closeBtn, "关闭快捷键帮助 (Esc / Enter)")
         closeBtn.HorizontalAlignment <- HorizontalAlignment.Right
+        let content = Ui.vstack Tokens.space4 [ Ui.title "键盘快捷键" :> Control; contentPanel :> Control; closeBtn :> Control ]
+        content.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape || e.Key = Key.Enter then
+                e.Handled <- true
+                overlay.CloseDialog())
         let scroller =
             ScrollViewer(
-                Content = Ui.vstack Tokens.space4 [ Ui.title "键盘快捷键" :> Control; contentPanel :> Control; closeBtn :> Control ],
-                MaxHeight = 520.0,
+                Content = content,
+                MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
-        overlay.ShowDialog(scroller :> Control, 460.0)
+        overlay.ShowDialog(scroller :> Control, 460.0, onClosed = restoreOpener)

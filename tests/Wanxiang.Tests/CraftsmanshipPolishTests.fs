@@ -601,6 +601,82 @@ let ``ChatView tracks unread messages when scrolled away from bottom`` () =
         window.Close()
 
 [<Fact>]
+let ``Sidebar conversation row right click invokes context menu`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let actions: SidebarActions =
+        { newConversation = ignore
+          openConversation = ignore
+          deleteConversation = ignore
+          renameConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    let testId = Guid.NewGuid()
+    let now = DateTimeOffset.Now
+    let items =
+        [ { id = testId
+            title = "ContextMenu Test"
+            preview = "Right-click preview"
+            messageCount = 1
+            pinned = false
+            running = false
+            archived = false
+            isFork = false
+            providerId = "openai"
+            model = "gpt-4o"
+            lastCommitId = 1UL
+            createdAt = now
+            updatedAt = now } ]
+    sidebar.SetConversations items
+    sidebar.SetConnection(true, "已连接")
+    root.Children.Insert(0, sidebar)
+    let window = Window(Width = 360.0, Height = 600.0, Content = root)
+    window.Show()
+    try
+        let rec visualControls (visual: Visual) =
+            seq {
+                match visual with
+                | :? Control as control -> yield control
+                | _ -> ()
+                for child in visual.GetVisualChildren() do
+                    yield! visualControls child
+            }
+        Dispatcher.UIThread.RunJobs()
+        let list =
+            descendants sidebar
+            |> Seq.pick (function :? ListBox as lb -> Some lb | _ -> None)
+        let row =
+            list.GetRealizedContainers()
+            |> Seq.collect visualControls
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "ContextMenu Test")
+
+        // Open more button on the row
+        let moreBtn =
+            descendants row
+            |> Seq.find (fun c ->
+                match Avalonia.Automation.AutomationProperties.GetName(c) with
+                | null -> false
+                | name -> name.StartsWith("会话“ContextMenu Test”的操作菜单"))
+        moreBtn.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
+        Dispatcher.UIThread.RunJobs()
+        Assert.True overlay.IsPopupOpen
+
+        overlay.HandleEscape() |> ignore
+        Dispatcher.UIThread.RunJobs()
+        Assert.False overlay.IsPopupOpen
+    finally
+        window.Close()
+
+[<Fact>]
 let ``Markdown hyperlink responds to Enter and Space key to openLink`` () =
     Headless.ensure ()
     let mutable opened = None

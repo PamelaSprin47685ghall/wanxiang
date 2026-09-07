@@ -72,8 +72,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Background = Brushes.Transparent,
             Height = Tokens.iconButton,
             MinHeight = Tokens.iconButton,
+            MaxHeight = Tokens.iconButton,
             VerticalAlignment = VerticalAlignment.Center,
-            Padding = Thickness(Tokens.space2, 0.0),
+            Padding = Thickness(Tokens.space3, 0.0),
             Focusable = true,
             Child = titleText)
 
@@ -203,7 +204,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleEditShell.Height <- Tokens.iconButton
         titleEditShell.MinHeight <- Tokens.iconButton
         titleEditShell.MaxHeight <- Tokens.iconButton
+        titleEditShell.Padding <- Thickness(Tokens.space3, 0.0)
         titleEditShell.VerticalAlignment <- VerticalAlignment.Center
+        titleEditBox.FontSize <- Tokens.fontTitle
+        titleEditBox.FontWeight <- FontWeight.Medium
+        titleEditBox.VerticalAlignment <- VerticalAlignment.Center
         ToolTip.SetTip(generatingChip, "正在生成回答")
         Avalonia.Automation.AutomationProperties.SetName(generatingChip, "正在生成回答")
         emptyActions.Margin <- Thickness(0.0, Tokens.space4, 0.0, 0.0)
@@ -219,6 +224,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             actions.renameTitle next
         if restoreFocus then
             Dispatcher.UIThread.Post(fun () -> titleAction.Focus(NavigationMethod.Tab) |> ignore)
+        else
+            Dispatcher.UIThread.Post(fun () -> titleAction.Focus(NavigationMethod.Unspecified) |> ignore)
 
     member private this.CancelTitleEdit() =
         titleEditShell.IsVisible <- false
@@ -243,6 +250,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleAction.Cursor <- if editable then new Cursor(StandardCursorType.Hand) else null
         ToolTip.SetTip(titleAction, text)
         ToolTip.SetTip(titleText, text)
+        Avalonia.Automation.AutomationProperties.SetName(titleText, text)
         Avalonia.Automation.AutomationProperties.SetName(
             titleAction,
             if editable then sprintf "重命名会话：%s" text else text)

@@ -67,6 +67,8 @@ module MessageCard =
         let refreshButton () =
             let clipped = scroller.Extent.Height > scroller.Viewport.Height + 1.0
             expandButton.IsVisible <- visible && (full || clipped)
+        scroller.LayoutUpdated.Add(fun _ ->
+            if visible then refreshButton ())
         toggleFull <- fun () ->
             full <- not full
             scroller.MaxHeight <- if full then Double.PositiveInfinity else LayoutPolicy.expandedDetailMaxHeight
@@ -77,12 +79,17 @@ module MessageCard =
         scroller.PropertyChanged.Add(fun args ->
             if args.Property = ScrollViewer.ExtentProperty || args.Property = ScrollViewer.ViewportProperty then
                 refreshButton ())
-        let host = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
+        let host =
+            StackPanel(
+                Orientation = Orientation.Vertical,
+                Spacing = Tokens.space1,
+                IsVisible = initiallyVisible)
         host.Children.Add scroller
         host.Children.Add expandButton
         let setVisible value =
             visible <- value
             scroller.IsVisible <- value
+            host.IsVisible <- value
             if not value && full then
                 full <- false
                 scroller.MaxHeight <- LayoutPolicy.expandedDetailMaxHeight
@@ -93,7 +100,9 @@ module MessageCard =
         host :> Control, setVisible
 
     let private formatDuration (ms: int64) =
-        if ms >= 1000L then sprintf "%.1f 秒" (float ms / 1000.0) else sprintf "%d 毫秒" (int ms)
+        if ms >= 1000L then sprintf "%.1f 秒" (float ms / 1000.0)
+        elif ms > 0L then sprintf "%d 毫秒" (int ms)
+        else ""
 
     let private technicalText (text: string) (size: float) (brush: IBrush) =
         SelectableTextBlock(
@@ -118,12 +127,18 @@ module MessageCard =
                 SelectionBrush = Tokens.accentSoft)
         let body, setBodyVisible = detailViewport (bodyText :> Control) (not collapsed)
         body.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
-        let chevron = Icons.chevronRight Tokens.textFaint
-        let chevronDown = Icons.chevronDown Tokens.textFaint
-        let chevronHost = Border(Child = (if collapsed then chevron else chevronDown), VerticalAlignment = VerticalAlignment.Center)
+        let chevronHost = Border(VerticalAlignment = VerticalAlignment.Center)
+        let mutable bodyVisible = not collapsed
+        let syncChevron () =
+            chevronHost.Child <-
+                if bodyVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
         let durationText =
             match durationMs with
-            | Some ms -> sprintf " · %s" (formatDuration ms)
+            | Some ms ->
+                let formatted = formatDuration ms
+                if String.IsNullOrWhiteSpace formatted then ""
+                else
+                    sprintf " · %s" formatted
             | None -> ""
         let caption =
             let titleRun = Run(if ctx.streaming then "正在思考" else "思考过程")
@@ -148,7 +163,6 @@ module MessageCard =
                 Cursor = handCursor,
                 Focusable = true,
                 Child = headerRow)
-        Avalonia.Automation.AutomationProperties.SetName(header, "切换思考过程")
         let mutable bodyVisible = not collapsed
         let syncHeaderName () =
             let actionName = if bodyVisible then "收起思考过程" else "展开思考过程"
@@ -160,9 +174,10 @@ module MessageCard =
         let toggle () =
             bodyVisible <- not bodyVisible
             setBodyVisible bodyVisible
-            chevronHost.Child <- if bodyVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
+            syncChevron ()
             syncHeaderName ()
         Ui.onClick header toggle
+        syncChevron ()
         syncHeaderName ()
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         stack.Children.Add header
@@ -238,7 +253,7 @@ module MessageCard =
             |> fun text -> technicalText text Tokens.fontCaption Tokens.textMuted
         let detail, setDetailVisible = detailViewport (detailText :> Control) false
         detail.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
-        let chevronHost = Border(Child = Icons.chevronRight Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
+        let chevronHost = Border(VerticalAlignment = VerticalAlignment.Center)
         let headerDock = DockPanel(LastChildFill = false)
         let left = Ui.hstack Tokens.space2 [ icon; name :> Control; state :> Control ]
         DockPanel.SetDock(left, Dock.Left)
@@ -267,6 +282,10 @@ module MessageCard =
                 Focusable = true,
                 Child = stack)
         let mutable detailVisible = false
+        let syncChevron () =
+            chevronHost.Child <-
+                if detailVisible then Icons.chevronDown Tokens.textFaint
+                else Icons.chevronRight Tokens.textFaint
         let syncToolName () =
             let statusText = if running then "执行中" else "已完成"
             let argInfo =
@@ -281,17 +300,35 @@ module MessageCard =
                 host, sprintf "%s工具调用 %s" (if detailVisible then "收起" else "展开") call.name)
             Avalonia.Automation.AutomationProperties.SetName(headerRow, label)
             Avalonia.Automation.AutomationProperties.SetItemStatus(headerRow, statusText)
+            Avalonia.Automation.AutomationProperties.SetHelpText(headerRow, if detailVisible then "收起参数与结果" else "展开查看参数与结果")
+            Avalonia.Automation.AutomationProperties.SetHelpText(host, if detailVisible then "收起参数与结果" else "展开查看参数与结果")
             ToolTip.SetTip(headerRow, if detailVisible then "点击收起参数与结果" else "点击展开参数与结果")
             ToolTip.SetTip(host, if detailVisible then "点击收起参数与结果" else "点击展开参数与结果")
         let toggle () =
             detailVisible <- not detailVisible
             setDetailVisible detailVisible
             summary.IsVisible <- not detailVisible && not (String.IsNullOrWhiteSpace summaryText)
-            chevronHost.Child <-
-                if detailVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
+            syncChevron ()
             syncToolName ()
-        Ui.onClick host toggle
-        Ui.onClick headerRow toggle
+        host.SetInvokeAction toggle
+        headerRow.SetInvokeAction toggle
+        host.PointerReleased.Add(fun e ->
+            if host.IsEnabled && host.IsHitTestVisible && e.InitialPressMouseButton = MouseButton.Left then
+                let insideDetail = detailVisible && detail.IsPointerOver
+                if not insideDetail then
+                    e.Handled <- true
+                    toggle ())
+        headerRow.PointerReleased.Add(fun e ->
+            if headerRow.IsEnabled && headerRow.IsHitTestVisible && e.InitialPressMouseButton = MouseButton.Left then
+                e.Handled <- true
+                toggle ())
+        let onKeyDown (e: KeyEventArgs) =
+            if host.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
+                e.Handled <- true
+                toggle ()
+        host.KeyDown.Add(fun e -> if host.IsFocused || headerRow.IsFocused then onKeyDown e)
+        headerRow.KeyDown.Add onKeyDown
+        syncChevron ()
         syncToolName ()
         host :> Control
 
@@ -387,22 +424,35 @@ module MessageCard =
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             ToolTip.SetTip(button, "复制")
             Avalonia.Automation.AutomationProperties.SetName(button, "复制")
+            Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
             let mutable copyTimer: DispatcherTimer option = None
+            let stopTimer () =
+                match copyTimer with
+                | Some t ->
+                    t.Stop()
+                    copyTimer <- None
+                | None -> ()
+            let restoreDefaultState () =
+                stopTimer ()
+                Ui.setIcon button Icons.copy Tokens.textMuted
+                ToolTip.SetTip(button, "复制")
+                Avalonia.Automation.AutomationProperties.SetName(button, "复制")
+                Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
             let doCopy () =
                 actions.copyText text
-                copyTimer |> Option.iter (fun t -> t.Stop())
+                stopTimer ()
                 Ui.setIcon button Icons.check Tokens.success
                 ToolTip.SetTip(button, "已复制！")
                 Avalonia.Automation.AutomationProperties.SetName(button, "已复制！")
+                Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制消息正文")
                 let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
                 timer.Tick.Add(fun _ ->
-                    timer.Stop()
-                    Ui.setIcon button Icons.copy Tokens.textMuted
-                    ToolTip.SetTip(button, "复制")
-                    Avalonia.Automation.AutomationProperties.SetName(button, "复制"))
+                    if copyTimer = Some timer then
+                        restoreDefaultState ())
                 copyTimer <- Some timer
                 timer.Start()
             Ui.onClick button doCopy
+            button.DetachedFromVisualTree.Add(fun _ -> restoreDefaultState ())
             row.Children.Add button
         if not (String.IsNullOrWhiteSpace message.text) then
             addCopyButton message.text
@@ -460,7 +510,9 @@ module MessageCard =
         if error.retryable then
             let retryButton = Ui.button Ui.Secondary "重试" onRetry
             retryButton.Focusable <- true
+            retryButton.Cursor <- handCursor
             Avalonia.Automation.AutomationProperties.SetName(retryButton, "重试生成")
+            Avalonia.Automation.AutomationProperties.SetHelpText(retryButton, "重新尝试生成")
             ToolTip.SetTip(retryButton, "重新尝试生成")
             actionRow.Children.Add retryButton
         match error.detail with
@@ -477,6 +529,7 @@ module MessageCard =
                 Ui.setButtonText detailButton (if visible then "收起技术细节" else "技术细节")
                 ToolTip.SetTip(detailButton, if visible then "收起错误技术细节" else "展开查看技术细节")
                 Avalonia.Automation.AutomationProperties.SetName(detailButton, if visible then "收起技术细节" else "技术细节")
+                Avalonia.Automation.AutomationProperties.SetHelpText(detailButton, if visible then "收起错误技术细节" else "展开查看技术细节")
             toggleDetail <- fun () ->
                 visible <- not visible
                 setDetailVisible visible
@@ -699,7 +752,8 @@ module MessageCard =
             Dispatcher.UIThread.Post(fun () -> syncVisual ())
         host.PointerEntered.Add(fun _ -> highlight ())
         host.PointerExited.Add(fun _ -> dim ())
-        buttons.GotFocus.Add(fun _ -> syncVisual ())
-        buttons.LostFocus.Add(fun _ ->
-            dim ())
+        host.GotFocus.Add(fun _ -> syncVisual ())
+        host.LostFocus.Add(fun _ -> dim ())
+        buttons.GotFocus.Add(fun _ -> highlight ())
+        buttons.LostFocus.Add(fun _ -> dim ())
         host :> Control

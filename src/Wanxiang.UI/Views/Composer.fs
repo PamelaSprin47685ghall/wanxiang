@@ -44,7 +44,7 @@ type Composer(actions: ComposerActions) as this =
             Foreground = Tokens.text,
             CaretBrush = Tokens.accent,
             FontSize = Tokens.fontReading,
-            Padding = Thickness(0.0, 2.0, 0.0, 2.0),
+            Padding = Thickness(0.0, 4.0, 0.0, 4.0),
             MinHeight = ControlMetrics.composerInputMinHeight,
             MaxHeight = ControlMetrics.composerInputMaxHeight,
             VerticalContentAlignment = VerticalAlignment.Center)
@@ -194,8 +194,13 @@ type Composer(actions: ComposerActions) as this =
 
     let refreshSendState () =
         let text = input.Text
+        let checkPresenterMultiLine () =
+            let presenter = input.GetVisualDescendants() |> Seq.tryPick (function :? Avalonia.Controls.Presenters.TextPresenter as p -> Some p | _ -> None)
+            match presenter with
+            | Some p when not (isNull p.TextLayout) -> p.TextLayout.TextLines.Count > 1
+            | _ -> false
         let isMultiLine =
-            not (isNull text) && (text.Contains('\n') || text.Contains('\r'))
+            not (isNull text) && (text.Contains('\n') || text.Contains('\r') || checkPresenterMultiLine ())
         input.VerticalContentAlignment <-
             if isMultiLine then VerticalAlignment.Top else VerticalAlignment.Center
 
@@ -230,7 +235,8 @@ type Composer(actions: ComposerActions) as this =
                     if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
                 elif uploading then "附件上传中，请稍候…"
                 elif not hasText && not hasAttachment then "请输入消息或添加附件"
-                else "排队发送"
+                else
+                    if enterSends then "排队发送 (Enter)" else "排队发送 (Ctrl+Enter / ⌘Enter)"
             ToolTip.SetTip(queueButton, queueTip)
             Avalonia.Automation.AutomationProperties.SetName(queueButton, "排队发送")
             Avalonia.Automation.AutomationProperties.SetHelpText(queueButton, queueTip)
@@ -301,17 +307,23 @@ type Composer(actions: ComposerActions) as this =
                         e.Handled <- true
                 elif e.Key = Key.Down && e.KeyModifiers = KeyModifiers.None then
                     if historyIndex <> -1 then
-                        if historyIndex < promptHistory.Count - 1 then
-                            historyIndex <- historyIndex + 1
-                            input.Text <- promptHistory.[historyIndex]
-                            input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
-                            e.Handled <- true
-                        else
-                            // Reached the end: restore draft
-                            historyIndex <- -1
-                            input.Text <- uncommittedDraft
-                            input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
-                            e.Handled <- true),
+                        let currentText = if isNull input.Text then "" else input.Text
+                        let isAtEnd =
+                            input.CaretIndex >= currentText.Length ||
+                            let idx = Math.Clamp(input.CaretIndex, 0, currentText.Length)
+                            not (currentText.Substring(idx).Contains('\n'))
+                        if isAtEnd then
+                            if historyIndex < promptHistory.Count - 1 then
+                                historyIndex <- historyIndex + 1
+                                input.Text <- promptHistory.[historyIndex]
+                                input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
+                                e.Handled <- true
+                            else
+                                // Reached the end: restore draft
+                                historyIndex <- -1
+                                input.Text <- uncommittedDraft
+                                input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
+                                e.Handled <- true),
             RoutingStrategies.Tunnel)
 
     member private this.Submit() =
@@ -368,6 +380,8 @@ type Composer(actions: ComposerActions) as this =
                     Width = ControlMetrics.composerAttachmentStateWidth,
                     TextAlignment = TextAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Center)
+            let formattedSize = if attachment.ready then AttachmentRef.formatSize attachment.size else "上传中"
+            ToolTip.SetTip(size, sprintf "文件大小：%s" formattedSize)
             let removeLabel = sprintf "移除附件 %s" attachment.fileName
             let remove = Ui.iconButton Icons.close removeLabel
             ToolTip.SetTip(remove, removeLabel)
@@ -384,6 +398,7 @@ type Composer(actions: ComposerActions) as this =
                 | [] ->
                     pendingFocusAttachmentId <- None
                     actions.removeAttachment currentAttachmentId
+                    // In case removeAttachment didn't trigger RenderAttachments synchronously:
                     tryFocusInput ()
                 | items ->
                     let idx =

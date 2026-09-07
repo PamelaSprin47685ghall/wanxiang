@@ -69,7 +69,7 @@ module ControlMetrics =
     let sidebarStateGlyphSize = 11.0
     let sidebarRunningDotSize = 6.0
 
-    let composerInputMinHeight = 26.0
+    let composerInputMinHeight = 30.0
     let composerInputMaxHeight = 240.0
     let composerShellPaddingX = Tokens.space3
     let composerShellPaddingY = Tokens.space2

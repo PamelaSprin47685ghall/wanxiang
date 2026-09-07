@@ -66,15 +66,21 @@ type MarkdownRenderer(
                 link.Foreground <- Tokens.accent
                 link.TextDecorations <- TextDecorations.Underline
                 block.Inlines.Add link
-                let hit =
-                    TextBlock(
-                        Text = "",
-                        Cursor = handCursor,
-                        Width = 0.0,
-                        Height = 0.0)
-                ignore hit
-                block.PointerReleased.Add(fun _ -> ())
+                block.Cursor <- handCursor
+                block.PointerReleased.Add(fun e ->
+                    if block.IsEnabled && e.InitialPressMouseButton = MouseButton.Left then
+                        e.Handled <- true
+                        openLink url)
+                block.KeyDown.Add(fun e ->
+                    if block.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
+                        e.Handled <- true
+                        openLink url)
                 ToolTip.SetTip(block, url)
+                Avalonia.Automation.AutomationProperties.SetName(block, text)
+                Avalonia.Automation.AutomationProperties.SetHelpText(block, url)
+                Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
+                    block,
+                    Nullable Avalonia.Automation.Peers.AutomationControlType.Hyperlink)
             | MdMath(tex, display) ->
                 match MathRender.tryInline (if display then size + 1.0 else size) lh tex with
                 | Some visual ->
@@ -268,7 +274,9 @@ type MarkdownRenderer(
             ToolTip.SetTip(copyButton, "已复制！")
             Avalonia.Automation.AutomationProperties.SetName(copyButton, "已复制！")
             let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
-            timer.Tick.Add(fun _ -> restoreDefaultState ())
+            timer.Tick.Add(fun _ ->
+                if copyTimer = Some timer then
+                    restoreDefaultState ())
             copyTimer <- Some timer
             timer.Start()
         Ui.onClick copyButton doCopy
@@ -355,17 +363,24 @@ type MarkdownRenderer(
                             fontSize - 0.5,
                             (if isHeader then FontWeight.Medium else FontWeight.Normal),
                             (if isHeader then Tokens.text else Tokens.textMuted))
+                    let hasBreak = content |> List.exists (function MdBreak -> true | _ -> false)
+                    cell.VerticalAlignment <-
+                        if isHeader then VerticalAlignment.Center
+                        elif hasBreak then VerticalAlignment.Top
+                        else VerticalAlignment.Center
                     let background: IBrush =
                         if isHeader then Tokens.tableHeader
                         // 隔行底色比逐行画线更轻：长表格里横线多了会变成网格纸
                         elif rowIndex % 2 = 0 then Tokens.tableStripe
                         else Brushes.Transparent
+                    let hasRowsBelow = not (List.isEmpty rows)
                     let host =
                         Border(
                             Padding = Thickness(Tokens.blockPaddingX, Tokens.blockPaddingY),
                             BorderBrush = Tokens.borderSoft,
-                            BorderThickness = Thickness(0.0, 0.0, 0.0, (if isHeader then 1.0 else 0.0)),
+                            BorderThickness = Thickness(0.0, 0.0, 0.0, (if isHeader && hasRowsBelow then 1.0 else 0.0)),
                             Background = background,
+                            UseLayoutRounding = true,
                             Child = cell)
                     Grid.SetRow(host, rowIndex)
                     Grid.SetColumn(host, columnIndex)
@@ -388,6 +403,7 @@ type MarkdownRenderer(
                 BorderThickness = Thickness 1.0,
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 ClipToBounds = true,
+                UseLayoutRounding = true,
                 Margin = Thickness(0.0, ReadingRhythm.tableVerticalMargin),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Child = tableContent)

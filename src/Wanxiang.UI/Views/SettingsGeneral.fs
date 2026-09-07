@@ -75,26 +75,28 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         Avalonia.Automation.AutomationProperties.SetHelpText(row, hint)
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             row,
-            Nullable Avalonia.Automation.Peers.AutomationControlType.Button)
+            Nullable Avalonia.Automation.Peers.AutomationControlType.CheckBox)
         let updateRowBackground () =
             row.Background <- if row.IsPointerOver || row.IsFocused then Tokens.hover :> IBrush else Brushes.Transparent :> IBrush
         row.PointerEntered.Add(fun _ -> updateRowBackground ())
         row.PointerExited.Add(fun _ -> updateRowBackground ())
         row.GotFocus.Add(fun _ -> updateRowBackground ())
         row.LostFocus.Add(fun _ -> updateRowBackground ())
+        let toggleAndRefresh () =
+            flip ()
+            updateRowBackground ()
+            let currentState = if read () then "开启" else "关闭"
+            Avalonia.Automation.AutomationProperties.SetItemStatus(row, currentState)
+        Avalonia.Automation.AutomationProperties.SetItemStatus(row, if initial then "开启" else "关闭")
         row.KeyDown.Add(fun e ->
             if e.Key = Key.Enter || e.Key = Key.Space then
                 e.Handled <- true
-                flip ()
-                updateRowBackground ())
-        Ui.onClick row (fun () ->
-            flip ()
-            updateRowBackground ())
-        row.PointerReleased.Add(fun e ->
-            if e.InitialPressMouseButton = MouseButton.Left then
-                e.Handled <- true
-                flip ())
-        row :> Control, read, write
+                toggleAndRefresh ())
+        Ui.onClick row toggleAndRefresh
+        let syncWrite v =
+            write v
+            Avalonia.Automation.AutomationProperties.SetItemStatus(row, if v then "开启" else "关闭")
+        row :> Control, read, syncWrite
 
     member this.SetCatalog(next: Catalog) =
         catalog <- next
