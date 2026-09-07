@@ -159,6 +159,7 @@ module WireCodec =
             p["title"] <- d.title
             p["lastCommitId"] <- d.lastCommitId
             p["runtimeState"] <- d.runtimeState
+            match d.generationId with Some id -> putGuid p "generationId" id | None -> ()
             p["messages"] <- d.messages.DeepClone()
             p["snapshotEarliestCommitId"] <- d.snapshotEarliestCommitId
             p["snapshotHasMore"] <- d.snapshotHasMore
@@ -495,7 +496,7 @@ module WireCodec =
                             match tryGet p "config" with
                             | Some (:? JsonObject as c) -> CommitCodec.configFromJson c
                             | _ -> SessionConfig.empty
-                        Ok(ConversationSnapshot {| conversationId = cid; title = tryString p "title" |> Option.defaultValue ""; lastCommitId = tryUInt64 p "lastCommitId" |> Option.defaultValue 0UL; runtimeState = tryString p "runtimeState" |> Option.defaultValue "idle"; messages = msgs; snapshotEarliestCommitId = tryUInt64 p "snapshotEarliestCommitId" |> Option.defaultValue 0UL; snapshotHasMore = hasMore; config = cfg |})
+                        Ok(ConversationSnapshot {| conversationId = cid; title = tryString p "title" |> Option.defaultValue ""; lastCommitId = tryUInt64 p "lastCommitId" |> Option.defaultValue 0UL; runtimeState = tryString p "runtimeState" |> Option.defaultValue "idle"; generationId = tryGuid p "generationId"; messages = msgs; snapshotEarliestCommitId = tryUInt64 p "snapshotEarliestCommitId" |> Option.defaultValue 0UL; snapshotHasMore = hasMore; config = cfg |})
                     | None -> Error "conversation.snapshot: missing conversationId"
                 | Some "conversation.updated" ->
                     match tryGuid p "conversationId" with

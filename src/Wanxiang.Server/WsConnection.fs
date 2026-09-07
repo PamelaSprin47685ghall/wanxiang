@@ -214,19 +214,20 @@ type WsConnection(
         match Projection.tryConversation proj convId with
         | None -> false
         | Some conv ->
-            let state = orchestrator.RuntimeStateOf convId
             let messages, earliest, hasMore = ServerModel.conversationMessagesTail proj conv snapshotMessageLimit
             let sent =
-                this.TrySend
-                    (ConversationSnapshot
-                        {| conversationId = convId
-                           title = conv.title
-                           lastCommitId = proj.latestCommitId
-                           runtimeState = state
-                           messages = messages
-                           snapshotEarliestCommitId = earliest
-                           snapshotHasMore = hasMore
-                           config = conv.config |})
+                orchestrator.WithRuntimeSnapshot(convId, fun state generationId ->
+                    this.TrySend
+                        (ConversationSnapshot
+                            {| conversationId = convId
+                               title = conv.title
+                               lastCommitId = proj.latestCommitId
+                               runtimeState = state
+                               generationId = generationId
+                               messages = messages
+                               snapshotEarliestCommitId = earliest
+                               snapshotHasMore = hasMore
+                               config = conv.config |}))
             if sent then
                 lock cursorLock (fun () -> awaitingCursor <- Some proj.latestCommitId)
             sent
@@ -466,7 +467,11 @@ type WsConnection(
                 | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | GenerationCancel d ->
                 match handshakeState with
-                | Authenticated -> orchestrator.CancelGeneration(d.conversationId, d.generationId) |> ignore
+                | Authenticated ->
+                    match orchestrator.CancelGeneration(d.conversationId, d.generationId) with
+                    | Ok () -> ()
+                    // 生成可能刚刚结束。重新给出权威状态，不能让停止按钮永久等待。
+                    | Error _ -> this.SendConversationSnapshot d.conversationId |> ignore
                 | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | AttachmentBegin d ->
                 match handshakeState with

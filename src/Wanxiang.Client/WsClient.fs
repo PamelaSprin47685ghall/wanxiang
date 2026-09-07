@@ -17,82 +17,116 @@ type WsClient() =
     let mutable cts: CancellationTokenSource = null
     let mutable connectionGeneration = 0
     let sendGate = new SemaphoreSlim(1, 1)
+    let connectionLock = obj()
+
+    let detachConnection () =
+        let generation, previousSocket, previousCts =
+            lock connectionLock (fun () ->
+                let generation = Interlocked.Increment(&connectionGeneration)
+                let previousSocket, previousCts = ws, cts
+                ws <- null
+                cts <- null
+                generation, previousSocket, previousCts)
+        if not (isNull previousCts) then
+            try previousCts.Cancel() with _ -> ()
+            previousCts.Dispose()
+        if not (isNull previousSocket) then
+            try previousSocket.Dispose() with _ -> ()
+        generation
 
     let onEvent = Event<WireEvent>()
     let onClosed = Event<exn option>()
+    let onConnectionEvent = Event<int * WireEvent>()
+    let onConnectionClosed = Event<int * exn option>()
 
     member _.EventReceived = onEvent.Publish
     member _.Closed = onClosed.Publish
+    member _.ConnectionEventReceived = onConnectionEvent.Publish
+    member _.ConnectionClosed = onConnectionClosed.Publish
+    member _.ConnectionGeneration = Volatile.Read(&connectionGeneration)
 
     member _.IsConnected =
-        not (isNull ws) && ws.State = WebSocketState.Open
+        lock connectionLock (fun () -> not (isNull ws) && ws.State = WebSocketState.Open)
 
     /// 连接并启动接收循环（认证前连接处于受限状态，决策 55）。
-    member this.ConnectAsync(uri: Uri, ct: CancellationToken) : Task =
+    member this.ConnectWithGenerationAsync(uri: Uri, ct: CancellationToken) : Task<int> =
         task {
-            this.Disconnect()
+            let generation = detachConnection ()
             let newWs = new ClientWebSocket()
             let newCts = CancellationTokenSource.CreateLinkedTokenSource ct
-            let generation = connectionGeneration + 1
-            connectionGeneration <- generation
             try
                 do! newWs.ConnectAsync(uri, newCts.Token)
-                ws <- newWs
-                cts <- newCts
-                Async.Start(this.ReceiveLoop(newWs, newCts.Token, generation)) |> ignore
+                let installed =
+                    lock connectionLock (fun () ->
+                        if generation = connectionGeneration then
+                            ws <- newWs
+                            cts <- newCts
+                            true
+                        else false)
+                if installed then
+                    Async.Start(this.ReceiveLoop(newWs, newCts.Token, generation)) |> ignore
+                    return generation
+                else
+                    newWs.Dispose()
+                    newCts.Dispose()
+                    return raise (OperationCanceledException "connection superseded")
             with e ->
                 newCts.Dispose()
                 newWs.Dispose()
                 return raise e
         }
 
-    member _.Disconnect() =
-        if not (isNull cts) then
-            try cts.Cancel() with _ -> ()
-        if not (isNull ws) then
-            try ws.Dispose() with _ -> ()
-        ws <- null
-
-    /// 发送一个事件（文本 JSON 帧）。ClientWebSocket 同时只允许一个发送者。
-    member _.SendAsync(ev: WireEvent) : Task =
+    member this.ConnectAsync(uri: Uri, ct: CancellationToken) : Task =
         task {
-            let socket = ws
-            let tokenSource = cts
-            if not (isNull socket) && not (isNull tokenSource) && socket.State = WebSocketState.Open then
-                let json = WireCodec.encode ev
-                let bytes = Encoding.UTF8.GetBytes json
-                try
-                    do! sendGate.WaitAsync(tokenSource.Token)
-                    try
-                        if socket.State = WebSocketState.Open then
-                            do! socket.SendAsync(ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, tokenSource.Token)
-                    finally
-                        sendGate.Release() |> ignore
-                with
-                | :? OperationCanceledException -> ()
-                | :? ObjectDisposedException -> ()
-                | :? WebSocketException -> ()
+            let! _ = this.ConnectWithGenerationAsync(uri, ct)
+            return ()
         }
 
-    /// 发送客户端命令（专用编码路径）。
-    member _.SendCommandAsync(cmd: ClientCommand) : Task =
+    member _.Disconnect() = detachConnection () |> ignore
+
+    /// 返回传输是否完成，而不是把断线当成功。业务保存仍只认 command.committed。
+    member private _.TrySendTextAsync(json: string, expectedGeneration: int option) : Task<bool> =
         task {
-            let socket = ws
-            let tokenSource = cts
+            let socket, tokenSource =
+                lock connectionLock (fun () ->
+                    if expectedGeneration |> Option.exists (fun expected -> expected <> connectionGeneration) then null, null
+                    else ws, cts)
             if not (isNull socket) && not (isNull tokenSource) && socket.State = WebSocketState.Open then
-                let json = WireCodec.encodeCommand cmd
                 let bytes = Encoding.UTF8.GetBytes json
                 try
                     do! sendGate.WaitAsync(tokenSource.Token)
                     try
                         if socket.State = WebSocketState.Open then
                             do! socket.SendAsync(ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, tokenSource.Token)
+                            return true
+                        else return false
                     finally
                         sendGate.Release() |> ignore
                 with
-                | :? OperationCanceledException -> ()
-                | :? ObjectDisposedException -> ()
-                | :? WebSocketException -> ()
+                | :? OperationCanceledException -> return false
+                | :? ObjectDisposedException -> return false
+                | :? WebSocketException -> return false
+            else return false
+        }
+
+    member this.TrySendAsync(ev: WireEvent) : Task<bool> = this.TrySendTextAsync(WireCodec.encode ev, None)
+    member this.TrySendCommandAsync(cmd: ClientCommand) : Task<bool> = this.TrySendTextAsync(WireCodec.encodeCommand cmd, None)
+    member this.TrySendCommandAtGenerationAsync(generation: int, cmd: ClientCommand) : Task<bool> =
+        this.TrySendTextAsync(WireCodec.encodeCommand cmd, Some generation)
+    member this.TrySendAtGenerationAsync(generation: int, ev: WireEvent) : Task<bool> =
+        this.TrySendTextAsync(WireCodec.encode ev, Some generation)
+
+    /// 保留原有 API；需要用户反馈的调用方使用 TrySend 系列。
+    member this.SendAsync(ev: WireEvent) : Task =
+        task {
+            let! _ = this.TrySendAsync ev
+            return ()
+        }
+
+    member this.SendCommandAsync(cmd: ClientCommand) : Task =
+        task {
+            let! _ = this.TrySendCommandAsync cmd
+            return ()
         }
 
     /// 接收循环用 async 而不是 task：browser-wasm 单线程运行时中，task CE 对 pending task 的 await 会
@@ -101,9 +135,13 @@ type WsClient() =
         async {
             let mutable shouldNotify = true
             let isCurrent () = generation = connectionGeneration
+            let closed error =
+                if isCurrent () then
+                    onConnectionClosed.Trigger(generation, error)
+                    onClosed.Trigger error
             try
                 let buffer = Array.zeroCreate<byte> (1024 * 1024)
-                let ms = new System.IO.MemoryStream()
+                use ms = new System.IO.MemoryStream()
                 let mutable doneReceiving = false
                 while not doneReceiving && socket.State = WebSocketState.Open do
                     let! result = socket.ReceiveAsync(ArraySegment<byte>(buffer), ct) |> Async.AwaitTask
@@ -111,7 +149,7 @@ type WsClient() =
                         doneReceiving <- true
                     elif result.MessageType = WebSocketMessageType.Binary then
                         doneReceiving <- true
-                        if isCurrent () then onClosed.Trigger(Some(exn "binary frame received"))
+                        closed (Some(exn "binary frame received"))
                         shouldNotify <- false
                     else
                         ms.Write(buffer, 0, result.Count)
@@ -119,14 +157,17 @@ type WsClient() =
                             let text = Encoding.UTF8.GetString(ms.ToArray())
                             ms.SetLength 0L
                             match WireCodec.tryDecode text with
-                            | Ok ev -> onEvent.Trigger ev
+                            | Ok ev when isCurrent () ->
+                                onConnectionEvent.Trigger(generation, ev)
+                                onEvent.Trigger ev
+                            | Ok _ -> ()
                             | Error _ -> ()
-                if shouldNotify && isCurrent () then onClosed.Trigger None
+                if shouldNotify then closed None
             with
-            | :? OperationCanceledException -> if shouldNotify && isCurrent () then onClosed.Trigger None
-            | :? ObjectDisposedException -> if shouldNotify && isCurrent () then onClosed.Trigger None
-            | :? WebSocketException as e -> if shouldNotify && isCurrent () then onClosed.Trigger(Some e)
-            | e -> if shouldNotify && isCurrent () then onClosed.Trigger(Some e)
+            | :? OperationCanceledException -> if shouldNotify then closed None
+            | :? ObjectDisposedException -> if shouldNotify then closed None
+            | :? WebSocketException as e -> if shouldNotify then closed (Some e)
+            | e -> if shouldNotify then closed (Some e)
         }
 
 /// 客户端会话状态（内存态；PWA 不持久缓存，决策 3）。
@@ -159,6 +200,13 @@ type ClientState() =
     member _.Conversations = conversations
     member _.Cursor = cursor
     member _.LatestCommitId = latestCommitId
+
+    /// 实例身份改变时清空旧投影，绝不把另一台服务端的游标带过来。
+    member _.Reset() =
+        conversationList <- JsonArray()
+        conversations <- Map.empty
+        cursor <- 0UL
+        latestCommitId <- 0UL
 
     member _.ListChanged = listChanged.Publish
     member _.ConversationChanged = convChanged.Publish

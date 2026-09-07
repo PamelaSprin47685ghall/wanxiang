@@ -320,7 +320,7 @@ let ``composer blocks send while any attachment is uploading`` () =
     Headless.ensure ()
     let mutable submitted = 0
     let actions =
-        { submit = fun _ -> submitted <- submitted + 1
+        { submit = fun _ -> submitted <- submitted + 1; true
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore
@@ -367,7 +367,7 @@ let ``composer blocks send while any attachment is uploading`` () =
 let ``composer send stop state keeps automation name in sync`` () =
     Headless.ensure ()
     let actions =
-        { submit = ignore
+        { submit = fun _ -> true
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore
@@ -392,7 +392,7 @@ let ``composer send stop state keeps automation name in sync`` () =
 let ``composer attachment slots stay stable across uploading ready and thirty items`` () =
     Headless.ensure ()
     let actions =
-        { submit = ignore
+        { submit = fun _ -> true
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore
@@ -1108,7 +1108,7 @@ let ``accelerated craft soak covers the long-session action ledger without visua
     let mutable submitted = 0
     let composer =
         Composer(
-            { submit = fun _ -> submitted <- submitted + 1
+            { submit = fun _ -> submitted <- submitted + 1; true
               stopGeneration = ignore
               pickAttachment = ignore
               removeAttachment = ignore
@@ -1265,7 +1265,7 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
           toggleSidebar = ignore
           message = messageActions }
     let composerActions =
-        { submit = ignore
+        { submit = fun _ -> true
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore

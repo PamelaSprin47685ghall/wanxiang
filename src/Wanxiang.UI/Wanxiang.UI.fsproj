@@ -15,7 +15,6 @@
     <Compile Include="Design/Icons.fs" />
     <Compile Include="Model/UiPrefs.fs" />
     <Compile Include="Model/MediaTypes.fs" />
-    <Compile Include="Model/UiControllers.fs" />
     <Compile Include="Rich/RichBackend.fs" />
     <Compile Include="Rich/Highlight.fs" />
     <Compile Include="Rich/KatexHtml.fs" />
@@ -23,6 +22,7 @@
     <Compile Include="Rich/MathVisual.fs" />
     <Compile Include="Model/Markdown.fs" />
     <Compile Include="Model/MessageModel.fs" />
+    <Compile Include="Model/UiControllers.fs" />
     <Compile Include="Model/Catalog.fs" />
     <Compile Include="Model/ConversationSummary.fs" />
     <Compile Include="Model/ProviderPresets.fs" />

@@ -19,7 +19,7 @@ open Wanxiang.Tests.Helpers
 /// 验证 P0-1 修复：观察快照 → cursor.advanced → 写命令不再被 stale-projection 拒绝。
 module private E2e =
 
-    type ServerHandle(port: int, token: string) =
+    type ServerHandle(port: int, token: string, ?providerUrl: string) =
         let dir = tempDir ()
         let configPath = Path.Combine(dir, "config.toml")
         let mutable server: Wanxiang.Server.ServerApp option = None
@@ -29,13 +29,14 @@ module private E2e =
             let cfg =
                 { AppConfig.defaults instanceId with
                     listen = sprintf "127.0.0.1:%d" port
+                    generation = { (AppConfig.defaults instanceId).generation with autoTitle = false }
                     providers =
                         Map.ofList
                             [ "test-provider",
                               { id = "test-provider"
                                 kind = "openai"
                                 label = "Test Provider"
-                                baseUrl = "http://127.0.0.1:1/v1"
+                                baseUrl = defaultArg providerUrl "http://127.0.0.1:1/v1"
                                 apiKey = None
                                 models = [ "test-model" ]
                                 defaultModel = "test-model"
@@ -110,6 +111,76 @@ let private pickPort () =
     let port = (listener.LocalEndpoint :?> Net.IPEndPoint).Port
     listener.Stop()
     port
+
+[<Fact>]
+let ``e2e reobserve restores cancel identity and retrying the original send is idempotent`` () =
+    // 上游接收连接但不返回响应，生成会一直保持在途，直到测试通过另一条 WS 取消。
+    use upstream = new System.Net.HttpListener()
+    let upstreamPort = pickPort ()
+    upstream.Prefixes.Add(sprintf "http://127.0.0.1:%d/" upstreamPort)
+    upstream.Start()
+    let port = pickPort ()
+    let token = Auth.generateToken ()
+    let server = E2e.ServerHandle(port, token, providerUrl = sprintf "http://127.0.0.1:%d/v1" upstreamPort)
+    try
+        use timeout = new CancellationTokenSource(TimeSpan.FromSeconds 20.0)
+        let ct = timeout.Token
+        use owner = E2e.conn port token ct
+        let eventType (o: JsonObject) = o["type"].GetValue<string>()
+        let value (o: JsonObject) (key: string) : JsonNode = o["payload"].AsObject()[key]
+        let wait ws name = E2e.waitFor ws ct (fun o -> eventType o = name)
+        let send ws ev = E2e.send ws (JsonNode.Parse(WireCodec.encode ev).AsObject()) ct
+        let command ws cmd = E2e.send ws (JsonNode.Parse(WireCodec.encodeCommand cmd).AsObject()) ct
+        wait owner "auth.accepted" |> ignore
+        let id = Guid.NewGuid()
+        command owner (CreateConversation {| invocationId = Guid.NewGuid(); conversationId = id; title = "可靠性测试"
+                                             config = { SessionConfig.empty with provider = "test-provider"; model = "test-model" } |})
+        wait owner "command.committed" |> ignore
+        send owner (ObserveConversation {| conversationId = id |})
+        let initial = wait owner "conversation.snapshot"
+        send owner (CursorAdvanced {| id = (value initial "lastCommitId").GetValue<uint64>() |})
+        let invocation = Guid.NewGuid()
+        let original = SendUserMessage {| invocationId = invocation; conversationId = id
+                                          messageJson = JsonNode.Parse("""{"role":"user","contents":[{"text":"只保存一次"}]}""") |}
+        command owner original
+        let mutable generation: Guid option = None
+        let mutable commit: uint64 option = None
+        while generation.IsNone || commit.IsNone do
+            let ev = E2e.recvEvent owner ct
+            if eventType ev = "generation.started" then generation <- Some(Guid.Parse((value ev "generationId").GetValue<string>()))
+            elif eventType ev = "command.committed" && (value ev "invocationId").GetValue<string>() = invocation.ToString("D") then
+                commit <- Some((value ev "commitId").GetValue<uint64>())
+        // 新客户端没有见过 generation.started，只能依赖快照中的运行身份。
+        use observer = E2e.conn port token ct
+        wait observer "auth.accepted" |> ignore
+        send observer (ObserveConversation {| conversationId = id |})
+        let resumed = wait observer "conversation.snapshot"
+        let resumedGeneration = Guid.Parse((value resumed "generationId").GetValue<string>())
+        Assert.Equal(generation.Value, resumedGeneration)
+        send observer (CursorAdvanced {| id = (value resumed "lastCommitId").GetValue<uint64>() |})
+        // 模拟客户端未处理保存确认，按原 invocationId 和原载荷重试。
+        command observer original
+        let replay = wait observer "command.committed"
+        Assert.Equal(commit.Value, (value replay "commitId").GetValue<uint64>())
+        send observer (ObserveConversation {| conversationId = id |})
+        let afterRetry = wait observer "conversation.snapshot"
+        Assert.Single((value afterRetry "messages").AsArray()) |> ignore
+        send observer (GenerationCancel {| conversationId = id; generationId = resumedGeneration |})
+        let finished = wait observer "generation.finished"
+        Assert.Equal("cancelled", (value finished "status").GetValue<string>())
+        // 结束事件发出后立即读快照，不应复活已经结束的生成。
+        send observer (ObserveConversation {| conversationId = id |})
+        let idle = wait observer "conversation.snapshot"
+        Assert.Equal("idle", (value idle "runtimeState").GetValue<string>())
+        Assert.Null(value idle "generationId")
+        let guarded = Wanxiang.Client.WsClient()
+        try
+            let epoch = guarded.ConnectWithGenerationAsync(Uri(sprintf "ws://127.0.0.1:%d/ws" port), ct).GetAwaiter().GetResult()
+            Assert.False(guarded.TrySendAtGenerationAsync(epoch - 1, AuthPresent {| token = token |}).GetAwaiter().GetResult())
+            Assert.False(guarded.TrySendCommandAtGenerationAsync(epoch - 1, original).GetAwaiter().GetResult())
+        finally guarded.Disconnect()
+    finally
+        server.Dispose()
 
 /// P0-1 端到端：快照后推进游标，写命令应成功而非 stale-projection。
 [<Fact>]

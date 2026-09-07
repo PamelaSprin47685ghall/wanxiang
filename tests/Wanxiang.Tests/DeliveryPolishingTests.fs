@@ -150,6 +150,7 @@ let ``client state updates and removes deleted message in ConversationUpdated`` 
                runtimeState = "idle"
                messages = snapItems
                snapshotEarliestCommitId = 10UL
+               generationId = None
                snapshotHasMore = false
                config = SessionConfig.empty |}
     state.Handle snap
@@ -189,6 +190,7 @@ let ``client state catch up removes deleted message via MessageDeleted event`` (
                runtimeState = "idle"
                messages = snapItems
                snapshotEarliestCommitId = 20UL
+               generationId = None
                snapshotHasMore = false
                config = SessionConfig.empty |}
     state.Handle snap
@@ -416,7 +418,7 @@ let ``chat view renders a focused empty state without extra actions`` () =
 let ``composer accepts text without introducing extra send modes`` () =
     Headless.ensure ()
     let actions: ComposerActions =
-        { submit = ignore
+        { submit = fun _ -> true
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore

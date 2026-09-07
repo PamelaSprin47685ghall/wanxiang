@@ -146,12 +146,30 @@ type ChatOrchestrator(
             convId
 
     /// 会话当前运行状态（供 snapshot 的 runtimeState 字段）。
-    member _.RuntimeStateOf(convId: Guid) : string =
+    member _.WithRuntimeSnapshot(convId: Guid, consume: string -> Guid option -> 'T) : 'T =
         let rt = getRuntime convId
         lock rt (fun () ->
             match rt.generation with
-            | Some g when not g.cancelled -> "generating"
-            | _ -> "idle")
+            | Some g when not g.cancelled -> consume "generating" (Some g.generationId)
+            | _ -> consume "idle" None)
+
+    member this.RuntimeSnapshotOf(convId: Guid) : string * Guid option =
+        this.WithRuntimeSnapshot(convId, fun state id -> state, id)
+
+    member this.RuntimeStateOf(convId: Guid) : string =
+        this.RuntimeSnapshotOf convId |> fst
+
+    /// 状态转换与通知同锁；快照不能排在 finished 后面却还声称正在生成。
+    /// 正常结束时还需在同一临界区检查队列，避免最后一条排队消息被遗留。
+    member private _.FinishGeneration(convId: Guid, generationId: Guid, ev: WireEvent, requireEmptyQueue: bool) =
+        let rt = getRuntime convId
+        lock rt (fun () ->
+            match rt.generation with
+            | Some g when g.generationId = generationId && (not requireEmptyQueue || List.isEmpty rt.pendingQueue) ->
+                rt.generation <- None
+                broadcastToConversation convId ev
+                true
+            | _ -> false)
 
     /// 提交一条消息事件（Agent 响应 / 工具结果记账）。
     /// 决策 16：Agent 内部命令也使用独立 invocationId，与普通命令一样带 commandId 提交——
@@ -379,8 +397,7 @@ type ChatOrchestrator(
                     //    继续保留，等待下一个插入点——绝不先提交再取消，否则消息落盘却无回复）
                     if g.cts.IsCancellationRequested then
                         let ev = finishedEvent convId generationId "cancelled" None g.startedAtUtc None
-                        broadcastToConversation convId ev
-                        lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
+                        this.FinishGeneration(convId, generationId, ev, false) |> ignore
                         running <- false
                     else
                         // 2. 插入点：排空队列（决策 24：全部 FIFO 提交，一次 Provider 调用）
@@ -392,8 +409,7 @@ type ChatOrchestrator(
                             // 继续调 Provider 只会凭空生成一段无来由的回复。
                             if not (List.isEmpty batch) then
                                 logInfo(sprintf "generation %O aborted: empty context after draining %d message(s)" generationId (List.length batch))
-                            lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
-                            broadcastToConversation convId (finishedEvent convId generationId "completed" None g.startedAtUtc None)
+                            this.FinishGeneration(convId, generationId, finishedEvent convId generationId "completed" None g.startedAtUtc None, false) |> ignore
                             running <- false
                         else
                             // 4. Provider 调用（配置变更只影响下一次调用，决策 87：
@@ -407,8 +423,7 @@ type ChatOrchestrator(
                                 logInfo(sprintf "generation %O failed: provider %s not configured" generationId g.invalidConfig.Value)
                                 let ev =
                                     finishedEvent convId generationId "failed" (Some(configInvalidError g.invalidConfig.Value)) g.startedAtUtc None
-                                broadcastToConversation convId ev
-                                lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
+                                this.FinishGeneration(convId, generationId, ev, false) |> ignore
                                 running <- false
                             elif latestConfig.IsSome && latestConfig.Value <> g.agentConfig then
                                 // 配置变化：同一 generation 内重建 agent（新 session），
@@ -422,15 +437,16 @@ type ChatOrchestrator(
                                             {| conversationId = convId
                                                generationId = generationId
                                                payload = MessageSerde.toJsonNode deltaMsg |}
-                                    broadcastToConversation convId deltaEv
+                                    lock rt (fun () ->
+                                        if not g.cancelled && (rt.generation |> Option.map _.generationId) = Some generationId then
+                                            broadcastToConversation convId deltaEv)
                                 // 多条消息合并为一次请求（按消息列表传入）
                                 let! result =
                                     g.runtime.RunStreaming(g.agentSession, context, onDelta, g.cts.Token)
                                 match result with
                                 | AgentCallResult.Cancelled ->
                                     let ev = finishedEvent convId generationId "cancelled" None g.startedAtUtc (Some g.accumulatedUsage)
-                                    broadcastToConversation convId ev
-                                    lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
+                                    this.FinishGeneration(convId, generationId, ev, false) |> ignore
                                     running <- false
                                 | Failed err ->
                                     logInfo(
@@ -440,8 +456,7 @@ type ChatOrchestrator(
                                             (GenerationErrorKind.code err.kind)
                                             (err.detail |> Option.defaultValue err.message))
                                     let ev = finishedEvent convId generationId "failed" (Some err) g.startedAtUtc (Some g.accumulatedUsage)
-                                    broadcastToConversation convId ev
-                                    lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
+                                    this.FinishGeneration(convId, generationId, ev, false) |> ignore
                                     running <- false
                                 | Completed usage ->
                                     g.accumulatedUsage <- addUsage g.accumulatedUsage (usageFromDetails usage g.startedAtUtc)
@@ -455,16 +470,12 @@ type ChatOrchestrator(
                                     if List.isEmpty calls then
                                         // 决策 22/24：idle 是可插入点——若流式期间有新消息入队，则继续循环排空，
                                         // 不立即结束 generation（避免排队消息需等下次显式动作才处理）
-                                        let hasQueued =
-                                            lock rt (fun () -> not (List.isEmpty rt.pendingQueue))
-                                        if hasQueued then
+                                        let ev = finishedEvent convId generationId "completed" None g.startedAtUtc (Some g.accumulatedUsage)
+                                        if not (this.FinishGeneration(convId, generationId, ev, true)) then
                                             lock rt (fun () -> g.lastProviderMessages <- [])
                                             // 继续 while 循环（下一轮 DrainQueue 排空 + 再次调 Provider）
                                             ()
                                         else
-                                            let ev = finishedEvent convId generationId "completed" None g.startedAtUtc (Some g.accumulatedUsage)
-                                            broadcastToConversation convId ev
-                                            lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
                                             running <- false
                                             do! this.MaybeGenerateTitle(convId, g)
                                     elif g.toolRounds >= maxRounds then
@@ -475,8 +486,7 @@ type ChatOrchestrator(
                                                 ToolFailed
                                                 (sprintf "模型连续调用工具超过 %d 轮，已停止本次生成。" maxRounds)
                                         let ev = finishedEvent convId generationId "failed" (Some err) g.startedAtUtc (Some g.accumulatedUsage)
-                                        broadcastToConversation convId ev
-                                        lock rt (fun () -> if (rt.generation |> Option.map (fun x -> x.generationId)) = Some generationId then rt.generation <- None)
+                                        this.FinishGeneration(convId, generationId, ev, false) |> ignore
                                         running <- false
                                     else
                                         // 5. 并行执行工具（决策 92），全部完成后统一返回 Provider（保持原顺序）

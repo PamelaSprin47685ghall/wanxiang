@@ -12,7 +12,8 @@ open Avalonia.Threading
 
 /// 输入区对外暴露的动作。
 type ComposerActions = {
-    submit: string -> unit
+    /// true 表示内容已由本地待发送记录接管，不代表服务端已经保存。
+    submit: string -> bool
     stopGeneration: unit -> unit
     pickAttachment: unit -> unit
     removeAttachment: Guid -> unit
@@ -59,6 +60,13 @@ type Composer(actions: ComposerActions) as this =
             Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2))
 
     let sendButton = Ui.iconButtonAccent Icons.send "发送"
+    let queueButton = Ui.iconButton Icons.send "排队发送"
+    let pendingPanel = StackPanel(Spacing = Tokens.space2)
+    let pendingScroller =
+        ScrollViewer(Content = pendingPanel, MaxHeight = LayoutPolicy.pendingMessagesMaxHeight, IsVisible = false,
+                     HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                     VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
+    let mutable pendingKeys: (Guid * DeliveryState * bool * bool) list = []
     let attachButton = Ui.iconButton Icons.paperclip "添加附件"
     let modelCaption =
         TextBlock(
@@ -100,6 +108,7 @@ type Composer(actions: ComposerActions) as this =
 
     let mutable enterSends = true
     let mutable generating = false
+    let mutable canStop = true
     let mutable enabled = false
     let mutable attachments: PendingAttachment list = []
 
@@ -107,7 +116,10 @@ type Composer(actions: ComposerActions) as this =
         let hasText = not (String.IsNullOrWhiteSpace input.Text)
         let hasAttachment = attachments |> List.exists (fun a -> a.ready)
         let uploading = attachments |> List.exists (fun a -> not a.ready)
-        Ui.setEnabled sendButton (generating || (enabled && not uploading && (hasText || hasAttachment)))
+        let canSend = enabled && not uploading && (hasText || hasAttachment)
+        Ui.setEnabled sendButton (if generating then canStop else canSend)
+        queueButton.IsVisible <- generating
+        Ui.setEnabled queueButton canSend
         ToolTip.SetTip(sendButton, if generating then "停止生成" elif uploading then "等待附件上传完成" else "发送")
 
     do
@@ -131,6 +143,7 @@ type Composer(actions: ComposerActions) as this =
 
         Ui.onClick sendButton (fun () ->
             if generating then actions.stopGeneration () else this.Submit())
+        Ui.onClick queueButton (fun () -> this.Submit())
 
         input.TextChanged.Add(fun _ -> refreshSendState ())
         // TextBox 的 AcceptsReturn 会在自己的 OnKeyDown 里吃掉 Enter，
@@ -149,13 +162,14 @@ type Composer(actions: ComposerActions) as this =
 
     member private this.Submit() =
         let uploading = attachments |> List.exists (fun a -> not a.ready)
-        if enabled && not generating && not uploading then
+        if enabled && not uploading then
             let text = if isNull input.Text then "" else input.Text
             if not (String.IsNullOrWhiteSpace text) || attachments |> List.exists (fun a -> a.ready) then
-                input.Text <- ""
-                refreshSendState ()
-                actions.submit text
-                input.Focus() |> ignore
+                if actions.submit text then
+                    // 所有权已经移交；回调若切到了另一份草稿，不清它的内容。
+                    if input.Text = text then input.Text <- ""
+                    refreshSendState ()
+                    input.Focus() |> ignore
 
     member private this.RenderAttachments() =
         attachmentStrip.Children.Clear()
@@ -210,9 +224,53 @@ type Composer(actions: ComposerActions) as this =
         attachmentScroller.IsVisible <- not (List.isEmpty attachments)
 
     member this.SetAttachments(items: PendingAttachment list) =
-        attachments <- items
-        this.RenderAttachments()
+        if attachments <> items then
+            attachments <- items
+            this.RenderAttachments()
+            refreshSendState ()
+
+    member _.Text = if isNull input.Text then "" else input.Text
+
+    member _.SetCanStop(value: bool) =
+        canStop <- value
         refreshSendState ()
+
+    /// 未确认消息常驻在输入区上方；失败不会只剩一条会消失的 toast。
+    member _.SetPendingMessages(items: PendingMessage list, activeConversationId: Guid option, canRetry: bool, retry: Guid -> unit, openConversation: Guid -> unit) =
+        let keys = items |> List.map (fun item -> PendingMessage.invocationId item, item.state, canRetry, activeConversationId = Some item.conversationId)
+        if keys <> pendingKeys then
+            pendingKeys <- keys
+            pendingPanel.Children.Clear()
+            let current, elsewhere = items |> List.partition (fun item -> activeConversationId = Some item.conversationId)
+            for item in current do
+                let body = StackPanel(Spacing = Tokens.space1)
+                if not (String.IsNullOrEmpty item.text) then
+                    body.Children.Add(
+                        ScrollViewer(
+                            MaxHeight = LayoutPolicy.pendingMessagePreviewMaxHeight,
+                            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                            Content = SelectableTextBlock(Text = item.text, TextWrapping = TextWrapping.Wrap,
+                                                          FontSize = Tokens.fontSmall, Foreground = Tokens.text)))
+                if not (List.isEmpty item.attachments) then
+                    body.Children.Add(Ui.caption (item.attachments |> List.map _.fileName |> String.concat "、"))
+                let status = TextBlock(Text = PendingMessage.status item, TextWrapping = TextWrapping.Wrap,
+                                       FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted)
+                let row = DockPanel(LastChildFill = true)
+                if PendingMessage.canRetry item then
+                    let button = Ui.button Ui.Secondary "重试" (fun () -> retry (PendingMessage.invocationId item))
+                    Ui.setEnabled button canRetry
+                    DockPanel.SetDock(button, Dock.Right)
+                    row.Children.Add button
+                row.Children.Add status
+                body.Children.Add row
+                pendingPanel.Children.Add(Ui.card body)
+            // 首条消息创建会话失败时尚无侧栏条目，切走后仍要有找回入口。
+            for conversationId, pending in elsewhere |> List.groupBy _.conversationId do
+                let label = sprintf "查看另一个会话的未确认消息（%d 条）" pending.Length
+                pendingPanel.Children.Add(Ui.button Ui.Secondary label (fun () -> openConversation conversationId))
+            if not (List.isEmpty items) then
+                pendingPanel.Children.Add(Ui.caption "未确认内容只保留在当前窗口，关闭或刷新前请先确认保存。")
+            pendingScroller.IsVisible <- not (List.isEmpty items)
 
     member this.SetGenerating(value: bool) =
         generating <- value
@@ -229,7 +287,8 @@ type Composer(actions: ComposerActions) as this =
     /// 启用输入。`reason` 在禁用时说明为什么不能发。
     member this.SetEnabled(value: bool, reason: string) =
         enabled <- value
-        input.IsEnabled <- value
+        // 连接暂不可用时仍能写草稿；只限制发送与上传。
+        input.IsEnabled <- true
         Ui.setEnabled attachButton value
         shell.Opacity <- if value then 1.0 else Tokens.opacityComposerDisabled
         disabledNotice.Text <- reason
@@ -250,6 +309,7 @@ type Composer(actions: ComposerActions) as this =
         let actionSize = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         Ui.setSquareTarget attachButton actionSize
         Ui.setSquareTarget sendButton actionSize
+        Ui.setSquareTarget queueButton actionSize
         modelChip.MinHeight <- if value then LayoutPolicy.compactActionTarget else 0.0
         this.Padding <-
             if value then Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space2)
@@ -269,7 +329,7 @@ type Composer(actions: ComposerActions) as this =
         // 而这里的 padding 一定在，末条消息的脚注行不会贴到输入卡上。
         this.Padding <- Thickness(Tokens.shellInset, Tokens.space4, Tokens.shellInset, Tokens.space3)
 
-        let actionRow = Ui.hstack Tokens.space1 [ attachButton :> Control; sendButton :> Control ]
+        let actionRow = Ui.hstack Tokens.space1 [ attachButton :> Control; queueButton :> Control; sendButton :> Control ]
         actionRow.VerticalAlignment <- VerticalAlignment.Bottom
 
         let inputRow = DockPanel(LastChildFill = true)
@@ -307,6 +367,7 @@ type Composer(actions: ComposerActions) as this =
 
         let outer = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, MaxWidth = Tokens.readingWidth)
         outer.Children.Add disabledNotice
+        outer.Children.Add pendingScroller
         outer.Children.Add shell
         this.Child <- outer
         this.SetEnterSends true

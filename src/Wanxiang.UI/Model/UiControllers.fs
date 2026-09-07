@@ -2,8 +2,74 @@ namespace Wanxiang.UI
 
 open System
 open System.Collections.Generic
+open System.Text.Json.Nodes
 open Avalonia.Input
 open Wanxiang.Core
+
+/// 临时生成状态按会话保存；导航只选择要显示哪一份，不拥有生成本身。
+type ConversationRun = {
+    generationId: Guid option
+    running: bool
+    message: MessageView option
+    error: GenerationError option
+    usage: GenerationUsage option
+}
+
+type ConversationRuns() =
+    let empty = { generationId = None; running = false; message = None; error = None; usage = None }
+    let mutable items: Map<Guid, ConversationRun> = Map.empty
+    let mutable retired: Set<Guid * Guid> = Set.empty
+
+    member _.Get(id: Guid option) = id |> Option.bind items.TryFind |> Option.defaultValue empty
+
+    member this.Snapshot(id: Guid, runtimeState: string, generationId: Guid option) =
+        let current = this.Get(Some id)
+        let running = runtimeState = "generating"
+        let generationId = generationId |> Option.filter (fun id -> id <> Guid.Empty)
+        if not (generationId |> Option.exists (fun generation -> retired.Contains(id, generation))) then
+            items <- items.Add(id,
+                { current with
+                    running = running
+                    generationId = if running then generationId else None
+                    message = if running && current.generationId = generationId then current.message else None
+                    error = if running then None else current.error })
+
+    member this.Start(id: Guid, generationId: Guid) =
+        let current = this.Get(Some id)
+        if current.generationId <> Some generationId && not (retired.Contains(id, generationId)) then
+            current.generationId |> Option.iter (fun previous -> retired <- retired.Add(id, previous))
+            items <- items.Add(id, { current with generationId = Some generationId; running = true; message = None; error = None })
+
+    member this.Delta(id: Guid, generationId: Guid, message: MessageView) =
+        let current = this.Get(Some id)
+        if current.running && current.generationId = Some generationId then
+            items <- items.Add(id, { current with message = Some message })
+            true
+        else false
+
+    member this.Finish(id: Guid, generationId: Guid, error: GenerationError option, usage: GenerationUsage option) =
+        let current = this.Get(Some id)
+        let applicable = not (retired.Contains(id, generationId)) && (current.generationId.IsNone || current.generationId = Some generationId)
+        retired <- retired.Add(id, generationId)
+        if applicable then
+            items <- items.Add(id,
+                { current with generationId = None; running = false; message = None; error = error
+                               usage = usage |> Option.orElse current.usage })
+            true
+        else false
+
+    member this.ClearMessage(id: Guid) =
+        items <- items.Add(id, { this.Get(Some id) with message = None })
+
+    member this.ClearError(id: Guid) =
+        items <- items.Add(id, { this.Get(Some id) with error = None })
+
+    member _.Disconnect() =
+        items <- items |> Map.map (fun _ item -> { item with generationId = None; running = false; message = None })
+
+    member _.Clear() =
+        items <- Map.empty
+        retired <- Set.empty
 
 /// Composer 中的一条附件草稿。用 attachmentId 而不是 sha256 作为身份：
 /// 同一文件被选择两次时，两条草稿仍能独立上传、删除和完成。
@@ -87,6 +153,145 @@ type AttachmentDraftController() =
             let consumed = items
             items <- []
             Some consumed
+
+type ComposerDraft = {
+    mutable text: string
+    attachments: AttachmentDraftController
+}
+
+/// 草稿仅在客户端内存中保存，按实例和会话隔离；不构成第二份业务数据库。
+type ComposerDrafts() =
+    let mutable items: Map<string * Guid option, ComposerDraft> = Map.empty
+
+    member _.Get(instanceId: string, conversationId: Guid option) =
+        let key = instanceId, conversationId
+        match items.TryFind key with
+        | Some draft -> draft
+        | None ->
+            let draft = { text = ""; attachments = AttachmentDraftController() }
+            items <- items.Add(key, draft)
+            draft
+
+    member _.Move(instanceId: string, source: Guid option, target: Guid option) =
+        match items.TryFind(instanceId, source) with
+        | Some draft -> items <- items.Remove((instanceId, source)).Add((instanceId, target), draft)
+        | None -> ()
+
+    member _.All = items |> Map.toSeq |> Seq.map snd
+
+type DeliveryState =
+    | PreparingConversation
+    | SendingMessage
+    | QueuedMessage
+    | UnconfirmedMessage of string
+    | RejectedMessage of string
+
+type PendingMessage = {
+    instanceId: string
+    conversationId: Guid
+    command: ClientCommand
+    creation: ClientCommand option
+    creationConfirmed: bool
+    text: string
+    attachments: PendingAttachment list
+    state: DeliveryState
+    lastAttemptAt: DateTimeOffset
+}
+
+module PendingMessage =
+    let invocationId item = ClientCommand.invocationId item.command
+    let canRetry item =
+        match item.state with UnconfirmedMessage _ | RejectedMessage _ -> true | _ -> false
+    let status item =
+        match item.state with
+        | PreparingConversation -> "正在准备会话…"
+        | SendingMessage -> "正在发送，等待保存确认…"
+        | QueuedMessage -> "已排队，尚未保存"
+        | UnconfirmedMessage reason -> "尚未确认保存：" + reason
+        | RejectedMessage reason -> "未发送：" + reason
+
+/// 输入框只把内容交给这里；直到 command.committed 才释放。
+/// 重试始终使用原命令、原 invocationId 和原附件引用，不猜测服务端是否已写入。
+type MessageOutbox() =
+    let mutable items: Map<Guid, PendingMessage> = Map.empty
+
+    member _.ForInstance(instanceId: string) =
+        items |> Map.toList |> List.map snd |> List.filter (fun item -> item.instanceId = instanceId)
+
+    member _.Items(instanceId: string, conversationId: Guid option) =
+        items |> Map.toList |> List.map snd
+        |> List.filter (fun item -> item.instanceId = instanceId && Some item.conversationId = conversationId)
+
+    member _.TryFind(id: Guid) = items.TryFind id
+    member _.Count = items.Count
+
+    member _.Stage(instanceId: string, conversationId: Guid, text: string, attachments: PendingAttachment list, creation: ClientCommand option) =
+        let contents = JsonArray()
+        if not (String.IsNullOrWhiteSpace text) then
+            let node = JsonObject()
+            node["text"] <- text
+            contents.Add node
+        for attachment in attachments do
+            let node = JsonObject()
+            node["type"] <- "attachment"
+            node["sha256"] <- attachment.sha256
+            node["size"] <- attachment.size
+            node["mediaType"] <- attachment.mediaType
+            node["fileName"] <- attachment.fileName
+            contents.Add node
+        let message = JsonObject()
+        message["role"] <- "user"
+        message["contents"] <- contents
+        let id = Guid.CreateVersion7()
+        let item =
+            { instanceId = instanceId; conversationId = conversationId
+              command = SendUserMessage {| invocationId = id; conversationId = conversationId; messageJson = message |}
+              creation = creation; creationConfirmed = creation.IsNone
+              text = text; attachments = attachments
+              state = (if creation.IsSome then PreparingConversation else SendingMessage)
+              lastAttemptAt = DateTimeOffset.UtcNow }
+        items <- items.Add(id, item)
+        item
+
+    member _.SetState(id: Guid, state: DeliveryState) =
+        items <- items |> Map.change id (Option.map (fun item ->
+            { item with state = state
+                        lastAttemptAt =
+                            match state with
+                            | PreparingConversation | SendingMessage -> DateTimeOffset.UtcNow
+                            | _ -> item.lastAttemptAt }))
+
+    member _.Expire(now: DateTimeOffset, timeout: TimeSpan) =
+        let mutable changed = false
+        items <- items |> Map.map (fun _ item ->
+            match item.state with
+            | PreparingConversation | SendingMessage when now - item.lastAttemptAt >= timeout ->
+                changed <- true
+                { item with state = UnconfirmedMessage "暂未收到确认；内容已保留，可重试核对。" }
+            | _ -> item)
+        changed
+
+    member _.ConversationReady(instanceId: string, conversationId: Guid) =
+        items <- items |> Map.map (fun _ item ->
+            if item.instanceId = instanceId && item.conversationId = conversationId then { item with creationConfirmed = true }
+            else item)
+
+    member this.Accept(id: Guid) =
+        if items.ContainsKey id then this.SetState(id, QueuedMessage)
+
+    member _.Commit(id: Guid) = items <- items.Remove id
+
+    member _.RejectCreation(id: Guid, reason: string) =
+        items <- items |> Map.map (fun _ item ->
+            if item.creation |> Option.exists (fun command -> ClientCommand.invocationId command = id) then
+                { item with state = RejectedMessage reason }
+            else item)
+
+    member _.Disconnect(instanceId: string) =
+        items <- items |> Map.map (fun _ item ->
+            if item.instanceId = instanceId then
+                { item with state = UnconfirmedMessage "连接已断开；重试会核对原命令，不会重复保存。" }
+            else item)
 
 /// 一个命令对应的 UI 后续动作。只有服务端 CommandCommitted 后才执行。
 type CommandFeedback = {

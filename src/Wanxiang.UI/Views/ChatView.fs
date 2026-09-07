@@ -209,6 +209,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         generatingCaption.Text <- if String.IsNullOrWhiteSpace statusText then "生成中" else statusText
         stopButton.IsVisible <- generating
 
+    member _.SetCanStop(value: bool) = Ui.setEnabled stopButton value
+
     /// 会话状态变化时同步顶栏功能按钮的可用性。
     member this.SetConversationChrome(hasConversation: bool) =
         hasConversationChrome <- hasConversation

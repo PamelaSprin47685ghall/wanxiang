@@ -43,29 +43,22 @@ type MainView() as this =
     let mutable instanceId = ""
 
     let mutable activeConvId: Guid option = None
-    let mutable activeGenerationId: Guid option = None
-    let mutable generationStartedAt: DateTimeOffset option = None
-    let mutable lastError: GenerationError option = None
+    let runs = ConversationRuns()
     let mutable summaries: ConversationSummary list = []
 
-    let streamText = Text.StringBuilder()
-    let streamReasoning = Text.StringBuilder()
-    let mutable streamToolCalls: ToolCallView list = []
-
-    /// 无会话时输入的第一条消息：先建会话，快照到达后再发出。
-    /// 让用户「打开就能打字」，而不是先被要求点一次新建。
-    let mutable pendingFirstMessage: (Guid * string) option = None
-    let attachmentDraft = AttachmentDraftController()
+    let drafts = ComposerDrafts()
+    let outbox = MessageOutbox()
+    let attachmentDraft () = (drafts.Get(instanceId, activeConvId)).attachments
     let downloadBuffers = System.Collections.Generic.Dictionary<string, MemoryStream>()
     let mutable downloadMeta: Map<string, string> = Map.empty
     let mutable missingAttachments: Set<string> = Set.empty
-    let mutable usageByConv: Map<Guid, GenerationUsage> = Map.empty
 
     let mutable lastUrl = CredentialStore.defaultServerUrl ()
     let mutable lastToken: string option = None
     let mutable reconnectCts: CancellationTokenSource option = None
     let mutable reconnectDelayMs = ReconnectBackoff.baseDelayMs
     let mutable pairingRequested = false
+    let mutable connectAttempt = 0
     let mutable setConnectStatus: string -> unit = ignore
     let mutable pageLoading = false
     /// 浏览器宿主的 CSS 像素视口宽（`wxViewportWidth` 轮询写入）。
@@ -109,7 +102,21 @@ type MainView() as this =
     let mutable chatColumn: DockPanel = Unchecked.defaultof<DockPanel>
 
     let send (ev: WireEvent) = client.SendAsync ev |> ignore
-    let sendCommand (cmd: ClientCommand) = client.SendCommandAsync cmd |> ignore
+    let sendCommand (cmd: ClientCommand) =
+        let epoch = client.ConnectionGeneration
+        // 在 UI 操作发生时就进入发送队列，不能让线程池调度改变消息顺序。
+        let sending = client.TrySendCommandAtGenerationAsync(epoch, cmd)
+        async {
+            let! sent = sending |> Async.AwaitTask
+            if not sent then
+                Dispatcher.UIThread.Post(fun () ->
+                    if epoch = client.ConnectionGeneration then
+                        let id = ClientCommand.invocationId cmd
+                        commandFeedback.Reject id |> Option.iter (fun feedback -> feedback.onCompleted false)
+                        outbox.SetState(id, UnconfirmedMessage "连接中断；内容已保留，可重试。")
+                        outbox.RejectCreation(id, "连接中断；内容已保留，可重试。")
+                        this.Render())
+        } |> Async.Start
     let sendCommandWithFeedback (cmd: ClientCommand) (successMessage: string option) (onCommitted: unit -> unit) =
         commandFeedback.Track(cmd, successMessage, onCommitted)
         sendCommand cmd
@@ -164,17 +171,11 @@ type MainView() as this =
             timer.Start()
 
     member private _.StreamingMessage() : MessageView option =
-        if streamText.Length = 0 && streamReasoning.Length = 0 && List.isEmpty streamToolCalls then None
-        else
-            Some
-                { MessageView.empty with
-                    role = "assistant"
-                    text = streamText.ToString()
-                    reasoning = streamReasoning.ToString()
-                    toolCalls = streamToolCalls }
+        (runs.Get activeConvId).message
 
     member private this.Render() =
-        let generating = activeGenerationId.IsSome
+        let run = runs.Get activeConvId
+        let generating = run.running
         match activeConvId, activeConversation () with
         | None, _ ->
             chat.SetConversationChrome false
@@ -199,6 +200,7 @@ type MainView() as this =
             chat.SetConversationChrome true
             chat.SetTitle("加载中…", false)
             chat.HideEmpty()
+            chat.RenderMessages([], None, None, prefs.fontScale, prefs.autoCollapseReasoning, None, missingAttachments)
             composer.SetEnabled(false, "")
             ignore convId
         | Some convId, Some view ->
@@ -208,7 +210,7 @@ type MainView() as this =
             chat.SetConversationChrome true
             chat.SetTitle((summary |> Option.map (fun s -> s.title) |> Option.defaultValue "会话"), true)
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
-            if List.isEmpty messages && streaming.IsNone && lastError.IsNone then
+            if List.isEmpty messages && streaming.IsNone && run.error.IsNone then
                 chat.ShowEmpty(EmptyConversation, None)
             else
                 chat.HideEmpty()
@@ -216,14 +218,26 @@ type MainView() as this =
                 chat.RenderMessages(
                     messages,
                     streaming,
-                    (lastError |> Option.map (fun e -> e, retry)),
+                    (run.error |> Option.map (fun e -> e, retry)),
                     prefs.fontScale,
                     prefs.autoCollapseReasoning,
-                    usageByConv.TryFind convId,
+                    run.usage,
                     missingAttachments)
             composer.SetEnabled(authenticated, (if authenticated then "" else "连接断开，重新连接后可继续发送。"))
         composer.SetGenerating generating
+        composer.SetCanStop(authenticated && run.generationId.IsSome)
+        composer.SetAttachments((attachmentDraft ()).Items)
+        composer.SetPendingMessages(
+            outbox.ForInstance instanceId,
+            activeConvId,
+            authenticated,
+            (fun id -> this.RetryPendingMessage id),
+            (fun id ->
+                this.SelectConversation(Some id)
+                if outbox.Items(instanceId, Some id) |> List.forall _.creationConfirmed then
+                    send (ObserveConversation {| conversationId = id |})))
         chat.SetGenerating(generating, (if generating then "生成中" else ""))
+        chat.SetCanStop(authenticated && run.generationId.IsSome)
 
     /// 平台的深色偏好。桌面来自系统设置，浏览器来自 prefers-color-scheme。
     /// 不能用 Application.ActualThemeVariant——它被固定为 Light 以稳定 Fluent 模板。
@@ -272,6 +286,14 @@ type MainView() as this =
                 (fun code -> send (PairingAttempted {| code = code; clientName = Some CredentialStore.clientName |}))
 
     member private this.Connect() =
+        connectAttempt <- connectAttempt + 1
+        let attempt = connectAttempt
+        authenticated <- false
+        runs.Disconnect()
+        outbox.Disconnect instanceId
+        commandFeedback.RejectAll()
+        configFeedback.RejectAll()
+        this.Render()
         match reconnectCts with
         | Some cts -> cts.Cancel()
         | None -> ()
@@ -279,21 +301,30 @@ type MainView() as this =
         let url = lastUrl
         let token = lastToken
         let usePairing = pairingRequested
+        let connecting =
+            try client.ConnectWithGenerationAsync(Uri url, CancellationToken.None)
+            with ex -> System.Threading.Tasks.Task.FromException<int> ex
         async {
             try
-                do! client.ConnectAsync(Uri url, CancellationToken.None) |> Async.AwaitTask
-                do! client.SendAsync(Hello {| protocol = "wanxiang"; version = Constants.ProtocolVersion; instanceId = None |}) |> Async.AwaitTask
-                match token with
-                | Some value -> do! client.SendAsync(AuthPresent {| token = value |}) |> Async.AwaitTask
-                | None ->
-                    if usePairing then
-                        do! client.SendAsync(PairingRequested {| clientName = Some CredentialStore.clientName |}) |> Async.AwaitTask
-                Dispatcher.UIThread.Post(fun () -> sidebar.SetConnection(false, "连接中…"))
+                let! epoch = connecting |> Async.AwaitTask
+                let! helloSent = client.TrySendAtGenerationAsync(epoch, Hello {| protocol = "wanxiang"; version = Constants.ProtocolVersion; instanceId = None |}) |> Async.AwaitTask
+                if helloSent then
+                    match token with
+                    | Some value ->
+                        let! _ = client.TrySendAtGenerationAsync(epoch, AuthPresent {| token = value |}) |> Async.AwaitTask
+                        ()
+                    | None ->
+                        if usePairing then
+                            let! _ = client.TrySendAtGenerationAsync(epoch, PairingRequested {| clientName = Some CredentialStore.clientName |}) |> Async.AwaitTask
+                            ()
+                Dispatcher.UIThread.Post(fun () ->
+                    if attempt = connectAttempt && not authenticated then sidebar.SetConnection(false, "连接中…"))
             with ex ->
                 Dispatcher.UIThread.Post(fun () ->
-                    setConnectStatus (sprintf "连接失败：%s" ex.Message)
-                    sidebar.SetConnection(false, "连接失败")
-                    toast (sprintf "无法连接 %s" url) Failure)
+                    if attempt = connectAttempt then
+                        setConnectStatus (sprintf "连接失败：%s" ex.Message)
+                        sidebar.SetConnection(false, "连接失败")
+                        this.ScheduleReconnect())
         }
         |> Async.Start
 
@@ -311,118 +342,131 @@ type MainView() as this =
                 do! Async.Sleep delay
                 if not cts.IsCancellationRequested then
                     Dispatcher.UIThread.Post(fun () ->
-                        reconnectCts <- None
-                        pairingRequested <- false
-                        this.Connect())
+                        if not cts.IsCancellationRequested then
+                            reconnectCts <- None
+                            pairingRequested <- false
+                            this.Connect())
             }
             |> Async.Start
 
     // ---- 会话操作 ----
 
+    member private this.SelectConversation(id: Guid option) =
+        if activeConvId <> id then
+            (drafts.Get(instanceId, activeConvId)).text <- composer.Text
+            activeConvId <- id
+            composer.SetText((drafts.Get(instanceId, id)).text)
+            composer.SetAttachments((attachmentDraft ()).Items)
+            chat.CancelHistoryPrependAnchor()
+            pageLoading <- false
+        this.SetCompactNavigation false
+        sidebar.SetActive activeConvId
+        this.Render()
+
+    member private _.MakeConversationCommand(conversationId: Guid) =
+        let provider, model = Catalog.defaultSelection catalog |> Option.defaultValue ("", "")
+        let config =
+            { SessionConfig.empty with
+                provider = provider; model = model
+                instructions = catalog.generation.instructions
+                temperature = catalog.generation.temperature
+                topP = catalog.generation.topP
+                maxTokens = catalog.generation.maxTokens }
+        CreateConversation
+            {| invocationId = newInvocation (); conversationId = conversationId; title = "新会话"; config = config |}
+
     member private this.CreateConversation() : Guid option =
-        if not (Catalog.isReady catalog) then
+        if not authenticated then
+            toast "连接服务器后才能新建会话；草稿会保留。" Warning
+            None
+        elif not (Catalog.isReady catalog) then
             toast "先在设置里添加一个服务商。" Warning
             this.ShowSettings()
             None
         else
             let conversationId = Guid.CreateVersion7()
-            let provider, model =
-                Catalog.defaultSelection catalog |> Option.defaultValue ("", "")
-            let config =
-                { SessionConfig.empty with
-                    provider = provider
-                    model = model
-                    instructions = catalog.generation.instructions
-                    temperature = catalog.generation.temperature
-                    topP = catalog.generation.topP
-                    maxTokens = catalog.generation.maxTokens }
-            sendCommand (
-                CreateConversation
-                    {| invocationId = newInvocation ()
-                       conversationId = conversationId
-                       title = "新会话"
-                       config = config |})
-            activeConvId <- Some conversationId
-            this.SetCompactNavigation false
-            sidebar.SetActive activeConvId
-            async {
-                do! Async.Sleep 250
-                Dispatcher.UIThread.Post(fun () ->
-                    send (ObserveConversation {| conversationId = conversationId |})
-                    composer.Focus())
-            }
-            |> Async.Start
+            this.SelectConversation(Some conversationId)
+            sendCommandWithCompletion
+                (this.MakeConversationCommand conversationId)
+                None
+                (fun () -> send (ObserveConversation {| conversationId = conversationId |}))
+                (fun ok ->
+                    if not ok && activeConvId = Some conversationId then this.SelectConversation None)
             Some conversationId
 
     member private this.OpenConversation(id: Guid) =
-        this.SetCompactNavigation false
-        chat.CancelHistoryPrependAnchor()
-        if activeConvId <> Some id then
-            activeConvId <- Some id
-            lastError <- None
-            streamText.Clear() |> ignore
-            streamReasoning.Clear() |> ignore
-            streamToolCalls <- []
-            activeGenerationId <- None
-            sidebar.SetActive activeConvId
-            this.Render()
+        this.SelectConversation(Some id)
         send (ObserveConversation {| conversationId = id |})
 
-    member private this.SendMessage(text: string) =
-        let hasReadyAttachment = attachmentDraft.HasReady
-        let hasUploadingAttachment = attachmentDraft.HasUploading
-        if hasUploadingAttachment then
-            toast "附件仍在上传，请等待上传完成后再发送。" Warning
+    member private this.DispatchPendingMessage(item: PendingMessage) =
+        let id = PendingMessage.invocationId item
+        if item.instanceId <> instanceId || not authenticated then
+            outbox.SetState(id, UnconfirmedMessage "请连接原服务器后重试。")
         else
-            match activeConvId with
-            | None ->
-                if String.IsNullOrWhiteSpace text && not hasReadyAttachment then ()
-                elif not (Catalog.isReady catalog) then
-                    toast "还没有可用的模型，先在设置里添加一个服务商。" Warning
-                    this.ShowSettings()
-                else
-                    match this.CreateConversation() with
-                    | Some conversationId -> pendingFirstMessage <- Some(conversationId, text)
-                    | None -> ()
-            | Some convId ->
-                if not client.IsConnected then
-                    toast "连接已断开，消息未发送。" Failure
-                else
-                    let attachments = attachmentDraft.TryConsumeReady() |> Option.defaultValue []
-                    let message = JsonObject()
-                    message["role"] <- "user"
-                    let contents = JsonArray()
-                    if not (String.IsNullOrWhiteSpace text) then
-                        let textContent = JsonObject()
-                        textContent["text"] <- text
-                        contents.Add textContent
-                    for attachment in attachments do
-                        let node = JsonObject()
-                        node["type"] <- "attachment"
-                        node["sha256"] <- attachment.sha256
-                        node["size"] <- attachment.size
-                        node["mediaType"] <- attachment.mediaType
-                        node["fileName"] <- attachment.fileName
-                        contents.Add node
-                    message["contents"] <- contents
-                    composer.SetAttachments attachmentDraft.Items
-                    lastError <- None
-                    sendCommand (
-                        SendUserMessage
-                            {| invocationId = newInvocation ()
-                               conversationId = convId
-                               messageJson = message |})
+            match item.creation with
+            | Some creation when not item.creationConfirmed ->
+                outbox.SetState(id, PreparingConversation)
+                sendCommandWithCompletion creation None
+                    (fun () ->
+                        outbox.ConversationReady(item.instanceId, item.conversationId)
+                        send (ObserveConversation {| conversationId = item.conversationId |}))
+                    (fun ok ->
+                        if not ok then
+                            outbox.SetState(id, UnconfirmedMessage "会话尚未确认创建；原文已保留。")
+                            this.Render())
+            | _ when not (state.Conversations.ContainsKey item.conversationId) ->
+                outbox.SetState(id, PreparingConversation)
+                send (ObserveConversation {| conversationId = item.conversationId |})
+            | _ ->
+                outbox.SetState(id, SendingMessage)
+                sendCommand item.command
+
+    member private this.RetryPendingMessage(id: Guid) =
+        match outbox.TryFind id with
+        | Some item when PendingMessage.canRetry item && item.instanceId = instanceId ->
+            this.DispatchPendingMessage item
+            this.Render()
+        | _ -> ()
+
+    member private this.SendMessage(text: string) : bool =
+        let draft = attachmentDraft ()
+        if draft.HasUploading then
+            toast "附件仍在上传，请等待上传完成后再发送。" Warning
+            false
+        elif not authenticated || not client.IsConnected then
+            toast "连接已断开，草稿已保留。" Warning
+            false
+        elif String.IsNullOrWhiteSpace text && not draft.HasReady then false
+        elif activeConvId.IsNone && not (Catalog.isReady catalog) then
+            toast "还没有可用的模型，先添加一个服务商。" Warning
+            false
+        else
+            let isNew = activeConvId.IsNone
+            let id = activeConvId |> Option.defaultWith Guid.CreateVersion7
+            let creation = if isNew then Some(this.MakeConversationCommand id) else None
+            // 先建立完整的保留副本，再消费附件和清输入框。
+            let item = outbox.Stage(instanceId, id, text, draft.Items, creation)
+            draft.TryConsumeReady() |> ignore
+            if isNew then
+                this.SelectConversation(Some id)
+                drafts.Move(instanceId, None, Some id)
+                // SelectConversation 会载入新草稿，Submit 只清自己提交的文本。
+                composer.SetText text
+            runs.ClearError id
+            this.DispatchPendingMessage item
+            this.Render()
+            true
 
     member private this.Regenerate() =
         match activeConvId with
         | None -> ()
         | Some convId ->
-            lastError <- None
+            runs.ClearError convId
             sendCommand (RegenerateResponse {| invocationId = newInvocation (); conversationId = convId |})
             this.Render()
 
     member private this.StopGeneration() =
-        match activeConvId, activeGenerationId with
+        match activeConvId, (runs.Get activeConvId).generationId with
         | Some convId, Some generationId ->
             send (GenerationCancel {| conversationId = convId; generationId = generationId |})
         | _ -> ()
@@ -449,22 +493,17 @@ type MainView() as this =
                 contents.Add textContent
                 editedMessage["contents"] <- contents
                 let newId = Guid.CreateVersion7()
-                sendCommand (
+                let command =
                     ForkConversation
                         {| invocationId = newInvocation ()
                            conversationId = newId
                            parentConversationId = convId
                            forkAfterId = forkAfterId
                            config = SessionConfig.empty
-                           editedMessageJson = editedMessage |})
-                activeConvId <- Some newId
-                async {
-                    do! Async.Sleep 250
-                    Dispatcher.UIThread.Post(fun () ->
-                        send (ObserveConversation {| conversationId = newId |})
-                        composer.Focus())
-                }
-                |> Async.Start)
+                           editedMessageJson = editedMessage |}
+                sendCommandWithFeedback command None (fun () ->
+                    this.SelectConversation(Some newId)
+                    send (ObserveConversation {| conversationId = newId |})))
         | _ -> toast "当前没有可分叉的会话。" Warning
 
     member private this.ShowSettings() =
@@ -485,14 +524,14 @@ type MainView() as this =
                       [ for model in provider.models ->
                             MenuEntry.create model (fun () ->
                                 let config = { view.config with provider = provider.id; model = model }
-                                view.config <- config
-                                sendCommand (
+                                let command =
                                     UpdateConversationConfig
                                         {| invocationId = newInvocation ()
                                            conversationId = convId
-                                           config = config |})
-                                toast (sprintf "已切换到 %s · %s" provider.label model) Success
-                                this.Render())
+                                           config = config |}
+                                sendCommandWithFeedback command (Some(sprintf "已切换到 %s · %s" provider.label model)) (fun () ->
+                                    view.config <- config
+                                    this.Render()))
                             |> MenuEntry.markSelected (provider.id = view.config.provider && model = view.config.model) ] ]
             if List.isEmpty groups then
                 toast "还没有可用的模型。" Warning
@@ -506,6 +545,9 @@ type MainView() as this =
         match topLevel () with
         | null -> ()
         | top ->
+            let owner = attachmentDraft ()
+            let ownerInstance = instanceId
+            let ownerConnection = client.ConnectionGeneration
             async {
                 try
                     let! picked =
@@ -516,7 +558,10 @@ type MainView() as this =
                         use buffer = new MemoryStream()
                         do! stream.CopyToAsync buffer |> Async.AwaitTask
                         let bytes = buffer.ToArray()
-                        Dispatcher.UIThread.Post(fun () -> this.BeginUpload(file.Name, bytes))
+                        Dispatcher.UIThread.Post(fun () ->
+                            if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
+                                this.BeginUpload(owner, file.Name, bytes)
+                            else toast "连接已变化，请重新选择附件；文件没有发送到其他服务器。" Warning)
                     Dispatcher.UIThread.Post(fun () -> composer.Focus())
                 with ex ->
                     Dispatcher.UIThread.Post(fun () ->
@@ -525,7 +570,7 @@ type MainView() as this =
             }
             |> Async.Start
 
-    member private this.BeginUpload(fileName: string, bytes: byte[]) =
+    member private this.BeginUpload(owner: AttachmentDraftController, fileName: string, bytes: byte[]) =
         if bytes.Length = 0 then toast "空文件无法上传。" Warning
         elif int64 bytes.Length > 64L * 1024L * 1024L then toast "附件超过 64 MiB 上限。" Warning
         else
@@ -538,7 +583,8 @@ type MainView() as this =
                   mediaType = mediaType
                   size = int64 bytes.Length
                   sha256 = sha }
-            attachmentDraft.Begin upload |> composer.SetAttachments
+            owner.Begin upload |> ignore
+            this.Render()
             send (
                 AttachmentBegin
                     {| attachmentId = attachmentId
@@ -599,7 +645,7 @@ type MainView() as this =
             elif settingsHost.IsVisible then
                 e.Handled <- true
                 this.CloseSettings()
-            elif activeGenerationId.IsSome then
+            elif (runs.Get activeConvId).generationId.IsSome then
                 e.Handled <- true
                 this.StopGeneration()
         | NoShortcut -> ()
@@ -637,6 +683,17 @@ type MainView() as this =
         match ev with
         | Hello _ -> ()
         | AuthAccepted d ->
+            if instanceId <> "" && instanceId <> d.instanceId then
+                (drafts.Get(instanceId, activeConvId)).text <- composer.Text
+                outbox.Disconnect instanceId
+                state.Reset()
+                runs.Clear()
+                catalog <- Catalog.empty
+                settings.SetCatalog catalog
+                activeConvId <- None
+                summaries <- []
+                sidebar.SetConversations []
+                composer.SetText((drafts.Get(d.instanceId, None)).text)
             authenticated <- true
             instanceId <- d.instanceId
             // 连接真的成功了，退避归零
@@ -711,30 +768,22 @@ type MainView() as this =
         | ConversationSnapshot d ->
             state.Handle ev
             state.AdvanceCursor()
-            activeConvId <- Some d.conversationId
-            pageLoading <- false
-            sidebar.SetActive activeConvId
-            if d.runtimeState = "generating" then
-                if activeGenerationId.IsNone then activeGenerationId <- Some Guid.Empty
-            else
-                activeGenerationId <- None
-            this.Render()
-            match pendingFirstMessage with
-            | Some(conversationId, text) when conversationId = d.conversationId ->
-                pendingFirstMessage <- None
-                this.SendMessage text
-            | _ -> ()
+            runs.Snapshot(d.conversationId, d.runtimeState, d.generationId)
+            if activeConvId = Some d.conversationId then
+                pageLoading <- false
+                this.Render()
+            outbox.ConversationReady(instanceId, d.conversationId)
+            for item in outbox.Items(instanceId, Some d.conversationId) do
+                if item.state = PreparingConversation then this.DispatchPendingMessage item
+            if activeConvId = Some d.conversationId then this.Render()
         | MessageCommitted d ->
             state.Handle ev
             state.AdvanceCursor()
+            let committed = MessageView.ofJson d.payload
+            if not (MessageView.isUser committed) then runs.ClearMessage d.conversationId
             if activeConvId = Some d.conversationId then
                 // 这条已成为权威消息，流式临时副本必须立刻作废；
                 // 工具循环里会连续提交多条，留着旧缓冲就会看到重复的回复。
-                let committed = MessageView.ofJson d.payload
-                if not (MessageView.isUser committed) then
-                    streamText.Clear() |> ignore
-                    streamReasoning.Clear() |> ignore
-                    streamToolCalls <- []
                 this.Render()
         | ConversationUpdated d ->
             state.Handle ev
@@ -745,61 +794,39 @@ type MainView() as this =
         | AuthorityCatchUp _ -> state.Handle ev
         | HistoryPage d ->
             state.Handle ev
-            pageLoading <- false
             if activeConvId = Some d.conversationId then
+                pageLoading <- false
                 this.Render()
                 chat.RestoreHistoryPrependAnchorDeferred()
-            else
-                chat.CancelHistoryPrependAnchor()
         | GenerationStarted d ->
-            state.Handle ev
-            activeGenerationId <- Some d.generationId
-            generationStartedAt <- Some DateTimeOffset.UtcNow
-            lastError <- None
-            streamText.Clear() |> ignore
-            streamReasoning.Clear() |> ignore
-            streamToolCalls <- []
-            this.Render()
+            runs.Start(d.conversationId, d.generationId)
+            if (runs.Get(Some d.conversationId)).generationId = Some d.generationId then
+                state.Handle ev
+                if activeConvId = Some d.conversationId then this.Render()
         | GenerationDelta d ->
-            if activeConvId = Some d.conversationId then
-                let view = MessageView.ofJson d.payload
-                streamText.Clear().Append(view.text) |> ignore
-                streamReasoning.Clear().Append(view.reasoning) |> ignore
-                streamToolCalls <- view.toolCalls
+            if runs.Delta(d.conversationId, d.generationId, MessageView.ofJson d.payload)
+               && activeConvId = Some d.conversationId then
                 this.Render()
         | GenerationFinished d ->
-            state.Handle ev
-            state.AdvanceCursor()
-            activeGenerationId <- None
-            generationStartedAt <- None
-            streamText.Clear() |> ignore
-            streamReasoning.Clear() |> ignore
-            streamToolCalls <- []
-            match d.usage with
-            | Some usage -> usageByConv <- usageByConv.Add(d.conversationId, usage)
-            | None -> ()
-            match d.status, d.error with
-            | "failed", Some error ->
-                lastError <- Some error
-                // 当前会话会就地显示错误卡片，再弹提示条只是同一句话说两遍，
-                // 而且会盖住输入区。只有失败发生在别的会话时才需要提示条。
-                if activeConvId <> Some d.conversationId then
+            let error = if d.status = "failed" then d.error else None
+            if runs.Finish(d.conversationId, d.generationId, error, d.usage) then
+                state.Handle ev
+                match d.status, error with
+                | "failed", Some error when activeConvId <> Some d.conversationId ->
                     toast (GenerationError.display error) Failure
-                else
-                    Dispatcher.UIThread.Post(fun () -> chat.ScrollToEnd())
-            | "cancelled", _ -> toast "已停止生成" Neutral
-            | _ -> lastError <- None
-            this.Render()
+                | "cancelled", _ when activeConvId = Some d.conversationId -> toast "已停止生成" Neutral
+                | _ -> ()
+                if activeConvId = Some d.conversationId then this.Render()
         | AttachmentCommitted d ->
-            match attachmentDraft.Complete(d.attachmentId, d.size) with
+            match drafts.All |> Seq.tryPick (fun draft -> draft.attachments.Complete(d.attachmentId, d.size)) with
             | Some(upload, stillDrafted) ->
-                composer.SetAttachments attachmentDraft.Items
+                composer.SetAttachments((attachmentDraft ()).Items)
                 if stillDrafted then toast (sprintf "附件「%s」上传完成" upload.fileName) Success
             | None -> ()
         | AttachmentAborted d ->
-            match attachmentDraft.Abort d.attachmentId with
+            match drafts.All |> Seq.tryPick (fun draft -> draft.attachments.Abort d.attachmentId) with
             | Some(_, stillDrafted) ->
-                composer.SetAttachments attachmentDraft.Items
+                composer.SetAttachments((attachmentDraft ()).Items)
                 if stillDrafted then toast (sprintf "附件上传失败：%s" d.reason) Failure
             | None -> ()
         | AttachmentDownloadBegin d ->
@@ -824,15 +851,23 @@ type MainView() as this =
                 downloadBuffers.Remove key |> ignore
                 this.SaveDownload(fileName, bytes)
             | _ -> ()
+        | CommandAccepted d ->
+            outbox.Accept d.invocationId
+            this.Render()
         | CommandCommitted d ->
+            outbox.Commit d.invocationId
             match commandFeedback.Commit d.invocationId with
             | Some feedback ->
                 feedback.onCommitted ()
                 feedback.onCompleted true
                 feedback.successMessage |> Option.iter (fun message -> toast message Success)
             | None -> ()
+            this.Render()
         | CommandRejected d ->
             commandFeedback.Reject d.invocationId |> Option.iter (fun feedback -> feedback.onCompleted false)
+            outbox.SetState(d.invocationId, RejectedMessage d.message)
+            outbox.RejectCreation(d.invocationId, d.message)
+            this.Render()
             match d.requiredCommitId with
             | Some _ -> toast "本地数据不是最新，已自动追赶，请重试。" Warning
             | None -> toast (sprintf "操作被拒绝：%s" d.message) Failure
@@ -875,7 +910,7 @@ type MainView() as this =
                                 (Some(sprintf "会话「%s」已删除" summary.title))
                                 (fun () ->
                                     if activeConvId = Some summary.id then
-                                        activeConvId <- None
+                                        this.SelectConversation None
                                         sidebar.SetActive None
                                         this.Render()))
               setPinned =
@@ -996,7 +1031,7 @@ type MainView() as this =
               pickAttachment = fun () -> this.PickAttachment()
               removeAttachment =
                 fun attachmentId ->
-                    attachmentDraft.Remove attachmentId |> composer.SetAttachments
+                    (attachmentDraft ()).Remove attachmentId |> composer.SetAttachments
               openModelPicker = fun anchor -> this.ShowModelPicker anchor }
         composer <- Composer(actions)
         composer.Build()
@@ -1113,19 +1148,23 @@ type MainView() as this =
         this.Background <- Tokens.canvas
         overlay.WireDismiss()
 
-        client.EventReceived.Add(fun ev -> Dispatcher.UIThread.Post(fun () -> this.HandleEvent ev))
-        state.CursorChanged.Add(fun _ -> send (state.CursorAdvancedEvent()))
-        client.Closed.Add(fun error ->
+        client.ConnectionEventReceived.Add(fun (epoch, ev) ->
             Dispatcher.UIThread.Post(fun () ->
-                authenticated <- false
-                activeGenerationId <- None
-                commandFeedback.RejectAll()
-                configFeedback.RejectAll()
-                let detail = match error with Some e -> e.Message | None -> ""
-                sidebar.SetConnection(false, "连接已断开")
-                if not (String.IsNullOrWhiteSpace detail) then toast (sprintf "连接断开：%s" detail) Warning
-                this.Render()
-                this.ScheduleReconnect()))
+                if epoch = client.ConnectionGeneration then this.HandleEvent ev))
+        state.CursorChanged.Add(fun _ -> send (state.CursorAdvancedEvent()))
+        client.ConnectionClosed.Add(fun (epoch, error) ->
+            Dispatcher.UIThread.Post(fun () ->
+                if epoch = client.ConnectionGeneration then
+                    authenticated <- false
+                    runs.Disconnect()
+                    outbox.Disconnect instanceId
+                    commandFeedback.RejectAll()
+                    configFeedback.RejectAll()
+                    let detail = match error with Some e -> e.Message | None -> ""
+                    sidebar.SetConnection(false, "连接已断开")
+                    if not (String.IsNullOrWhiteSpace detail) then toast (sprintf "连接断开：%s" detail) Warning
+                    this.Render()
+                    this.ScheduleReconnect()))
 
         Tokens.Changed.Publish.Add(fun _ -> Dispatcher.UIThread.Post(fun () -> this.Render()))
         // 后台着色算完：卡片身份没变，必须显式丢缓存才会换成着色版
@@ -1150,6 +1189,11 @@ type MainView() as this =
         this.Render()
         this.ApplyResponsiveLayout this.Bounds.Width
         this.WatchHostViewport()
+        let deliveryTimer = DispatcherTimer(Interval = TimeSpan.FromSeconds 1.0)
+        deliveryTimer.Tick.Add(fun _ ->
+            if outbox.Expire(DateTimeOffset.UtcNow, TimeSpan.FromSeconds 30.0) then this.Render())
+        this.AttachedToVisualTree.Add(fun _ -> deliveryTimer.Start())
+        this.DetachedFromVisualTree.Add(fun _ -> deliveryTimer.Stop())
         this.AutoConnect()
 
     /// 已有凭据时自动连接：桌面读 client.toml，PWA 读 IndexedDB（决策 52/53、Q191）。

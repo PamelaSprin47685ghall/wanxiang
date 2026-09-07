@@ -27,6 +27,8 @@ module LayoutPolicy =
 
     /// Composer 附件草稿最多常驻的高度，更多附件由局部滚动承担。
     let attachmentDraftMaxHeight = 104.0
+    let pendingMessagesMaxHeight = 168.0
+    let pendingMessagePreviewMaxHeight = 76.0
 
     /// Toast 长错误正文的局部阅读高度。
     let toastBodyMaxHeight = 160.0
