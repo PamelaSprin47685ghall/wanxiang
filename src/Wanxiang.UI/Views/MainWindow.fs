@@ -18,9 +18,9 @@ type MainWindow() as this =
 
     do
         this.Title <- "万象"
-        this.MinWidth <- 900.0
+        this.MinWidth <- LayoutPolicy.desktopMinWidth
         this.MinHeight <- 620.0
-        this.Width <- prefs.windowWidth
+
         this.Height <- prefs.windowHeight
         this.WindowStartupLocation <-
             if prefs.hasWindowPosition then WindowStartupLocation.Manual else WindowStartupLocation.CenterScreen

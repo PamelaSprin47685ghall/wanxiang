@@ -8,7 +8,6 @@ open Avalonia.Layout
 
 open Avalonia.Media
 open Avalonia.Threading
-open Avalonia.Interactivity
 open Avalonia.Automation
 open Wanxiang.Core
 
@@ -59,16 +58,18 @@ module Dialogs =
 
         row.Children.Add cancelButton
         row.Children.Add confirmButton
+        // Enter 归属：按钮级（Ui.onClick 在每个按钮上绑 Enter/Space）是唯一的确认路径；
+        // 行级 Enter/Space 只是非破坏性对话框的便利（焦点在按钮行内即确认）。
+        // Danger 语气不设行级确认：破坏性操作必须由用户显式落在确认按钮上激活，
+        // 避免内容区冒泡上来的 Enter 被误确认。Escape 不在这里处理，统一走 OverlayHost.HandleEscape。
         row.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog()
-            elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
-                e.Handled <- true
-                onConfirm ()
-            elif (e.Key = Key.Enter || e.Key = Key.Space) && cancelButton.IsFocused then
-                e.Handled <- true
-                overlay.CloseDialog())
+            if tone <> Ui.Danger then
+                if (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
+                    e.Handled <- true
+                    onConfirm ()
+                elif (e.Key = Key.Enter || e.Key = Key.Space) && cancelButton.IsFocused then
+                    e.Handled <- true
+                    overlay.CloseDialog())
         row, confirmButton
 
     let private actionRow (overlay: OverlayHost) (confirmLabel: string) (tone: Ui.ButtonTone) (onConfirm: unit -> unit) =
@@ -130,10 +131,8 @@ module Dialogs =
         box.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
-                submit ()
-            elif e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog())
+                submit ())
+        // Escape 不在这里处理，统一走 OverlayHost.HandleEscape（提交 pending 中会被守卫拦截）。
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
         AutomationProperties.SetName(cancelButton, "取消")
         AutomationProperties.SetHelpText(cancelButton, "取消并关闭对话框 (Esc)")
@@ -165,10 +164,8 @@ module Dialogs =
         buttons.Children.Add cancelButton
         buttons.Children.Add confirmButton
         buttons.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog()
-            elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
+            // 非破坏性 prompt 保留行级 Enter 确认（焦点在按钮行内即提交）；Escape 走 HandleEscape。
+            if (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
                 e.Handled <- true
                 submit ()
             elif (e.Key = Key.Enter || e.Key = Key.Space) && cancelButton.IsFocused then
@@ -177,13 +174,10 @@ module Dialogs =
         let content =
             let fieldBox = Ui.vstack 0.0 [ shell :> Control; validation :> Control; helper :> Control ]
             Ui.vstack Tokens.space4 [ Ui.title title :> Control; fieldBox :> Control; buttons :> Control ]
-        content.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog())
         overlay.ShowDialog(content :> Control, 420.0, onClosed = (fun () ->
             // 焦点恢复统一走 OverlayHost 的单记忆路径，这里只标记失活。
-            active <- false))
+            active <- false),
+            canDismiss = (fun () -> not pending))
         Dispatcher.UIThread.Post(fun () ->
             box.Focus() |> ignore
             box.SelectAll())
@@ -206,7 +200,6 @@ module Dialogs =
                 LineHeight = ReadingRhythm.uiBodyLineHeight)
         AutomationProperties.SetName(message, body)
         AutomationProperties.SetHelpText(message, body)
-        let cancelAction () = overlay.CloseDialog()
         let confirmAction () =
             overlay.CloseDialog()
             onConfirm ()
@@ -219,13 +212,8 @@ module Dialogs =
                 [ Ui.title title :> Control
                   message :> Control
                   buttons :> Control ]
-        content.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape then
-                e.Handled <- true
-                cancelAction ()
-            elif (e.Key = Key.Enter || e.Key = Key.Space) && not buttons.Children[0].IsFocused then
-                e.Handled <- true
-                confirmAction ())
+        // 破坏性确认无内容级 Enter/Space 快捷：必须显式聚焦确认按钮再激活；
+        // 默认焦点落在取消（安全项）上；Escape 统一走 OverlayHost.HandleEscape。
         // 关闭后焦点由 OverlayHost 恢复到触发控件，无需第二套记忆。
         overlay.ShowDialog(content :> Control, 420.0)
         Dispatcher.UIThread.Post(fun () ->
@@ -233,9 +221,9 @@ module Dialogs =
             target.Focus(NavigationMethod.Directional) |> ignore)
 
 
-    /// 破坏性操作确认：主按钮用 Danger 语气 + 警示 tooltip，打开后焦点直接落在它上面。
+    /// 破坏性操作确认：主按钮用 Danger 语气 + 警示 tooltip，默认焦点落在取消（安全项）上。
     let confirm (overlay: OverlayHost) (title: string) (body: string) (confirmLabel: string) (onConfirm: unit -> unit) =
-        confirmWithFocus overlay title body confirmLabel onConfirm true
+        confirmWithFocus overlay title body confirmLabel onConfirm false
 
     /// 长文本编辑（编辑消息并分叉）。
     let editText (overlay: OverlayHost) (title: string) (initial: string) (confirmLabel: string) (onConfirm: string -> unit) =
@@ -250,10 +238,7 @@ module Dialogs =
         ToolTip.SetTip(confirmButton, sprintf "确认“%s”(Ctrl+Enter)" confirmLabel)
         box.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
-            if e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog()
-            elif e.Key = Key.Enter && ctrl then
+            if e.Key = Key.Enter && ctrl then
                 e.Handled <- true
                 submit ())
         let content =
@@ -263,10 +248,6 @@ module Dialogs =
                   Ui.caption "会以你编辑后的内容新建一个分叉会话，原会话保持不变。" :> Control
                   shell :> Control
                   buttons :> Control ]
-        content.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog())
         overlay.ShowDialog(content :> Control, 520.0)
         Dispatcher.UIThread.Post(fun () ->
             box.Focus() |> ignore
@@ -306,17 +287,21 @@ module Dialogs =
                 TextWrapping = TextWrapping.Wrap,
                 IsVisible = false,
                 LineHeight = ReadingRhythm.captionLineHeight)
+        // 连接错误走 assertive live region：与行内字段错误（Ui.setFieldError）同等的读屏待遇。
+        AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Assertive)
+        let announce message =
+            status.Text <- message
+            status.IsVisible <- not (String.IsNullOrWhiteSpace message)
+            AutomationProperties.SetName(status, message)
 
         let submitCode () =
             let code = if isNull codeBox.Text then "" else codeBox.Text.Trim()
             if code.Length = 6 then onSubmitCode code
+            else announce "请输入 6 位配对码。"
         codeBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
-                submitCode ()
-            elif e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog())
+                submitCode ())
 
         let codeButton = Ui.button Ui.Secondary "提交配对码" submitCode
         codeButton.IsVisible <- false
@@ -338,8 +323,7 @@ module Dialogs =
             let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
             let token = if isNull tokenBox.Text then "" else tokenBox.Text.Trim()
             if String.IsNullOrWhiteSpace url then
-                status.Text <- "请填写服务器地址。"
-                status.IsVisible <- true
+                announce "请填写服务器地址。"
             else
                 onConnect
                     { url = url
@@ -349,17 +333,11 @@ module Dialogs =
         urlBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
-                connectAction ()
-            elif e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog())
+                connectAction ())
         tokenBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
-                connectAction ()
-            elif e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog())
+                connectAction ())
 
         // 页脚走统一 actionRow：右对齐节律、取消只关闭、左右键在两按钮间移动，与全对话框一致。
         let footerRow, connectBtn = actionRow overlay "连接" Ui.Primary connectAction
@@ -389,15 +367,10 @@ module Dialogs =
                   codeSection :> Control
                   codeButton :> Control
                   footerRow :> Control ]
-        content.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog())
+        // Escape 统一走 OverlayHost.HandleEscape，这里不设局部处理。
         overlay.ShowDialog(content :> Control, 460.0)
         Dispatcher.UIThread.Post(fun () -> urlBox.Focus() |> ignore)
-        fun message ->
-            status.Text <- message
-            status.IsVisible <- not (String.IsNullOrWhiteSpace message)
+        announce
 
 
     /// 会话设置：模型、生成参数、系统指令、工具勾选。
@@ -446,23 +419,8 @@ module Dialogs =
         let _, thinkingBudgetBox = Ui.textField "留空跟随默认；0 关闭思维链"
         thinkingBudgetBox.Text <- (match current.thinkingBudget with Some b -> string b | None -> "")
 
-        // 隧道监听 Escape：当子控件（输入框等）拥有焦点时，若当前有文本选中则清除选中，
-        // 无选中时按 Escape 立即关闭对话框，避免子控件吞掉 Escape 事件。
-        let wireEscapeForSubBox (box: TextBox) =
-            box.AddHandler(
-                InputElement.KeyDownEvent,
-                EventHandler<KeyEventArgs>(fun _ e ->
-                    if e.Key = Key.Escape then
-                        if box.SelectionStart <> box.SelectionEnd then
-                            e.Handled <- true
-                            box.ClearSelection()
-                        else
-                            e.Handled <- true
-                            overlay.CloseDialog()),
-                RoutingStrategies.Tunnel)
-
-        for box in [ instructionsBox; temperatureBox; topPBox; maxTokensBox; thinkingBudgetBox ] do
-            wireEscapeForSubBox box
+        // Escape 统一走 OverlayHost.HandleEscape（提交 pending 中会被守卫拦截），
+        // 这里不再为输入框设隧道 Esc 处理。
 
         let selectedTools = System.Collections.Generic.HashSet<string>(current.tools)
         let toolsPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
@@ -594,11 +552,18 @@ module Dialogs =
         let footer = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
         footer.Children.Add cancelButton
         footer.Children.Add saveButton
-        footer.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape then
+        // 页脚加入左右键导航节律：与其他对话框按钮行一致，Left/Right 在两按钮间移动。
+        cancelButton.KeyDown.Add(fun e ->
+            if e.Key = Key.Right && saveButton.IsEnabled then
                 e.Handled <- true
-                overlay.CloseDialog()
-            elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
+                saveButton.Focus(NavigationMethod.Directional) |> ignore)
+        saveButton.KeyDown.Add(fun e ->
+            if e.Key = Key.Left && cancelButton.IsEnabled then
+                e.Handled <- true
+                cancelButton.Focus(NavigationMethod.Directional) |> ignore)
+        footer.KeyDown.Add(fun e ->
+            // 非破坏性设置页保留行级 Enter 确认；Escape 统一走 OverlayHost.HandleEscape。
+            if (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
                 e.Handled <- true
                 save ())
         let content =
@@ -614,10 +579,8 @@ module Dialogs =
                   footer :> Control ]
         content.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
-            if e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog()
-            elif e.Key = Key.Enter && ctrl then
+            // Ctrl+Enter 保存；Escape 统一走 OverlayHost.HandleEscape。
+            if e.Key = Key.Enter && ctrl then
                 e.Handled <- true
                 save ())
         let scroller =
@@ -628,7 +591,8 @@ module Dialogs =
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
         applyParamLayout paramGrid.Bounds.Width
         overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () ->
-            dialogActive <- false))
+            dialogActive <- false),
+            canDismiss = (fun () -> not pending))
 
     /// 快捷键帮助（分类清晰、对标桌面端成熟软件）。
     let shortcuts (overlay: OverlayHost) =
@@ -681,10 +645,8 @@ module Dialogs =
         ToolTip.SetTip(closeBtn, "关闭快捷键帮助 (Esc / Enter)")
         closeBtn.HorizontalAlignment <- HorizontalAlignment.Right
         let content = Ui.vstack Tokens.space4 [ Ui.title "键盘快捷键" :> Control; contentPanel :> Control; closeBtn :> Control ]
-        content.KeyDown.Add(fun e ->
-            if e.Key = Key.Escape || e.Key = Key.Enter || (e.Key = Key.Space && closeBtn.IsFocused) then
-                e.Handled <- true
-                overlay.CloseDialog())
+        // 关闭只走按钮级激活（Ui.onClick）与全局 Escape：内容级 Enter 快捷会误关嵌套层，
+        // 且与按钮级重复触发两次 CloseDialog。
         let scroller =
             ScrollViewer(
                 Content = content,

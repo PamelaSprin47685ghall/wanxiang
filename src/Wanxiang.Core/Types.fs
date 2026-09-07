@@ -236,7 +236,7 @@ type WanxiangError =
     | ProtocolMismatch of serverVersion: int * clientVersion: int
     | UnknownEventType of string
     | Poisoned of string
-    | AttachmentTooLarge of maxBytes: int64
+    | AttachmentTooLarge of limitBytes: int64 * actualBytes: int64
     | AttachmentHashMismatch of expected: string * actual: string
     | AttachmentIncomplete of attachmentId: Guid
     | ConfigRejected of message: string
@@ -244,6 +244,12 @@ type WanxiangError =
     | Cancelled of string
 
 module WanxiangError =
+    /// 字节数的人话写法：MiB 精度只为可读，不为对账。
+    let private formatBytes (bytes: int64) : string =
+        if bytes < 1024L then sprintf "%d B" bytes
+        elif bytes < 1024L * 1024L then sprintf "%.1f KiB" (float bytes / 1024.0)
+        else sprintf "%.1f MiB" (float bytes / (1024.0 * 1024.0))
+
     let code (err: WanxiangError) : string =
         match err with
         | ValidationError _ -> "validation-error"
@@ -283,7 +289,8 @@ module WanxiangError =
         | ProtocolMismatch (s, c) -> sprintf "protocol version mismatch: server=%d client=%d" s c
         | UnknownEventType t -> sprintf "unknown event type: %s" t
         | Poisoned m -> sprintf "poisoned: %s" m
-        | AttachmentTooLarge maxBytes -> sprintf "attachment exceeds max size %d bytes" maxBytes
+        | AttachmentTooLarge (limitBytes, actualBytes) ->
+            sprintf "附件过大：上限 %s，本次 %s。请压缩文件后重试，或调大 network.maxAttachmentBytes。" (formatBytes limitBytes) (formatBytes actualBytes)
         | AttachmentHashMismatch (e, a) -> sprintf "attachment hash mismatch: expected %s actual %s" e a
         | AttachmentIncomplete aid -> sprintf "attachment %O is incomplete" aid
         | ConfigRejected m -> m

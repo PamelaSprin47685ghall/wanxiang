@@ -29,6 +29,9 @@ type ConversationGroup = {
 
 module ConversationSummary =
 
+    /// 生成中状态的唯一判定（C8：UiControllers 的旧副本收敛到这里）。
+    let isGeneratingStatus (status: string) : bool = status = "generating"
+
     let private str (o: JsonObject) key fallback =
         let mutable n: JsonNode = null
         if o.TryGetPropertyValue(key, &n) && not (isNull n) && n.GetValueKind() = JsonValueKind.String then
@@ -61,7 +64,10 @@ module ConversationSummary =
 
     let private parseItem (o: JsonObject) : ConversationSummary option =
         match Guid.TryParse(str o "conversationId" "") with
-        | false, _ -> None
+        | false, _ ->
+            // 无有效 id 的行无法被选中或打开：如实丢弃并记 stderr，绝不静默（D6）。
+            eprintfn "wanxiang: dropping conversation row with unparseable id '%s'" (str o "conversationId" "")
+            None
         | true, id ->
             let providerId, model =
                 let mutable n: JsonNode = null
@@ -73,7 +79,8 @@ module ConversationSummary =
             let createdAt =
                 match DateTimeOffset.TryParse(str o "createdAt" "") with
                 | true, value -> value
-                | _ -> DateTimeOffset.UtcNow
+                // 坏时间戳回退到 Unix 纪元：排最后、永不进“今天”，绝不冒充刚建的会话（D6）。
+                | _ -> DateTimeOffset.UnixEpoch
             let updatedAt =
                 match DateTimeOffset.TryParse(str o "updatedAt" "") with
                 | true, value -> value
@@ -82,7 +89,7 @@ module ConversationSummary =
                 { id = id
                   title = (let t = str o "title" "" in if String.IsNullOrWhiteSpace t then "未命名会话" else t)
                   preview = str o "lastMessage" ""
-                  running = str o "runtimeState" "idle" = "generating"
+                  running = isGeneratingStatus (str o "runtimeState" "idle")
                   pinned = boolOf o "pinned"
                   archived = boolOf o "archived"
                   createdAt = createdAt
@@ -123,6 +130,18 @@ module ConversationSummary =
                 if c2 <> 0 then c2
                 else b.createdAt.CompareTo(a.createdAt))
 
+    /// 置顶/归档组按权威提交序号优先、再按最近活动排：
+    /// 时间桶内仍走 sortDescending（updatedAt 优先），投影语义不动（D7）。
+    let private sortPinnedArchived (items: ConversationSummary list) =
+        items
+        |> List.sortWith (fun a b ->
+            let c = b.lastCommitId.CompareTo(a.lastCommitId)
+            if c <> 0 then c
+            else
+                let c2 = b.updatedAt.CompareTo(a.updatedAt)
+                if c2 <> 0 then c2
+                else b.createdAt.CompareTo(a.createdAt))
+
     /// 一次活动落在哪个时间桶。用最近活动而非创建时间，符合「最近用过的排前面」直觉。
     let bucketOf (now: DateTimeOffset) (summary: ConversationSummary) =
         let updated = summary.updatedAt.ToOffset(now.Offset)
@@ -148,8 +167,8 @@ module ConversationSummary =
                   items = sortDescending items })
         [ if not (List.isEmpty pinned) then
               { label = "置顶"
-                items = sortDescending pinned }
+                items = sortPinnedArchived pinned }
           yield! byBucket
           if not (List.isEmpty archived) then
               { label = "已归档"
-                items = sortDescending archived } ]
+                items = sortPinnedArchived archived } ]

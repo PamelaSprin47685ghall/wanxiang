@@ -158,7 +158,7 @@ let ``switching conversations restores their separate drafts`` () =
 let ``outbox keeps the exact command and attachment references across a disconnect`` () =
     let outbox = MessageOutbox()
     let attachment = { attachmentId = Guid.NewGuid(); sha256 = "abc"; size = 12L
-                       mediaType = "text/plain"; fileName = "notes.txt"; ready = true }
+                       mediaType = "text/plain"; fileName = "notes.txt"; ready = true; failed = false }
     let item = outbox.Stage("server-a", Guid.NewGuid(), "原文", [ attachment ], None)
     let id = PendingMessage.invocationId item
     let encoded = WireCodec.encodeCommand item.command

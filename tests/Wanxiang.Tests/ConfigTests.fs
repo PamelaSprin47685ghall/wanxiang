@@ -373,3 +373,13 @@ let ``不支持的 configVersion 返回明确错误`` () =
     match TomlCodec.tryParse v99 with
     | Error errs -> Assert.Contains(errs, fun e -> e.Contains "configVersion 99 not supported")
     | Ok _ -> failwith "version 99 should be rejected"
+
+// ---------------------------------------------------------------- 默认值回归（D4/Q157，D7）
+
+[<Fact>]
+let ``provider 默认不自动重试计费调用`` () =
+    Assert.Equal(0, ProviderConfig.defaultMaxRetries)
+
+[<Fact>]
+let ``context token 预算默认 128000`` () =
+    Assert.Equal(128000, GenerationDefaults.defaults.maxContextTokens)

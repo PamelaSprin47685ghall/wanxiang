@@ -10,6 +10,7 @@ open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Threading
+open Avalonia.VisualTree
 
 /// 侧栏对外暴露的动作。
 type SidebarActions = {
@@ -129,6 +130,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let mutable hasArchivedToggle = false
     let mutable archivedToggleFlatIndex: int option = None
     let mutable archivedToggleHost: Border option = None
+    let mutable compactMode = false
+    let mutable focusedRowIndex = -1
+    let mutable pendingFocusId: Guid option = None
 
     do
         Ui.setReservedActionVisible clearSearchButton false
@@ -193,11 +197,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 这里只管选中底与左缘，悬停由事件处理补，避免两套阴影互相覆盖。
         host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
         let status =
-            if isActive then "当前会话"
-            elif summary.running then "生成中"
-            elif summary.pinned then "已置顶"
-            elif summary.archived then "已归档"
-            else ""
+            match isActive, summary.running with
+            | true, true -> "当前会话，生成中"
+            | true, false -> "当前会话"
+            | false, true -> "生成中"
+            | false, false when summary.pinned -> "已置顶"
+            | false, false when summary.archived -> "已归档"
+            | _ -> ""
         Avalonia.Automation.AutomationProperties.SetItemStatus(host, status)
 
     member private this.ApplyRowState(id: Guid, host: Border) =
@@ -219,26 +225,29 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             match flatIndexByConversation.TryGetValue id with
             | true, flatIndex ->
                 conversationList.ScrollIntoView flatIndex
-                let focusHost () =
-                    match rowHosts.TryGetValue id with
-                    | true, host ->
-                        // Down 进结果时首项必须完整可见：布局完成后再 BringIntoView + 聚焦。
-                        host.BringIntoView()
-                        host.Focus NavigationMethod.Directional |> ignore
-                    | _ -> ()
-                focusHost ()
-                Dispatcher.UIThread.Post(focusHost, DispatcherPriority.Input)
+                // 单一机制：先 ScrollIntoView，聚焦只走一次 Post（容器实现后再 BringIntoView + 聚焦）。
+                // 同步再调一次会和虚拟化实现竞争，造成焦点抖动。
+                Dispatcher.UIThread.Post(
+                    (fun () ->
+                        match rowHosts.TryGetValue id with
+                        | true, host ->
+                            // Down 进结果时首项必须完整可见：布局完成后再 BringIntoView + 聚焦。
+                            host.BringIntoView()
+                            host.Focus NavigationMethod.Directional |> ignore
+                        | _ -> ()),
+                    DispatcherPriority.Input)
             | _ -> ()
 
     member private this.MoveRowFocus(id: Guid, delta: int) =
         match visibleRowIds |> Array.tryFindIndex ((=) id) with
         | Some 0 when delta < 0 ->
-            this.FocusSearch()
+            this.FocusSearch(selectAll = false)
         | Some index ->
             let targetIndex = index + delta
+            if targetIndex >= visibleRowIds.Length && hasArchivedToggle then
             // 末行继续 Down 就落到已归档开关上，而不是钳在原地；
             // 开关是列表最后一项，Up 会再桥回末行，来回都不断。
-            if targetIndex >= visibleRowIds.Length && hasArchivedToggle then
+
                 this.FocusArchivedToggle()
             else
                 this.FocusRowAt(Math.Clamp(targetIndex, 0, visibleRowIds.Length - 1))
@@ -248,12 +257,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         match archivedToggleFlatIndex with
         | Some flatIndex ->
             conversationList.ScrollIntoView flatIndex
-            let focusHost () =
+            // 与 FocusRowAt 同一机制：聚焦只走 Post，避免与 ScrollIntoView 竞争。
+            Dispatcher.UIThread.Post(fun () ->
                 match archivedToggleHost with
                 | Some host -> host.Focus NavigationMethod.Directional |> ignore
-                | None -> ()
-            focusHost ()
-            Dispatcher.UIThread.Post focusHost
+                | None -> ())
         | None -> ()
 
     member private this.FocusActiveConversation() =
@@ -348,14 +356,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 if visibleRowIds.Length > 0 then
                     this.FocusRowAt(visibleRowIds.Length - 1)
                 else
-                    this.FocusSearch()
+                    this.FocusSearch(selectAll = false)
             elif e.Key = Key.Down then
                 // 已经是列表最后一项：吞掉，避免 ListBox 默认导航把焦点吸走。
                 e.Handled <- true
             elif e.Key = Key.Home then
                 e.Handled <- true
                 if visibleRowIds.Length > 0 then this.FocusRowAt 0
-                else this.FocusSearch()
+                else this.FocusSearch(selectAll = false)
             elif e.Key = Key.End then
                 e.Handled <- true
             elif e.Key = Key.Escape then
@@ -364,48 +372,23 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     this.ResetSearch true)
         host :> Control
 
-    /// 一行会话。选中态用强调色浅底 + 左缘，生成中用一个呼吸点。
-    member private this.RenderRow(summary: ConversationSummary) : Control =
-        let title =
-            TextBlock(
-                Text = summary.title,
-                FontSize = Tokens.fontSmall,
-                FontWeight = FontWeight.Medium,
-                Foreground = Tokens.text,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center)
+    member private _.PreviewTextFor(summary: ConversationSummary) =
         // 自动标题取自回复首行，预览又从同一段正文开头截取，
         // 于是两行开头一模一样。去掉重复前缀，让预览真的补充信息。
-        let previewText =
-            let withoutTitle =
-                let preview = if isNull summary.preview then "" else summary.preview.Trim()
-                let title = summary.title.TrimEnd('…').Trim()
-                if title.Length >= 4 && preview.StartsWith(title, StringComparison.Ordinal) then
-                    preview.Substring(title.Length).TrimStart(' ', '·', '—', '-', '，', '。')
-                else
-                    preview
-            if not (String.IsNullOrWhiteSpace withoutTitle) then withoutTitle
-            elif summary.messageCount > 0 then sprintf "%d 条消息" summary.messageCount
-            else "还没有消息"
-        let preview =
-            TextBlock(
-                Text = previewText,
-                FontSize = Tokens.fontMicro,
-                Foreground = Tokens.textFaint,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
-                // 预览左缘与标题文本左缘对齐：缩进恰好是状态槽宽 + 槽间距。
-                Margin = Thickness(ControlMetrics.sidebarStateSlotWidth + Tokens.space2, 1.0, 0.0, 0.0))
-        let titleRow = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
-        // running / pinned / idle 永远占同一个槽位。状态切换只换槽内内容，
-        // 不允许标题左缘跟着生成状态来回漂。
-        let stateSlot =
-            Border(
-                Width = ControlMetrics.sidebarStateSlotWidth,
-                Height = ControlMetrics.sidebarStateGlyphSize,
-                Margin = Thickness(0.0, 0.0, Tokens.space2, 0.0),
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Left)
+        let withoutTitle =
+            let preview = if isNull summary.preview then "" else summary.preview.Trim()
+            let title = summary.title.TrimEnd('…').Trim()
+            if title.Length >= 4 && preview.StartsWith(title, StringComparison.Ordinal) then
+                preview.Substring(title.Length).TrimStart(' ', '·', '—', '-', '，', '。')
+            else
+                preview
+        if not (String.IsNullOrWhiteSpace withoutTitle) then withoutTitle
+        elif summary.messageCount > 0 then sprintf "%d 条消息" summary.messageCount
+        else "还没有消息"
+
+    /// 状态槽内容：running 圆点 / pinned 图标 / idle 留空。槽位本身尺寸不变，
+    /// 标题左缘不跟着生成状态漂（keep-clean：state-slot 几何）。
+    member private _.SetStateSlot(stateSlot: Border, summary: ConversationSummary) =
         if summary.running then
             stateSlot.Child <-
                 Ellipse(
@@ -421,9 +404,42 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             pin.HorizontalAlignment <- HorizontalAlignment.Center
             pin.VerticalAlignment <- VerticalAlignment.Center
             stateSlot.Child <- pin
+        else
+            stateSlot.Child <- null
+
+    /// 一行会话。选中态用强调色浅底 + 左缘，生成中是一个静态圆点（无动画，避免列表常驻动效）。
+    member private this.RenderRow(summary: ConversationSummary) : Control =
+
+        let title =
+            TextBlock(
+                Text = summary.title,
+                FontSize = Tokens.fontSmall,
+                FontWeight = FontWeight.Medium,
+                Foreground = Tokens.text,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center)
+        let preview =
+            TextBlock(
+                Text = this.PreviewTextFor summary,
+                FontSize = Tokens.fontMicro,
+                Foreground = Tokens.textFaint,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+                // 预览左缘与标题文本左缘对齐：缩进恰好是状态槽宽 + 槽间距。
+                Margin = Thickness(ControlMetrics.sidebarStateSlotWidth + Tokens.space2, 0.0, 0.0, 0.0))
+        let titleRow = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
+        let stateSlot =
+            Border(
+                Width = ControlMetrics.sidebarStateSlotWidth,
+                Height = ControlMetrics.sidebarStateGlyphSize,
+                Margin = Thickness(0.0, 0.0, Tokens.space2, 0.0),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left)
+        this.SetStateSlot(stateSlot, summary)
         DockPanel.SetDock(stateSlot, Dock.Left)
         titleRow.Children.Add stateSlot
         let moreButton = Ui.iconButton Icons.more "更多操作"
+
         ToolTip.SetTip(moreButton, "更多操作")
         Avalonia.Automation.AutomationProperties.SetName(moreButton, sprintf "会话“%s”的操作菜单" summary.title)
         Avalonia.Automation.AutomationProperties.SetHelpText(moreButton, "打开会话操作菜单")
@@ -457,19 +473,25 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             host,
             Nullable Avalonia.Automation.Peers.AutomationControlType.ListItem)
         let openMenu (target: Control) (alignRight: bool) =
+            // 菜单打开瞬间按 id 取最新快照：行渲染时的 summary 可能已被覆盖（如置顶切换后），
+            // 标签与动作绝不用渲染期闭包里的旧值。
+            let live =
+                match summaryById.TryGetValue summary.id with
+                | true, current -> current
+                | _ -> summary
             Menu.show
                 overlay
                 target
                 alignRight
-                [ MenuEntry.create "重命名 (F2)" (fun () -> actions.renameConversation summary)
+                [ MenuEntry.create "重命名 (F2)" (fun () -> actions.renameConversation live)
                   |> MenuEntry.withIcon Icons.pencil
-                  MenuEntry.create (if summary.pinned then "取消置顶" else "置顶") (fun () -> actions.setPinned summary (not summary.pinned))
+                  MenuEntry.create (if live.pinned then "取消置顶" else "置顶") (fun () -> actions.setPinned live (not live.pinned))
                   |> MenuEntry.withIcon Icons.pin
-                  MenuEntry.create (if summary.archived then "取消归档" else "归档") (fun () -> actions.setArchived summary (not summary.archived))
+                  MenuEntry.create (if live.archived then "取消归档" else "归档") (fun () -> actions.setArchived live (not live.archived))
                   |> MenuEntry.withIcon Icons.archive
-                  MenuEntry.create "从此分叉" (fun () -> actions.duplicateAsFork summary) |> MenuEntry.withIcon Icons.fork
-                  MenuEntry.create "导出为 Markdown" (fun () -> actions.exportConversation summary) |> MenuEntry.withIcon Icons.download
-                  MenuEntry.create "删除 (Delete)" (fun () -> actions.deleteConversation summary)
+                  MenuEntry.create "从此分叉" (fun () -> actions.duplicateAsFork live) |> MenuEntry.withIcon Icons.fork
+                  MenuEntry.create "导出为 Markdown" (fun () -> actions.exportConversation live) |> MenuEntry.withIcon Icons.download
+                  MenuEntry.create "删除 (Delete)" (fun () -> actions.deleteConversation live)
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ]
         Ui.onClick moreButton (fun () -> openMenu (moreButton :> Control) true)
@@ -478,18 +500,24 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         moreButton.LostFocus.Add(fun _ ->
             if not host.IsFocused then Ui.setReservedActionVisible moreButton false)
         host.PointerEntered.Add(fun _ ->
-            if activeId <> Some summary.id then host.Background <- Tokens.hover
+            // 悬停只动背景：选中行的强调左缘不动，悬停在已选项上仍有可见增量。
+            host.Background <- Tokens.hover
             Ui.setReservedActionVisible moreButton true)
         host.PointerExited.Add(fun _ ->
-            this.ApplyRowState(summary, host)
+            // hover 还原走 id + 实时快照，不用渲染期闭包里的旧 summary。
+            this.ApplyRowState(summary.id, host)
             if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
         host.GotFocus.Add(fun _ ->
             focusedRowId <- Some summary.id
-            this.ApplyRowState(summary, host)
-            if activeId <> Some summary.id then host.Background <- Tokens.hover
+            focusedRowIndex <-
+                visibleRowIds
+                |> Array.tryFindIndex ((=) summary.id)
+                |> Option.defaultValue focusedRowIndex
+            this.ApplyRowState(summary.id, host)
+            host.Background <- Tokens.hover
             Ui.setReservedActionVisible moreButton true)
         host.LostFocus.Add(fun _ ->
-            this.ApplyRowState(summary, host)
+            this.ApplyRowState(summary.id, host)
             if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
         Ui.onClick host (fun () -> actions.openConversation summary.id)
         // Enter/Space 由 Ui.onClick 统一接管（同一按键只打开一次）；
@@ -497,17 +525,21 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         host.KeyDown.Add(fun e ->
             if e.Key = Key.F2 then
                 e.Handled <- true
-                actions.renameConversation summary
+                match summaryById.TryGetValue summary.id with
+                | true, live -> actions.renameConversation live
+                | _ -> actions.renameConversation summary
             elif e.Key = Key.Delete then
                 e.Handled <- true
-                actions.deleteConversation summary
+                match summaryById.TryGetValue summary.id with
+                | true, live -> actions.deleteConversation live
+                | _ -> actions.deleteConversation summary
             elif e.Key = Key.Down then
                 e.Handled <- true
                 this.MoveRowFocus(summary.id, 1)
             elif e.Key = Key.Up then
                 e.Handled <- true
                 match visibleRowIds |> Array.tryFindIndex ((=) summary.id) with
-                | Some 0 -> this.FocusSearch()
+                | Some 0 -> this.FocusSearch(selectAll = false)
                 | _ -> this.MoveRowFocus(summary.id, -1)
             elif e.Key = Key.Escape then
                 if not (String.IsNullOrEmpty searchBox.Text) then
@@ -518,7 +550,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 this.FocusRowAt 0
             elif e.Key = Key.End then
                 e.Handled <- true
-                this.FocusRowAt(visibleRowIds.Length - 1)
+                // End 落到列表最后一项：已归档开关在时就是它。
+                if hasArchivedToggle then this.FocusArchivedToggle()
+                elif visibleRowIds.Length > 0 then this.FocusRowAt(visibleRowIds.Length - 1)
+
             elif (e.Key = Key.F10 && e.KeyModifiers.HasFlag KeyModifiers.Shift) || e.Key = Key.Apps then
                 e.Handled <- true
                 openMenu (host :> Control) false)
@@ -526,13 +561,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             let props = e.GetCurrentPoint(host).Properties
             if props.IsRightButtonPressed then
                 host.Focus NavigationMethod.Pointer |> ignore
-                this.ApplyRowState(summary, host))
+                this.ApplyRowState(summary.id, host))
+
         host.PointerReleased.Add(fun e ->
             if e.InitialPressMouseButton = MouseButton.Right then
                 e.Handled <- true
                 host.Focus NavigationMethod.Pointer |> ignore
-                this.ApplyRowState(summary, host)
+                this.ApplyRowState(summary.id, host)
                 openMenu (host :> Control) false)
+
         ToolTip.SetTip(
             host,
             sprintf
@@ -541,6 +578,68 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 summary.messageCount
                 (if summary.isFork then " · 分叉会话" else ""))
         host :> Control
+
+    /// 回收复用：同一会话的新快照直接刷标题/预览/状态槽/提示，不重建事件链。
+
+    /// 结构对不上就返回 false，调用方回退到 RenderRow。
+    member private this.RefreshRowHost(host: Border, summary: ConversationSummary) : bool =
+        host.Tag <- summary
+        rowHosts[summary.id] <- host
+        match host.Child with
+        | :? StackPanel as column when column.Children.Count >= 2 ->
+            match column.Children.[0] with
+            | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
+                match titleRow.Children.[2] with
+                | :? TextBlock as titleBlock ->
+                    match column.Children.[1] with
+                    | :? TextBlock as previewBlock ->
+                        match titleRow.Children.[0] with
+                        | :? Border as stateSlot ->
+                            titleBlock.Text <- summary.title
+                            previewBlock.Text <- this.PreviewTextFor summary
+                            this.SetStateSlot(stateSlot, summary)
+                            this.ApplyRowState(summary, host)
+                            Avalonia.Automation.AutomationProperties.SetName(host, summary.title)
+                            ToolTip.SetTip(
+                                host,
+                                sprintf
+                                    "%s\n%d 条消息%s"
+                                    summary.title
+                                    summary.messageCount
+                                    (if summary.isFork then " · 分叉会话" else ""))
+                            true
+                        | _ -> false
+                    | _ -> false
+                | _ -> false
+            | _ -> false
+        | _ -> false
+
+    /// 已归档开关复用：只刷文案/人字形/无障碍名，展开/收起的点击与键盘处理与状态无关，沿用旧链。
+    member private _.RefreshArchivedToggle(host: Border, expanded: bool, count: int) =
+        let labelText = if expanded then "收起已归档会话" else sprintf "已归档会话 (%d)" count
+        match host.Child with
+        | :? DockPanel as row when row.Children.Count >= 2 ->
+            match row.Children.[1] with
+            | :? StackPanel as leading when leading.Children.Count >= 2 ->
+                match leading.Children.[1] with
+                | :? TextBlock as label -> label.Text <- labelText
+                | _ -> ()
+            | _ -> ()
+            let chevron = (if expanded then Icons.chevronUp else Icons.chevronDown) Tokens.textFaint
+            chevron.Width <- Tokens.iconGlyph
+            chevron.Height <- Tokens.iconGlyph
+            chevron.VerticalAlignment <- VerticalAlignment.Center
+            DockPanel.SetDock(chevron, Dock.Right)
+            row.Children.RemoveAt(0)
+            row.Children.Insert(0, chevron)
+        | _ -> ()
+        archivedToggleHost <- Some host
+        let accessibleName =
+            if expanded then "收起已归档会话"
+            else sprintf "已归档会话，共 %d 个，点击展开" count
+        Avalonia.Automation.AutomationProperties.SetName(host, accessibleName)
+        Avalonia.Automation.AutomationProperties.SetExpanded(host, expanded)
+        ToolTip.SetTip(host, accessibleName)
 
     member private this.Rebuild() =
         // Rebuild 会整体替换 ItemsSource：焦点若在某行上先记住，刷新后仍可见就还回去；
@@ -552,6 +651,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 | true, host when host.IsFocused -> Some id
                 | _ -> None
             | None -> None
+
+        // 快照刷新不许动滚动：换 ItemsSource 会把 ScrollViewer 偏移清零，
+        // 先记住、换完原样贴回去（同步一次即可；异步再贴会压掉后续的焦点跟随滚动）。
+        let scroller =
+            conversationList.GetVisualDescendants()
+            |> Seq.tryPick (function
+                | :? ScrollViewer as sv -> Some sv
+                | _ -> None)
+        let savedOffset = scroller |> Option.map (fun sv -> sv.Offset)
         rowHosts.Clear()
         flatIndexByConversation.Clear()
         summaryById.Clear()
@@ -573,6 +681,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         archivedCount <- archived.Length
         // 折叠时它是展开入口，展开时它是收起入口：两种状态都留在列表末尾，
         // 键盘 Up/Down 才能在行与它之间连续走通，展开后也有地方收起。
+
         hasArchivedToggle <- not (List.isEmpty archived)
         archivedToggleHost <- None
         archivedToggleFlatIndex <- None
@@ -589,15 +698,36 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     | _ -> None
                 else None)
             |> Array.ofSeq
-        match restoreFocusId with
-        | Some id when visibleRowIds |> Array.contains id ->
+        savedOffset
+        |> Option.iter (fun offset ->
+            match scroller with
+            | Some sv -> sv.Offset <- offset
+            | None -> ())
+        // 删除流先记的邻位意图优先于常规焦点还原；消费一次即清。
+        let targetRestoreId =
+            match pendingFocusId with
+            | Some id when visibleRowIds |> Array.contains id ->
+                pendingFocusId <- None
+                Some id
+            | Some _ ->
+                pendingFocusId <- None
+                None
+            | None -> None
+        let targetRestoreId =
+            match targetRestoreId, restoreFocusId with
+            | Some id, _ -> Some id
+            | None, Some id when visibleRowIds |> Array.contains id -> Some id
+            | _ -> None
+        match targetRestoreId with
+
+        | Some id ->
             Dispatcher.UIThread.Post(
                 (fun () ->
                     match rowHosts.TryGetValue id with
                     | true, host when not host.IsFocused -> host.Focus(NavigationMethod.Directional) |> ignore
                     | _ -> ()),
                 DispatcherPriority.Input)
-        | _ -> ()
+        | None -> ()
         let isSearchEmpty = not (String.IsNullOrWhiteSpace query) && List.isEmpty visible
         searchEmptyHint.IsVisible <- isSearchEmpty
         emptyState.IsVisible <- List.isEmpty visible && not isSearchEmpty
@@ -640,14 +770,52 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         this.Rebuild()
 
     member _.SetCompactMode(value: bool) =
+        compactMode <- value
         compactBackButton.IsVisible <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         for button in [ compactBackButton; newConversationButton; settingsButton; clearSearchButton ] do
             Ui.setSquareTarget button size
 
-    member _.FocusSearch() =
+    /// 搜索框聚焦。行内 Up 回来时保留插入点（selectAll = false）；
+    /// Ctrl+K（AppShell）与空输入沿用全选，方便直接替换查询。
+    member _.FocusSearch(?selectAll: bool) =
+        let select = defaultArg selectAll true
         searchBox.Focus() |> ignore
-        searchBox.SelectAll()
+        if select || String.IsNullOrEmpty searchBox.Text then
+            searchBox.SelectAll()
+
+    /// 契约 C2：当前从上到下展示的会话行 id（字符串），供 ShellFix Ctrl+1..9 索引。
+    member _.GetVisibleOrder() : string list =
+        visibleRowIds |> Array.map (fun id -> id.ToString()) |> Array.toList
+
+    /// 契约 C3：删除后聚焦邻位（下一行优先），行空了就回搜索框。
+    /// 删除前调用（id 还在）直接瞄邻位并记下意图，Rebuild 后补聚焦；
+    /// 删除后调用（id 已不在）按上次行焦点位置钳制。
+    member this.FocusAfterDelete(removedId: string) =
+        let neighborIndex () =
+            if visibleRowIds.Length = 0 then
+                None
+            else
+                match Guid.TryParse removedId with
+                | true, removed ->
+                    match visibleRowIds |> Array.tryFindIndex ((=) removed) with
+                    | Some idx ->
+                        if idx + 1 < visibleRowIds.Length then Some(idx + 1)
+                        elif idx - 1 >= 0 then Some(idx - 1)
+                        else None
+                    | None ->
+                        Some(min (max focusedRowIndex 0) (visibleRowIds.Length - 1))
+                | _ ->
+                    Some(min (max focusedRowIndex 0) (visibleRowIds.Length - 1))
+        match neighborIndex () with
+        | Some idx ->
+            let id = visibleRowIds.[idx]
+            pendingFocusId <- Some id
+            focusedRowId <- Some id
+            focusedRowIndex <- idx
+            this.FocusRowAt idx
+        | None ->
+            this.FocusSearch(selectAll = false)
 
     member this.Build() =
         this.Background <- Tokens.rail
@@ -682,10 +850,20 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 if visibleRowIds.Length > 0 then
                     e.Handled <- true
                     this.FocusRowAt 0
+                elif hasArchivedToggle then
+                    // 零结果也先落到已归档开关，键盘不断线。
+                    e.Handled <- true
+                    this.FocusArchivedToggle()
+                elif searchEmptyHint.IsVisible then
+                    e.Handled <- true
+                    searchEmptyHint.Focus NavigationMethod.Directional |> ignore
             elif e.Key = Key.Enter then
                 if visibleRowIds.Length > 0 then
                     e.Handled <- true
                     actions.openConversation visibleRowIds.[0]
+                    // 焦点跟随选择：桌面回首行；compact 下 AppShell 收抽屉并把焦点交还输入区。
+                    if not compactMode then
+                        this.FocusRowAt 0
                 elif searchEmptyHint.IsVisible then
                     // 无结果时 Enter 把焦点送到空态提示（再按 Enter/Space 清空），键盘不断线。
                     e.Handled <- true
@@ -706,7 +884,6 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             searchDebounce.Stop()
             searchDebounce.Start())
         let searchArea = Border(Padding = Thickness(Tokens.space3, 0.0, Tokens.space3, Tokens.space2), Child = searchShell)
-
         let statusRow =
             ActionBorder(
                 Background = Brushes.Transparent,
@@ -733,18 +910,38 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         conversationList.ItemsPanel <- FuncTemplate<Panel>(fun () -> VirtualizingStackPanel() :> Panel)
         conversationList.ItemTemplate <-
             FuncDataTemplate<SidebarListItem>(
-                (fun item _ ->
+                (fun item existing ->
                     match item with
                     | SectionHeader label ->
-                        let header = Ui.sectionLabel label
-                        header.Margin <- Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space1)
-                        header.LetterSpacing <- 0.8
-                        header.Foreground <- Tokens.textMuted
-                        header.FontSize <- Tokens.fontMicro
-                        header.Focusable <- false
-                        header :> Control
-                    | ConversationRow summary -> this.RenderRow summary
-                    | ArchivedToggle -> this.RenderArchivedToggle()),
+                        match existing with
+                        | :? TextBlock as header ->
+                            header.Text <- label
+                            header :> Control
+                        | _ ->
+                            let header = Ui.sectionLabel label
+                            header.Margin <- Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space1)
+                            header.LetterSpacing <- 0.8
+                            header.Foreground <- Tokens.textMuted
+                            header.FontSize <- Tokens.fontMicro
+                            header.Focusable <- false
+                            header :> Control
+                    | ConversationRow summary ->
+                        match existing with
+                        | :? Border as host ->
+                            match host.Tag with
+                            | :? ConversationSummary as old when old.id = summary.id ->
+                                // 同一会话的新快照：原地刷，不重建。
+                                if this.RefreshRowHost(host, summary) then host :> Control
+                                else this.RenderRow summary
+                            | _ -> this.RenderRow summary
+                        | _ -> this.RenderRow summary
+
+                    | ArchivedToggle ->
+                        match existing with
+                        | :? Border as host when isNull host.Tag ->
+                            this.RefreshArchivedToggle(host, showArchived, archivedCount)
+                            host :> Control
+                        | _ -> this.RenderArchivedToggle()),
                 true)
         conversationList.ContainerPrepared.Add(fun args ->
             match args.Container with

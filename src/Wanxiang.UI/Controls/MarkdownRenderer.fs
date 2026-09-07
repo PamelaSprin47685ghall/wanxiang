@@ -69,26 +69,14 @@ type MarkdownRenderer(
                     run.FontSize <- size - 0.5
                     run.BaselineAlignment <- BaselineAlignment.Center
                 block.Inlines.Add run
-            | MdLink(text, url) ->
+            | MdLink(text, _url) ->
+                // 只留视觉（强调色 + 下划线）：可点激活归 RenderInlineRow 的
+                // WrapPanel 路径逐段拥有；整块 TextBlock 不再挂整块级点击/键盘臂，
+                // 否则含链接的整段正文都会变成同一个 URL 的整块热区。
                 let link = Run text
                 link.Foreground <- Tokens.accent
                 link.TextDecorations <- TextDecorations.Underline
                 block.Inlines.Add link
-                block.Cursor <- handCursor
-                block.PointerReleased.Add(fun e ->
-                    if block.IsEnabled && e.InitialPressMouseButton = MouseButton.Left then
-                        e.Handled <- true
-                        openLink url)
-                block.KeyDown.Add(fun e ->
-                    if block.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
-                        e.Handled <- true
-                        openLink url)
-                ToolTip.SetTip(block, url)
-                Avalonia.Automation.AutomationProperties.SetName(block, text)
-                Avalonia.Automation.AutomationProperties.SetHelpText(block, url)
-                Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
-                    block,
-                    Nullable Avalonia.Automation.Peers.AutomationControlType.Hyperlink)
             | MdMath(tex, display) ->
                 match MathRender.tryInline (if display then size + 1.0 else size) lh tex with
                 | Some visual ->
@@ -165,6 +153,28 @@ type MarkdownRenderer(
                 arr[i] <- arr[i].Substring(0, arr[i].Length - 1)
                 arr[i + 1] <- string last + arr[i + 1]
         arr |> Array.toList |> List.filter (not << String.IsNullOrEmpty)
+    /// 单元格里出现超长无断点 token（URL/hash/长代码）时，Star 列不会被撑宽，
+    /// 内容溢出格子又被 ClipToBounds 一刀切——既看不见也选不中。
+    /// 调用方只在这种格子里套一层横向 scroller，普通表格的树形与几何纹丝不动。
+    static member private HasLongToken(items: MdInline list) : bool =
+        let isBreakChar c =
+            c = ' ' || c = '\t' || c = '\n' || c = '\r' || c = '\u200B'
+        let hasLongRun (s: string) =
+            let mutable run = 0
+            let mutable i = 0
+            let mutable found = false
+            while i < s.Length && not found do
+                if isBreakChar s.[i] then run <- 0
+                else
+                    run <- run + 1
+                    if run > 32 then found <- true
+                i <- i + 1
+            found
+        items
+        |> List.exists (function
+            | MdText(text, _, _, _, _) -> not (String.IsNullOrEmpty text) && hasLongRun text
+            | MdLink(text, _) -> not (String.IsNullOrEmpty text) && hasLongRun text
+            | _ -> false)
 
     /// 链接需要能点。整段文本共用一个 TextBlock 时无法逐字命中，
     /// 因此只在段落里存在链接时，把段落拆成「文本 + 可点链接」的 WrapPanel。
@@ -257,16 +267,40 @@ type MarkdownRenderer(
             | CodeAddition -> Tokens.codeAddition
             | CodeDeletion -> Tokens.codeDeletion
             | CodePlain -> Tokens.codeText
-        for token in Highlight.tokenize allowHighlight language code do
+        // 着色是整段同步计算：输入先截到常量预算，超出部分按纯文本追加，
+        // 数千行围栏的着色工作量从此有上界（复制仍拿完整原文）。
+        let highlightBudget = 20000
+        let highlightHead, highlightRest =
+            if String.IsNullOrEmpty code || code.Length <= highlightBudget then
+                code, ""
+            else
+                // 按字素簇安全截断，避免把 surrogate pair / emoji 拦腰切断。
+                match MarkdownRenderer.SafeChunk highlightBudget code with
+                | head :: _ when head.Length < code.Length -> head, code.Substring(head.Length)
+                | _ -> code.Substring(0, highlightBudget), code.Substring(highlightBudget)
+        for token in Highlight.tokenize allowHighlight language highlightHead do
             let run = Run token.text
             run.Foreground <- brushOf token.kind
             if token.kind = CodeComment then run.FontStyle <- FontStyle.Italic
             block.Inlines.Add run
+        if not (String.IsNullOrEmpty highlightRest) then
+            let rest = Run highlightRest
+            rest.Foreground <- Tokens.codeText
+            block.Inlines.Add rest
 
         let scroll =
             ScrollViewer(
                 Content = block,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Disabled)
+        // 超长单围栏走与 reasoning/tool/error 细节相同的二阶段 contract：
+        // 先 capped 在 expandedDetailMaxHeight，需要全文再展开全部。
+        // 行数阈值保证 capped 时内容必定溢出（120 行在任何字号下都远超 360px），
+        // 于是展开按钮永远有意义，不用再监听 Extent 做可见性判断。
+        let codeLineCount = 1 + (code |> Seq.filter ((=) '\n') |> Seq.length)
+        let hugeCode = codeLineCount > 120
+        if hugeCode then
+            scroll.MaxHeight <- LayoutPolicy.expandedDetailMaxHeight
+            scroll.VerticalScrollBarVisibility <- ScrollBarVisibility.Auto
 
         let langLabel =
             TextBlock(
@@ -284,9 +318,12 @@ type MarkdownRenderer(
             button
 
         let copyButton = headerButton Icons.copy "复制代码"
+        let codeCopyName =
+            sprintf "复制%s代码" (if String.IsNullOrWhiteSpace language then "text" else language.ToLowerInvariant())
         copyButton.Focusable <- true
         copyButton.Cursor <- handCursor
-        Avalonia.Automation.AutomationProperties.SetName(copyButton, "复制代码")
+        Avalonia.Automation.AutomationProperties.SetName(copyButton, codeCopyName)
+        Avalonia.Automation.AutomationProperties.SetHelpText(copyButton, codeCopyName)
         ToolTip.SetTip(copyButton, "复制代码")
 
         let mutable copyTimer: DispatcherTimer option = None
@@ -301,7 +338,8 @@ type MarkdownRenderer(
             stopTimer ()
             Ui.setIcon copyButton Icons.copy Tokens.codeMuted
             ToolTip.SetTip(copyButton, "复制代码")
-            Avalonia.Automation.AutomationProperties.SetName(copyButton, "复制代码")
+            Avalonia.Automation.AutomationProperties.SetName(copyButton, codeCopyName)
+            Avalonia.Automation.AutomationProperties.SetHelpText(copyButton, codeCopyName)
 
         let doCopy () =
             copyText code
@@ -330,6 +368,12 @@ type MarkdownRenderer(
             scroll.HorizontalScrollBarVisibility <-
                 (if wrapped then ScrollBarVisibility.Disabled else ScrollBarVisibility.Auto)
             Ui.setIcon wrapButton Icons.textWrap (if wrapped then Tokens.accent else Tokens.codeMuted)
+            // 开关的自动化名称跟随当前状态，读屏用户直接知道按下去会发生什么。
+            let wrapName = if wrapped then "取消折行" else "长行折行"
+            Avalonia.Automation.AutomationProperties.SetName(wrapButton, wrapName)
+            Avalonia.Automation.AutomationProperties.SetHelpText(
+                wrapButton,
+                if wrapped then "取消折行，恢复横向滚动" else "长行折行，在块内自动换行")
         let toggleWrap () =
             wrapped <- not wrapped
             MarkdownRenderer.DefaultCodeWrap <- wrapped
@@ -356,6 +400,22 @@ type MarkdownRenderer(
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         stack.Children.Add header
         stack.Children.Add scroll
+        if hugeCode then
+            let mutable codeFull = false
+            let mutable toggleCodeFull: unit -> unit = ignore
+            let codeExpand = Ui.button Ui.Ghost "展开全部" (fun () -> toggleCodeFull ())
+            codeExpand.HorizontalAlignment <- HorizontalAlignment.Left
+            codeExpand.Margin <- Thickness(Tokens.blockPaddingX, Tokens.space1, 0.0, Tokens.space1)
+            codeExpand.Cursor <- handCursor
+            codeExpand.Focusable <- true
+            Avalonia.Automation.AutomationProperties.SetName(codeExpand, "展开全部")
+            toggleCodeFull <- fun () ->
+                codeFull <- not codeFull
+                scroll.MaxHeight <- if codeFull then Double.PositiveInfinity else LayoutPolicy.expandedDetailMaxHeight
+                Ui.setButtonText codeExpand (if codeFull then "收起" else "展开全部")
+                Avalonia.Automation.AutomationProperties.SetName(codeExpand, if codeFull then "收起" else "展开全部")
+            stack.Children.Add codeExpand
+
         let root =
             Border(
                 Background = Tokens.codeBg,
@@ -452,6 +512,17 @@ type MarkdownRenderer(
                         elif hasBreak then VerticalAlignment.Top
                         else VerticalAlignment.Center
                     cell.HorizontalAlignment <- alignment
+                    // 超长无断点 token 的格子套一层横向 scroller（keyed on content）；
+                    // 普通格子原样直挂，树形与几何都不变。
+                    let cellContent: Control =
+                        if columnCount <= 4 && MarkdownRenderer.HasLongToken content then
+                            ScrollViewer(
+                                Content = cell,
+                                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled)
+                            :> Control
+                        else
+                            cell
                     let background: IBrush =
                         if isHeader then Tokens.tableHeader
                         // 隔行微底色 + 单 hairline 行分隔：横线只出现在行与行之间，
@@ -466,7 +537,7 @@ type MarkdownRenderer(
                             Background = background,
                             ClipToBounds = true,
                             UseLayoutRounding = true,
-                            Child = cell)
+                            Child = cellContent)
                     Grid.SetRow(host, gridRowIndex)
                     Grid.SetColumn(host, columnIndex)
                     grid.Children.Add host

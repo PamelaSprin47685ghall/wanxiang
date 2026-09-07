@@ -74,7 +74,19 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
     /// 当前编辑器的探活挂钩：ApplyProbe 到达时清掉按钮 pending 并回填模型框，
     /// 避免用户用陈旧列表覆盖刚探到的结果。对话框关闭时清空。
-    let mutable activeProbe: (string * (bool -> unit) * (string list -> unit)) option = None
+    /// 失败时还在编辑器里留一行常驻标记：toast 一闪而过，这行留到下一次探活。
+    let mutable activeProbe: (string * (bool -> unit) * (string list -> unit) * (string -> unit)) option = None
+
+    /// 所有 loopback 写法都算本机：127.0.0.1、localhost、::1（含括号写法）。
+    /// Uri.IsLoopback 覆盖标准解析；子串回退覆盖非常规输入。
+    let isLoopbackUrl (baseUrl: string) =
+        if String.IsNullOrWhiteSpace baseUrl then false
+        else
+            match Uri.TryCreate(baseUrl.Trim(), UriKind.Absolute) with
+            | true, uri when uri.IsLoopback -> true
+            | _ ->
+                let lower = baseUrl.Trim().ToLowerInvariant()
+                lower.Contains("127.0.0.1") || lower.Contains("localhost") || lower.Contains("[::1]") || lower.Contains("::1")
 
     let providerPayload (id: string) (label: string) (kind: string) (baseUrl: string) (apiKey: string option) (models: string list) (defaultModel: string) (enabled: bool) (timeout: int) (retries: int) =
         let o = JsonObject()
@@ -146,6 +158,16 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let syncPresetHint () =
             presetHint.IsVisible <- not (String.IsNullOrWhiteSpace presetHint.Text)
 
+        /// 传输类型由预设决定，表单里只读展示，不可手动修改。
+        let transportLabel kind =
+            match kind with
+            | "anthropic" -> "Anthropic 原生 · Messages API（支持思维链与 prompt caching）"
+            | "gemini" -> "Google 原生 · generateContent（支持多模态与 systemInstruction）"
+            | _ -> "OpenAI 兼容 · /v1/chat/completions"
+        let kindCaption = Ui.caption ""
+        let syncKindCaption () =
+            kindCaption.Text <- "传输：" + transportLabel selectedKind
+
         let applyPreset (preset: ProviderPreset) =
             applyingPreset <- true
             try
@@ -157,6 +179,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 presetHint.Text <- preset.hint
                 syncPresetHint ()
                 setPresetText preset.label
+                syncKindCaption ()
                 if existing.IsNone then
                     idBox.Text <- ProviderPresets.suggestId preset takenIds
                     labelBox.Text <- preset.label
@@ -178,8 +201,13 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                     let normPreset =
                         p.models |> List.map (fun s -> s.Trim()) |> List.filter (String.IsNullOrWhiteSpace >> not) |> Array.ofList
                     let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
-                    if url <> p.baseUrl.Trim() || normModels <> normPreset then
+                    // 端点比较走归一化：末尾斜杠不算分歧，预设连续性不断。
+                    if ProviderPresets.normalizeBaseUrl url <> ProviderPresets.normalizeBaseUrl p.baseUrl || normModels <> normPreset then
                         currentPreset <- None
+                        // 回到自定义就不再是预设：hint 清空隐藏（传输类型不变，
+                        // 只读行无需改动），都在原处换文案，不碰兄弟组。
+                        presetHint.Text <- ""
+                        syncPresetHint ()
                         setPresetText "自定义"
                 | None -> ()
         let presetOptions () =
@@ -215,8 +243,23 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             | Some preset -> applyPreset preset
             | None -> ()
 
+        // 编辑已有服务商时传输类型来自它自己，不走 applyPreset，这里补一次同步。
+        syncKindCaption ()
+
         let probeIdleText = "从服务器获取模型列表"
         let mutable setProbePending: bool -> unit = ignore
+        /// 探活失败的常驻行内标记：toast 一闪而过，这行留到下一次探活。
+        let probeStatus =
+            TextBlock(
+                Text = "",
+                FontSize = Tokens.fontCaption,
+                Foreground = Tokens.danger,
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = ReadingRhythm.captionLineHeight)
+        probeStatus.IsVisible <- false
+        let setProbeStatus (message: string) =
+            probeStatus.Text <- message
+            probeStatus.IsVisible <- not (String.IsNullOrWhiteSpace message)
         let runProbe () =
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
             if String.IsNullOrWhiteSpace id then
@@ -224,13 +267,15 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             elif not (takenIds |> List.contains id) then
                 actions.toast "先保存服务商，然后再探测模型列表。" Warning
             else
+                clearFieldError urlBox
+                setProbeStatus ""
                 setProbePending true
                 activeProbe <-
-                    Some (id, setProbePending, fun models ->
+                    Some (id, setProbePending, (fun models ->
                         modelsBox.Text <- String.Join("\n", models)
                         let currentDefault = if isNull defaultModelBox.Text then "" else defaultModelBox.Text.Trim()
                         if String.IsNullOrWhiteSpace currentDefault || not (List.contains currentDefault models) then
-                            defaultModelBox.Text <- models |> List.tryHead |> Option.defaultValue "")
+                            defaultModelBox.Text <- models |> List.tryHead |> Option.defaultValue ""), setProbeStatus)
                 actions.probeProvider id
                 actions.toast "正在向服务商请求模型列表…" Neutral
         let probeButton = Ui.button Ui.Secondary probeIdleText runProbe
@@ -253,11 +298,14 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
         let idleSaveText = if existing.IsSome then "保存" else "添加"
         let mutable setPending: bool -> unit = ignore
-        let save () =
+        /// 保存往返中的重入 guard：按钮已禁用，但 Ctrl+Enter 仍能进 save。
+        let mutable savePending = false
+        let saveCore () =
             for box in allBoxes do clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
             let label = if isNull labelBox.Text then "" else labelBox.Text.Trim()
-            let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
+            // 同一端点只有一个身份：末尾斜杠在入库前归一，预设连续性不断。
+            let url = ProviderPresets.normalizeBaseUrl (if isNull urlBox.Text then "" else urlBox.Text)
             let models =
                 (if isNull modelsBox.Text then "" else modelsBox.Text)
                     .Split([| '\n'; '\r'; ',' |], StringSplitOptions.RemoveEmptyEntries)
@@ -338,6 +386,10 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                     setPending false
                     if ok && editorActive then overlay.CloseDialog())
 
+        /// pending 中的 save 直接返回，不做二次提交。
+        let save () =
+            if savePending then () else saveCore ()
+
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
         cancelButton.Margin <- Thickness 0.0
         cancelButton.Focusable <- true
@@ -352,6 +404,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         ToolTip.SetTip(saveButton, sprintf "确认%s (Ctrl+Enter)" idleSaveText)
         Ui.preparePendingButton saveButton
         setPending <- fun pending ->
+            savePending <- pending
             Ui.setButtonPending saveButton pending idleSaveText "正在保存…"
             Ui.setEnabled cancelButton (not pending)
         let buttons =
@@ -372,6 +425,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 Tokens.space3
                 [ Ui.title (if existing.IsSome then "编辑服务商" else "添加服务商") :> Control
                   Ui.controlFieldGroup "预设" "" (presetButton :> Control)
+                  kindCaption :> Control
                   presetHint :> Control
                   idField
                   labelField
@@ -380,6 +434,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                   modelsField
                   defaultModelField
                   probeButton :> Control
+                  probeStatus :> Control
                   enabledRow :> Control
                   Ui.hairline () :> Control
                   buttons :> Control ]
@@ -402,10 +457,16 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
     /// 探活结果回填：把服务商的模型列表直接更新到配置里。
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
         match activeProbe with
-        | Some (pid, setPending, applyModels) when pid = providerId ->
+        | Some (pid, setPending, applyModels, setStatus) when pid = providerId ->
             activeProbe <- None
             setPending false
-            if ok && not (List.isEmpty models) then applyModels models
+            if ok && not (List.isEmpty models) then
+                setStatus ""
+                applyModels models
+            elif ok then
+                setStatus "服务商返回了空模型列表，模型框未改动。"
+            else
+                setStatus (sprintf "探测失败：%s" (error |> Option.defaultValue "未知原因"))
         | _ -> ()
         if ok then
             probeResults[providerId] <- models
@@ -433,8 +494,13 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
     member private this.RenderRow(provider: ProviderInfo) : Control =
         // 点只反映配置完整度：没探活过就没资格显示「健康」。
+        // 免密钥预设（本机推理）与所有 loopback 写法永远不缺密钥。
+        let presetNeedsKey =
+            match ProviderPresets.matchByBaseUrl provider.baseUrl with
+            | Some preset -> preset.needsApiKey
+            | None -> true
         let configured =
-            provider.hasApiKey || provider.baseUrl.StartsWith("http://127.0.0.1", StringComparison.Ordinal)
+            provider.hasApiKey || not presetNeedsKey || isLoopbackUrl provider.baseUrl
         let statusBrush: IBrush =
             if not provider.enabled then Tokens.textFaint
             elif configured then Tokens.accent
@@ -473,7 +539,10 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 overlay
                 (moreButton :> Control)
                 true
-                [ MenuEntry.create "获取模型列表" (fun () -> actions.probeProvider provider.id) |> MenuEntry.withIcon Icons.refresh
+                [ MenuEntry.create "获取模型列表" (fun () ->
+                      actions.toast "正在向服务商请求模型列表…" Neutral
+                      actions.probeProvider provider.id)
+                  |> MenuEntry.withIcon Icons.refresh
                   MenuEntry.create (if provider.enabled then "停用" else "启用") (fun () ->
                       actions.upsertProvider
                           (providerPayload

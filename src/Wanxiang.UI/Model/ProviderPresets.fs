@@ -161,12 +161,19 @@ module ProviderPresets =
 
     let tryFind (key: string) = all |> List.tryFind (fun p -> p.key = key)
 
+    /// 归一化端点：首尾空白与末尾斜杠不产生新身份。
+    /// 粘贴 `https://api.openai.com/v1/` 与手打 `https://api.openai.com/v1`
+    /// 是同一个端点，预设匹配、分歧判断与保存载荷都走这里。
+    let normalizeBaseUrl (url: string) =
+        if System.String.IsNullOrWhiteSpace url then ""
+        else url.Trim().TrimEnd('/')
+
     /// 用 baseUrl 反查预设，便于编辑已有服务商时高亮当前预设。
     let matchByBaseUrl (baseUrl: string) =
         if System.String.IsNullOrWhiteSpace baseUrl then None
         else
-            let normalized = baseUrl.TrimEnd('/')
-            all |> List.tryFind (fun p -> p.baseUrl.TrimEnd('/') = normalized)
+            let normalized = normalizeBaseUrl baseUrl
+            all |> List.tryFind (fun p -> normalizeBaseUrl p.baseUrl = normalized)
 
     /// 给新服务商建议一个不冲突的稳定标识。
     let suggestId (preset: ProviderPreset) (taken: string list) =

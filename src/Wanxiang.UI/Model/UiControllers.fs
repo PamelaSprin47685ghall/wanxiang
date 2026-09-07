@@ -24,7 +24,7 @@ type ConversationRuns() =
 
     member this.Snapshot(id: Guid, runtimeState: string, generationId: Guid option) =
         let current = this.Get(Some id)
-        let running = runtimeState = "generating"
+        let running = ConversationSummary.isGeneratingStatus runtimeState
         let generationId = generationId |> Option.filter (fun id -> id <> Guid.Empty)
         if not (generationId |> Option.exists (fun generation -> retired.Contains(id, generation))) then
             items <- items.Add(id,
@@ -81,6 +81,8 @@ type PendingAttachment = {
     fileName: string
     /// 上传中时为 false
     ready: bool
+    /// 上传失败后保留的可见残留：仍占一条 chip，可移除、可重新添加重试；发送前必须先清理。
+    failed: bool
 }
 
 /// 附件传输所需元数据。协议层完成/失败事件通过 attachmentId 回来。
@@ -96,10 +98,15 @@ type AttachmentUpload = {
 type AttachmentDraftController() =
     let uploads = Dictionary<Guid, AttachmentUpload>()
     let mutable items: PendingAttachment list = []
+    /// 所属会话键，由 ComposerDrafts 在创建/搬移草稿时维护；Complete 透出它，
+    /// AppShell 只在它等于当前可见会话时才 toast 上传完成。
+    let mutable ownerKey: string * Guid option = "", None
 
     member _.Items = items
     member _.HasReady = items |> List.exists _.ready
     member _.HasUploading = items |> List.exists (fun item -> not item.ready)
+    member _.HasFailed = items |> List.exists _.failed
+    member _.OwnerKey with get () = ownerKey and set value = ownerKey <- value
 
     member _.Begin(upload: AttachmentUpload) =
         uploads[upload.attachmentId] <- upload
@@ -110,7 +117,8 @@ type AttachmentDraftController() =
                   size = upload.size
                   mediaType = upload.mediaType
                   fileName = upload.fileName
-                  ready = false } ]
+                  ready = false
+                  failed = false } ]
         items
 
     /// 用户从草稿中移除后，底层上传可以自然完成，但不会再重新出现在 Composer。
@@ -119,7 +127,8 @@ type AttachmentDraftController() =
         items
 
     /// 返回上传元数据，以及完成时这条附件是否仍在用户草稿里。
-    member _.Complete(attachmentId: Guid, committedSize: int64) : (AttachmentUpload * bool) option =
+    /// 一并透出所属会话键：调用方只在它等于当前可见会话时才 toast，避免后台会话的完成误报。
+    member _.Complete(attachmentId: Guid, committedSize: int64) : (AttachmentUpload * bool * (string * Guid option)) option =
         match uploads.TryGetValue attachmentId with
         | true, upload ->
             uploads.Remove attachmentId |> ignore
@@ -129,21 +138,41 @@ type AttachmentDraftController() =
                 |> List.map (fun item ->
                     if item.attachmentId = attachmentId then
                         stillDrafted <- true
-                        { item with ready = true; size = committedSize }
+                        { item with ready = true; failed = false; size = committedSize }
                     else
                         item)
-            Some(upload, stillDrafted)
+            Some(upload, stillDrafted, ownerKey)
         | _ -> None
 
-    /// 失败时只移除对应的一条草稿；相同 sha256 的其它附件不受影响。
-    member _.Abort(attachmentId: Guid) : (AttachmentUpload * bool) option =
+    /// 失败时保留一条 failed 残留（同槽位 chip 呈现，可移除、可重新添加重试）；相同 sha256 的其它附件不受影响。
+    /// 返回上传元数据（fileName 即 toast 用名）、是否仍在草稿里、所属会话键；同一 attachmentId 只报一次。
+    member _.Abort(attachmentId: Guid) : (AttachmentUpload * bool * (string * Guid option)) option =
         match uploads.TryGetValue attachmentId with
         | true, upload ->
             uploads.Remove attachmentId |> ignore
             let stillDrafted = items |> List.exists (fun item -> item.attachmentId = attachmentId)
-            items <- items |> List.filter (fun item -> item.attachmentId <> attachmentId)
-            Some(upload, stillDrafted)
+            items <-
+                items
+                |> List.map (fun item ->
+                    if item.attachmentId = attachmentId then { item with ready = false; failed = true } else item)
+            Some(upload, stillDrafted, ownerKey)
         | _ -> None
+
+
+    /// 断连时把所有 uploading 翻成 failed 残留并返回它们；语义上发送仍被阻塞，
+    /// 但用户移除残留后即可恢复，不会因“永远上传中”楔死发送。
+    member _.MarkAllUploadingAsFailed() : PendingAttachment list =
+        let failedNow = ResizeArray<PendingAttachment>()
+        items <-
+            items
+            |> List.map (fun item ->
+                if not item.ready && not item.failed then
+                    uploads.Remove item.attachmentId |> ignore
+                    let failed = { item with ready = false; failed = true }
+                    failedNow.Add failed
+                    failed
+                else item)
+        List.ofSeq failedNow
 
     /// 发送是草稿的原子消费点。只要仍有 uploading，就拒绝消费。
     member _.TryConsumeReady() : PendingAttachment list option =
@@ -169,12 +198,15 @@ type ComposerDrafts() =
         | Some draft -> draft
         | None ->
             let draft = { text = ""; attachments = AttachmentDraftController() }
+            draft.attachments.OwnerKey <- key
             items <- items.Add(key, draft)
             draft
 
     member _.Move(instanceId: string, source: Guid option, target: Guid option) =
         match items.TryFind(instanceId, source) with
-        | Some draft -> items <- items.Remove((instanceId, source)).Add((instanceId, target), draft)
+        | Some draft ->
+            draft.attachments.OwnerKey <- (instanceId, target)
+            items <- items.Remove((instanceId, source)).Add((instanceId, target), draft)
         | None -> ()
 
     member _.All = items |> Map.toSeq |> Seq.map snd

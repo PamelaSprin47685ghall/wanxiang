@@ -1048,8 +1048,12 @@ let ``SettingsView supports Up and Down arrow traversal across navigation sectio
     finally
         window.Close()
 
+// Destructive confirms default-focus the SAFE option (cancel): Enter/Space on
+// content must not hair-trigger the danger action (Dialogs.confirm ->
+// confirmWithFocus ... false -> actionRowWithDefault Danger, which skips the
+// row-level Enter/Space confirm for Ui.Danger).
 [<Fact>]
-let ``Dialogs confirm focuses the destructive action button by default`` () =
+let ``Dialogs confirm focuses the safe cancel action by default`` () =
     Headless.ensure ()
     let root = Grid()
     let overlay = OverlayHost(root)
@@ -1072,9 +1076,33 @@ let ``Dialogs confirm focuses the destructive action button by default`` () =
             |> List.tryFind (fun b ->
                 descendants b
                 |> Seq.exists (function :? TextBlock as tb -> tb.Text = "确定删除" | _ -> false))
+        let cancelButton =
+            buttons
+            |> List.tryFind (fun b ->
+                descendants b
+                |> Seq.exists (function :? TextBlock as tb -> tb.Text = "取消" | _ -> false))
 
         Assert.True(confirmButton.IsSome)
-        Assert.True(confirmButton.Value.IsFocused)
+        Assert.True(cancelButton.IsSome)
+        Assert.True(cancelButton.Value.IsFocused)
+        Assert.False(confirmButton.Value.IsFocused)
+        // Content Enter/Space must not hair-trigger the destructive action.
+        Assert.False(confirmed)
+        let row =
+            descendants root
+            |> Seq.choose (function :? StackPanel as panel -> Some panel | _ -> None)
+            |> Seq.find (fun panel ->
+                let texts =
+                    descendants panel
+                    |> Seq.choose (function :? TextBlock as tb -> Some tb.Text | _ -> None)
+                    |> Set.ofSeq
+                texts.Contains "取消" && texts.Contains "确定删除")
+        for key in [ Key.Enter; Key.Space ] do
+            let keyArgs = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = KeyModifiers.None)
+            row.RaiseEvent(keyArgs)
+            Dispatcher.UIThread.RunJobs()
+        Assert.False(confirmed)
+        Assert.True(overlay.IsDialogOpen)
     finally
         overlay.CloseDialog()
         window.Close()
@@ -1106,7 +1134,7 @@ let ``MessageCard toolCallCard header toggles argument and result details`` () =
                     argumentsJson = "{\"city\": \"Beijing\"}"
                     result = Some "Sunny, 24C" } ] }
     let card =
-        MessageCard.render message ctx msgActions
+        MessageCard.render message ctx msgActions None
 
     let window = Window(Width = 600.0, Height = 400.0, Content = card)
     window.Show()
@@ -1273,7 +1301,10 @@ let ``Markdown code block copy button confirms visually with check icon and tool
         Dispatcher.UIThread.RunJobs()
         let copyButton =
             descendants controls
-            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "复制代码")
+            |> Seq.find (fun c ->
+                match ToolTip.GetTip(c) with
+                | :? string as tip -> tip = "复制代码"
+                | _ -> false)
         Assert.True copyButton.Focusable
         Assert.Equal("复制代码", ToolTip.GetTip(copyButton) :?> string)
 

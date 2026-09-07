@@ -448,6 +448,8 @@ module Ui =
         host.Opacity <- if visible then 1.0 else 0.0
         host.IsHitTestVisible <- visible
         host.Focusable <- visible
+        // 槽位保留但感官与键盘均不可达时，同样移出 AT 控制视图；布局占位与键盘阻断不受影响。
+        AutomationProperties.SetAccessibilityView(host, if visible then AccessibilityView.Default else AccessibilityView.Raw)
 
     let setToggled (host: Border) (active: bool) =
         host.Background <- if active then Tokens.accentSoft :> IBrush else Brushes.Transparent :> IBrush
@@ -536,7 +538,7 @@ module Ui =
                 Child = box)
         box.GotFocus.Add(fun _ ->
             shell.BorderBrush <- Tokens.accent
-            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = 1.5, Color = Tokens.accentSoft.Color)))
+            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color)))
         box.LostFocus.Add(fun _ ->
             shell.BorderBrush <- if isInvalid box then Tokens.danger else Tokens.border
             shell.BoxShadow <- BoxShadows())

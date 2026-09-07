@@ -57,10 +57,6 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
     let mutable registry: ConnectionRegistry option = None
     let mutable host: IHost option = None
     let mutable stopping = false
-    /// 附件仓库在协调器之后才构造，但提交回调需要引用它，故用可变持有。
-    let mutable attachments: AttachmentStore option = None
-    /// 附件回收进行中标记：批量删会话只该触发一次清扫。
-    let mutable sweeping = 0
 
     let pairing = Auth.PairingState()
     let mutable failureTracker = Auth.FailureTracker(TimeSpan.FromMinutes 1.0, 5, TimeSpan.FromMinutes 5.0)
@@ -205,28 +201,6 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
 
     let toolRegistry = ToolRegistry(currentConfig, mcpLog)
 
-    /// 后台回收不再被引用的附件 blob。
-    ///
-    /// 单写者线程上不能读投影（会自锁），因此清扫整体挪到后台任务；
-    /// 同一时刻只允许一次，批量删会话不会叠成 N 次全盘扫描。
-    member private this.ScheduleAttachmentSweep() : unit =
-        if Interlocked.CompareExchange(&sweeping, 1, 0) = 0 then
-            Task.Run(fun () ->
-                try
-                    // 稍等一拍：让同一批删除全部落盘后只扫一次
-                    Thread.Sleep 1500
-                    match coordinator, attachments with
-                    | Some coord, Some store ->
-                        let referenced = ServerModel.referencedAttachments coord.Projection
-                        let removed, freed = store.CollectGarbage(referenced, TimeSpan.FromMinutes 10.0)
-                        if removed > 0 then
-                            logInfo(sprintf "attachment gc removed %d blob(s), freed %d bytes" removed freed)
-                    | _ -> ()
-                with ex ->
-                    Stderr.write "attachment-gc-failed" [ "message", ex.Message ]
-                Volatile.Write(&sweeping, 0))
-            |> ignore
-
     /// 启动服务器（server 开关）。
     member this.Start(servePwa: bool) : unit =
         match ConfigStore.Open(configPath, onConfigReloaded, onConfigRejected) with
@@ -246,12 +220,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 | Some reg -> reg.BroadcastCommit commit
                 | None -> ()
             with _ -> ()
-            // 删会话会让它独占的附件失去引用。这里只做「是否需要清扫」的纯判断——
-            // 本回调运行在单写者线程上，读投影会自锁，清扫必须挪到后台。
-            let deletedSomething =
-                commit.events
-                |> List.exists (function EventData.ConversationDeleted _ -> true | _ -> false)
-            if deletedSomething then this.ScheduleAttachmentSweep()
+            // 决策 73：首版不做附件 GC——删会话不断触发任何 blob 清扫，孤儿留待未来压缩处理。
         let onTruncated (commit: Events.Commit, err: WanxiangError, byteOffset: int64, file: string) =
             Stderr.truncated commit file byteOffset err
         coordinator <- Some(new CommitCoordinator(dataDir, replayOutcome, broadcastCommit, onTruncated))
@@ -261,7 +230,6 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             | Some reg -> reg.BroadcastTransient(convId, ev)
             | None -> ()
         let attachmentStore = AttachmentStore(dataDir, (currentConfig ()).maxAttachmentBytes, (currentConfig ()).chunkSizeBytes)
-        attachments <- Some attachmentStore
         // 附件必须能被送进模型：编排层按 sha256 直接读 blob（决策 71-72 的内容寻址存储）
         let loadBlob (sha256: string) : byte[] option =
             try

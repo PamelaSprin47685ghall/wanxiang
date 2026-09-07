@@ -7,6 +7,10 @@ module LayoutPolicy =
     /// 主壳、Settings 共用的 compact 模式断点。
     let compactBreakpoint = 720.0
 
+    /// 桌面窗口最小宽度（契约 C7）。必须小于 compactBreakpoint，
+    /// 否则把窗口缩到最窄也进不了 compact 抽屉分支。
+    let desktopMinWidth = 700.0
+
     /// 小型参数表单由双列退化为单列的局部断点。
     let formSingleColumnBreakpoint = 440.0
 

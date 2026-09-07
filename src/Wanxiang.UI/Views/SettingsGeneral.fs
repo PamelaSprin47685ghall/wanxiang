@@ -9,6 +9,7 @@ open Avalonia.Input
 open Avalonia.Input.Platform
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Threading
 open Wanxiang.Core
 
 /// 生成默认值、外观偏好与关于信息。
@@ -30,6 +31,8 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
     let mutable readAutoTitle: unit -> bool = fun () -> true
     let mutable setAutoTitle: bool -> unit = ignore
     let mutable setGenerationPending: bool -> unit = ignore
+    /// 生成保存往返中的重入 guard：按钮已禁用，但重复调用仍能进 Save。
+    let mutable generationSaving = false
     let mutable syncAppearance: UiPrefs -> unit = ignore
 
     let floatText (value: float option) =
@@ -53,6 +56,9 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
 
     let switchRow (title: string) (hint: string) (initial: bool) (onChanged: bool -> unit) : Control * (unit -> bool) * (bool -> unit) =
         let toggle, read, write, flip = Ui.toggle initial onChanged
+        // 一行只有一个 Tab 停靠点：内层开关不进 Tab 序，行容器统一代理键盘，
+        // Enter/Space 只走 Ui.onClick 一次，单次翻转不变。鼠标点开关本身仍有效。
+        toggle.Focusable <- false
         Avalonia.Automation.AutomationProperties.SetName(toggle, title)
         Avalonia.Automation.AutomationProperties.SetHelpText(toggle, hint)
         let caption = Ui.label title
@@ -110,7 +116,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         prefs <- next
         syncAppearance next
 
-    member private this.SaveGeneration() =
+    member private this.SaveGenerationCore() =
         let fields = [ temperatureBox; topPBox; maxTokensBox; contextBox; toolRoundsBox ]
         for box in fields do Ui.clearFieldError box
         let mutable firstInvalid: TextBox option = None
@@ -146,16 +152,24 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         let temperature =
             parseOptionalFloat temperatureBox (fun value -> value >= 0.0 && value <= 2.0) "请输入 0–2 之间的数字，或留空。"
         let topP =
-            parseOptionalFloat topPBox (fun value -> value > 0.0 && value <= 1.0) "请输入大于 0 且不超过 1 的数字，或留空。"
+            parseOptionalFloat topPBox (fun value -> value >= 0.0 && value <= 1.0) "请输入 0 到 1 之间的数字，或留空。"
         let maxTokens = parseOptionalPositiveInt maxTokensBox
         let contextMessages = parseRequiredInt contextBox (fun value -> value >= 0) "请输入 0 或正整数。"
         let toolRounds = parseRequiredInt toolRoundsBox (fun value -> value > 0) "请输入大于 0 的整数。"
 
         match firstInvalid with
         | Some box ->
-            box.Focus(NavigationMethod.Directional) |> ignore
+            let errorMsg = (Ui.fieldValidationMessage box).Text
+            if not (String.IsNullOrWhiteSpace errorMsg) then
+                actions.toast errorMsg Warning
+            // 错误行只展开自己所在的组（hint 与 error 互换），边框粗细不变；
+            // 这里只把焦点送到第一个错误处，不碰兄弟。
             box.BringIntoView()
-            (box.Parent :?> Control).BringIntoView()
+            box.Focus(NavigationMethod.Directional) |> ignore
+            Dispatcher.UIThread.Post(fun () ->
+                if box.IsEffectivelyVisible && box.IsEnabled then
+                    box.BringIntoView()
+                    box.Focus(NavigationMethod.Directional) |> ignore)
         | None ->
             let payload = JsonObject()
             match temperature with Some v -> payload["temperature"] <- v | None -> payload["temperature"] <- null
@@ -169,6 +183,10 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             setGenerationPending true
             actions.updateGeneration payload (fun _ -> setGenerationPending false)
 
+    /// pending 中的保存直接返回，不做二次提交。
+    member private this.SaveGeneration() =
+        if generationSaving then () else this.SaveGenerationCore()
+
     member this.BuildGeneration() : Control =
         let autoTitleRow, readAuto, writeAuto =
             switchRow "自动生成会话标题" "首轮对话后用同一个模型起一个短标题；失败时回落到你的第一句话。" true ignore
@@ -178,6 +196,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         Ui.preparePendingButton saveButton
         saveButton.HorizontalAlignment <- HorizontalAlignment.Left
         setGenerationPending <- fun pending ->
+            generationSaving <- pending
             Ui.setButtonPending saveButton pending "保存生成设置" "正在保存…"
         let grid = Grid(ColumnSpacing = Tokens.space4, RowSpacing = Tokens.space3)
         grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
@@ -340,13 +359,21 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                     (if String.IsNullOrWhiteSpace instanceId then "未连接" else instanceId)
                     (if String.IsNullOrWhiteSpace serverUrl then "未连接" else serverUrl)
                     (DateTimeOffset.UtcNow.ToString("O"))
-            actions.toast "诊断报告已生成" Success
+            // 先解析剪贴板：拿不到就直说失败，成功 toast 只在复制完成后发。
             match TopLevel.GetTopLevel overlay.Root with
-            | null -> ()
+            | null -> actions.toast "无法访问剪贴板，诊断报告未复制。" Failure
             | top ->
                 match top.Clipboard with
-                | null -> ()
-                | clip -> clip.SetTextAsync diag |> ignore)
+                | null -> actions.toast "无法访问剪贴板，诊断报告未复制。" Failure
+                | clip ->
+                    async {
+                        try
+                            do! clip.SetTextAsync diag |> Async.AwaitTask
+                            Dispatcher.UIThread.Post(fun () -> actions.toast "诊断报告已复制到剪贴板。" Success)
+                        with _ ->
+                            Dispatcher.UIThread.Post(fun () -> actions.toast "复制诊断报告失败，请重试。" Failure)
+                    }
+                    |> Async.Start)
         copyDiagButton.HorizontalAlignment <- HorizontalAlignment.Left
         Ui.vstack
             Tokens.space6

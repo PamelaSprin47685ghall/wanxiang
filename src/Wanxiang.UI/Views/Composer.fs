@@ -67,16 +67,8 @@ type Composer(actions: ComposerActions) as this =
             IsVisible = false,
             Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2))
 
-    let sendButton =
-        let btn = Ui.iconButtonAccent Icons.send "发送"
-        btn.HorizontalAlignment <- HorizontalAlignment.Center
-        btn.VerticalAlignment <- VerticalAlignment.Center
-        btn.Width <- Tokens.iconButton
-        btn.Height <- Tokens.iconButton
-        btn.MinWidth <- Tokens.iconButton
-        btn.MinHeight <- Tokens.iconButton
-        btn.CornerRadius <- CornerRadius Tokens.radiusPill
-        btn
+    // 几何全由 Ui.iconButtonAccent 固定（发送↔停止只换字形）；此处不再复述尺寸，避免双写漂移。
+    let sendButton = Ui.iconButtonAccent Icons.send "发送"
     let queueButton = Ui.iconButton Icons.send "排队发送"
     let pendingPanel = StackPanel(Spacing = Tokens.space2)
     let pendingScroller =
@@ -162,6 +154,7 @@ type Composer(actions: ComposerActions) as this =
     let mutable disabledReason = ""
     let mutable wasActiveBeforeDisabled = false
     let mutable isDraggingOver = false
+    // 发送历史全局共享（shell 风格，不随会话隔离）；半截输入由 uncommittedDraft + per-session draft 持有，不进历史。
     let promptHistory = ResizeArray<string>()
     let mutable historyIndex = -1
     let mutable uncommittedDraft = ""
@@ -169,6 +162,13 @@ type Composer(actions: ComposerActions) as this =
     let mutable attachments: PendingAttachment list = []
     let mutable pendingFocusAttachmentId: Guid option = None
     let removeButtons = System.Collections.Generic.Dictionary<Guid, Control>()
+
+    /// IME 组合中（CJK 候选选择）时 Up/Down/Enter 归输入法：TextPresenter.PreeditText 非空即让路，
+    /// 不做历史召回与提交。Shift+选择本就要求 Modifiers=None，已天然绕行。
+    let isImeComposing () =
+        input.GetVisualDescendants()
+        |> Seq.tryPick (function :? Avalonia.Controls.Presenters.TextPresenter as p -> Some p | _ -> None)
+        |> Option.exists (fun presenter -> not (String.IsNullOrEmpty presenter.PreeditText))
 
     let tryFocusInput () =
         let act () =
@@ -221,8 +221,10 @@ type Composer(actions: ComposerActions) as this =
 
         let hasText = not (String.IsNullOrWhiteSpace input.Text)
         let hasAttachment = attachments |> List.exists (fun a -> a.ready)
-        let uploading = attachments |> List.exists (fun a -> not a.ready)
-        let canSend = enabled && not uploading && (hasText || hasAttachment)
+        let uploading = attachments |> List.exists (fun a -> not a.ready && not a.failed)
+        let hasFailed = attachments |> List.exists _.failed
+        // 失败残留同样挡住发送：TryConsumeReady 只认全 ready；用户移除或重加后即恢复，不楔死。
+        let canSend = enabled && not uploading && not hasFailed && (hasText || hasAttachment)
         Ui.setEnabled sendButton (if generating then canStop else canSend)
         Ui.setEnabled queueButton canSend
         Ui.setReservedActionVisible queueButton generating
@@ -232,11 +234,13 @@ type Composer(actions: ComposerActions) as this =
             queueButton.Focusable <- false
         let sendTip =
             if generating then
-                if canStop then "停止生成 (Escape)" else "正在停止，请稍候…"
+                if canStop then "停止生成 (Escape)" else "已停止，等待确认…"
             elif not enabled then
                 if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
             elif uploading then
                 "附件上传中，请稍候…"
+            elif hasFailed then
+                "有附件上传失败，移除或重新添加后发送"
             elif not hasText && not hasAttachment then
                 "请输入消息或添加附件"
             else
@@ -253,6 +257,7 @@ type Composer(actions: ComposerActions) as this =
                 if not enabled then
                     if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
                 elif uploading then "附件上传中，请稍候…"
+                elif hasFailed then "有附件上传失败，移除或重新添加后发送"
                 elif not hasText && not hasAttachment then "请输入消息或添加附件"
                 else
                     if enterSends then "排队发送 (Enter)" else "排队发送 (Ctrl+Enter / ⌘Enter)"
@@ -316,7 +321,8 @@ type Composer(actions: ComposerActions) as this =
                                 match top.FocusManager with
                                 | null -> ()
                                 | fm -> fm.Focus(null, NavigationMethod.Unspecified, KeyModifiers.None) |> ignore
-                elif e.Key = Key.Enter then
+                // 组合中回车归输入法（候选确认），不提交。
+                elif e.Key = Key.Enter && not (isImeComposing ()) then
                     let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
                     let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
                     if shift then ()
@@ -328,7 +334,8 @@ type Composer(actions: ComposerActions) as this =
                     if ctrl then
                         if actions.pasteFromClipboard () then
                             e.Handled <- true
-                elif e.Key = Key.Up && e.KeyModifiers = KeyModifiers.None then
+                // 组合中 Up/Down 归输入法（候选导航），不召回历史。
+                elif e.Key = Key.Up && e.KeyModifiers = KeyModifiers.None && not (isImeComposing ()) then
                     let hasSelection = input.SelectionStart <> input.SelectionEnd
                     if not hasSelection && promptHistory.Count > 0 then
                         let currentText = if isNull input.Text then "" else input.Text
@@ -355,7 +362,8 @@ type Composer(actions: ComposerActions) as this =
                             input.Text <- promptHistory.[historyIndex]
                             input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
                             e.Handled <- true
-                elif e.Key = Key.Down && e.KeyModifiers = KeyModifiers.None then
+                // 组合中 Up/Down 归输入法（候选导航），不召回历史。
+                elif e.Key = Key.Down && e.KeyModifiers = KeyModifiers.None && not (isImeComposing ()) then
                     let hasSelection = input.SelectionStart <> input.SelectionEnd
                     if not hasSelection && historyIndex <> -1 then
                         let currentText = if isNull input.Text then "" else input.Text
@@ -395,12 +403,26 @@ type Composer(actions: ComposerActions) as this =
                     refreshSendState ()
                     tryFocusInput ()
 
+    /// 附件滚动窗按“整行”取高：用已渲染 chip 的实测高度对默认上限取整行倍数，避免半行露出。
+    member private _.SnapAttachmentScroller() =
+        if attachmentStrip.Children.Count > 0 then
+            match attachmentStrip.Children.[0] with
+            | :? Border as chip ->
+                let h = chip.Bounds.Height
+                if h > 0.0 then
+                    let rows = max 1 (int (LayoutPolicy.attachmentDraftMaxHeight / h))
+                    attachmentScroller.MaxHeight <- float rows * h
+            | _ -> ()
+
     member private this.RenderAttachments() =
         attachmentStrip.Children.Clear()
         removeButtons.Clear()
         for attachment in attachments do
             let icon =
-                if attachment.ready then
+                if attachment.failed then
+                    // 失败态同槽位：15px icon slot 与 state 宽度不变，只换字形与颜色，可移除、可重新添加重试。
+                    Icons.alert Tokens.danger
+                elif attachment.ready then
                     let glyph = if attachment.mediaType.StartsWith("image/", StringComparison.Ordinal) then Icons.image else Icons.file
                     glyph Tokens.textMuted
                 else
@@ -424,14 +446,17 @@ type Composer(actions: ComposerActions) as this =
                     VerticalAlignment = VerticalAlignment.Center)
             let size =
                 TextBlock(
-                    Text = (if attachment.ready then AttachmentRef.formatSize attachment.size else "上传中"),
+                    Text = (if attachment.ready || attachment.failed then AttachmentRef.formatSize attachment.size else "上传中"),
                     FontSize = Tokens.fontMicro,
-                    Foreground = Tokens.textFaint,
+                    Foreground = (if attachment.failed then Tokens.danger else Tokens.textFaint),
                     Width = ControlMetrics.composerAttachmentStateWidth,
                     TextAlignment = TextAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Center)
-            let formattedSize = if attachment.ready then AttachmentRef.formatSize attachment.size else "上传中"
-            ToolTip.SetTip(size, sprintf "文件大小：%s" formattedSize)
+            let formattedSize =
+                if attachment.ready || attachment.failed then AttachmentRef.formatSize attachment.size else "上传中"
+            ToolTip.SetTip(
+                size,
+                if attachment.failed then sprintf "上传失败：%s，可移除或重新添加" formattedSize else sprintf "文件大小：%s" formattedSize)
             let removeLabel = sprintf "移除附件 %s" attachment.fileName
             let remove = Ui.iconButton Icons.close removeLabel
             ToolTip.SetTip(remove, removeLabel)
@@ -477,7 +502,11 @@ type Composer(actions: ComposerActions) as this =
             row.Children.Add name
             row.Children.Add size
             row.Children.Add remove
-            let chipLabel = sprintf "附件：%s (%s)" attachment.fileName (AttachmentRef.formatSize attachment.size)
+            let chipLabel =
+                if attachment.failed then
+                    sprintf "附件上传失败：%s（%s），可移除或重新添加" attachment.fileName (AttachmentRef.formatSize attachment.size)
+                else
+                    sprintf "附件：%s (%s)" attachment.fileName (AttachmentRef.formatSize attachment.size)
             let chip =
                 Border(
                     Background = Tokens.surfaceRaised,
@@ -490,6 +519,8 @@ type Composer(actions: ComposerActions) as this =
             Avalonia.Automation.AutomationProperties.SetName(chip, chipLabel)
             attachmentStrip.Children.Add chip
         attachmentScroller.IsVisible <- not (List.isEmpty attachments)
+        // 滚动窗按“整行”取高：布局完成后用实测 chip 高度对默认上限取整，避免半行露出。
+        Dispatcher.UIThread.Post(fun () -> this.SnapAttachmentScroller())
         match pendingFocusAttachmentId with
         | Some targetId ->
             pendingFocusAttachmentId <- None
@@ -506,11 +537,23 @@ type Composer(actions: ComposerActions) as this =
 
     member this.SetAttachments(items: PendingAttachment list) =
         if attachments <> items then
+            // 数据型重渲染（兄弟附件完成/失败）：显式移除流程已通过 pendingFocusAttachmentId 占位，
+            // 其它情况把当前聚焦的 remove 按钮原位恢复，避免焦点掉到页顶。
+            if pendingFocusAttachmentId.IsNone then
+                removeButtons
+                |> Seq.tryPick (fun kv -> if kv.Value.IsFocused then Some kv.Key else None)
+                |> Option.filter (fun id -> items |> List.exists (fun a -> a.attachmentId = id))
+                |> Option.iter (fun id -> pendingFocusAttachmentId <- Some id)
             attachments <- items
             this.RenderAttachments()
             refreshSendState ()
 
-    member _.Text = if isNull input.Text then "" else input.Text
+    /// 历史召回中输入框显示的是旧发送，真正的半截草稿在 uncommittedDraft；
+    /// 会话切换经由它保存，半截输入不会被召回项覆盖。
+    member _.Text =
+        if historyIndex <> -1 then uncommittedDraft
+        elif isNull input.Text then ""
+        else input.Text
 
     member _.SetCanStop(value: bool) =
         canStop <- value
@@ -592,8 +635,8 @@ type Composer(actions: ComposerActions) as this =
 
     /// 窄屏只收紧已有控件，不增加第二套输入逻辑：隐藏键盘提示、压缩边距与模型标签。
     member this.SetCompactMode(value: bool) =
-        hintText.IsVisible <- true
-        hintText.Opacity <- if not value then 1.0 else 0.0
+        // compact 下提示行直接折叠；footer 高度由 modelChip.MinHeight 兜底，不塌陷。
+        hintText.IsVisible <- not value
         hintText.IsHitTestVisible <- not value
         modelCaption.MaxWidth <-
             if value then ControlMetrics.composerModelCompactMaxWidth else ControlMetrics.composerModelMaxWidth

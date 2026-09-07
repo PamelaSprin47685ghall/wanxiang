@@ -75,7 +75,7 @@ module GenerationContext =
                         if List.isEmpty refs then Some msg
                         else Some(AttachmentContent.appendTo support loadBlob refs msg))
                 |> List.filter (fun m -> m.Contents.Count > 0)
-            trim generation.maxContextMessages 0 restored
+            trim generation.maxContextMessages generation.maxContextTokens restored
 
     /// 供「重新生成」使用：最后一条用户消息的文本（用于标题生成与日志）。
     let lastUserText (msgs: ChatMessage list) : string =

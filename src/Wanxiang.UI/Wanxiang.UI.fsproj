@@ -23,9 +23,9 @@
     <Compile Include="Model/Markdown.fs" />
     <Compile Include="Model/MessageModel.fs" />
     <Compile Include="Model/ConversationExport.fs" />
-    <Compile Include="Model/UiControllers.fs" />
-    <Compile Include="Model/Catalog.fs" />
     <Compile Include="Model/ConversationSummary.fs" />
+    <Compile Include="Model/Catalog.fs" />
+    <Compile Include="Model/UiControllers.fs" />
     <Compile Include="Model/ProviderPresets.fs" />
     <Compile Include="Controls/Primitives.fs" />
     <Compile Include="Controls/OverlayHost.fs" />

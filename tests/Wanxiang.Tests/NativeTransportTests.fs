@@ -566,3 +566,39 @@ let ``会话 extraJson 在两种原生传输上都不被丢掉`` () =
     let gemini = GeminiRequest.build [ ChatMessage(ChatRole.User, "hi") ] options 0
     let config = ProviderSse.tryObject gemini "generationConfig" |> Option.get
     Assert.Equal(Some "priority", ProviderSse.tryString config "service_tier")
+
+// ---------------------------------------------------------------- 重试零语义（D4）
+
+/// 只计数的桩传输：永远回固定状态码，让 sendWithRetry 的尝试次数可观测。
+/// 两个原生传输（Anthropic/Gemini）都经它发请求；OpenAI 兼容路径由 SDK 的
+/// ClientRetryPolicy 控重试——按官方文档 ClientRetryPolicy(0) 即关闭重试，
+/// 不装多余包装。
+type private CountingHandler(status: HttpStatusCode, count: int ref) =
+    inherit HttpMessageHandler()
+    override _.SendAsync(_, _) =
+        count.Value <- count.Value + 1
+        task { return new HttpResponseMessage(status) }
+
+[<Fact>]
+let ``sendWithRetry with maxRetries 0 makes exactly one attempt`` () =
+    // retry-zero 必须精确打一次上游：多一次就是对计费调用的自动重发（原则 5）。
+    let count = ref 0
+    use http = new HttpClient(new CountingHandler(HttpStatusCode.InternalServerError, count))
+    use response =
+        ProviderSse.sendWithRetry http (fun () -> new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1/")) 0 CancellationToken.None
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+    Assert.Equal(1, count.Value)
+    Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode)
+
+[<Fact>]
+let ``sendWithRetry retries transient failures while maxRetries allows`` () =
+    // 正控制：配了重试时首字节前重试仍在（退避与状态码语义不动，只盖零档）。
+    let count = ref 0
+    use http = new HttpClient(new CountingHandler(HttpStatusCode.ServiceUnavailable, count))
+    use response =
+        ProviderSse.sendWithRetry http (fun () -> new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1/")) 2 CancellationToken.None
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+    Assert.Equal(3, count.Value)
+    Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode)

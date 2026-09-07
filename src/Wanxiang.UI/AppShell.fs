@@ -67,6 +67,8 @@ type MainView() as this =
     let mutable settingsReturnFocus: Control option = None
     /// 会话快照等待中的骨架屏延时器：300ms 内到达就不挂任何 loading chrome。
     let mutable skeletonTimer: DispatcherTimer option = None
+    /// 骨架屏延时器已为哪个会话武装：Render 会被后台事件反复触发，不得重启它，一会话只武装一次（D1）。
+    let mutable skeletonArmedFor: Guid option = None
     /// 浏览器宿主的 CSS 像素视口宽（`wxViewportWidth` 轮询写入）。
     /// Browser 后端高 DPR 下 `Bounds.Width` 会被 DPR 除一次，不可做断点依据；
     /// 有覆盖值时响应式布局只认它，桌面/测试走 Bounds 原路径。
@@ -154,8 +156,13 @@ type MainView() as this =
         view.messages |> Seq.cast<JsonNode> |> Seq.map MessageView.ofSnapshotItem |> List.ofSeq
 
     member private this.SetCompactNavigation(opened: bool) =
+        let before = navigation.State
         let state = navigation.SetCompactNavigation opened
         if state.compactMode && not (isNull (box mainLayout)) then mainLayout.Apply state
+        // compact 抽屉的焦点归宿：打开进抽屉（搜索框），收起回输入区（D3/D4）。
+        if state.compactMode then
+            if opened then sidebar.FocusSearch()
+            elif before.compactNavigationOpen then composer.Focus()
 
     member private this.ApplyResponsiveLayout(width: float) =
         let effective = hostViewportWidth |> Option.defaultValue width
@@ -182,17 +189,34 @@ type MainView() as this =
     /// 会话快照到达前的本地 loading：300ms 内不挂任何 chrome，超时才挂骨架 + 标题。
     /// 快照先到则定时器自证过期，不做任何事。
     member private this.ShowConversationLoadingDeferred(convId: Guid) =
+        // 一会话只武装一次：后台事件触发的 Render 若重启计时器，骨架屏会被无限顺延（D1）。
+        if skeletonArmedFor <> Some convId then
+            skeletonArmedFor <- Some convId
+            match skeletonTimer with
+            | Some timer -> timer.Stop()
+            | None -> ()
+            let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 300.0)
+            timer.Tick.Add(fun _ ->
+                timer.Stop()
+                if activeConvId = Some convId && (activeConversation ()).IsNone then
+                    chat.SetTitle("加载中…", false)
+                    chat.ShowSkeletonLoading())
+            skeletonTimer <- Some timer
+            timer.Start()
+
+    /// 快照到达或切换会话：解除骨架屏武装并停表。
+    member private _.DisarmSkeletonLoading() =
         match skeletonTimer with
         | Some timer -> timer.Stop()
         | None -> ()
-        let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 300.0)
-        timer.Tick.Add(fun _ ->
-            timer.Stop()
-            if activeConvId = Some convId && (activeConversation ()).IsNone then
-                chat.SetTitle("加载中…", false)
-                chat.ShowSkeletonLoading())
-        skeletonTimer <- Some timer
-        timer.Start()
+        skeletonTimer <- None
+        skeletonArmedFor <- None
+
+    /// 断线时把所有上传中的附件标成失败：底层流已死，不会再有 Complete/Abort（C4）。
+    member private this.FailUploadingAttachments() =
+        for draft in drafts.All do
+            draft.attachments.MarkAllUploadingAsFailed() |> ignore
+        composer.SetAttachments((attachmentDraft ()).Items)
 
     member private this.Render() =
         let run = runs.Get activeConvId
@@ -222,8 +246,9 @@ type MainView() as this =
             // Loading 分级：快照 300ms 内到达就不闪任何 loading chrome，超时才在本地挂骨架；
             // 流式文本本身就是进度，这里不叠加任何页级 loading。
             this.ShowConversationLoadingDeferred convId
-            composer.SetEnabled(false, "")
+            composer.SetEnabled(false, "正在加载会话…")
         | Some convId, Some view ->
+            this.DisarmSkeletonLoading()
             let messages = messagesOf view
             let streaming = this.StreamingMessage()
             let summary = activeSummary ()
@@ -316,6 +341,7 @@ type MainView() as this =
         outbox.Disconnect instanceId
         commandFeedback.RejectAll()
         configFeedback.RejectAll()
+        this.FailUploadingAttachments()
         this.Render()
         match reconnectCts with
         | Some cts -> cts.Cancel()
@@ -383,6 +409,7 @@ type MainView() as this =
             composer.SetAttachments((attachmentDraft ()).Items)
             chat.CancelHistoryPrependAnchor()
             pageLoading <- false
+        this.DisarmSkeletonLoading()
         let navBefore = navigation.State
         this.SetCompactNavigation false
         sidebar.SetActive activeConvId
@@ -419,11 +446,15 @@ type MainView() as this =
                 (fun () -> send (ObserveConversation {| conversationId = conversationId |}))
                 (fun ok ->
                     if not ok && activeConvId = Some conversationId then this.SelectConversation None)
+            // 新会话落定：焦点有家，直接进输入区（D3/D4）。
+            composer.Focus()
             Some conversationId
 
     member private this.OpenConversation(id: Guid) =
         this.SelectConversation(Some id)
         send (ObserveConversation {| conversationId = id |})
+        // 会话激活（键盘/可见顺序/分叉入口统一走这里）：焦点回家到输入区（D3/D4）。
+        composer.Focus()
 
     member private this.DispatchPendingMessage(item: PendingMessage) =
         let id = PendingMessage.invocationId item
@@ -453,11 +484,17 @@ type MainView() as this =
         | Some item when PendingMessage.canRetry item && item.instanceId = instanceId ->
             this.DispatchPendingMessage item
             this.Render()
+            // 重试发出：错误行/重试按钮随状态机翻转，焦点先回家（D3/D4）。
+            composer.Focus()
         | _ -> ()
 
     member private this.SendMessage(text: string) : bool =
         let draft = attachmentDraft ()
-        if draft.HasUploading then
+        // 失败态优先：失败的附件不会自动变好，继续报“上传中”等于指错路（C6）。
+        if draft.HasFailed then
+            toast "有上传失败的附件，请先移除再发送。" Warning
+            false
+        elif draft.HasUploading then
             toast "附件上传中，请等待上传完成后再发送。" Warning
             false
         elif not authenticated || not client.IsConnected then
@@ -794,7 +831,11 @@ type MainView() as this =
     member this.ToggleSidebar() =
         let state = navigation.ToggleSidebar()
         mainLayout.Apply state
-        if not state.compactMode then
+        if state.compactMode then
+            // compact 抽屉开关的焦点归宿：打开进抽屉，收起回输入区（D3/D4）。
+            if state.compactNavigationOpen then sidebar.FocusSearch()
+            else composer.Focus()
+        else
             prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
             UiPrefs.save prefs
 
@@ -805,6 +846,11 @@ type MainView() as this =
             elif settingsHost.IsVisible then
                 e.Handled <- true
                 this.CloseSettings()
+            elif navigation.State.compactMode && navigation.State.compactNavigationOpen then
+                // 抽屉内有焦点的分支（搜索/行/开关/空态）已先消费 Escape 并标记 Handled；
+                // 落到这里说明焦点在抽屉外，直接收起并把焦点还给输入区，且先于生成停止分支（D3/D4）。
+                e.Handled <- true
+                this.SetCompactNavigation false
             elif (runs.Get activeConvId).generationId.IsSome then
                 e.Handled <- true
                 this.StopGeneration()
@@ -816,25 +862,41 @@ type MainView() as this =
             e.Handled <- true
             let state = navigation.EnsureSearchVisible()
             mainLayout.Apply state
-            if not state.compactMode && prefs.sidebarCollapsed then
-                prefs <- { prefs with sidebarCollapsed = false }
+            // 以返回的状态为准回写偏好，不读更新前的 prefs（D3/D4）。
+            if not state.compactMode && prefs.sidebarCollapsed <> state.sidebarCollapsed then
+                prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
                 UiPrefs.save prefs
             sidebar.FocusSearch()
         | OpenSettings -> e.Handled <- true; this.ShowSettings()
         | ToggleTheme ->
             e.Handled <- true
-            let nextTheme = if Tokens.isDark() then AlwaysLight else AlwaysDark
+            // 主题三态轮转：跟随系统 → 浅色 → 深色 → 回到跟随系统。
+            let nextTheme =
+                match prefs.theme with
+                | FollowSystem -> AlwaysLight
+                | AlwaysLight -> AlwaysDark
+                | AlwaysDark -> FollowSystem
             this.SavePrefs { prefs with theme = nextTheme }
-            toast (if nextTheme = AlwaysDark then "已切换为深色主题" else "已切换为浅色主题") Neutral
+            toast
+                (match nextTheme with
+                 | FollowSystem -> "已切换为跟随系统主题"
+                 | AlwaysDark -> "已切换为深色主题"
+                 | AlwaysLight -> "已切换为浅色主题")
+                Neutral
         | ExportConversation ->
             e.Handled <- true
             match activeSummary() with
             | Some summary -> this.ExportConversation summary
             | None -> toast "没有打开的会话可导出" Warning
         | OpenConversationAt index ->
-            if index < summaries.Length then
-                e.Handled <- true
-                this.OpenConversation summaries[index].id
+            // Ctrl+1..9 走侧栏当前可见顺序（C2）；打开后焦点经 OpenConversation 回家（D3/D4）。
+            let order = sidebar.GetVisibleOrder()
+            if index >= 0 && index < order.Length then
+                match Guid.TryParse order[index] with
+                | true, id ->
+                    e.Handled <- true
+                    this.OpenConversation id
+                | _ -> ()
         | ShowShortcuts -> e.Handled <- true; Dialogs.shortcuts overlay
 
     // ---- 协议事件 ----
@@ -860,6 +922,10 @@ type MainView() as this =
             // 连接真的成功了，退避归零
             reconnectDelayMs <- ReconnectBackoff.baseDelayMs
             pairingRequested <- false
+            // 重连成功：上一代连接残留的失败卡片已过期，清掉免得误导。
+            for s in summaries do
+                runs.ClearError s.id
+            activeConvId |> Option.iter runs.ClearError
             if not (exportDialog |> Option.exists (fun dialog -> dialog.IsOpen)) then overlay.CloseDialog()
             let host = try Uri(lastUrl).Host with _ -> lastUrl
             sidebar.SetConnection(true, sprintf "已连接 · %s" host)
@@ -972,26 +1038,42 @@ type MainView() as this =
                && activeConvId = Some d.conversationId then
                 this.Render()
         | GenerationFinished d ->
-            let error = if d.status = "failed" then d.error else None
+            // Fail-closed：未知状态与无错误详情的失败一律落成可重试的通用失败卡，绝不静默（D2）。
+            let error =
+                match d.status with
+                | "completed" | "cancelled" -> None
+                | "failed" ->
+                    match d.error with
+                    | Some _ as error -> error
+                    | None ->
+                        Some(GenerationError.create GenerationErrorKind.UnknownFailure "生成失败，但服务端没有返回错误详情。")
+                | unknown ->
+                    Some(
+                        GenerationError.create GenerationErrorKind.UnknownFailure "生成结束状态未知，已按失败处理。"
+                        |> GenerationError.withDetail (sprintf "未知状态：%s" unknown))
             if runs.Finish(d.conversationId, d.generationId, error, d.usage) then
                 state.Handle ev
                 match d.status, error with
-                | "failed", Some error when activeConvId <> Some d.conversationId ->
-                    toast (GenerationError.display error) Failure
                 | "cancelled", _ when activeConvId = Some d.conversationId -> toast "已停止" Neutral
+                // 非当前会话的失败只 toast（卡片看不见）；当前会话的失败只进卡片，不叠 toast。
+                | _, Some err when activeConvId <> Some d.conversationId ->
+                    toast (GenerationError.display err) Failure
                 | _ -> ()
                 if activeConvId = Some d.conversationId then this.Render()
         | AttachmentCommitted d ->
             match drafts.All |> Seq.tryPick (fun draft -> draft.attachments.Complete(d.attachmentId, d.size)) with
-            | Some(upload, stillDrafted) ->
+            // 完成 toast 只给当前可见会话：后台会话的翻转由 chip 自证，不叠 toast（C5）。
+            | Some(upload, stillDrafted, key) when stillDrafted && key = (instanceId, activeConvId) ->
                 composer.SetAttachments((attachmentDraft ()).Items)
-                if stillDrafted then toast (sprintf "附件「%s」上传完成" upload.fileName) Success
+                toast (sprintf "附件「%s」上传完成" upload.fileName) Success
+            | Some _ -> ()
             | None -> ()
         | AttachmentAborted d ->
             match drafts.All |> Seq.tryPick (fun draft -> draft.attachments.Abort d.attachmentId) with
-            // 上传失败只报一次：输入区附件条已内联呈现失败态，不再叠 toast。
-            | Some(_, _) ->
+            // 失败恰报一次 toast（附件条同时内联呈现失败态，两处各报一次、不叠加）（C6）。
+            | Some(upload, _, _) ->
                 composer.SetAttachments((attachmentDraft ()).Items)
+                toast (sprintf "上传失败：%s" upload.fileName) Warning
             | None -> ()
         | AttachmentDownloadBegin d ->
             let key = d.sha256.ToLowerInvariant()
@@ -1040,6 +1122,13 @@ type MainView() as this =
                 if parts.Length > 1 then
                     missingAttachments <- missingAttachments.Add(parts[1].ToLowerInvariant())
                     this.Render()
+            elif d.message.StartsWith("消息记账失败", StringComparison.Ordinal) && activeConvId.IsSome then
+                // 可行动的服务端错误进持久面：错误卡片自带重试，不再叠 toast（D9）。
+                // 若正有生成在跑（槽位被占），退回 toast，避免踩掉进行中的状态。
+                let convId = activeConvId.Value
+                let failure = GenerationError.create GenerationErrorKind.UnknownFailure d.message
+                if runs.Finish(convId, Guid.CreateVersion7(), Some failure, None) then this.Render()
+                else toast (sprintf "服务端错误：%s" d.message) Failure
             else
                 toast (sprintf "服务端错误：%s" d.message) Failure
         | _ -> ()
@@ -1071,6 +1160,8 @@ type MainView() as this =
                                 command
                                 (Some(sprintf "会话「%s」已删除" summary.title))
                                 (fun () ->
+                                    // 删除后焦点有家：邻行，否则搜索框（C3）。
+                                    sidebar.FocusAfterDelete(summary.id.ToString())
                                     if activeConvId = Some summary.id then
                                         this.SelectConversation None
                                         sidebar.SetActive None
@@ -1179,6 +1270,8 @@ type MainView() as this =
         | Some convId, Some view when view.pageHasMore && not pageLoading ->
             chat.BeginHistoryPrependAnchor()
             pageLoading <- true
+            // 分页没有骨架屏（会重置滚动）：一条 transient toast 给加载反馈。
+            toast "正在加载更早消息…" Neutral
             send (
                 HistoryRequest
                     {| conversationId = convId
@@ -1316,6 +1409,7 @@ type MainView() as this =
                     outbox.Disconnect instanceId
                     commandFeedback.RejectAll()
                     configFeedback.RejectAll()
+                    this.FailUploadingAttachments()
                     let detail = match error with Some e -> e.Message | None -> ""
                     sidebar.SetConnection(false, "连接已断开")
                     if not (String.IsNullOrWhiteSpace detail) then toast (sprintf "连接已断开：%s" detail) Warning

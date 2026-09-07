@@ -208,3 +208,13 @@ let ``stderr redact replaces longer secrets first`` () =
         Assert.Equal("x *** y", Stderr.redact (sprintf "x %s y" shortSecret))
     finally
         Stderr.clearSecrets ()
+
+/// D6：超限错误携带 (上限, 实际)，文案点名 MiB 上限、实际大小与 remedy。
+[<Fact>]
+let ``oversize attachment error names the MiB cap, actual size, and remedy`` () =
+    let err = AttachmentTooLarge (64L * 1024L * 1024L, 100L * 1024L * 1024L)
+    Assert.Equal("attachment-too-large", WanxiangError.code err)
+    let msg = WanxiangError.message err
+    Assert.Contains("64.0 MiB", msg)
+    Assert.Contains("100.0 MiB", msg)
+    Assert.Contains("network.maxAttachmentBytes", msg)

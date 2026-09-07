@@ -27,6 +27,7 @@ type ProviderConfig = {
     /// 单次 HTTP 请求超时（秒）
     timeoutSeconds: int
     /// 可重试失败的最大重试次数（指数退避 + 尊重 Retry-After）
+    /// 默认 0：计费调用默认不自动重发，需要才显式打开。
     maxRetries: int
     /// 关闭后不参与模型选择，也不允许新会话使用
     enabled: bool
@@ -42,7 +43,7 @@ type ProviderConfig = {
 module ProviderConfig =
 
     let defaultTimeoutSeconds = 120
-    let defaultMaxRetries = 2
+    let defaultMaxRetries = 0
 
     /// 界面展示名：label 为空时回落 id。
     let displayName (p: ProviderConfig) : string =
@@ -93,6 +94,9 @@ type GenerationDefaults = {
     instructions: string option
     /// 单次请求最多携带多少条历史消息；0 = 不限
     maxContextMessages: int
+    /// 单次请求最多携带多少 token（含图片估算，见 GenerationContext.trim）。
+    /// 超出即从旧往新裁剪，与 maxContextMessages 是两道栏；0 = 不限。
+    maxContextTokens: int
     /// 首轮对话后自动生成会话标题
     autoTitle: bool
     /// 工具调用循环的最大轮次，防止模型无限调工具
@@ -112,6 +116,7 @@ module GenerationDefaults =
           maxTokens = None
           instructions = None
           maxContextMessages = 200
+          maxContextTokens = 128000
           thinkingBudget = 0
           autoTitle = true
           maxToolRounds = 12 }

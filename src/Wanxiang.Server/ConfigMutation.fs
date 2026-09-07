@@ -201,6 +201,7 @@ module ConfigMutation =
               maxTokens = optInt "maxTokens" current.maxTokens
               instructions = if hasKey "instructions" then str payload "instructions" else current.instructions
               maxContextMessages = intOf payload "maxContextMessages" |> Option.defaultValue current.maxContextMessages
+              maxContextTokens = intOf payload "maxContextTokens" |> Option.defaultValue current.maxContextTokens
               autoTitle = boolOf payload "autoTitle" current.autoTitle
               maxToolRounds = intOf payload "maxToolRounds" |> Option.defaultValue current.maxToolRounds
               thinkingBudget = intOf payload "thinkingBudget" |> Option.defaultValue current.thinkingBudget }
@@ -223,6 +224,7 @@ module ConfigMutation =
               | Some m when m <= 0 -> "generation.maxTokens: 需为正整数"
               | _ -> ()
               if generation.maxContextMessages < 0 then "generation.maxContextMessages: 不能为负"
+              if generation.maxContextTokens < 0 then "generation.maxContextTokens: 不能为负"
               if generation.maxToolRounds <= 0 then "generation.maxToolRounds: 需为正整数"
               if toolsCfg.callTimeoutSeconds <= 0 then "tools.callTimeoutSeconds: 需为正整数"
               for root in toolsCfg.fileReadRoots do

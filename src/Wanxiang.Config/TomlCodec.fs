@@ -27,7 +27,7 @@ module TomlCodec =
     let private knownPairingKeys = set [ "failureWindowMinutes"; "maxFailures"; "freezeMinutes" ]
 
     let private knownGenerationKeys =
-        set [ "temperature"; "topP"; "maxTokens"; "instructions"; "maxContextMessages"
+        set [ "temperature"; "topP"; "maxTokens"; "instructions"; "maxContextMessages"; "maxContextTokens"
               "autoTitle"; "maxToolRounds"; "thinkingBudget" ]
 
     let private knownToolsKeys = set [ "fileReadRoots"; "callTimeoutSeconds" ]
@@ -421,6 +421,7 @@ module TomlCodec =
                         | true, b -> asString b |> Option.filter (String.IsNullOrWhiteSpace >> not)
                         | _ -> None
                       maxContextMessages = getIntOpt "maxContextMessages" |> Option.defaultValue d.maxContextMessages
+                      maxContextTokens = getIntOpt "maxContextTokens" |> Option.defaultValue d.maxContextTokens
                       autoTitle =
                         (match t.TryGetValue "autoTitle" with
                          | true, b -> asBool b |> Option.defaultValue d.autoTitle
@@ -590,6 +591,7 @@ module TomlCodec =
         | Some m when m <= 0 -> errors.Add "generation.maxTokens: must be positive"
         | _ -> ()
         if generation.maxContextMessages < 0 then errors.Add "generation.maxContextMessages: must not be negative"
+        if generation.maxContextTokens < 0 then errors.Add "generation.maxContextTokens: must not be negative"
         if generation.maxToolRounds <= 0 then errors.Add "generation.maxToolRounds: must be positive"
         if generation.thinkingBudget < 0 then errors.Add "generation.thinkingBudget: must not be negative"
         if toolsCfg.callTimeoutSeconds <= 0 then errors.Add "tools.callTimeoutSeconds: must be positive"
@@ -711,6 +713,7 @@ module TomlCodec =
         match cfg.generation.maxTokens with Some m -> generation.Add("maxTokens", int64 m) | None -> ()
         match cfg.generation.instructions with Some s -> generation.Add("instructions", s) | None -> ()
         generation.Add("maxContextMessages", int64 cfg.generation.maxContextMessages)
+        generation.Add("maxContextTokens", int64 cfg.generation.maxContextTokens)
         generation.Add("autoTitle", cfg.generation.autoTitle)
         generation.Add("maxToolRounds", int64 cfg.generation.maxToolRounds)
         if cfg.generation.thinkingBudget > 0 then

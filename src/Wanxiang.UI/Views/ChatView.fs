@@ -478,6 +478,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// Assistant (头像 + 多行正文条) -> User (右对齐气泡) -> Assistant (头像 + 多行正文条)
     member private this.EnsureSkeletonBuilt() =
         if skeletonPanel.Children.Count = 0 then
+            Avalonia.Automation.AutomationProperties.SetName(skeletonPanel, "正在加载历史消息")
             let makeTextBar (height: float) (widthFraction: float) =
                 let border =
                     Border(
@@ -512,6 +513,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 DockPanel.SetDock(avatar, Dock.Left)
                 dock.Children.Add avatar
                 dock.Children.Add lines
+                Avalonia.Automation.AutomationProperties.SetName(dock, "正在加载助手消息")
                 dock :> Control
 
             let makeUserSkeleton () =
@@ -535,6 +537,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 let stack = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3, HorizontalAlignment = HorizontalAlignment.Right)
                 stack.Children.Add bubble
                 stack.Children.Add avatar
+                Avalonia.Automation.AutomationProperties.SetName(stack, "正在加载用户消息")
                 stack :> Control
 
             // 助手骨架 1
@@ -617,11 +620,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                           usageTag = (if ctx.isLastAssistant then hash ctx.usage else 0)
                           missingTag =
                             (if List.isEmpty message.attachments then 0 else hash ctx.missingAttachments) })
-                desired.Add(key, fun () -> MessageCard.render message ctx actions.message))
+                desired.Add(key, fun () -> MessageCard.render message ctx actions.message (Some index)))
 
         match streamingMessage with
         | Some streaming when MessageView.hasVisibleBody streaming ->
-            desired.Add(None, fun () -> MessageCard.render streaming (ctxFor -1 true) actions.message)
+            desired.Add(None, fun () -> MessageCard.render streaming (ctxFor -1 true) actions.message None)
         | _ -> ()
         match error with
         | Some(err, retry) -> desired.Add(None, fun () -> MessageCard.errorCard err retry)
@@ -670,9 +673,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         else
             let newCount = desired.Count
             let delta = newCount - previousRenderedMessageCount
+            // 流式 delta 替换同一张卡（delta = 0）时绝不记未读：
+            // 用户正看着的那条卡在原地刷新，不是“新消息”。
             if delta > 0 && previousRenderedMessageCount > 0 then
                 unreadSinceScrolledUp <- unreadSinceScrolledUp + delta
-            elif unreadSinceScrolledUp = 0 && not wasAtBottom && (streamingMessage.IsSome || (delta > 0)) then
+            elif unreadSinceScrolledUp = 0 && not wasAtBottom && delta > 0 then
                 unreadSinceScrolledUp <- max 1 delta
             this.UpdateScrollToBottomAppearance()
         previousRenderedMessageCount <- desired.Count
@@ -905,7 +910,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 unreadSinceScrolledUp <- 0
                 scrollToBottomButton.IsVisible <- false
             this.UpdateScrollToBottomAppearance()
-            if offset <= 0.5 && extent > viewport then actions.requestOlderHistory ())
+            // 骨架可见时不预取更早历史：会话切换中的 extent 抖动会误触发，
+            // 等真实内容挂载后再按正常阈值取。
+            if offset <= 0.5 && extent > viewport && not skeletonPanel.IsVisible then actions.requestOlderHistory ())
         scroller.PointerWheelChanged.Add(fun e ->
             if e.Delta.Y > 0.0 then
                 smoothScrollTimer |> Option.iter (fun t -> t.Stop())

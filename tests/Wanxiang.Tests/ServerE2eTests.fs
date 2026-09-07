@@ -639,3 +639,130 @@ let ``e2e empty session config is filled from toml default provider`` () =
         ws.Dispose()
     finally
         handle.Dispose()
+
+/// D5/决策 73 回归：删会话绝不触发 blob 清扫——即使 blob 又老又没有任何引用。
+/// 旧行为（后台 sweep：1.5s 延迟 + 10 分钟 grace）会删掉这个倒签 mtime 的孤儿；
+/// 新行为下没有任何删 blob 的路径，断言无条件成立（sleep 只给旧代码留开火时间）。
+[<Fact>]
+let ``e2e deleting a conversation never sweeps attachment blobs`` () =
+    let port = pickPort ()
+    let token = Auth.generateToken ()
+    let dir = tempDir ()
+    let configPath = Path.Combine(dir, "config.toml")
+    try
+        DataPaths.ensureDataDirs dir
+        let cfg =
+            { AppConfig.defaults (Guid.NewGuid()) with
+                listen = sprintf "127.0.0.1:%d" port
+                providers =
+                    Map.ofList
+                        [ "test-provider",
+                          { id = "test-provider"
+                            kind = "openai"
+                            label = "Test Provider"
+                            baseUrl = "http://127.0.0.1:1/v1"
+                            apiKey = None
+                            models = [ "test-model" ]
+                            defaultModel = "test-model"
+                            timeoutSeconds = ProviderConfig.defaultTimeoutSeconds
+                            maxRetries = 0
+                            enabled = true
+                            promptCaching = false
+                            headers = Map.empty
+                            extraJson = None } ]
+                authClients =
+                    [ { tokenHash = Auth.hashToken token
+                        name = "e2e"
+                        createdAtUtc = DateTimeOffset.UtcNow
+                        lastSeenUtc = None
+                        revoked = false } ] }
+        File.WriteAllText(configPath, TomlCodec.serialize cfg)
+        let app = new Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
+        app.Start(false)
+        try
+            use cts = new CancellationTokenSource(TimeSpan.FromSeconds 20.0)
+            let ws = E2e.conn port token cts.Token
+            E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
+            // 上传一个从不挂到任何消息上的 blob：天然孤儿
+            let bytes = Text.Encoding.UTF8.GetBytes "orphan blob survives delete"
+            let hash = Convert.ToHexString(SHA256.HashData bytes).ToLowerInvariant()
+            let aid = Guid.NewGuid()
+            let beginEv = JsonObject()
+            beginEv["type"] <- "attachment.begin"
+            let bp = JsonObject()
+            bp["attachmentId"] <- aid.ToString("D")
+            bp["totalBytes"] <- int64 bytes.Length
+            bp["sha256"] <- hash
+            bp["mediaType"] <- "text/plain"
+            bp["fileName"] <- "orphan.txt"
+            beginEv["payload"] <- bp
+            E2e.send ws beginEv cts.Token
+            let chunk = JsonObject()
+            chunk["type"] <- "attachment.chunk"
+            let cp = JsonObject()
+            cp["attachmentId"] <- aid.ToString("D")
+            cp["index"] <- 0
+            cp["data"] <- Convert.ToBase64String bytes
+            chunk["payload"] <- cp
+            E2e.send ws chunk cts.Token
+            let complete = JsonObject()
+            complete["type"] <- "attachment.complete"
+            let cpp = JsonObject()
+            cpp["attachmentId"] <- aid.ToString("D")
+            cpp["sha256"] <- hash
+            complete["payload"] <- cpp
+            E2e.send ws complete cts.Token
+            E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "attachment.committed") |> ignore
+            // mtime 倒签一天：旧清扫的 10 分钟 grace 会把它当过期孤儿删掉
+            let blobPath = Path.Combine(dir, "attachments", hash.Substring(0, 2), hash.Substring(2, 2), hash)
+            Assert.True(File.Exists blobPath)
+            File.SetLastWriteTimeUtc(blobPath, DateTime.UtcNow - TimeSpan.FromDays 1.0)
+            // 建会话再删掉：旧代码在每次 conversation.deleted 后调度后台清扫
+            let obs = JsonObject()
+            obs["type"] <- "conversation-list.observe"
+            E2e.send ws obs cts.Token
+            let snap = E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "conversation-list.snapshot")
+            let adv = JsonObject()
+            adv["type"] <- "cursor.advanced"
+            let ap = JsonObject()
+            ap["id"] <- (snap["payload"].AsObject()["lastCommitId"]).GetValue<uint64>()
+            adv["payload"] <- ap
+            E2e.send ws adv cts.Token
+            let convId = Guid.NewGuid()
+            let create = JsonObject()
+            create["type"] <- "conversation.create"
+            let ccp = JsonObject()
+            ccp["invocationId"] <- Guid.NewGuid().ToString("D")
+            ccp["conversationId"] <- convId.ToString("D")
+            ccp["title"] <- "待删会话"
+            ccp["config"] <- JsonNode.Parse("""{"provider":"","model":""}""")
+            create["payload"] <- ccp
+            E2e.send ws create cts.Token
+            let created = E2e.waitFor ws cts.Token (fun o ->
+                let t = o["type"].GetValue<string>()
+                t = "command.committed" || t = "command.rejected")
+            Assert.Equal("command.committed", created["type"].GetValue<string>())
+            let adv2 = JsonObject()
+            adv2["type"] <- "cursor.advanced"
+            let ap2 = JsonObject()
+            ap2["id"] <- (created["payload"].AsObject()["commitId"]).GetValue<uint64>()
+            adv2["payload"] <- ap2
+            E2e.send ws adv2 cts.Token
+            let delete = JsonObject()
+            delete["type"] <- "conversation.delete"
+            let dp = JsonObject()
+            dp["invocationId"] <- Guid.NewGuid().ToString("D")
+            dp["conversationId"] <- convId.ToString("D")
+            delete["payload"] <- dp
+            E2e.send ws delete cts.Token
+            let deleted = E2e.waitFor ws cts.Token (fun o ->
+                let t = o["type"].GetValue<string>()
+                t = "command.committed" || t = "command.rejected")
+            Assert.Equal("command.committed", deleted["type"].GetValue<string>())
+            Thread.Sleep(3500)
+            Assert.True(File.Exists blobPath)
+            ws.Dispose()
+        finally
+            (app :> IDisposable).Dispose()
+    finally
+        cleanup dir

@@ -339,7 +339,8 @@ let ``composer blocks send while any attachment is uploading`` () =
                 size = 1024L
                 mediaType = "text/plain"
                 fileName = "pending.txt"
-                ready = false } ]
+                ready = false
+                failed = false } ]
         Dispatcher.UIThread.RunJobs()
 
         let send = byAutomationName composer "发送" :?> Border
@@ -357,7 +358,8 @@ let ``composer blocks send while any attachment is uploading`` () =
                 size = 1024L
                 mediaType = "text/plain"
                 fileName = "ready.txt"
-                ready = true } ]
+                ready = true
+                failed = false } ]
         Assert.True send.IsEnabled
         provider.Invoke()
         Dispatcher.UIThread.RunJobs()
@@ -413,7 +415,8 @@ let ``composer attachment slots stay stable across uploading ready and thirty it
           size = 1024L
           mediaType = "text/plain"
           fileName = "a-very-long-attachment-name-that-needs-ellipsis.txt"
-          ready = false }
+          ready = false
+          failed = false }
     let window = show composer 720.0 360.0
     try
         composer.SetAttachments [ pending ]
@@ -441,7 +444,7 @@ let ``composer attachment slots stay stable across uploading ready and thirty it
         Dispatcher.UIThread.RunJobs()
         let attachmentScroller =
             descendants composer
-            |> Seq.choose (function :? ScrollViewer as s when abs (s.MaxHeight - LayoutPolicy.attachmentDraftMaxHeight) < 0.1 -> Some s | _ -> None)
+            |> Seq.choose (function :? ScrollViewer as s when s.MaxHeight <= LayoutPolicy.attachmentDraftMaxHeight + 0.5 -> Some s | _ -> None)
             |> Seq.head
         Assert.True(attachmentScroller.Extent.Height > attachmentScroller.Viewport.Height)
         Assert.True(attachmentScroller.Bounds.Height <= LayoutPolicy.attachmentDraftMaxHeight + 0.5)
@@ -469,13 +472,13 @@ let ``attachment draft uses upload identity so duplicate files stay independent`
     Assert.Equal(secondId, draft.Items.Head.attachmentId)
 
     match draft.Complete(firstId, 100L) with
-    | Some(_, stillDrafted) -> Assert.False stillDrafted
+    | Some(_, stillDrafted, _) -> Assert.False stillDrafted
     | None -> failwith "removed upload should still complete transport bookkeeping"
     Assert.Single draft.Items |> ignore
     Assert.False draft.Items.Head.ready
 
     match draft.Complete(secondId, 120L) with
-    | Some(_, stillDrafted) -> Assert.True stillDrafted
+    | Some(_, stillDrafted, _) -> Assert.True stillDrafted
     | None -> failwith "second upload missing"
     Assert.True draft.Items.Head.ready
     Assert.Equal(120L, draft.Items.Head.size)
@@ -557,7 +560,7 @@ let ``large tool detail is bounded first and can explicitly expand fully`` () =
                     name = "huge_tool"
                     argumentsJson = "{\"query\":\"demo\"}"
                     result = Some hugeResult } ] }
-    let card = MessageCard.render message context actions
+    let card = MessageCard.render message context actions None
     let window = show card 720.0 520.0
     try
         let tool = byAutomationName card "展开工具调用 huge_tool"
@@ -577,7 +580,14 @@ let ``large tool detail is bounded first and can explicitly expand fully`` () =
         expandInvoke.Invoke()
         Dispatcher.UIThread.RunJobs()
         Assert.True(Double.IsPositiveInfinity detailScroller.MaxHeight)
-        Assert.Equal("收回限高", AutomationProperties.GetName(expand))
+        // 展开控件在展开后仍然存在：再次激活应收回到有限高度。
+        let collapseInvoke = ControlAutomationPeer.CreatePeerForElement expand |> Assert.IsAssignableFrom<IInvokeProvider>
+        collapseInvoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal(LayoutPolicy.expandedDetailMaxHeight, detailScroller.MaxHeight, 3)
+        expandInvoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(Double.IsPositiveInfinity detailScroller.MaxHeight)
 
         invoke.Invoke()
         Dispatcher.UIThread.RunJobs()
@@ -998,7 +1008,9 @@ let ``sidebar running pin and idle states keep the same title origin`` () =
         Dispatcher.UIThread.RunJobs()
         let list = byAutomationName sidebar "会话列表" :?> ListBox
         let selected = realizedByAutomationName list "Stable title"
-        Assert.Equal("当前会话", AutomationProperties.GetItemStatus(selected))
+        // Active + generating rows announce the combined status (Sidebar.ApplyRowState:
+        // true, true -> "当前会话，生成中"); title geometry/origin asserts above stay.
+        Assert.Equal("当前会话，生成中", AutomationProperties.GetItemStatus(selected))
     finally
         window.Close()
 
@@ -1330,11 +1342,14 @@ let ``toast stays inside narrow viewport and is keyboard dismissible live conten
         overlay.Toast(message, Failure)
         Dispatcher.UIThread.RunJobs()
         let toast = byAutomationName root message
-        Assert.True toast.Focusable
+        // Transient toasts leave the Tab order (Focusable=false, live-region announce
+        // kept); keyboard dismissal goes through the global Escape (HandleEscape
+        // toast branch, topmost-first) without needing focus.
+        Assert.False toast.Focusable
+        Assert.False(toast.IsFocused)
         Assert.Equal(AutomationLiveSetting.Assertive, AutomationProperties.GetLiveSetting(toast))
         Assert.True(toast.Bounds.Width <= root.Bounds.Width - Tokens.space3 * 2.0 + 0.5)
-        let invoke = ControlAutomationPeer.CreatePeerForElement toast |> Assert.IsAssignableFrom<IInvokeProvider>
-        invoke.Invoke()
+        Assert.True(overlay.HandleEscape())
         Dispatcher.UIThread.RunJobs()
         Assert.DoesNotContain(toast, descendants root)
     finally

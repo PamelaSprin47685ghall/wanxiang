@@ -153,7 +153,7 @@ apiKey = "sk-..."
 models = ["gpt-5", "gpt-4o", "gpt-4o-mini"]
 defaultModel = "gpt-4o"
 timeoutSeconds = 120
-maxRetries = 2
+maxRetries = 0
 enabled = true
 promptCaching = false         # 仅 anthropic 原生传输；默认关，因为缓存写入更贵
 
@@ -204,7 +204,8 @@ defaultModel = "gemini-2.5-flash"
 
 两种原生传输都支持流式、工具调用、多模态入参、思维链与用量统计，
 `timeoutSeconds` / `maxRetries` / `headers` 与 OpenAI 传输同样生效——
-重试只发生在收到响应头之前，一旦开始吐字就绝不重发，
+`maxRetries` 默认 0：计费调用默认不自动重发。配成正数才会在收到响应头之前重试，
+一旦开始吐字就绝不重发，
 不会让你看到同一段回答出现两次。密钥走请求头而不是 URL 查询参数。
 
 ---

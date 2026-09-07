@@ -123,7 +123,9 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
 
         let idleSaveText = if existing.IsSome then "保存" else "添加"
         let mutable setPending: bool -> unit = ignore
-        let save () =
+        /// 保存往返中的重入 guard：按钮已禁用，但 Ctrl+Enter 仍能进 save。
+        let mutable savePending = false
+        let saveCore () =
             for box in allBoxes do clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
             let label = if isNull labelBox.Text then "" else labelBox.Text.Trim()
@@ -195,6 +197,10 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                         setPending false
                         if ok && editorActive then overlay.CloseDialog())
 
+        /// pending 中的 save 直接返回，不做二次提交。
+        let save () =
+            if savePending then () else saveCore ()
+
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
         cancelButton.Margin <- Thickness 0.0
         cancelButton.Focusable <- true
@@ -209,6 +215,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         ToolTip.SetTip(saveButton, sprintf "确认%s (Ctrl+Enter)" idleSaveText)
         Ui.preparePendingButton saveButton
         setPending <- fun pending ->
+            savePending <- pending
             Ui.setButtonPending saveButton pending idleSaveText "正在保存…"
             Ui.setEnabled cancelButton (not pending)
         let buttons =

@@ -33,6 +33,8 @@ module MenuEntry =
 module Menu =
 
     let private handCursor = new Cursor(StandardCursorType.Hand)
+    // 浮层菜单内部滚动上限：show / showGrouped 共用，长菜单在浮层内滚动，不把卡片撑出视口。
+    let private menuMaxHeight = 380.0
 
     let private renderEntry (overlay: OverlayHost) (entry: MenuEntry) : Control =
         let foreground: IBrush = if entry.danger then Tokens.danger else Tokens.text
@@ -116,7 +118,7 @@ module Menu =
     /// 菜单用 Up/Down/Home/End 做 roving focus；几何仍完全交给 Avalonia。
     let private wireDirectionalNavigation (panel: StackPanel) =
         panel.KeyDown.Add(fun e ->
-            if e.Key = Key.Up || e.Key = Key.Down || e.Key = Key.Home || e.Key = Key.End then
+            if e.Key = Key.Up || e.Key = Key.Down || e.Key = Key.Home || e.Key = Key.End || e.Key = Key.PageUp || e.Key = Key.PageDown then
                 let items =
                     panel.Children
                     |> Seq.choose (function :? ActionBorder as item when item.Focusable && item.IsEnabled -> Some item | _ -> None)
@@ -125,8 +127,10 @@ module Menu =
                     let current = items |> Array.tryFindIndex _.IsFocused |> Option.defaultValue -1
                     let next =
                         match e.Key with
-                        | Key.Home -> 0
-                        | Key.End -> items.Length - 1
+                        | Key.Home
+                        | Key.PageUp -> 0
+                        | Key.End
+                        | Key.PageDown -> items.Length - 1
                         | Key.Up -> if current <= 0 then items.Length - 1 else current - 1
                         | _ -> if current < 0 || current >= items.Length - 1 then 0 else current + 1
                     e.Handled <- true
@@ -143,8 +147,7 @@ module Menu =
             let scroller =
                 ScrollViewer(
                     Content = panel,
-                    // 与 showGrouped 同一内部滚动上限：40 条也在浮层内滚动，不把卡片撑出视口。
-                    MaxHeight = 380.0,
+                    MaxHeight = menuMaxHeight,
                     HorizontalScrollBarVisibility = Primitives.ScrollBarVisibility.Disabled,
                     VerticalScrollBarVisibility = Primitives.ScrollBarVisibility.Auto)
             overlay.ShowPopup(anchor, scroller :> Control, alignRight, 200.0)
@@ -169,7 +172,7 @@ module Menu =
             let scroller =
                 ScrollViewer(
                     Content = panel,
-                    MaxHeight = 380.0,
+                    MaxHeight = menuMaxHeight,
                     HorizontalScrollBarVisibility = Primitives.ScrollBarVisibility.Disabled,
                     VerticalScrollBarVisibility = Primitives.ScrollBarVisibility.Auto)
             overlay.ShowPopup(anchor, scroller :> Control, alignRight, 240.0)
@@ -213,7 +216,8 @@ module Menu =
         let openMenu () = showGrouped overlay (host :> Control) false (optionsOf ())
         Ui.onClick host openMenu
         host.KeyDown.Add(fun e ->
-            if e.Key = Key.Down then
+            // Down / Up 都能展开：只读按钮上两个方向都符合直觉，且与菜单内 Up/Down 对称。
+            if e.Key = Key.Down || e.Key = Key.Up then
                 e.Handled <- true
                 openMenu ())
         host, (fun text -> caption.Text <- text)

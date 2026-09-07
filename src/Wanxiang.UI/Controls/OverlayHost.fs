@@ -76,6 +76,12 @@ type OverlayHost(root: Grid) =
             Margin = Thickness(Tokens.space6, 0.0, Tokens.space6, Tokens.space8))
 
     let mutable onDialogClosed: unit -> unit = id
+    // 嵌套对话框栈：后打开的对话框只盖住先打开的，关闭时原样恢复
+    // （子内容 + onClosed + 关闭守卫），守卫闭包（如提交 pending 标记）原样保留。
+    let dialogStack = ResizeArray<Control * float * (unit -> unit) * (unit -> bool)>()
+    // 顶层对话框的关闭守卫：提交 pending 期间 Esc / scrim 不得关闭，
+    // 由 HandleEscape 与 scrim 统一检查，程序化的 CloseDialog（提交成功）不受影响。
+    let mutable dialogGuard: unit -> bool = fun () -> true
     let mutable previousDialogFocus: IInputElement option = None
     let mutable previousPopupFocus: IInputElement option = None
     let mutable lastPopupFocus: IInputElement option = None
@@ -167,7 +173,9 @@ type OverlayHost(root: Grid) =
 
     let focusables (content: Control) =
         descendants content
-        |> Seq.filter (fun c -> c.Focusable && c.IsVisible && c.IsEnabled)
+        // 有效可见（IsEffectivelyVisible）而非本地 IsVisible：折叠容器（如配对码区）
+        // 内的子控件本地仍可见，必须跳过，Tab 才不会落到隐藏字段上。
+        |> Seq.filter (fun c -> c.Focusable && c.IsEffectivelyVisible && c.IsEnabled)
         |> Array.ofSeq
 
     let focusFirst (content: Control) =
@@ -269,14 +277,20 @@ type OverlayHost(root: Grid) =
             Grid.SetRowSpan(layer, 8)
             root.Children.Add layer |> ignore
         // 底层滚动时浮层锚点会脱节：滚轮不经过 popupCatcher 的点击捕获，
-        // 因此像层外点击一样直接关闭，避免浮层悬在错误位置。
-        root.PointerWheelChanged.Add(fun _ ->
+        // 因此层外滚轮像层外点击一样直接关闭，避免浮层悬在错误位置；
+        // 落在 popupCard 内的滚轮放行给内部 ScrollViewer，长菜单可在浮层内滚动。
+        root.PointerWheelChanged.Add(fun e ->
             if popupCard.IsVisible then
-                popupCatcher.IsVisible <- false
-                popupCard.IsVisible <- false
-                popupCard.Child <- null
-                popupAnchor <- None
-                restorePopupFocus ())
+                let inside =
+                    try
+                        popupCard.Bounds.Contains(e.GetPosition root)
+                    with _ -> false
+                if not inside then
+                    popupCatcher.IsVisible <- false
+                    popupCard.IsVisible <- false
+                    popupCard.Child <- null
+                    popupAnchor <- None
+                    restorePopupFocus ())
 
     member private _.HideDialog() =
         scrim.IsVisible <- false
@@ -288,13 +302,30 @@ type OverlayHost(root: Grid) =
     member this.CloseDialog() =
         let callback = onDialogClosed
         onDialogClosed <- id
-        this.HideDialog()
-        restoreDialogFocus ()
-        callback ()
+        if dialogStack.Count > 0 then
+            // 嵌套关闭：恢复被盖住的子内容 + onClosed + 守卫，守卫闭包原样保留；
+            // 焦点记忆不动（仍指向最初的触发源），只把焦点送回恢复后的内容。
+            let child, width, closed, guard = dialogStack[dialogStack.Count - 1]
+            dialogStack.RemoveAt(dialogStack.Count - 1)
+            dialogCard.Child <- child
+            dialogPreferredWidth <- width
+            onDialogClosed <- closed
+            dialogGuard <- guard
+            fitDialogToViewport ()
+            if not (isNull child) then focusFirst child
+            callback ()
+        else
+            this.HideDialog()
+            restoreDialogFocus ()
+            callback ()
 
-    member this.ShowDialog(content: Control, width: float, ?onClosed: unit -> unit) =
-        if not dialogCard.IsVisible then rememberDialogFocus ()
+    member this.ShowDialog(content: Control, width: float, ?onClosed: unit -> unit, ?canDismiss: unit -> bool) =
+        if dialogCard.IsVisible then
+            // 嵌套打开：保留当前子内容 + onClosed + 守卫，关闭时原样恢复。
+            dialogStack.Add((dialogCard.Child, dialogPreferredWidth, onDialogClosed, dialogGuard))
+        else rememberDialogFocus ()
         onDialogClosed <- defaultArg onClosed id
+        dialogGuard <- defaultArg canDismiss (fun () -> true)
         let hosted = wrapForDialog content
         dialogCard.Child <- hosted
         dialogPreferredWidth <- width
@@ -330,7 +361,10 @@ type OverlayHost(root: Grid) =
         // 需要等一帧拿到浮层实际尺寸，才能算出不越界的位置
         Dispatcher.UIThread.Post(fun () ->
             positionPopup ()
-            focusFirst content)
+            focusFirst content
+            // 首帧 Bounds 可能仍是旧尺寸（翻转判断用错高度）：布局完成后再重算一次位置。
+            Dispatcher.UIThread.Post(fun () ->
+                if popupCard.IsVisible then positionPopup ()))
 
     member _.IsPopupOpen = popupCard.IsVisible
 
@@ -384,7 +418,8 @@ type OverlayHost(root: Grid) =
                     MaxWidth = ContentMetrics.toastMaxWidth,
                     Padding = Thickness(Tokens.space4, Tokens.space3),
                     Child = row,
-                    Focusable = true)
+                    // 瞬态提示条不进 Tab 序：读屏经由下面的 live region 公告，键盘关闭走全局 Escape。
+                    Focusable = false)
             toast.BoxShadow <- Tokens.shadowPopup ()
             toast.Cursor <- new Cursor(StandardCursorType.Hand)
             ToolTip.SetTip(toast, "点击关闭")
@@ -417,10 +452,7 @@ type OverlayHost(root: Grid) =
                 dismissOldest ()
             toastEntries.Add(message, remove)
             Ui.onClick toast remove
-            toast.KeyDown.Add(fun e ->
-                if e.Key = Key.Escape then
-                    e.Handled <- true
-                    remove ())
+            // Escape 唯一归属 HandleEscape（topmost-first）：这里不再自带局部 Esc 处理。
             toast.PointerEntered.Add(fun _ -> paused <- true)
             toast.PointerExited.Add(fun _ -> paused <- toast.IsFocused)
             toast.GotFocus.Add(fun _ -> paused <- true)
@@ -434,19 +466,28 @@ type OverlayHost(root: Grid) =
             expire.Start()
 
     /// Esc / 点击层外的统一关闭入口，由 AppShell 在根视图上转发按键。
+    /// 唯一的 Escape 归属（topmost-first：popup → dialog → toast）：调用方消费返回的
+    /// true，不再落到 AppShell 的 StopGeneration；守卫拦截的关闭同样消费，避免误停生成。
     member this.HandleEscape() : bool =
         if popupCard.IsVisible then
             this.ClosePopup()
             true
         elif dialogCard.IsVisible then
-            this.CloseDialog()
+            if dialogGuard () then this.CloseDialog()
+            // 守卫拦截（提交 pending 中）也不透出：不关闭但已消费。
+            true
+        elif toastEntries.Count > 0 then
+            let _, dismissNewest = toastEntries[toastEntries.Count - 1]
+            dismissNewest ()
             true
         else
             false
 
     member this.WireDismiss() =
         popupCatcher.PointerPressed.Add(fun _ -> this.ClosePopup())
-        scrim.PointerPressed.Add(fun _ -> this.CloseDialog())
+        // scrim 与 Escape 同守卫：提交 pending 中点 scrim 也不关闭。
+        scrim.PointerPressed.Add(fun _ ->
+            if dialogGuard () then this.CloseDialog())
         root.PropertyChanged.Add(fun args ->
             if args.Property = Visual.BoundsProperty then
                 fitDialogToViewport ()

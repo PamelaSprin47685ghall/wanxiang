@@ -127,34 +127,22 @@ let private upload (store: AttachmentStore) (payload: string) : string =
     sha
 
 [<Fact>]
-let ``garbage collection removes only unreferenced blobs`` () =
+let ``unreferenced blobs are retained without v1 gc`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
         let store = AttachmentStore(dir, 1024L * 1024L)
         let kept = upload store "keep me"
         let dropped = upload store "drop me"
+        // 决策 73：首版不做附件 GC——没有任何引用也必须留着，内容可读回
         Assert.True(store.Exists kept)
         Assert.True(store.Exists dropped)
-        let removed, freed = store.CollectGarbage(Set.ofList [ kept ], TimeSpan.Zero)
-        Assert.Equal(1, removed)
-        Assert.True(freed > 0L)
-        Assert.True(store.Exists kept)
-        Assert.False(store.Exists dropped)
-    finally
-        cleanup dir
-
-[<Fact>]
-let ``the grace window protects blobs that no message references yet`` () =
-    let dir = tempDir ()
-    try
-        DataPaths.ensureDataDirs dir
-        let store = AttachmentStore(dir, 1024L * 1024L)
-        // 分块上传完成与消息提交之间存在窗口，此刻孤儿 blob 是合法的
-        let fresh = upload store "just uploaded"
-        let removed, _ = store.CollectGarbage(Set.empty, TimeSpan.FromMinutes 10.0)
-        Assert.Equal(0, removed)
-        Assert.True(store.Exists fresh)
+        match store.OpenRead dropped with
+        | None -> failwith "retained blob should be readable"
+        | Some (stream, _) ->
+            use stream = stream
+            use reader = new StreamReader(stream)
+            Assert.Equal("drop me", reader.ReadToEnd())
     finally
         cleanup dir
 
@@ -169,8 +157,7 @@ let ``in-flight uploads are never collected`` () =
         let id = Guid.CreateVersion7()
         store.Begin(1, id, int64 bytes.Length, sha, "application/octet-stream", "a.bin")
         |> function Ok () -> () | Error e -> failwithf "%s" (WanxiangError.message e)
-        store.CollectGarbage(Set.empty, TimeSpan.Zero) |> ignore
-        // 未完成的上传住在 .tmp 里，清扫不该碰它，后续 chunk/complete 仍要能跑通
+        // 未完成的上传住在 .tmp 里（首版无任何清扫路径），后续 chunk/complete 仍要能跑通
         store.AppendChunk(id, 0, Convert.ToBase64String bytes)
         |> function Ok () -> () | Error e -> failwithf "%s" (WanxiangError.message e)
         match store.Complete(id, sha) with

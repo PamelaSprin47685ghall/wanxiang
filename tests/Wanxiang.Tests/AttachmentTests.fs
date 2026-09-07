@@ -54,8 +54,21 @@ let ``attachment upload rejects oversized and mismatched payloads`` () =
         store.AppendChunk(aid, 0, Convert.ToBase64String payload) |> ignore
         match store.Complete(aid, "f".PadRight(64, '0')) with
         | Ok _ -> failwith "hash mismatch should be rejected"
-        | Error (AttachmentHashMismatch _) -> ()
+        | Error (AttachmentHashMismatch (expected, actual)) ->
+            // 内容本身无损（actualHash = begin 值），错的是 complete 参数：error 必须点名它
+            Assert.Equal(realHash, expected)
+            Assert.Equal("f".PadRight(64, '0'), actual)
         | Error e -> failwith (WanxiangError.message e)
+        // 内容真损坏时，error 点名的是内容 hash：第二段上传故意写错字节
+        let bad = "abd" |> Text.Encoding.UTF8.GetBytes
+        let aid2 = Guid.NewGuid()
+        store.Begin(1, aid2, int64 payload.Length, realHash, "text/plain", "y.txt") |> ignore
+        store.AppendChunk(aid2, 0, Convert.ToBase64String bad) |> ignore
+        match store.Complete(aid2, realHash) with
+        | Error (AttachmentHashMismatch (expected, actual)) ->
+            Assert.Equal(realHash, expected)
+            Assert.Equal(Convert.ToHexString(SHA256.HashData bad).ToLowerInvariant(), actual)
+        | result -> failwithf "content corruption should be a hash mismatch, got %A" result
         store.Dispose()
     finally
         cleanup dir
@@ -108,7 +121,9 @@ let ``duplicate active attachment id is rejected`` () =
         DataPaths.ensureDataDirs dir
         let store = AttachmentStore(dir, 10L)
         match store.Begin(1, Guid.NewGuid(), 100L, "0".PadRight(64, '0'), "text/plain", "big.txt") with
-        | Error (AttachmentTooLarge _) -> ()
+        | Error (AttachmentTooLarge (limit, actual)) ->
+            Assert.Equal(10L, limit)
+            Assert.Equal(100L, actual)
         | _ -> failwith "oversize should be rejected"
         store.Dispose()
     finally

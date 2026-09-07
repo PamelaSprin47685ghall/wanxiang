@@ -140,7 +140,8 @@ module UiPrefs =
               showArchived = boolOf "showArchived" defaults.showArchived
               reduceMotion = boolOf "reduceMotion" defaults.reduceMotion
               enterSends = boolOf "enterSends" defaults.enterSends
-              windowWidth = floatOf "windowWidth" defaults.windowWidth |> clamp 900.0 6000.0
+              // 桌面最小宽与主窗口下限同源（C7）：LayoutPolicy.desktopMinWidth 是唯一事实来源。
+              windowWidth = floatOf "windowWidth" defaults.windowWidth |> clamp LayoutPolicy.desktopMinWidth 6000.0
               windowHeight = floatOf "windowHeight" defaults.windowHeight |> clamp 600.0 4000.0
               windowX = intOf "windowX" 0
               windowY = intOf "windowY" 0

@@ -80,8 +80,8 @@ module MessageCard =
         toggleFull <- fun () ->
             full <- not full
             scroller.MaxHeight <- if full then Double.PositiveInfinity else LayoutPolicy.expandedDetailMaxHeight
-            Ui.setButtonText expandButton (if full then "收回限高" else "展开全部")
-            Avalonia.Automation.AutomationProperties.SetName(expandButton, if full then "收回限高" else "展开全部")
+            Ui.setButtonText expandButton (if full then "收起" else "展开全部")
+            Avalonia.Automation.AutomationProperties.SetName(expandButton, if full then "收起" else "展开全部")
             Dispatcher.UIThread.Post refreshButton
         scroller.PropertyChanged.Add(fun args ->
             if args.Property = ScrollViewer.ExtentProperty || args.Property = ScrollViewer.ViewportProperty then
@@ -411,14 +411,32 @@ module MessageCard =
                         else None
                     else None
                 with _ -> None
+            elif trimmed.IndexOf("traceback", StringComparison.OrdinalIgnoreCase) >= 0 then
+                // Python traceback：摘要取最后一行非空行（真正的异常行），全文仍在详情里。
+                let lastLine =
+                    trimmed.Split('\n')
+                    |> Array.map (fun s -> s.Trim())
+                    |> Array.filter (not << String.IsNullOrWhiteSpace)
+                    |> Array.tryLast
+                Some(defaultArg lastLine "执行失败")
+            elif trimmed.IndexOf("command failed", StringComparison.OrdinalIgnoreCase) >= 0 then
+                // shell 失败：摘要取首行非空行，全文仍在详情里。
+                let firstLine =
+                    trimmed.Split('\n')
+                    |> Array.map (fun s -> s.Trim())
+                    |> Array.filter (not << String.IsNullOrWhiteSpace)
+                    |> Array.tryHead
+                Some(defaultArg firstLine "执行失败")
             else None
         | _ -> None
 
     let private toolCallCard (ctx: MessageContext) (call: ToolCallView) : Control =
         let running = call.result.IsNone
-        let hasError =
-            match call.result with
-            | Some res when not (String.IsNullOrWhiteSpace res) ->
+        // 与 tryExtractToolError 同意：只要能摘出错误摘要就按失败呈现。
+        // plain-text 失败（error: 前缀、traceback、Command failed）从此也不再
+        // 穿绿色成功外衣、挂“已完成” pill，错误横幅必定出现。
+        let errorSummaryOpt = tryExtractToolError call.result
+        let jsonSignalsError (res: string) =
                 let trimmed = res.Trim()
                 if trimmed.StartsWith "{" && trimmed.EndsWith "}" then
                     try
@@ -430,7 +448,11 @@ module MessageCard =
                                 root.TryGetProperty("isError", &isErr) && isErr.ValueKind = JsonValueKind.True))
                     with _ -> false
                 else false
-            | _ -> false
+        let hasError =
+            errorSummaryOpt.IsSome
+            || (match call.result with
+                | Some res when not (String.IsNullOrWhiteSpace res) -> jsonSignalsError res
+                | _ -> false)
         let statusBrush: IBrush =
             if running then Tokens.accent
             elif hasError then Tokens.danger
@@ -440,6 +462,7 @@ module MessageCard =
             elif hasError then Tokens.dangerSoft :> IBrush
             else Tokens.surfaceSoft :> IBrush
         let statusBadgeText =
+
             if running then "执行中"
             elif hasError then "执行失败"
             else "已完成"
@@ -492,13 +515,12 @@ module MessageCard =
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 IsVisible = not (String.IsNullOrWhiteSpace summaryText),
                 Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0))
-        let errorSummaryOpt = if hasError then tryExtractToolError call.result else None
         let errorBanner =
             let errGlyph = Icons.alert Tokens.danger
             errGlyph.VerticalAlignment <- VerticalAlignment.Center
             let errText =
                 TextBlock(
-                    Text = defaultArg errorSummaryOpt "执行失败：未返回正常结果",
+                    Text = defaultArg errorSummaryOpt "执行失败",
                     FontFamily = Tokens.monoFontFamily,
                     FontSize = Tokens.fontMicro,
                     Foreground = Tokens.danger,
@@ -730,7 +752,7 @@ module MessageCard =
 
     /// 消息操作按钮。放在脚注行里随文档流排布——
     /// 早先做成浮在消息上方的悬浮条，常驻显示后就会压住头像和气泡边角。
-    let private actionButtons (message: MessageView) (ctx: MessageContext) (actions: MessageActions) : StackPanel =
+    let private actionButtons (message: MessageView) (ctx: MessageContext) (actions: MessageActions) (index: int option) : StackPanel =
         let rowTransitions = Avalonia.Animation.Transitions()
         let opacityTransition = Avalonia.Animation.DoubleTransition()
         opacityTransition.Property <- Visual.OpacityProperty
@@ -757,6 +779,12 @@ module MessageCard =
             Avalonia.Automation.AutomationProperties.SetHelpText(button, help)
             Ui.onClick button action
             row.Children.Add button
+        // 复制按钮的自动化名称带上角色与序号：同一屏里多个“复制”不再撞名。
+        let messageCopyName =
+            let roleLabel = if MessageView.isUser message then "用户" else "助手"
+            match index with
+            | Some i when i >= 0 -> sprintf "复制%s消息 %d" roleLabel (i + 1)
+            | _ -> sprintf "复制%s消息" roleLabel
         let addCopyButton (text: string) =
             let button = Ui.iconButton Icons.copy "复制"
             button.Focusable <- true
@@ -766,7 +794,7 @@ module MessageCard =
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             applyIconBaselineNudge button
             ToolTip.SetTip(button, "复制")
-            Avalonia.Automation.AutomationProperties.SetName(button, "复制")
+            Avalonia.Automation.AutomationProperties.SetName(button, messageCopyName)
             Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
             Avalonia.Automation.AutomationProperties.SetLiveSetting(button, AutomationLiveSetting.Polite)
             let mutable copyTimer: DispatcherTimer option = None
@@ -782,7 +810,7 @@ module MessageCard =
                 Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                 applyIconBaselineNudge button
                 ToolTip.SetTip(button, "复制")
-                Avalonia.Automation.AutomationProperties.SetName(button, "复制")
+                Avalonia.Automation.AutomationProperties.SetName(button, messageCopyName)
                 Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
             let doCopy () =
                 actions.copyText text
@@ -802,7 +830,8 @@ module MessageCard =
             Ui.onClick button doCopy
             button.DetachedFromVisualTree.Add(fun _ -> restoreDefaultState ())
             row.Children.Add button
-        if not (String.IsNullOrWhiteSpace message.text) then
+        // 复制与编辑/分叉/重生成/删除同门：流式进行中一律不挂，避免拷走半句话。
+        if not (String.IsNullOrWhiteSpace message.text) && not ctx.streaming then
             addCopyButton message.text
         if MessageView.isUser message && not ctx.streaming then
             addButton Icons.pencil "编辑并分叉" "编辑并分叉" "以编辑后的消息创建分叉会话" (fun () ->
@@ -860,7 +889,7 @@ module MessageCard =
                     Text = sprintf "建议等待约 %d 秒后重试。" seconds,
                     FontSize = Tokens.fontCaption,
                     Foreground = Tokens.warning))
-        | None -> ()
+        | _ -> ()
         // 恢复动作紧跟说明：告诉用户「可以重试」却不给按钮，
         // 等于逼他把刚才那句话重新打一遍。
         let actionRow =
@@ -1149,7 +1178,7 @@ module MessageCard =
             Some(panel :> Control)
 
     /// 渲染一条消息。返回可直接塞进消息列表的控件。
-    let render (message: MessageView) (ctx: MessageContext) (actions: MessageActions) : Control =
+    let render (message: MessageView) (ctx: MessageContext) (actions: MessageActions) (index: int option) : Control =
         let renderer = MarkdownRenderer(ctx.fontSize, actions.copyText, actions.openLink, not ctx.streaming)
         let body = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
 
@@ -1263,7 +1292,7 @@ module MessageCard =
         // 脚注行：时间 + 操作按钮，随文档流排在消息下方。
         // 头像占了 26pt 加 12pt 间距，脚注缩进同样的量才能与正文左缘对齐。
         let gutter = Tokens.logoAvatar + Tokens.space3
-        let buttons = actionButtons message ctx actions
+        let buttons = actionButtons message ctx actions index
         let metaText =
             if ctx.streaming then None
             else footer message (if ctx.isLastAssistant then ctx.usage else None)

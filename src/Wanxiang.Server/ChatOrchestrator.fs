@@ -14,6 +14,37 @@ open Wanxiang.Core
 open Wanxiang.Protocol
 open Wanxiang.Store
 
+/// SubmitResult → 记账结果的唯一映射（决策 10/17：只有 committed 才算成功）。
+/// SubmitMessage 与 DrainQueue 共用：排队提交的每一种结局要么拿到 commit id，
+/// 要么经 RecordSubmitOutcome 变成可见的 ServerError，绝不静默吞掉。
+module SubmitOutcome =
+
+    let ofSubmitResult (result: SubmitResult) : Result<Events.Commit, WanxiangError> =
+        match result with
+        | Committed c -> Ok c
+        | IdempotentReplay c -> Ok c
+        | TruncatedAndReused (c, _) -> Ok c // 已截尾：调用方忽略
+        | CommandIdRejected e -> Error e
+        | CommitFailed e -> Error e
+
+/// 空上下文时的结束决策：本批有已提交消息却拼不出上下文 → failed（可重试），
+/// 绝不以 completed 蒙混成“成功却无回复”；空批（无事可做）→ completed。
+module EmptyContextFinish =
+
+    let decide (hasBatch: bool) : string * GenerationError option =
+        if hasBatch then
+            "failed",
+            Some(GenerationError.create UnknownFailure "已收到消息，但无法组装出有效的模型上下文，本次生成已中止，请重试。")
+        else
+            "completed", None
+
+/// 工具轮数上限的失败形态：可重试——调大 maxToolRounds 后重新生成可能成功。
+module ToolRoundLimit =
+
+    let error (maxRounds: int) : GenerationError =
+        { GenerationError.create ToolFailed (sprintf "模型连续调用工具超过 %d 轮，已停止本次生成；如需继续，可在会话设置中提高 maxToolRounds 后重试。" maxRounds) with
+            retryable = true }
+
 /// 会话运行时的生成状态。
 type GenerationRuntime = {
     generationId: Guid
@@ -180,17 +211,13 @@ type ChatOrchestrator(
         let canonicalPayload = payloadJson.ToJsonString()
         let commandId = CommandId.compute invocationId "agent.message" canonicalPayload
         let canonicalHash = CommandId.sha256Hex canonicalPayload
-        match coordinator.Submit
-            { events = [ AgentMessageRecorded { conversationId = convId; payloadJson = payloadJson } ]
-              commandId = Some commandId
-              commandType = Some "agent.message"
-              commandHash = Some canonicalHash
-              nowUtc = None } with
-        | Committed c -> Ok c
-        | IdempotentReplay c -> Ok c
-        | TruncatedAndReused (c, _) -> Ok c // 已截尾：调用方忽略
-        | CommandIdRejected e -> Error e
-        | CommitFailed e -> Error e
+        SubmitOutcome.ofSubmitResult
+            (coordinator.Submit
+                { events = [ AgentMessageRecorded { conversationId = convId; payloadJson = payloadJson } ]
+                  commandId = Some commandId
+                  commandType = Some "agent.message"
+                  commandHash = Some canonicalHash
+                  nowUtc = None })
 
     /// 记账提交结果处理：失败必须可见（决策 10/17：只有 committed 才算成功），
     /// 记 stderr 并向观察该会话的客户端广播 ServerError。
@@ -247,11 +274,14 @@ type ChatOrchestrator(
               let result = this.SubmitQueuedMessage(convId, cmd, msgJson)
               let invId = ClientCommand.invocationId cmd
               let commandId = CommandId.compute invId (ClientCommand.commandType cmd) (ClientCommand.canonicalPayload cmd)
-              match result with
-              | Committed c ->
+              let accounted = SubmitOutcome.ofSubmitResult result
+              // 与 SubmitMessage 同一记账口径：失败变成可见的 ServerError，不静默
+              this.RecordSubmitOutcome(convId, accounted)
+              match accounted with
+              | Ok c ->
                   broadcastToConversation convId (CommandCommitted {| invocationId = invId; commandId = commandId; commitId = c.id |})
                   yield invId, c.id
-              | _ -> () ]
+              | Error _ -> () ]
 
     /// 启动生成（若会话空闲且队列非空）。
     member this.MaybeStartGeneration(convId: Guid) : unit =
@@ -396,7 +426,7 @@ type ChatOrchestrator(
                     // 1. 取消检查（决策 88：取消只停止当前运行；内存中排队但尚未插入的用户消息
                     //    继续保留，等待下一个插入点——绝不先提交再取消，否则消息落盘却无回复）
                     if g.cts.IsCancellationRequested then
-                        let ev = finishedEvent convId generationId "cancelled" None g.startedAtUtc None
+                        let ev = finishedEvent convId generationId "cancelled" None g.startedAtUtc (Some g.accumulatedUsage)
                         this.FinishGeneration(convId, generationId, ev, false) |> ignore
                         running <- false
                     else
@@ -409,7 +439,9 @@ type ChatOrchestrator(
                             // 继续调 Provider 只会凭空生成一段无来由的回复。
                             if not (List.isEmpty batch) then
                                 logInfo(sprintf "generation %O aborted: empty context after draining %d message(s)" generationId (List.length batch))
-                            this.FinishGeneration(convId, generationId, finishedEvent convId generationId "completed" None g.startedAtUtc None, false) |> ignore
+                            // 本批有已提交消息却拼不出上下文：失败（可重试），绝不 completed 蒙混
+                            let status, err = EmptyContextFinish.decide (not (List.isEmpty batch))
+                            this.FinishGeneration(convId, generationId, finishedEvent convId generationId status err g.startedAtUtc None, false) |> ignore
                             running <- false
                         else
                             // 4. Provider 调用（配置变更只影响下一次调用，决策 87：
@@ -481,10 +513,7 @@ type ChatOrchestrator(
                                     elif g.toolRounds >= maxRounds then
                                         // 工具循环不设上限时，一个反复调工具的模型能把 token 烧到没有上限。
                                         logInfo(sprintf "generation %O stopped: tool round limit %d reached" generationId maxRounds)
-                                        let err =
-                                            GenerationError.create
-                                                ToolFailed
-                                                (sprintf "模型连续调用工具超过 %d 轮，已停止本次生成。" maxRounds)
+                                        let err = ToolRoundLimit.error maxRounds
                                         let ev = finishedEvent convId generationId "failed" (Some err) g.startedAtUtc (Some g.accumulatedUsage)
                                         this.FinishGeneration(convId, generationId, ev, false) |> ignore
                                         running <- false
