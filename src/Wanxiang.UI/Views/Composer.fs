@@ -8,6 +8,7 @@ open Avalonia.Input
 open Avalonia.Interactivity
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Platform.Storage
 open Avalonia.Threading
 
 /// 输入区对外暴露的动作。
@@ -18,6 +19,8 @@ type ComposerActions = {
     pickAttachment: unit -> unit
     removeAttachment: Guid -> unit
     openModelPicker: Control -> unit
+    dropFiles: IStorageItem list -> unit
+    pasteFromClipboard: unit -> bool
 }
 
 /// 消息输入区。
@@ -157,7 +160,12 @@ type Composer(actions: ComposerActions) as this =
                     if shift then ()
                     elif enterSends || ctrl then
                         e.Handled <- true
-                        this.Submit()),
+                        this.Submit()
+                elif e.Key = Key.V then
+                    let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
+                    if ctrl then
+                        if actions.pasteFromClipboard () then
+                            e.Handled <- true),
             RoutingStrategies.Tunnel)
 
     member private this.Submit() =
@@ -364,6 +372,47 @@ type Composer(actions: ComposerActions) as this =
         input.LostFocus.Add(fun _ ->
             shell.BorderBrush <- Tokens.border
             shell.BoxShadow <- Tokens.shadowSoft ())
+
+        DragDrop.SetAllowDrop(shell, true)
+        DragDrop.SetAllowDrop(this, true)
+
+        let handleDragOver (e: DragEventArgs) =
+            let hasFiles =
+                e.DataTransfer <> null &&
+                (e.DataTransfer.Contains(DataFormat.File) || e.DataTransfer.TryGetFiles() <> null)
+            if hasFiles then
+                e.DragEffects <- DragDropEffects.Copy
+                shell.BorderBrush <- Tokens.accent
+                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
+            else
+                e.DragEffects <- DragDropEffects.None
+
+        let handleDragLeave (_: DragEventArgs) =
+            if not input.IsFocused then
+                shell.BorderBrush <- Tokens.border
+                shell.BoxShadow <- Tokens.shadowSoft ()
+
+        let handleDrop (e: DragEventArgs) =
+            if not input.IsFocused then
+                shell.BorderBrush <- Tokens.border
+                shell.BoxShadow <- Tokens.shadowSoft ()
+            if e.DataTransfer <> null then
+                let files =
+                    let multi = e.DataTransfer.TryGetFiles()
+                    if multi <> null then List.ofSeq multi
+                    else
+                        let single = e.DataTransfer.TryGetFile()
+                        if single <> null then [ single ] else []
+                if not (List.isEmpty files) then
+                    e.Handled <- true
+                    actions.dropFiles files
+
+        shell.AddHandler(DragDrop.DragOverEvent, EventHandler<DragEventArgs>(fun _ e -> handleDragOver e))
+        shell.AddHandler(DragDrop.DragLeaveEvent, EventHandler<DragEventArgs>(fun _ e -> handleDragLeave e))
+        shell.AddHandler(DragDrop.DropEvent, EventHandler<DragEventArgs>(fun _ e -> handleDrop e))
+        this.AddHandler(DragDrop.DragOverEvent, EventHandler<DragEventArgs>(fun _ e -> handleDragOver e))
+        this.AddHandler(DragDrop.DragLeaveEvent, EventHandler<DragEventArgs>(fun _ e -> handleDragLeave e))
+        this.AddHandler(DragDrop.DropEvent, EventHandler<DragEventArgs>(fun _ e -> handleDrop e))
 
         let outer = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, MaxWidth = Tokens.readingWidth)
         outer.Children.Add disabledNotice

@@ -1,6 +1,8 @@
 namespace Wanxiang.UI
 
 open System
+open System.Globalization
+open System.Text
 open Avalonia
 open Avalonia.Controls
 open Avalonia.Controls.Documents
@@ -99,6 +101,27 @@ type MarkdownRenderer(
             | MdBreak -> block.Inlines.Add(LineBreak())
         block :> Control
 
+    /// 将长字符串按字素簇（grapheme clusters / text elements）安全切片，
+    /// 避免在 surrogate pair 或复杂 emoji 序列中间拆分造成畸变。
+    static member SafeChunk (chunkSize: int) (str: string) : string list =
+        if String.IsNullOrEmpty str || chunkSize <= 0 then
+            if String.IsNullOrEmpty str then [] else [ str ]
+        else
+            let enumerator = StringInfo.GetTextElementEnumerator(str)
+            let chunks = ResizeArray<string>()
+            let current = StringBuilder()
+            let mutable count = 0
+            while enumerator.MoveNext() do
+                current.Append(enumerator.GetTextElement()) |> ignore
+                count <- count + 1
+                if count = chunkSize then
+                    chunks.Add(current.ToString())
+                    current.Clear() |> ignore
+                    count <- 0
+            if current.Length > 0 then
+                chunks.Add(current.ToString())
+            chunks |> Seq.toList
+
     /// 链接需要能点。整段文本共用一个 TextBlock 时无法逐字命中，
     /// 因此只在段落里存在链接时，把段落拆成「文本 + 可点链接」的 WrapPanel。
     member private this.RenderInlineRow(items: MdInline list, size: float, weight: FontWeight, brush: IBrush) : Control =
@@ -148,11 +171,12 @@ type MarkdownRenderer(
                     if text.Length <= 40 then
                         addLinkChunk text text url true
                     else
-                        for start in 0 .. 40 .. text.Length - 1 do
-                            let count = min 40 (text.Length - start)
+                        let chunks = MarkdownRenderer.SafeChunk 40 text
+                        for i in 0 .. chunks.Length - 1 do
+                            let chunk = chunks.[i]
                             // 视觉上仍可逐段命中，但一个长链接只占一个 Tab stop，
                             // 避免键盘用户在同一 URL 上重复停留多次。
-                            addLinkChunk text (text.Substring(start, count)) url (start = 0)
+                            addLinkChunk text chunk url (i = 0)
                 | other -> buffer <- other :: buffer
             flush ()
             wrap :> Control

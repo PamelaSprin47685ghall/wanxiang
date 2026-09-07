@@ -155,7 +155,7 @@ module GenerationErrorKind =
         | ProviderAuthFailed -> "请在设置中检查该服务商的 API Key。"
         | ProviderRateLimited -> "已触发服务商限流，稍等一会儿再试。"
         | ProviderTimeout -> "网络或服务商响应过慢，可直接重试。"
-        | ProviderUnavailable -> "服务商暂时不可用，请稍后重试或换一个服务商。"
+        | ProviderUnavailable -> "服务商暂时不可用或网络异常，请检查网络设置或稍后重试。"
         | ProviderBadRequest -> "当前模型不接受这些生成参数，请到会话设置调整。"
         | ContextTooLong -> "对话太长了，可新建会话或删除部分早期消息。"
         | ModelNotFound -> "该模型不可用，请在设置中确认模型名称。"

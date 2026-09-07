@@ -111,7 +111,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             // 末条消息与输入区之间的留白统一由 messagePanel.Margin 承担，底部 Padding 设为 0 避免叠加
             Padding = Thickness(Tokens.shellInset, Tokens.space5, Tokens.shellInset, 0.0))
-
     let emptyPanel =
         StackPanel(
             Orientation = Orientation.Vertical,
@@ -138,6 +137,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             LineHeight = ReadingRhythm.emptyStateLineHeight)
     let emptyActions = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Center)
     let mutable lastEmptyState: (ChatEmptyState * string option) option = None
+    let skeletonPanel =
+        StackPanel(
+            Orientation = Orientation.Vertical,
+            Spacing = ContentMetrics.messageGap,
+            Margin = Thickness(0.0, 0.0, 0.0, ContentMetrics.messageEndBreathing),
+            MaxWidth = Tokens.readingWidth,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            IsVisible = false)
+    let mutable skeletonTimer: DispatcherTimer option = None
+    let mutable skeletonOpacityPhase = 0.0
 
     /// 已渲染的卡片，按身份缓存。
     ///
@@ -248,6 +257,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             | None -> ()
         emptyPanel.IsVisible <- true
         scroller.IsVisible <- false
+        this.HideSkeletonLoading()
         messagePanel.IsVisible <- false
 
     member this.HideEmpty() =
@@ -255,6 +265,120 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         emptyPanel.IsVisible <- false
         scroller.IsVisible <- true
         messagePanel.IsVisible <- true
+
+    /// 停止骨架呼吸动画。
+    member private this.StopSkeletonBreathing() =
+        skeletonTimer |> Option.iter (fun t -> t.Stop())
+        skeletonTimer <- None
+        skeletonPanel.Opacity <- 1.0
+
+    /// 启动骨架呼吸动画（低频平滑透明度呼吸）。
+    member private this.StartSkeletonBreathing() =
+        this.StopSkeletonBreathing()
+        if MotionPolicy.isReduced () then
+            skeletonPanel.Opacity <- 0.85
+        else
+            skeletonOpacityPhase <- 0.0
+            let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 50.0)
+            timer.Tick.Add(fun _ ->
+                skeletonOpacityPhase <- skeletonOpacityPhase + 0.12
+                // 0.55 ~ 0.95 之间的平滑呼吸
+                let alpha = 0.75 + 0.2 * Math.Sin(skeletonOpacityPhase)
+                skeletonPanel.Opacity <- alpha)
+            timer.Start()
+            skeletonTimer <- Some timer
+
+    /// 构建骨架屏占位内容：
+    /// Assistant (头像 + 多行正文条) -> User (右对齐气泡) -> Assistant (头像 + 多行正文条)
+    member private this.EnsureSkeletonBuilt() =
+        if skeletonPanel.Children.Count = 0 then
+            let makeTextBar (height: float) (widthFraction: float) =
+                let border =
+                    Border(
+                        Height = height,
+                        CornerRadius = CornerRadius Tokens.radiusSm,
+                        Background = Tokens.borderSoft,
+                        Opacity = 0.65,
+                        HorizontalAlignment = HorizontalAlignment.Stretch)
+                let colStar = widthFraction
+                let colRest = max 0.01 (1.0 - widthFraction)
+                let grid = Grid(HorizontalAlignment = HorizontalAlignment.Stretch)
+                grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(colStar, GridUnitType.Star)))
+                grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(colRest, GridUnitType.Star)))
+                Grid.SetColumn(border, 0)
+                grid.Children.Add border
+                grid :> Control
+
+            let makeAssistantSkeleton (lineFractions: (float * float) list) =
+                let avatar =
+                    Border(
+                        Width = 28.0,
+                        Height = 28.0,
+                        CornerRadius = CornerRadius Tokens.radiusPill,
+                        Background = Tokens.borderSoft,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Margin = Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space3, 0.0),
+                        Opacity = 0.85)
+                let lines = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Stretch)
+                for (h, w) in lineFractions do
+                    lines.Children.Add(makeTextBar h w)
+                let dock = DockPanel(LastChildFill = true, HorizontalAlignment = HorizontalAlignment.Stretch)
+                DockPanel.SetDock(avatar, Dock.Left)
+                dock.Children.Add avatar
+                dock.Children.Add lines
+                dock :> Control
+
+            let makeUserSkeleton () =
+                let bubble =
+                    Border(
+                        Background = Tokens.borderSoft,
+                        CornerRadius = CornerRadius(Tokens.radiusLg, Tokens.radiusLg, Tokens.radiusSm, Tokens.radiusLg),
+                        Width = 260.0,
+                        Height = 40.0,
+                        Opacity = 0.55,
+                        HorizontalAlignment = HorizontalAlignment.Right)
+                let avatar =
+                    Border(
+                        Width = 28.0,
+                        Height = 28.0,
+                        CornerRadius = CornerRadius Tokens.radiusPill,
+                        Background = Tokens.borderSoft,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0),
+                        Opacity = 0.55)
+                let stack = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3, HorizontalAlignment = HorizontalAlignment.Right)
+                stack.Children.Add bubble
+                stack.Children.Add avatar
+                stack :> Control
+
+            // 助手骨架 1
+            skeletonPanel.Children.Add(makeAssistantSkeleton [ (14.0, 0.45); (13.0, 0.85); (13.0, 0.70); (13.0, 0.35) ])
+            // 用户骨架
+            skeletonPanel.Children.Add(makeUserSkeleton ())
+            // 助手骨架 2
+            skeletonPanel.Children.Add(makeAssistantSkeleton [ (14.0, 0.60); (13.0, 0.90); (13.0, 0.75); (13.0, 0.50) ])
+
+    /// 显示骨架屏（换会话或初次加载中，替代空白屏与“加载中…”）
+    member this.ShowSkeletonLoading() =
+        this.EnsureSkeletonBuilt()
+        lastEmptyState <- None
+        emptyPanel.IsVisible <- false
+        messagePanel.IsVisible <- false
+        scroller.IsVisible <- true
+        skeletonPanel.IsVisible <- true
+        scroller.Content <- skeletonPanel
+        this.StartSkeletonBreathing()
+
+    /// 隐藏骨架屏
+    member this.HideSkeletonLoading() =
+        if skeletonPanel.IsVisible then
+            this.StopSkeletonBreathing()
+            skeletonPanel.IsVisible <- false
+            scroller.Content <- messagePanel
+            messagePanel.IsVisible <- true
+
+    member this.IsSkeletonVisible: bool = skeletonPanel.IsVisible
+    member this.IsMessagePanelVisible: bool = messagePanel.IsVisible
 
     /// 重绘全部消息。流式期间由 `streamingMessage` 追加一条临时消息。
     member this.RenderMessages
@@ -267,6 +391,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             usage: GenerationUsage option,
             missingAttachments: Set<string>
         ) =
+        this.HideSkeletonLoading()
         let wasAtBottom = atBottom
         let merged = MessageView.mergeToolResults messages
         let lastAssistantIndex =

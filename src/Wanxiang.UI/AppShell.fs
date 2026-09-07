@@ -12,6 +12,7 @@ open Avalonia.Input
 open Avalonia.Input.Platform
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Media.Imaging
 open Avalonia.Platform
 open Avalonia.Platform.Storage
 open Avalonia.Threading
@@ -200,8 +201,7 @@ type MainView() as this =
         | Some convId, None ->
             chat.SetConversationChrome true
             chat.SetTitle("加载中…", false)
-            chat.HideEmpty()
-            chat.RenderMessages([], None, None, prefs.fontScale, prefs.autoCollapseReasoning, None, missingAttachments)
+            chat.ShowSkeletonLoading()
             composer.SetEnabled(false, "")
             ignore convId
         | Some convId, Some view ->
@@ -212,8 +212,10 @@ type MainView() as this =
             chat.SetTitle((summary |> Option.map (fun s -> s.title) |> Option.defaultValue "会话"), true)
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
             if List.isEmpty messages && streaming.IsNone && run.error.IsNone then
+                chat.HideSkeletonLoading()
                 chat.ShowEmpty(EmptyConversation, None)
             else
+                chat.HideSkeletonLoading()
                 chat.HideEmpty()
                 let retry () = this.Regenerate()
                 chat.RenderMessages(
@@ -571,6 +573,94 @@ type MainView() as this =
                         composer.Focus())
             }
             |> Async.Start
+
+    member private this.DropFiles(items: IStorageItem list) =
+        match topLevel () with
+        | null -> ()
+        | _ ->
+            let owner = attachmentDraft ()
+            let ownerInstance = instanceId
+            let ownerConnection = client.ConnectionGeneration
+            async {
+                try
+                    for item in items do
+                        match item with
+                        | :? IStorageFile as sf ->
+                            use! stream = sf.OpenReadAsync() |> Async.AwaitTask
+                            use buffer = new MemoryStream()
+                            do! stream.CopyToAsync buffer |> Async.AwaitTask
+                            let bytes = buffer.ToArray()
+                            Dispatcher.UIThread.Post(fun () ->
+                                if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
+                                    this.BeginUpload(owner, sf.Name, bytes)
+                                else toast "连接已变化，请重新选择附件；文件没有发送到其他服务器。" Warning)
+                        | _ ->
+                            let path = item.TryGetLocalPath()
+                            if not (String.IsNullOrEmpty path) && File.Exists path then
+                                let bytes = File.ReadAllBytes path
+                                let name = Path.GetFileName path
+                                Dispatcher.UIThread.Post(fun () ->
+                                    if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
+                                        this.BeginUpload(owner, name, bytes)
+                                    else toast "连接已变化，请重新选择附件；文件没有发送到其他服务器。" Warning)
+                    Dispatcher.UIThread.Post(fun () -> composer.Focus())
+                with ex ->
+                    Dispatcher.UIThread.Post(fun () ->
+                        toast (sprintf "读取拖入文件失败：%s" ex.Message) Failure
+                        composer.Focus())
+            }
+            |> Async.Start
+
+    member private this.HandleClipboardPaste() : bool =
+        match topLevel () with
+        | null -> false
+        | top ->
+            try
+                let clipboard = top.Clipboard
+                if isNull clipboard then false
+                else
+                    let formatsTask = clipboard.GetDataFormatsAsync()
+                    if formatsTask.Wait(100) && formatsTask.Result <> null then
+                        let formats = formatsTask.Result
+                        let hasFiles = formats |> Seq.exists (fun f -> f = DataFormat.File)
+                        let hasBitmap = formats |> Seq.exists (fun f -> f = DataFormat.Bitmap)
+                        if hasFiles then
+                            async {
+                                try
+                                    let! files = clipboard.TryGetFilesAsync() |> Async.AwaitTask
+                                    if files <> null && files.Length > 0 then
+                                        Dispatcher.UIThread.Post(fun () -> this.DropFiles(List.ofArray files))
+                                with ex ->
+                                    Dispatcher.UIThread.Post(fun () ->
+                                        toast (sprintf "读取剪贴板文件失败：%s" ex.Message) Failure
+                                        composer.Focus())
+                            } |> Async.Start
+                            true
+                        elif hasBitmap then
+                            async {
+                                try
+                                    let! bitmap = clipboard.TryGetBitmapAsync() |> Async.AwaitTask
+                                    if bitmap <> null then
+                                        use buffer = new MemoryStream()
+                                        let options = PngBitmapEncoderOptions()
+                                        bitmap.Save(buffer, options)
+                                        let bytes = buffer.ToArray()
+                                        let name = sprintf "paste_%s.png" (DateTime.Now.ToString("yyyyMMdd_HHmmss"))
+                                        let owner = attachmentDraft ()
+                                        Dispatcher.UIThread.Post(fun () ->
+                                            if authenticated then this.BeginUpload(owner, name, bytes)
+                                            else toast "连接已变化，请重新选择附件；文件没有发送到其他服务器。" Warning
+                                            composer.Focus())
+                                with ex ->
+                                    Dispatcher.UIThread.Post(fun () ->
+                                        toast (sprintf "读取剪贴板图片失败：%s" ex.Message) Failure
+                                        composer.Focus())
+                            } |> Async.Start
+                            true
+                        else false
+                    else false
+            with _ ->
+                false
 
     member private this.BeginUpload(owner: AttachmentDraftController, fileName: string, bytes: byte[]) =
         if bytes.Length = 0 then toast "空文件无法上传。" Warning
@@ -1047,7 +1137,9 @@ type MainView() as this =
               removeAttachment =
                 fun attachmentId ->
                     (attachmentDraft ()).Remove attachmentId |> composer.SetAttachments
-              openModelPicker = fun anchor -> this.ShowModelPicker anchor }
+              openModelPicker = fun anchor -> this.ShowModelPicker anchor
+              dropFiles = fun files -> this.DropFiles files
+              pasteFromClipboard = fun () -> this.HandleClipboardPaste () }
         composer <- Composer(actions)
         composer.Build()
         composer.SetEnterSends prefs.enterSends

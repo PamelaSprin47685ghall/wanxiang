@@ -311,6 +311,7 @@ let ``conversation summary matches multi word and model search`` () =
           pinned = false
           archived = false
           createdAt = DateTimeOffset.UtcNow
+          updatedAt = DateTimeOffset.UtcNow
           messageCount = 4
           isFork = false
           providerId = "anthropic"
@@ -422,7 +423,9 @@ let ``composer accepts text without introducing extra send modes`` () =
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore
-          openModelPicker = ignore }
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
     let comp = Composer(actions)
     comp.Build()
     comp.SetEnabled(true, "")

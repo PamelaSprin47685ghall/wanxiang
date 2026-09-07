@@ -50,6 +50,7 @@ module ServerModel =
             o["pinned"] <- c.pinned
             o["archived"] <- c.archived
             o["createdAt"] <- c.createdAtUtc.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
+            o["updatedAt"] <- c.lastActivityAtUtc.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
             o["messageCount"] <- (Projection.effectiveMessages proj c |> List.length)
             o["isFork"] <- c.parent.IsSome
             o["lastMessage"] <- lastMessageText proj c

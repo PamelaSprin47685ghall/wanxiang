@@ -324,7 +324,9 @@ let ``composer blocks send while any attachment is uploading`` () =
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore
-          openModelPicker = ignore }
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
     let composer = Composer(actions)
     composer.Build()
     let window = show composer 720.0 260.0
@@ -371,7 +373,9 @@ let ``composer send stop state keeps automation name in sync`` () =
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore
-          openModelPicker = ignore }
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
     let composer = Composer(actions)
     composer.Build()
     let window = show composer 620.0 220.0
@@ -396,7 +400,9 @@ let ``composer attachment slots stay stable across uploading ready and thirty it
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore
-          openModelPicker = ignore }
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
     let composer = Composer(actions)
     composer.Build()
     composer.SetEnabled(true, "")
@@ -852,6 +858,7 @@ let private summary id title =
       pinned = false
       archived = false
       createdAt = DateTimeOffset.Now
+      updatedAt = DateTimeOffset.Now
       messageCount = 2
       isFork = false
       providerId = "test"
@@ -1112,7 +1119,9 @@ let ``accelerated craft soak covers the long-session action ledger without visua
               stopGeneration = ignore
               pickAttachment = ignore
               removeAttachment = ignore
-              openModelPicker = ignore })
+              openModelPicker = ignore
+              dropFiles = ignore
+              pasteFromClipboard = fun () -> false })
     composer.Build()
     composer.SetEnabled(true, "")
     let chat =
@@ -1269,7 +1278,9 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
           stopGeneration = ignore
           pickAttachment = ignore
           removeAttachment = ignore
-          openModelPicker = ignore }
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
 
     // 900×620 物理窗口在 125% / 150% 系统缩放下，对应用布局最重要的是
     // 可用逻辑空间分别约 720×496 / 600×413。这里直接验证同一逻辑空间 contract。

@@ -56,7 +56,8 @@ let ``composer retains input when dispatch does not take ownership`` () =
     let composer =
         Composer
             { submit = fun _ -> failwith "dispatch failed"
-              stopGeneration = ignore; pickAttachment = ignore; removeAttachment = ignore; openModelPicker = ignore }
+              stopGeneration = ignore; pickAttachment = ignore; removeAttachment = ignore; openModelPicker = ignore
+              dropFiles = ignore; pasteFromClipboard = fun () -> false }
     composer.Build()
     composer.SetEnabled(true, "")
     composer.SetText "这段文字不能丢"
@@ -103,7 +104,9 @@ let ``a declined submission leaves the composer editable and intact`` () =
               stopGeneration = ignore
               pickAttachment = ignore
               removeAttachment = ignore
-              openModelPicker = ignore }
+              openModelPicker = ignore
+              dropFiles = ignore
+              pasteFromClipboard = fun () -> false }
     composer.Build()
     composer.SetEnabled(true, "")
     composer.SetText "仍然是草稿"
@@ -124,7 +127,9 @@ let ``generation accepts a queued message without turning send into cancel`` () 
               stopGeneration = fun () -> stopped <- true
               pickAttachment = ignore
               removeAttachment = ignore
-              openModelPicker = ignore }
+              openModelPicker = ignore
+              dropFiles = ignore
+              pasteFromClipboard = fun () -> false }
     composer.Build()
     composer.SetEnabled(true, "")
     composer.SetGenerating true
@@ -278,7 +283,8 @@ let ``failed first messages remain reachable after switching away`` () =
     let composer =
         Composer
             { submit = fun _ -> false
-              stopGeneration = ignore; pickAttachment = ignore; removeAttachment = ignore; openModelPicker = ignore }
+              stopGeneration = ignore; pickAttachment = ignore; removeAttachment = ignore; openModelPicker = ignore
+              dropFiles = ignore; pasteFromClipboard = fun () -> false }
     composer.Build()
     composer.SetPendingMessages(outbox.ForInstance "server", Some(Guid.NewGuid()), true, ignore, fun target -> opened <- Some target)
     let window = Window(Content = composer, Width = 420.0, Height = 500.0)

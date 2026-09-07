@@ -18,6 +18,7 @@ type Conversation = {
     conversationId: Guid
     title: string
     createdAtUtc: DateTimeOffset
+    lastActivityAtUtc: DateTimeOffset
     deleted: bool
     /// 置顶：侧栏排在最前
     pinned: bool
@@ -118,6 +119,7 @@ module Projection =
                                 { conversationId = d.conversationId
                                   title = d.title
                                   createdAtUtc = commit.committedAtUtc
+                                  lastActivityAtUtc = commit.committedAtUtc
                                   deleted = false
                                   pinned = false
                                   archived = false
@@ -150,6 +152,7 @@ module Projection =
                                         { conversationId = d.conversationId
                                           title = parent.title + " (fork)"
                                           createdAtUtc = commit.committedAtUtc
+                                          lastActivityAtUtc = commit.committedAtUtc
                                           deleted = false
                                           pinned = false
                                           archived = false
@@ -162,11 +165,11 @@ module Projection =
                     | ConversationRenamed d ->
                         match conversations.TryFind d.conversationId with
                         | None -> failed <- Some(ValidationError(sprintf "conversation %O not found" d.conversationId))
-                        | Some conv -> conversations <- conversations.Add(d.conversationId, { conv with title = d.title; lastCommitId = Some commit.id })
+                        | Some conv -> conversations <- conversations.Add(d.conversationId, { conv with title = d.title; lastActivityAtUtc = commit.committedAtUtc; lastCommitId = Some commit.id })
                     | ConversationConfigUpdated d ->
                         match conversations.TryFind d.conversationId with
                         | None -> failed <- Some(ValidationError(sprintf "conversation %O not found" d.conversationId))
-                        | Some conv -> conversations <- conversations.Add(d.conversationId, { conv with config = d.config; lastCommitId = Some commit.id })
+                        | Some conv -> conversations <- conversations.Add(d.conversationId, { conv with config = d.config; lastActivityAtUtc = commit.committedAtUtc; lastCommitId = Some commit.id })
                     | ConversationDeleted d ->
                         match conversations.TryFind d.conversationId with
                         | None -> failed <- Some(ValidationError(sprintf "conversation %O not found" d.conversationId))
@@ -189,7 +192,7 @@ module Projection =
                                   payloadJson = d.payloadJson
                                   committedAtUtc = commit.committedAtUtc
                                   deletedAtCommitId = None }
-                            conversations <- conversations.Add(d.conversationId, { conv with messages = conv.messages @ [ msg ]; lastCommitId = Some commit.id })
+                            conversations <- conversations.Add(d.conversationId, { conv with messages = conv.messages @ [ msg ]; lastActivityAtUtc = commit.committedAtUtc; lastCommitId = Some commit.id })
                     | MessageDeleted d ->
                         match conversations.TryFind d.conversationId with
                         | None -> failed <- Some(ValidationError(sprintf "conversation %O not found" d.conversationId))

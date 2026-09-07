@@ -1,6 +1,7 @@
 namespace Wanxiang.Core
 
 open System
+open System.Globalization
 open System.Text
 open System.Text.RegularExpressions
 
@@ -50,7 +51,21 @@ module PlainText =
             whitespace.Replace(text, " ").Trim()
 
     /// 转成纯文本并按显示宽度截断（CJK 按两格计）。
+    /// 使用 StringInfo 遍历字符簇（grapheme clusters / text elements），
+    /// 避免在 surrogate pair 或复杂 emoji / ZWJ 序列中间切断导致乱码。
     let summarize (maxChars: int) (raw: string) : string =
         let text = ofMarkdown raw
-        if text.Length <= maxChars then text
-        else text.Substring(0, maxChars).TrimEnd() + "…"
+        if maxChars <= 0 then ""
+        else
+            let enumerator = StringInfo.GetTextElementEnumerator(text)
+            let sb = StringBuilder()
+            let mutable count = 0
+            let mutable truncated = false
+            while enumerator.MoveNext() do
+                if count < maxChars then
+                    sb.Append(enumerator.GetTextElement()) |> ignore
+                    count <- count + 1
+                else
+                    truncated <- true
+            if not truncated then text
+            else sb.ToString().TrimEnd() + "…"

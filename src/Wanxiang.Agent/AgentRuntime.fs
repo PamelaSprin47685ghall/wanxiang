@@ -4,6 +4,7 @@ open System
 open System.Collections.Generic
 open System.Net
 open System.Net.Http
+open System.Net.Sockets
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Agents.AI
@@ -80,12 +81,20 @@ module ProviderFailure =
             | s when s >= 500 -> ProviderUnavailable
             | _ -> UnknownFailure
 
+    let private serverUnavailableMessage (providerLabel: string) (status: int option) : string =
+        match status with
+        | Some s when s >= 500 -> sprintf "「%s」服务暂时不可用（HTTP %d）。" providerLabel s
+        | _ -> sprintf "「%s」服务暂时不可用。" providerLabel
+
+    let private networkErrorMessage (providerLabel: string) : string =
+        sprintf "无法连接「%s」，请检查网络或地址。" providerLabel
+
     let private messageOf (kind: GenerationErrorKind) (providerLabel: string) (model: string) : string =
         match kind with
         | ProviderAuthFailed -> sprintf "「%s」拒绝了当前凭据。" providerLabel
         | ProviderRateLimited -> sprintf "「%s」限流了这次请求。" providerLabel
         | ProviderTimeout -> sprintf "等待「%s」响应超时。" providerLabel
-        | ProviderUnavailable -> sprintf "无法连接「%s」。" providerLabel
+        | ProviderUnavailable -> networkErrorMessage providerLabel
         | ProviderBadRequest -> sprintf "「%s」认为这次请求参数不合法。" providerLabel
         | ContextTooLong -> "本次上下文超出模型能接受的长度。"
         | ModelNotFound -> sprintf "「%s」上找不到模型 %s。" providerLabel model
@@ -93,6 +102,32 @@ module ProviderFailure =
         | ToolFailed -> "工具执行失败。"
         | ConfigInvalid -> "会话配置无效。"
         | UnknownFailure -> sprintf "调用「%s」时发生未预期的错误。" providerLabel
+
+    let rec private isNetworkException (ex: exn) : bool =
+        match ex with
+        | null -> false
+        | :? SocketException -> true
+        | :? HttpRequestException as hre when not hre.StatusCode.HasValue -> true
+        | _ ->
+            let msg = if isNull ex.Message then "" else ex.Message.ToLowerInvariant()
+            msg.Contains "connection refused"
+            || msg.Contains "actively refused"
+            || msg.Contains "name or service not known"
+            || msg.Contains "no such host"
+            || msg.Contains "network is unreachable"
+            || msg.Contains "network unreachable"
+            || msg.Contains "connection reset"
+            || (not (isNull ex.InnerException) && isNetworkException ex.InnerException)
+
+    let private tryParse5xxStatus (text: string) : int option =
+        if String.IsNullOrWhiteSpace text then None
+        else
+            let lowered = text.ToLowerInvariant()
+            if lowered.Contains "500" || lowered.Contains "internal server error" then Some 500
+            elif lowered.Contains "502" || lowered.Contains "bad gateway" then Some 502
+            elif lowered.Contains "503" || lowered.Contains "service unavailable" then Some 503
+            elif lowered.Contains "504" || lowered.Contains "gateway timeout" then Some 504
+            else None
 
     /// 归类一个 Provider 调用异常。
     let classify (providerLabel: string) (model: string) (ex: exn) : GenerationError =
@@ -106,9 +141,19 @@ module ProviderFailure =
                         let content = response.Content
                         if isNull content then cre.Message else content.ToString()
                 with _ -> cre.Message
-            let kind = kindOfStatus cre.Status body
-            { GenerationError.create kind (messageOf kind providerLabel model) with
-                detail = Some(detailOf (sprintf "HTTP %d · %s" cre.Status body))
+            let kind =
+                if cre.Status <= 0 then ProviderUnavailable
+                else kindOfStatus cre.Status body
+            let message =
+                match kind with
+                | ProviderUnavailable when cre.Status >= 500 ->
+                    serverUnavailableMessage providerLabel (Some cre.Status)
+                | ProviderUnavailable ->
+                    networkErrorMessage providerLabel
+                | other ->
+                    messageOf other providerLabel model
+            { GenerationError.create kind message with
+                detail = Some(detailOf (if cre.Status > 0 then sprintf "HTTP %d · %s" cre.Status body else cre.Message))
                 retryAfterSeconds = retryAfterOf cre
                 retryable =
                     match kind with
@@ -119,17 +164,53 @@ module ProviderFailure =
             GenerationError.create ProviderTimeout (messageOf ProviderTimeout providerLabel model)
             |> GenerationError.withDetail (detailOf ex.Message)
         | :? HttpRequestException as hre ->
+            let statusCode = hre.StatusCode |> Option.ofNullable |> Option.map int
             let kind =
-                match hre.StatusCode |> Option.ofNullable with
-                | Some code -> kindOfStatus (int code) hre.Message
+                match statusCode with
+                | Some code -> kindOfStatus code hre.Message
                 | None -> ProviderUnavailable
-            { GenerationError.create kind (messageOf kind providerLabel model) with
-                detail = Some(detailOf ex.Message)
+            let message =
+                match kind with
+                | ProviderUnavailable ->
+                    match statusCode with
+                    | Some code when code >= 500 ->
+                        serverUnavailableMessage providerLabel (Some code)
+                    | _ ->
+                        networkErrorMessage providerLabel
+                | other ->
+                    messageOf other providerLabel model
+            { GenerationError.create kind message with
+                detail = Some(detailOf hre.Message)
+                retryable =
+                    match kind with
+                    | ProviderRateLimited | ProviderTimeout | ProviderUnavailable | UnknownFailure -> true
+                    | _ -> false }
+        | :? SocketException as se ->
+            let msg = networkErrorMessage providerLabel
+            { GenerationError.create ProviderUnavailable msg with
+                detail = Some(detailOf se.Message)
                 retryable = true }
         | _ ->
-            let kind = signalFromBody ex.Message |> Option.defaultValue UnknownFailure
-            GenerationError.create kind (messageOf kind providerLabel model)
-            |> GenerationError.withDetail (detailOf ex.Message)
+            match signalFromBody ex.Message with
+            | Some kind ->
+                GenerationError.create kind (messageOf kind providerLabel model)
+                |> GenerationError.withDetail (detailOf ex.Message)
+            | None ->
+                if isNetworkException ex then
+                    let msg = networkErrorMessage providerLabel
+                    { GenerationError.create ProviderUnavailable msg with
+                        detail = Some(detailOf ex.Message)
+                        retryable = true }
+                else
+                    match tryParse5xxStatus ex.Message with
+                    | Some status ->
+                        let msg = serverUnavailableMessage providerLabel (Some status)
+                        { GenerationError.create ProviderUnavailable msg with
+                            detail = Some(detailOf ex.Message)
+                            retryable = true }
+                    | None ->
+                        GenerationError.create UnknownFailure (messageOf UnknownFailure providerLabel model)
+                        |> GenerationError.withDetail (detailOf ex.Message)
 
 /// 每个 provider 共享一个 HttpClient：连接池复用，超时与附加请求头在此固化。
 module private ProviderHttp =

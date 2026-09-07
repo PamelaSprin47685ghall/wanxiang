@@ -64,15 +64,17 @@
 - 桌面启动崩溃：删 `Wanxiang.App` 对 `Tmds.DBus.Protocol 0.95.0` 的直引（库内零引用；0.95 把 `Connection` 改名 `DBusConnection`，Avalonia.FreeDesktop 要 0.90.3，TypeLoad 直接炸客户端）。回落传递 0.90.3，能跑优先；NU1903 提醒留着（本地托盘 IPC，无远程暴露）。
 - PWA 高 DPR 响应式错误：900 CSS @1.5 进 compact 抽屉（有效布局宽=CSS/DPR；1000 CSS @1.5 同样抽屉；420 封顶数学吻合）。修法：`AppShell` 响应式改认 JS `innerWidth`（`wxViewportWidth` 桥 + 500ms 轮询覆盖，桌面/测试走 Bounds 原路径）。已验证：900@1.5 回到三栏（边 639px=284×1.5），12 矩阵全绿。残留：该 DPR 下单元系仍按 CSS/DPR 走，比例偏大但一致可用；真修需动 framework 缩放，不在本轮。
 - QA 链硬化（测试辅助）：`qa_provision.js`（配 mock+探活，幂等）；`qa_shot.js` 改协议驱动（WS 建会话/发消息/等终态）+ UI 点击像素变化断言（3 次无变化即抛）；`qa_matrix.js` 加内容门禁（03–06 全同 07 即 FAIL）+ 跑前清挂起 chrome；`qa_shot` 关浏览器 10s 超时放手。
+- 骨架屏落地：ChatView 换会话过渡引入平滑骨架屏（头像槽位 + 助手/用户气泡占位 + 呼吸动画），杜绝白屏与“加载中…”生硬跳变。
+- Emoji/ZWJ 切片安全：PlainText.summarize 与 MarkdownRenderer 安全长链接分块迁移至 StringInfo 字素簇（TextElement），彻底杜绝代理对（surrogate pair）与修饰符切断。
+- FAIL 错误文案精准化：细分 HTTP 5xx 上游错误（「服务商」服务暂时不可用（HTTP 5xx））与物理网络断开（无法连接「服务商」，请检查网络或地址），保持协议 code 与 retryable 兼容。
+- 侧栏时间桶动态准确化：会话追踪 lastActivityAtUtc 并通过 updatedAt 下发，使 Sidebar 分组准确按最近活动更新（“今天”、“昨天”等）。
+- Composer 附件交互强化：支持文件拖拽悬停反馈（DragDrop Copy 状态）及系统剪贴板文件/截图粘贴上传。
 
 ## 6. 已知未做（下一轮入口）
 
 - ChatView 非全虚拟化：百条以上重 Markdown + KaTeX 常驻，Measure 压力；当前 LCP+CardKey O(1) 已够用，全量虚拟化需大改，留待性能实测触发。
-- 骨架屏缺失：换会话/分页仍是“加载中…”文字，需补头像+气泡骨架；已预留槽位模式可直接复用。
-- Emoji/ZWJ 切片：Highlight/KaTeX 按 `Length/Substring` 切分，含修饰符序列有 surrogate 断裂风险，需切 `StringInfo` 簇。
 - 单 popup 排他：二级子菜单/悬停预览会顶替上级，需设计后再扩展。
 - 高 DPR 单元系：响应式断点已对（CSS px），但布局单元仍按 CSS/DPR 走，HiDPI 下相对比例偏大；要根治需修 Browser 后端缩放（framework 层），本轮只修到“模式正确+可用”。
-- FAIL 文案：上游 500 显示“无法连接”欠准，应按错误码区分连接失败/上游错误；结构码正确，纯文案。
 - QA 残留污染：各轮共享服务端攒下几十条 `QA *`/`新会话` 空会话，侧栏 N-data 很好但会越攒越多；下轮 matrix 前重建数据目录（provision 已支持干净启动）。
 
 ## 7. Verification（每次重要修改后执行）

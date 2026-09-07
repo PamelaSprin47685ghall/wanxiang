@@ -31,7 +31,7 @@ let ``export of an unopened conversation has its own progress view without navig
     typeof<MainView>.GetField("activeConvId", flags).SetValue(view, Some selected)
     let summary: ConversationSummary =
         { id = Guid.NewGuid(); title = "从未打开的长会话"; preview = ""; running = false
-          pinned = false; archived = false; createdAt = DateTimeOffset.UtcNow; messageCount = 450
+          pinned = false; archived = false; createdAt = DateTimeOffset.UtcNow; updatedAt = DateTimeOffset.UtcNow; messageCount = 450
           isFork = false; providerId = "mock"; model = "mock"; lastCommitId = 451UL }
     invoke "ExportConversation" [| box summary |] |> ignore
     let overlay = typeof<MainView>.GetField("overlay", flags).GetValue(view) :?> OverlayHost
@@ -322,7 +322,7 @@ let ``reconnecting the same instance keeps export recovery but changing instance
     typeof<MainView>.GetField("instanceId", flags).SetValue(view, "original")
     let summary: ConversationSummary =
         { id = Guid.NewGuid(); title = "导出"; preview = ""; running = false; pinned = false
-          archived = false; createdAt = DateTimeOffset.UtcNow; messageCount = 250; isFork = false
+          archived = false; createdAt = DateTimeOffset.UtcNow; updatedAt = DateTimeOffset.UtcNow; messageCount = 250; isFork = false
           providerId = "mock"; model = "mock"; lastCommitId = 251UL }
     invoke "ExportConversation" [| box summary |] |> ignore
     let overlay = typeof<MainView>.GetField("overlay", flags).GetValue(view) :?> OverlayHost
