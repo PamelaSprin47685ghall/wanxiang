@@ -156,7 +156,7 @@ module Palette =
     /// 墨夜深色：同一套纸感在低光下的样子，不是简单反色。
     let dark : Palette =
         { canvas = c "#15151A"
-          rail = c "#101014"
+          rail = c "#1A1A22"
           surface = c "#22222A"
           surfaceRaised = c "#2C2C35"
           border = c "#45454F"
@@ -164,7 +164,7 @@ module Palette =
           line = c "#55555F"
 
           text = c "#EDEBE4"
-          textMuted = c "#C2BFB6"
+          textMuted = c "#B2AFA6"
           textFaint = c "#A19E95"
           textOnAccent = c "#0F1A28"
 
@@ -172,21 +172,21 @@ module Palette =
           accentHover = c "#A6C6E9"
           accentSoft = c "#22313F"
           accentFaint = c "#1C2530"
-          selected = c "#2C2C32"
-          userBubble = c "#27384A"
+          selected = c "#34343E"
+          userBubble = c "#2F4864"
           userBubbleText = c "#E7EEF7"
           inlineCode = c "#2E2E38"
-          tableStripe = c "#25252E"
-          tableHeader = c "#2E2E3A"
+          tableStripe = c "#2A2A35"
+          tableHeader = c "#343442"
 
           success = c "#7FBF9C"
           warning = c "#D6A75E"
           danger = c "#E09385"
           dangerSoft = c "#422421"
 
-          codeBg = c "#101013"
-          codeHeaderBg = c "#18181C"
-          codeBorder = c "#2A2A30"
+          codeBg = c "#1E1E28"
+          codeHeaderBg = c "#262634"
+          codeBorder = c "#363646"
           codeText = c "#EDEBE4"
           codeMuted = c "#8A877E"
           codeKeyword = c "#9CBCE4"

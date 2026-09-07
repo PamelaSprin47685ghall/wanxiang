@@ -183,6 +183,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             IsVisible = false)
     let mutable skeletonTimer: DispatcherTimer option = None
     let mutable skeletonOpacityPhase = 0.0
+    let mutable motionSubscription: IDisposable option = None
+    let mutable attached = false
 
     /// 已渲染的卡片，按身份缓存。
     ///
@@ -456,12 +458,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member private this.StopSkeletonBreathing() =
         skeletonTimer |> Option.iter (fun t -> t.Stop())
         skeletonTimer <- None
-        skeletonPanel.Opacity <- 1.0
+        skeletonPanel.Opacity <- if skeletonPanel.IsVisible && MotionPolicy.isReduced () then 0.85 else 1.0
 
     /// 启动骨架呼吸动画（低频平滑透明度呼吸）。
     member private this.StartSkeletonBreathing() =
-        this.StopSkeletonBreathing()
+        skeletonTimer |> Option.iter (fun t -> t.Stop())
+        skeletonTimer <- None
         if MotionPolicy.isReduced () then
+            skeletonPanel.Opacity <- 0.85
+        elif not attached then
+            // 尚未挂载到视觉树时不启动计时器；挂载时若骨架仍可见会触发
             skeletonPanel.Opacity <- 0.85
         else
             skeletonOpacityPhase <- 0.0
@@ -473,6 +479,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 skeletonPanel.Opacity <- alpha)
             timer.Start()
             skeletonTimer <- Some timer
+
+    member private this.RefreshSkeletonMotion() =
+        if skeletonPanel.IsVisible then
+            if MotionPolicy.isReduced () then
+                this.StopSkeletonBreathing()
+                skeletonPanel.Opacity <- 0.85
+            elif attached then
+                this.StartSkeletonBreathing()
 
     /// 构建骨架屏占位内容：
     /// Assistant (头像 + 多行正文条) -> User (右对齐气泡) -> Assistant (头像 + 多行正文条)
@@ -942,3 +956,19 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         layout.Children.Add header
         layout.Children.Add body
         this.Child <- layout
+
+        this.AttachedToVisualTree.Add(fun _ ->
+            attached <- true
+            motionSubscription |> Option.iter (fun s -> s.Dispose())
+            motionSubscription <- Some(MotionPolicy.Changed.Publish.Subscribe(fun _ -> this.RefreshSkeletonMotion()))
+            if skeletonPanel.IsVisible then
+                this.RefreshSkeletonMotion())
+        this.DetachedFromVisualTree.Add(fun _ ->
+            attached <- false
+            this.StopSkeletonBreathing()
+            if skeletonPanel.IsVisible then
+                skeletonPanel.Opacity <- 0.85
+            smoothScrollTimer |> Option.iter (fun t -> t.Stop())
+            smoothScrollTimer <- None
+            motionSubscription |> Option.iter (fun s -> s.Dispose())
+            motionSubscription <- None)

@@ -40,6 +40,24 @@ type private SidebarListItem =
 
     member this.IsItem = this.isItem
 
+module private SidebarHelpers =
+    let blendOver (baseBrush: IBrush) (overlayBrush: IBrush) : IBrush =
+        match baseBrush, overlayBrush with
+        | (:? SolidColorBrush as b), (:? SolidColorBrush as o) ->
+            let blend (bc: byte) (oc: byte) (alpha: byte) =
+                byte (int bc + (int oc - int bc) * int alpha / 255)
+            let a = o.Color.A
+            SolidColorBrush(Color.FromArgb(b.Color.A, blend b.Color.R o.Color.R a, blend b.Color.G o.Color.G a, blend b.Color.B o.Color.B a))
+            :> IBrush
+        | _ -> overlayBrush
+
+type private RowToolTip(text: string) as this =
+    inherit TextBlock()
+    do
+        this.Text <- text
+        this.FontFamily <- Tokens.fontFamily
+    override _.ToString() = text
+
 /// 会话侧栏。
 ///
 /// 旧版是一个平铺 ListBox：没有分组、没有置顶、没有空态、右键只有两项。
@@ -386,6 +404,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         elif summary.messageCount > 0 then sprintf "%d 条消息" summary.messageCount
         else "还没有消息"
 
+    member private _.RowTooltipFor(summary: ConversationSummary) =
+        let text =
+            sprintf
+                "%s\n%d 条消息%s"
+                summary.title
+                summary.messageCount
+                (if summary.isFork then " · 分叉会话" else "")
+        RowToolTip text
+
     /// 状态槽内容：running 圆点 / pinned 图标 / idle 留空。槽位本身尺寸不变，
     /// 标题左缘不跟着生成状态漂（keep-clean：state-slot 几何）。
     member private _.SetStateSlot(stateSlot: Border, summary: ConversationSummary) =
@@ -500,8 +527,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         moreButton.LostFocus.Add(fun _ ->
             if not host.IsFocused then Ui.setReservedActionVisible moreButton false)
         host.PointerEntered.Add(fun _ ->
-            // 悬停只动背景：选中行的强调左缘不动，悬停在已选项上仍有可见增量。
-            host.Background <- Tokens.hover
+            // 悬停只动背景：选中行的强调左缘不动；悬停在已选项上层叠高亮，绝不比已选项更暗。
+            let isActive = activeId = Some summary.id
+            host.Background <-
+                if isActive then SidebarHelpers.blendOver Tokens.selected Tokens.hover
+                else Tokens.hover :> IBrush
             Ui.setReservedActionVisible moreButton true)
         host.PointerExited.Add(fun _ ->
             // hover 还原走 id + 实时快照，不用渲染期闭包里的旧 summary。
@@ -514,7 +544,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 |> Array.tryFindIndex ((=) summary.id)
                 |> Option.defaultValue focusedRowIndex
             this.ApplyRowState(summary.id, host)
-            host.Background <- Tokens.hover
+            if activeId <> Some summary.id then host.Background <- Tokens.hover
             Ui.setReservedActionVisible moreButton true)
         host.LostFocus.Add(fun _ ->
             this.ApplyRowState(summary.id, host)
@@ -572,11 +602,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
         ToolTip.SetTip(
             host,
-            sprintf
-                "%s\n%d 条消息%s"
-                summary.title
-                summary.messageCount
-                (if summary.isFork then " · 分叉会话" else ""))
+            this.RowTooltipFor summary)
         host :> Control
 
     /// 回收复用：同一会话的新快照直接刷标题/预览/状态槽/提示，不重建事件链。
@@ -602,11 +628,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                             Avalonia.Automation.AutomationProperties.SetName(host, summary.title)
                             ToolTip.SetTip(
                                 host,
-                                sprintf
-                                    "%s\n%d 条消息%s"
-                                    summary.title
-                                    summary.messageCount
-                                    (if summary.isFork then " · 分叉会话" else ""))
+                                this.RowTooltipFor summary)
                             true
                         | _ -> false
                     | _ -> false

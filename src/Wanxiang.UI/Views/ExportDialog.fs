@@ -27,6 +27,9 @@ type ConversationExportDialog(
     let mutable saveError: string option = None
     let mutable output: byte[] option = None
     let timer = DispatcherTimer(Interval = TimeSpan.FromSeconds 1.0)
+    do
+        timer.Tick.Add(fun _ ->
+            if controller.Expire(DateTimeOffset.UtcNow, TimeSpan.FromSeconds 30.0) then this.Refresh())
     let closeButton = Ui.button Ui.Ghost "取消导出" (fun () -> overlay.CloseDialog())
     let retryButton = Ui.button Ui.Secondary "重新导出" (fun () -> this.Start())
     let saveButton = Ui.button Ui.Primary "保存 Markdown" (fun () -> this.Save())
@@ -87,8 +90,6 @@ type ConversationExportDialog(
             timer.Stop()
             controller.Cancel()
             output <- None))
-        timer.Tick.Add(fun _ ->
-            if controller.Expire(DateTimeOffset.UtcNow, TimeSpan.FromSeconds 30.0) then this.Refresh())
         timer.Start()
         this.Start()
 

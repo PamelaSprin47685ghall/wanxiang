@@ -73,6 +73,8 @@ type MainView() as this =
     /// Browser 后端高 DPR 下 `Bounds.Width` 会被 DPR 除一次，不可做断点依据；
     /// 有覆盖值时响应式布局只认它，桌面/测试走 Bounds 原路径。
     let mutable hostViewportWidth: float option = None
+    /// 浏览器 CSS 视口轮询计时器：仅在 Browser 环境启动，卸载时停止。
+    let mutable viewportTimer: DispatcherTimer option = None
     let commandFeedback = CommandFeedbackTracker()
     let configFeedback = ConfigFeedbackTracker()
     let mutable exportDialog: ConversationExportDialog option = None
@@ -182,7 +184,14 @@ type MainView() as this =
                         hostViewportWidth <- Some css
                         this.ApplyResponsiveLayout css
                 with _ -> ())
+            viewportTimer <- Some timer
             timer.Start()
+
+    member private this.StartViewportWatcher() =
+        viewportTimer |> Option.iter (fun t -> t.Start())
+
+    member private this.StopViewportWatcher() =
+        viewportTimer |> Option.iter (fun t -> t.Stop())
 
     member private _.StreamingMessage() : MessageView option =
         (runs.Get activeConvId).message
@@ -1446,8 +1455,12 @@ type MainView() as this =
         let deliveryTimer = DispatcherTimer(Interval = TimeSpan.FromSeconds 1.0)
         deliveryTimer.Tick.Add(fun _ ->
             if outbox.Expire(DateTimeOffset.UtcNow, TimeSpan.FromSeconds 30.0) then this.Render())
-        this.AttachedToVisualTree.Add(fun _ -> deliveryTimer.Start())
-        this.DetachedFromVisualTree.Add(fun _ -> deliveryTimer.Stop())
+        this.AttachedToVisualTree.Add(fun _ ->
+            deliveryTimer.Start()
+            this.StartViewportWatcher())
+        this.DetachedFromVisualTree.Add(fun _ ->
+            deliveryTimer.Stop()
+            this.StopViewportWatcher())
         this.AutoConnect()
 
     /// 已有凭据时自动连接：桌面读 client.toml，PWA 读 IndexedDB（决策 52/53、Q191）。

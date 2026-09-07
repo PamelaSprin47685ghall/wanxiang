@@ -331,6 +331,14 @@ module Ui =
 
     /// 旋转指示器：只在真正等待时出现。
     let spinner (size: float) : Control =
+        let track =
+            Path(
+                Data = Geometry.Parse "M 8 1.6 A 6.4 6.4 0 1 1 7.99 1.6",
+                Stroke = Tokens.border,
+                StrokeThickness = 1.8,
+                Fill = Brushes.Transparent,
+                Stretch = Stretch.None,
+                IsVisible = false)
         let arc =
             Path(
                 Data = Geometry.Parse "M 8 1.6 A 6.4 6.4 0 0 1 14.4 8",
@@ -340,6 +348,7 @@ module Ui =
                 Fill = Brushes.Transparent,
                 Stretch = Stretch.None)
         let host = Canvas(Width = 16.0, Height = 16.0)
+        host.Children.Add track |> ignore
         host.Children.Add arc |> ignore
         let view =
             Viewbox(
@@ -358,9 +367,12 @@ module Ui =
                 timer.Stop()
                 angle <- 0.0
                 view.RenderTransform <- RotateTransform 0.0
+                track.IsVisible <- true
             elif attached then
+                track.IsVisible <- false
                 timer.Start()
             else
+                track.IsVisible <- false
                 timer.Stop()
         timer.Tick.Add(fun _ ->
             angle <- (angle + 18.0) % 360.0
