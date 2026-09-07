@@ -100,12 +100,15 @@ module Tokens =
     let rail = track (fun p -> p.rail)
     let surface = track (fun p -> p.surface)
     let surfaceRaised = track (fun p -> p.surfaceRaised)
+    /// 柔和表面微底色（思考过程、次级容器背景）
+    let surfaceSoft = track (fun p -> Color.FromArgb(0x55uy, p.surface.R, p.surface.G, p.surface.B))
     let border = track (fun p -> p.border)
     let borderSoft = track (fun p -> p.borderSoft)
     let line = track (fun p -> p.line)
 
     // ---- 文字 ----
     let text = track (fun p -> p.text)
+    let textPrimary = text
     let textMuted = track (fun p -> p.textMuted)
     let textFaint = track (fun p -> p.textFaint)
     let textOnAccent = track (fun p -> p.textOnAccent)
@@ -127,6 +130,7 @@ module Tokens =
 
     // ---- 代码 ----
     let codeBg = track (fun p -> p.codeBg)
+    let codeBlockBackground = codeBg
     let codeHeaderBg = track (fun p -> p.codeHeaderBg)
     let codeBorder = track (fun p -> p.codeBorder)
     let codeText = track (fun p -> p.codeText)

@@ -8,6 +8,8 @@ open Avalonia.Controls.Primitives
 open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Threading
+open System.Text.RegularExpressions
 
 /// 工具与 MCP 设置面板。
 ///
@@ -39,6 +41,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         o
 
     member private this.ShowEditor(existing: McpInfo option) =
+        let takenIds = catalog.mcpServers |> List.map (fun s -> s.id)
         let mutable editorActive = true
         let idField, idBox = Ui.labeledField "稳定标识" "例如 filesystem"
         let labelField, labelBox = Ui.labeledField "显示名称" "在界面上怎么称呼它"
@@ -76,8 +79,9 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let idleSaveText = if existing.IsSome then "保存" else "添加"
         let mutable setPending: bool -> unit = ignore
         let save () =
-            for box in [ idBox; commandBox; urlBox; timeoutBox ] do Ui.clearFieldError box
+            for box in [ idBox; labelBox; commandBox; urlBox; timeoutBox ] do Ui.clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
+            let label = if isNull labelBox.Text then "" else labelBox.Text.Trim()
             let command = if isNull commandBox.Text then "" else commandBox.Text.Trim()
             let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
             let args =
@@ -86,40 +90,92 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 |> Array.map (fun s -> s.Trim())
                 |> Array.filter (String.IsNullOrWhiteSpace >> not)
                 |> List.ofArray
-            let timeoutResult = Int32.TryParse(if isNull timeoutBox.Text then "" else timeoutBox.Text.Trim())
+            let rawTimeout = if isNull timeoutBox.Text then "" else timeoutBox.Text.Trim()
+            let mutable firstInvalid: TextBox option = None
+            let fail (box: TextBox) msg =
+                Ui.setFieldError box msg
+                if firstInvalid.IsNone then firstInvalid <- Some box
+
             if String.IsNullOrWhiteSpace id then
-                Ui.setFieldError idBox "稳定标识不能为空。"
-                idBox.Focus() |> ignore
-            elif String.IsNullOrWhiteSpace command && String.IsNullOrWhiteSpace url then
-                Ui.setFieldError commandBox "本地命令与远程端点至少填一个。"
-                Ui.setFieldError urlBox "本地命令与远程端点至少填一个。"
-                commandBox.Focus() |> ignore
+                fail idBox "稳定标识不能为空。"
+            elif existing.IsNone && List.contains id takenIds then
+                fail idBox "该标识已存在，请换一个。"
+            elif not (Regex.IsMatch(id, "^[a-zA-Z0-9_-]+$")) then
+                fail idBox "稳定标识仅支持英文字母、数字、下划线(_)与连字符(-)。"
+
+            if String.IsNullOrWhiteSpace label then
+                fail labelBox "显示名称不能为空。"
+
+            if String.IsNullOrWhiteSpace command && String.IsNullOrWhiteSpace url then
+                fail commandBox "本地命令与远程端点至少填一个。"
+                fail urlBox "本地命令与远程端点至少填一个。"
             elif not (String.IsNullOrWhiteSpace command) && not (String.IsNullOrWhiteSpace url) then
-                Ui.setFieldError commandBox "与远程端点只能填写一个。"
-                Ui.setFieldError urlBox "与本地命令只能填写一个。"
-                commandBox.Focus() |> ignore
-            elif not (fst timeoutResult) || snd timeoutResult <= 0 then
-                Ui.setFieldError timeoutBox "请输入大于 0 的秒数。"
-                timeoutBox.Focus() |> ignore
+                fail commandBox "与远程端点只能填写一个。"
+                fail urlBox "与本地命令只能填写一个。"
+            elif not (String.IsNullOrWhiteSpace url) then
+                if not (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) then
+                    fail urlBox "远程端点地址必须以 http:// 或 https:// 开头。"
+                else
+                    match Uri.TryCreate(url, UriKind.Absolute) with
+                    | true, uri when uri.Scheme = "http" || uri.Scheme = "https" -> ()
+                    | _ -> fail urlBox "请输入合法的 HTTP/HTTPS 远程端点地址。"
+
+            if String.IsNullOrWhiteSpace rawTimeout then
+                fail timeoutBox "调用超时时间不能为空。"
             else
-                let timeout = snd timeoutResult
+                match Int32.TryParse rawTimeout with
+                | true, t when t >= 1 && t <= 3600 -> ()
+                | true, _ -> fail timeoutBox "请输入 1 到 3600 之间的秒数。"
+                | false, _ -> fail timeoutBox "请输入有效的正整数秒数（1–3600）。"
+
+            match firstInvalid with
+            | Some box ->
+                let errorMsg = (Ui.fieldValidationMessage box).Text
+                if not (String.IsNullOrWhiteSpace errorMsg) then
+                    actions.toast errorMsg Warning
+                box.BringIntoView()
+                box.Focus(NavigationMethod.Directional) |> ignore
+                Dispatcher.UIThread.Post(fun () ->
+                    if box.IsEffectivelyVisible && box.IsEnabled then
+                        box.BringIntoView()
+                        box.Focus(NavigationMethod.Directional) |> ignore)
+            | None ->
+                let timeout = match Int32.TryParse rawTimeout with true, t -> t | _ -> 60
                 setPending true
                 actions.upsertMcp
-                    (mcpPayload id (if isNull labelBox.Text then "" else labelBox.Text.Trim()) command args url timeout (readEnabled ()))
+                    (mcpPayload id label command args url timeout (readEnabled ()))
                     (fun ok ->
                         setPending false
                         if ok && editorActive then overlay.CloseDialog())
 
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        cancelButton.Margin <- Thickness 0.0
+        cancelButton.Focusable <- true
+        Avalonia.Automation.AutomationProperties.SetName(cancelButton, "取消")
+        Avalonia.Automation.AutomationProperties.SetHelpText(cancelButton, "取消并关闭 MCP 服务器编辑 (Esc)")
+        ToolTip.SetTip(cancelButton, "取消并关闭 (Esc)")
         let saveButton = Ui.button Ui.Primary idleSaveText save
+        saveButton.Margin <- Thickness 0.0
+        saveButton.Focusable <- true
+        Avalonia.Automation.AutomationProperties.SetName(saveButton, idleSaveText)
+        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, sprintf "确认%s MCP 服务器设置 (Ctrl+Enter)" idleSaveText)
+        ToolTip.SetTip(saveButton, sprintf "确认%s (Ctrl+Enter)" idleSaveText)
         Ui.preparePendingButton saveButton
         setPending <- fun pending ->
             Ui.setButtonPending saveButton pending idleSaveText "正在保存…"
             Ui.setEnabled cancelButton (not pending)
         let buttons =
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+            row.Margin <- Thickness 0.0
             row.Children.Add cancelButton
             row.Children.Add saveButton
+            row.KeyDown.Add(fun e ->
+                if e.Key = Key.Escape then
+                    e.Handled <- true
+                    overlay.CloseDialog()
+                elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
+                    e.Handled <- true
+                    save ())
             row
 
         let form =
@@ -136,6 +192,14 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                   enabledRow :> Control
                   Ui.hairline () :> Control
                   buttons :> Control ]
+        form.KeyDown.Add(fun e ->
+            let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
+            if e.Key = Key.Escape then
+                e.Handled <- true
+                overlay.CloseDialog()
+            elif e.Key = Key.Enter && ctrl then
+                e.Handled <- true
+                save ())
         let scroller =
             ScrollViewer(
                 Content = form,

@@ -19,6 +19,7 @@ module ReadingRhythm =
     let validationLineHeight = 16.0
     let helperLineHeight = 18.0
     let emptyStateLineHeight = 21.0
+    let headingLineHeight = 26.0
 
     /// Markdown 标题字号也属于阅读节奏，而不是组件临时放大的视觉特效。
     let headingFontSize (baseSize: float) (level: int) =

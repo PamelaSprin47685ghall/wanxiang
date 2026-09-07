@@ -1,6 +1,7 @@
 namespace Wanxiang.UI
 
 open System
+open System.Globalization
 open System.Text.Json
 open Avalonia
 open Avalonia.Controls
@@ -8,6 +9,7 @@ open Avalonia.Controls.Documents
 open Avalonia.Controls.Primitives
 open Avalonia.Automation
 open Avalonia.Input
+open Avalonia.Input.Platform
 open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Threading
@@ -116,7 +118,65 @@ module MessageCard =
             LineHeight = ReadingRhythm.technicalLineHeight size,
             SelectionBrush = Tokens.accentSoft)
 
+    let private copyPayloadToClipboard (visual: Visual) (text: string) (onCopied: unit -> unit) =
+        try
+            match TopLevel.GetTopLevel visual with
+            | null -> ()
+            | top ->
+                match top.Clipboard with
+                | null -> ()
+                | clip ->
+                    clip.SetTextAsync text |> ignore
+                    onCopied ()
+        with _ -> ()
+
+    let private createCopyButton (tipText: string) (accessibleName: string) (getText: unit -> string) : Border =
+        let button = Ui.iconButton Icons.copy tipText
+        button.Focusable <- true
+        button.Margin <- Thickness 0.0
+        button.Padding <- Thickness 0.0
+        button.Cursor <- handCursor
+        Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+        ToolTip.SetTip(button, tipText)
+        Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
+        Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(button, AutomationLiveSetting.Polite)
+        let mutable copyTimer: DispatcherTimer option = None
+        let stopTimer () =
+            match copyTimer with
+            | Some t ->
+                t.Stop()
+                copyTimer <- None
+            | None -> ()
+        let restoreDefaultState () =
+            stopTimer ()
+            Ui.setIcon button Icons.copy Tokens.textMuted
+            Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+            ToolTip.SetTip(button, tipText)
+            Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
+            Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
+        let doCopy () =
+            let payload = getText ()
+            if not (String.IsNullOrEmpty payload) then
+                copyPayloadToClipboard button payload (fun () ->
+                    stopTimer ()
+                    Ui.setIcon button Icons.check Tokens.success
+                    Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+                    ToolTip.SetTip(button, "已复制！")
+                    Avalonia.Automation.AutomationProperties.SetName(button, "已复制！")
+                    Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制到剪贴板")
+                    let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
+                    timer.Tick.Add(fun _ ->
+                        if copyTimer = Some timer then
+                            restoreDefaultState ())
+                    copyTimer <- Some timer
+                    timer.Start())
+        Ui.onClick button doCopy
+        button.DetachedFromVisualTree.Add(fun _ -> restoreDefaultState ())
+        button
+
     /// 思考过程：左缘竖线 + 可折叠。流式期间默认展开，让人看到模型在动。
+    /// 支持无障碍、平滑悬浮反馈与键盘 Enter/Space 激活。
     let private reasoningBlock (ctx: MessageContext) (reasoning: string) (durationMs: int64 option) : Control =
         let collapsed = not ctx.streaming && ctx.autoCollapseReasoning
         let bodyText =
@@ -129,20 +189,39 @@ module MessageCard =
                 SelectionBrush = Tokens.accentSoft)
         let body, setBodyVisible = detailViewport (bodyText :> Control) (not collapsed)
         body.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
+        let mutable bodyVisible = not collapsed
         let chevronHost =
             Border(
                 Width = Tokens.iconGlyph,
                 Height = Tokens.iconGlyph,
                 MinWidth = Tokens.iconGlyph,
                 MinHeight = Tokens.iconGlyph,
+                Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0),
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center)
-        let mutable bodyVisible = not collapsed
+        let rotateTransform = RotateTransform(if bodyVisible then 90.0 else 0.0)
+        let chevronTransitions = Avalonia.Animation.Transitions()
+        let rotateTransition = Avalonia.Animation.DoubleTransition()
+        rotateTransition.Property <- RotateTransform.AngleProperty
+        rotateTransition.Duration <- MotionPolicy.duration 150
+        chevronTransitions.Add rotateTransition
+        rotateTransform.Transitions <- chevronTransitions
+        let chevronGlyph = Icons.chevronRight Tokens.textMuted
+        chevronGlyph.HorizontalAlignment <- HorizontalAlignment.Center
+        chevronGlyph.VerticalAlignment <- VerticalAlignment.Center
+        chevronGlyph.RenderTransform <- rotateTransform
+        chevronGlyph.RenderTransformOrigin <- RelativePoint.Center
+        chevronHost.Child <- chevronGlyph
         let syncChevron () =
-            let glyph = if bodyVisible then Icons.chevronDown Tokens.textMuted else Icons.chevronRight Tokens.textMuted
-            glyph.HorizontalAlignment <- HorizontalAlignment.Center
-            glyph.VerticalAlignment <- VerticalAlignment.Center
-            chevronHost.Child <- glyph
+            rotateTransform.Angle <- if bodyVisible then 90.0 else 0.0
+        let titleRun = Run()
+        let durRun = Run()
+        let syncStateText () =
+            let stateDesc = if bodyVisible then " (收起)" else " (展开)"
+            let baseText = if ctx.streaming then "正在思考" else "已深度思考"
+            titleRun.Text <- baseText + stateDesc
+            titleRun.Foreground <- Tokens.textMuted
+            durRun.Foreground <- Tokens.textMuted
         let durationText =
             match durationMs with
             | Some ms ->
@@ -152,23 +231,32 @@ module MessageCard =
                     sprintf " · %s" formatted
             | None -> ""
         let caption =
-            let titleRun = Run(if ctx.streaming then "正在思考" else "思考过程")
-            titleRun.Foreground <- Tokens.textMuted
             let tb =
                 TextBlock(
-                    FontSize = Tokens.fontSmall,
+                    FontSize = Tokens.fontCaption,
                     FontWeight = FontWeight.Medium,
                     LineHeight = ReadingRhythm.captionLineHeight,
+                    Foreground = Tokens.textMuted,
                     VerticalAlignment = VerticalAlignment.Center)
             tb.Inlines.Add titleRun
             if not (String.IsNullOrWhiteSpace durationText) then
-                let durRun = Run durationText
+                durRun.Text <- durationText
                 durRun.Foreground <- Tokens.textMuted
                 tb.Inlines.Add durRun
             tb
         let headerRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        headerRow.Cursor <- handCursor
         headerRow.Children.Add chevronHost
         headerRow.Children.Add caption
+        let headerTransitions = Avalonia.Animation.Transitions()
+        let opacityTransition = Avalonia.Animation.DoubleTransition()
+        opacityTransition.Property <- Visual.OpacityProperty
+        opacityTransition.Duration <- MotionPolicy.duration 120
+        headerTransitions.Add opacityTransition
+        let bgTransition = Avalonia.Animation.BrushTransition()
+        bgTransition.Property <- Border.BackgroundProperty
+        bgTransition.Duration <- MotionPolicy.duration 120
+        headerTransitions.Add bgTransition
         let header =
             ActionBorder(
                 CornerRadius = CornerRadius Tokens.radiusSm,
@@ -177,20 +265,29 @@ module MessageCard =
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
                 Focusable = true,
+                Transitions = headerTransitions,
                 Child = headerRow)
-        let mutable bodyVisible = not collapsed
         let syncHeaderName () =
             let actionName = if bodyVisible then "收起思考过程" else "展开思考过程"
             Avalonia.Automation.AutomationProperties.SetName(
                 header, actionName)
             Avalonia.Automation.AutomationProperties.SetHelpText(
-                header, actionName)
+                header, sprintf "%s思考过程" (if bodyVisible then "点击折叠" else "点击展开"))
+            Avalonia.Automation.AutomationProperties.SetRole(header, AutomationRole.Button)
+            Avalonia.Automation.AutomationProperties.SetExpanded(header, bodyVisible)
             ToolTip.SetTip(header, if bodyVisible then "收起思考过程" else "展开思考过程")
+            syncStateText ()
         let toggle () =
             bodyVisible <- not bodyVisible
             setBodyVisible bodyVisible
             syncChevron ()
             syncHeaderName ()
+        header.PointerEntered.Add(fun _ ->
+            header.Background <- Tokens.hover
+            header.Opacity <- 0.9)
+        header.PointerExited.Add(fun _ ->
+            header.Background <- Brushes.Transparent
+            header.Opacity <- 1.0)
         Ui.onClick header toggle
         syncChevron ()
         syncHeaderName ()
@@ -198,6 +295,7 @@ module MessageCard =
         stack.Children.Add header
         stack.Children.Add body
         Border(
+            Background = Tokens.surfaceSoft,
             BorderBrush = Tokens.borderSoft,
             BorderThickness = Thickness(2.0, 0.0, 0.0, 0.0),
             Padding = Thickness(Tokens.space3, Tokens.space1, 0.0, Tokens.space1),
@@ -243,26 +341,35 @@ module MessageCard =
             elif hasError then Icons.alert statusBrush
             else Icons.wrench statusBrush
         icon.VerticalAlignment <- VerticalAlignment.Center
+        let statusGlyph: Control =
+            if running then Ui.spinner 11.0
+            elif hasError then Icons.alert statusBrush
+            else Icons.check statusBrush
+        statusGlyph.VerticalAlignment <- VerticalAlignment.Center
+        statusGlyph.Margin <- Thickness(0.0, 0.0, Tokens.space1, 0.0)
         let name =
             TextBlock(
                 Text = call.name,
+                FontFamily = Tokens.monoFontFamily,
                 FontSize = Tokens.fontSmall,
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
                 VerticalAlignment = VerticalAlignment.Center)
+        let statusText =
+            TextBlock(
+                Text = statusBadgeText,
+                FontSize = Tokens.fontMicro,
+                Foreground = statusBrush,
+                VerticalAlignment = VerticalAlignment.Center)
+        let statusPillContent = Ui.hstack 0.0 [ statusGlyph; statusText :> Control ]
         let state =
             Border(
                 Background = statusBg,
                 CornerRadius = CornerRadius Tokens.radiusPill,
-                Padding = Thickness(Tokens.space2, 1.0),
+                Padding = Thickness(Tokens.space2, 2.0),
                 Margin = Thickness 0.0,
                 VerticalAlignment = VerticalAlignment.Center,
-                Child =
-                    TextBlock(
-                        Text = statusBadgeText,
-                        FontSize = Tokens.fontMicro,
-                        Foreground = statusBrush,
-                        VerticalAlignment = VerticalAlignment.Center))
+                Child = statusPillContent)
         /// 未展开时也给一行参数摘要：多数时候用户只想确认「传了什么」。
         let argCount, previewText =
             if String.IsNullOrWhiteSpace call.argumentsJson then
@@ -289,14 +396,47 @@ module MessageCard =
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 IsVisible = not (String.IsNullOrWhiteSpace summaryText),
                 Margin = Thickness(0.0, 3.0, 0.0, 0.0))
-        let detailText =
-            [ if not (String.IsNullOrWhiteSpace call.argumentsJson) then "参数\n" + call.argumentsJson
+        let rawPayloadText () =
+            [ if not (String.IsNullOrWhiteSpace call.argumentsJson) then sprintf "// 参数 (Arguments)\n%s" call.argumentsJson
               match call.result with
-              | Some result when not (String.IsNullOrWhiteSpace result) -> "结果\n" + result
+              | Some res when not (String.IsNullOrWhiteSpace res) -> sprintf "// 结果 (Result)\n%s" res
               | _ -> () ]
             |> String.concat "\n\n"
-            |> fun text -> technicalText text Tokens.fontCaption Tokens.textMuted
-        let detail, setDetailVisible = detailViewport (detailText :> Control) false
+        let detailPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
+        let createDetailSection (label: string) (payload: string) =
+            let header = DockPanel(LastChildFill = false)
+            let sectionTitle =
+                TextBlock(
+                    Text = label,
+                    FontSize = Tokens.fontMicro,
+                    FontWeight = FontWeight.Medium,
+                    Foreground = Tokens.textMuted,
+                    VerticalAlignment = VerticalAlignment.Center)
+            let copyBtn = createCopyButton (sprintf "复制%s" label) (sprintf "复制工具%s" label) (fun () -> payload)
+            DockPanel.SetDock(sectionTitle, Dock.Left)
+            DockPanel.SetDock(copyBtn, Dock.Right)
+            header.Children.Add sectionTitle
+            header.Children.Add copyBtn
+            let contentText = technicalText payload Tokens.fontCaption Tokens.textMuted
+            let codeBox =
+                Border(
+                    Background = Tokens.codeBlockBackground,
+                    BorderBrush = Tokens.borderSoft,
+                    BorderThickness = Thickness 1.0,
+                    CornerRadius = CornerRadius Tokens.radiusSm,
+                    Padding = Thickness(Tokens.space3, Tokens.space2),
+                    Child = contentText)
+            let section = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
+            section.Children.Add header
+            section.Children.Add codeBox
+            section
+        if not (String.IsNullOrWhiteSpace call.argumentsJson) then
+            detailPanel.Children.Add(createDetailSection "调用参数" call.argumentsJson)
+        match call.result with
+        | Some result when not (String.IsNullOrWhiteSpace result) ->
+            detailPanel.Children.Add(createDetailSection "执行结果" result)
+        | _ -> ()
+        let detail, setDetailVisible = detailViewport (detailPanel :> Control) false
         detail.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
         let chevronHost =
             Border(
@@ -306,12 +446,18 @@ module MessageCard =
                 MinHeight = Tokens.iconGlyph,
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center)
+        let toolCopyButton =
+            createCopyButton "复制工具参数与结果" (sprintf "复制工具 %s 参数与结果" call.name) rawPayloadText
+        toolCopyButton.Margin <- Thickness(0.0, 0.0, Tokens.space1, 0.0)
+        toolCopyButton.VerticalAlignment <- VerticalAlignment.Center
+        let headerActions = Ui.hstack Tokens.space1 [ toolCopyButton :> Control; chevronHost :> Control ]
+        headerActions.VerticalAlignment <- VerticalAlignment.Center
         let headerDock = DockPanel(LastChildFill = false)
         let left = Ui.hstack Tokens.space2 [ icon; name :> Control; state :> Control ]
         DockPanel.SetDock(left, Dock.Left)
-        DockPanel.SetDock(chevronHost, Dock.Right)
+        DockPanel.SetDock(headerActions, Dock.Right)
         headerDock.Children.Add left
-        headerDock.Children.Add chevronHost
+        headerDock.Children.Add headerActions
         let headerRow =
             ActionBorder(
                 CornerRadius = CornerRadius Tokens.radiusSm,
@@ -577,6 +723,7 @@ module MessageCard =
         if error.retryable then
             let retryButton = Ui.button Ui.Secondary "重试" onRetry
             retryButton.Focusable <- true
+            retryButton.MinWidth <- 80.0
             retryButton.Margin <- Thickness 0.0
             retryButton.Padding <- Thickness(Tokens.space4, ControlMetrics.textButtonPaddingY)
             retryButton.Cursor <- handCursor
@@ -586,8 +733,32 @@ module MessageCard =
             actionRow.Children.Add retryButton
         match error.detail with
         | Some detail ->
-            let detailText = technicalText detail Tokens.fontMicro Tokens.textFaint
-            let detailHost, setDetailVisible = detailViewport (detailText :> Control) false
+            let detailText = technicalText detail Tokens.fontMicro Tokens.codeMuted
+            let detailHeader = DockPanel(LastChildFill = false)
+            let detailTitle =
+                TextBlock(
+                    Text = "错误堆栈与技术细节",
+                    FontSize = Tokens.fontMicro,
+                    FontWeight = FontWeight.Medium,
+                    Foreground = Tokens.textMuted,
+                    VerticalAlignment = VerticalAlignment.Center)
+            let copyDetailBtn = createCopyButton "复制错误细节" "复制错误技术细节" (fun () -> detail)
+            DockPanel.SetDock(detailTitle, Dock.Left)
+            DockPanel.SetDock(copyDetailBtn, Dock.Right)
+            detailHeader.Children.Add detailTitle
+            detailHeader.Children.Add copyDetailBtn
+            let codeBox =
+                Border(
+                    Background = Tokens.codeBlockBackground,
+                    BorderBrush = Tokens.borderSoft,
+                    BorderThickness = Thickness 1.0,
+                    CornerRadius = CornerRadius Tokens.radiusSm,
+                    Padding = Thickness(Tokens.space3, Tokens.space2),
+                    Child = detailText)
+            let detailStack = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
+            detailStack.Children.Add detailHeader
+            detailStack.Children.Add codeBox
+            let detailHost, setDetailVisible = detailViewport (detailStack :> Control) false
             detailHost.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
             let mutable visible = false
             let mutable toggleDetail: unit -> unit = ignore
@@ -601,6 +772,12 @@ module MessageCard =
                 ToolTip.SetTip(detailButton, if visible then "收起错误技术细节" else "展开查看技术细节")
                 Avalonia.Automation.AutomationProperties.SetName(detailButton, if visible then "收起技术细节" else "技术细节")
                 Avalonia.Automation.AutomationProperties.SetHelpText(detailButton, if visible then "收起错误技术细节" else "展开查看技术细节")
+                Avalonia.Automation.AutomationProperties.SetRole(detailButton, AutomationRole.Button)
+                Avalonia.Automation.AutomationProperties.SetExpanded(detailButton, visible)
+            detailButton.KeyDown.Add(fun e ->
+                if detailButton.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
+                    e.Handled <- true
+                    toggleDetail ())
             toggleDetail <- fun () ->
                 visible <- not visible
                 setDetailVisible visible
@@ -633,11 +810,111 @@ module MessageCard =
         elif local.Year = DateTimeOffset.Now.Year then local.ToString "M月d日 HH:mm"
         else local.ToString "yyyy年M月d日 HH:mm"
 
+    /// 渲染用量角标/脚注：紧凑、优雅且无杂乱感。
+    /// 用标签（Tokens.textFaint）与等宽数字（Tokens.textMuted, monoFontFamily）搭配，
+    /// 并支持无障碍朗读名称与悬浮完整提示。
+    let private renderUsage (u: GenerationUsage) : Control option =
+        let total =
+            match u.totalTokens with
+            | Some t -> Some t
+            | None ->
+                match u.promptTokens, u.completionTokens with
+                | Some p, Some c -> Some(p + c)
+                | _ -> None
+
+        // 没有任何 token 或耗时信息时不渲染
+        if Option.isNone total && Option.isNone u.promptTokens && Option.isNone u.completionTokens && Option.isNone u.durationMs then
+            None
+        else
+            let tb =
+                TextBlock(
+                    FontSize = Tokens.fontMicro,
+                    VerticalAlignment = VerticalAlignment.Center)
+
+            let appendSep () =
+                let sep = Run(" · ")
+                sep.Foreground <- Tokens.textFaint
+                tb.Inlines.Add sep
+
+            let appendMetric (label: string) (count: int) =
+                let lblRun = Run(label + " ")
+                lblRun.Foreground <- Tokens.textFaint
+                let numRun = Run(count.ToString("N0", CultureInfo.InvariantCulture))
+                numRun.FontFamily <- Tokens.monoFontFamily
+                numRun.Foreground <- Tokens.textMuted
+                tb.Inlines.Add lblRun
+                tb.Inlines.Add numRun
+
+            let mutable hasPrev = false
+
+            // 如果有总数且明细齐全，紧凑展示输入、输出，或优先展示总计/输入/输出
+            match u.promptTokens, u.completionTokens with
+            | Some p, Some c ->
+                appendMetric "入" p
+                appendSep ()
+                appendMetric "出" c
+                hasPrev <- true
+                match total with
+                | Some t when t <> (p + c) ->
+                    appendSep ()
+                    appendMetric "总" t
+                | _ -> ()
+            | Some p, None ->
+                appendMetric "入" p
+                hasPrev <- true
+            | None, Some c ->
+                appendMetric "出" c
+                hasPrev <- true
+            | None, None ->
+                match total with
+                | Some t ->
+                    appendMetric "tokens" t
+                    hasPrev <- true
+                | None -> ()
+
+            match u.durationMs with
+            | Some ms ->
+                if hasPrev then appendSep ()
+                let durText =
+                    if ms >= 1000L then
+                        sprintf "%.1fs" (float ms / 1000.0)
+                    else
+                        sprintf "%dms" ms
+                let durRun = Run(durText)
+                durRun.FontFamily <- Tokens.monoFontFamily
+                durRun.Foreground <- Tokens.textMuted
+                tb.Inlines.Add durRun
+            | None -> ()
+
+            // 悬停交互高亮
+            tb.PointerEntered.Add(fun _ ->
+                for inlineItem in tb.Inlines do
+                    match inlineItem with
+                    | :? Run as r when r.Foreground = (Tokens.textMuted :> IBrush) ->
+                        r.Foreground <- Tokens.text
+                    | _ -> ())
+            tb.PointerExited.Add(fun _ ->
+                for inlineItem in tb.Inlines do
+                    match inlineItem with
+                    | :? Run as r when r.Foreground = (Tokens.text :> IBrush) ->
+                        r.Foreground <- Tokens.textMuted
+                    | _ -> ())
+
+            // 屏幕阅读器与完整详情 ToolTip
+            let pStr = u.promptTokens |> Option.map (fun v -> v.ToString("N0", CultureInfo.InvariantCulture)) |> Option.defaultValue "-"
+            let cStr = u.completionTokens |> Option.map (fun v -> v.ToString("N0", CultureInfo.InvariantCulture)) |> Option.defaultValue "-"
+            let tStr = total |> Option.map (fun v -> v.ToString("N0", CultureInfo.InvariantCulture)) |> Option.defaultValue "-"
+            let a11yName = sprintf "Token 使用情况：输入 %s，输出 %s，总计 %s" pStr cStr tStr
+            AutomationProperties.SetName(tb, a11yName)
+            ToolTip.SetTip(tb, GenerationUsage.formatDetail u)
+
+            Some(tb :> Control)
+
     /// 脚注：时间 + 可选用量。合成一行，避免两条弱字上下堆叠。
     let private footer (message: MessageView) (usage: GenerationUsage option) : Control option =
         let timeText = message.committedAt |> Option.map formatTimestamp
-        let usageSummary = usage |> Option.bind GenerationUsage.formatSummary
-        match timeText, usageSummary with
+        let usageControl = usage |> Option.bind renderUsage
+        match timeText, usageControl with
         | None, None -> None
         | Some time, None ->
             let text =
@@ -649,18 +926,9 @@ module MessageCard =
                         (if MessageView.isUser message then HorizontalAlignment.Right else HorizontalAlignment.Left),
                     VerticalAlignment = VerticalAlignment.Center)
             Some(text :> Control)
-        | None, Some summary ->
-            let usageTb =
-                TextBlock(
-                    Text = summary,
-                    FontSize = Tokens.fontMicro,
-                    Foreground = Tokens.textMuted,
-                    VerticalAlignment = VerticalAlignment.Center)
-            usage |> Option.iter (fun u -> ToolTip.SetTip(usageTb, GenerationUsage.formatDetail u))
-            usageTb.PointerEntered.Add(fun _ -> usageTb.Foreground <- Tokens.text)
-            usageTb.PointerExited.Add(fun _ -> usageTb.Foreground <- Tokens.textMuted)
-            Some(usageTb :> Control)
-        | Some time, Some summary ->
+        | None, Some uCtrl ->
+            Some uCtrl
+        | Some time, Some uCtrl ->
             let panel =
                 StackPanel(
                     Orientation = Orientation.Horizontal,
@@ -670,14 +938,9 @@ module MessageCard =
                 TextBlock(Text = time, FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted, VerticalAlignment = VerticalAlignment.Center)
             let sepTb =
                 TextBlock(Text = " · ", FontSize = Tokens.fontMicro, Foreground = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
-            let usageTb =
-                TextBlock(Text = summary, FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted, VerticalAlignment = VerticalAlignment.Center)
-            usage |> Option.iter (fun u -> ToolTip.SetTip(usageTb, GenerationUsage.formatDetail u))
-            usageTb.PointerEntered.Add(fun _ -> usageTb.Foreground <- Tokens.text)
-            usageTb.PointerExited.Add(fun _ -> usageTb.Foreground <- Tokens.textMuted)
             panel.Children.Add timeTb
             panel.Children.Add sepTb
-            panel.Children.Add usageTb
+            panel.Children.Add uCtrl
             Some(panel :> Control)
 
     /// 渲染一条消息。返回可直接塞进消息列表的控件。

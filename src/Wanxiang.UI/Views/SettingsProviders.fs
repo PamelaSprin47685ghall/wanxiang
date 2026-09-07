@@ -9,6 +9,7 @@ open Avalonia.Controls.Primitives
 open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Threading
 
 /// 设置界面对外暴露的动作。全部落到协议上，客户端不直接碰 TOML。
 type SettingsActions = {
@@ -77,6 +78,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         modelsBox.TextWrapping <- TextWrapping.Wrap
         modelsBox.MinHeight <- 92.0
         modelsBox.VerticalContentAlignment <- VerticalAlignment.Top
+        let defaultModelField, defaultModelBox = Ui.labeledField "默认模型" "留空则自动使用列表中第一个"
 
         let presetHint =
             TextBlock(
@@ -90,6 +92,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             selectedKind <- preset.kind
             urlBox.Text <- preset.baseUrl
             modelsBox.Text <- String.Join("\n", preset.models)
+            defaultModelBox.Text <- preset.models |> List.tryHead |> Option.defaultValue ""
             presetHint.Text <- preset.hint
             if existing.IsNone then
                 idBox.Text <- ProviderPresets.suggestId preset takenIds
@@ -118,6 +121,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             labelBox.Text <- p.label
             urlBox.Text <- p.baseUrl
             modelsBox.Text <- String.Join("\n", p.models)
+            defaultModelBox.Text <- p.defaultModel
             keyBox.PlaceholderText <- if p.hasApiKey then "已保存（留空则不改动）" else "粘贴密钥"
             presetHint.Text <- initialPreset |> Option.map (fun x -> x.hint) |> Option.defaultValue ""
         | None ->
@@ -151,8 +155,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let idleSaveText = if existing.IsSome then "保存" else "添加"
         let mutable setPending: bool -> unit = ignore
         let save () =
-            for box in [ idBox; labelBox; urlBox; keyBox; modelsBox ] do Ui.clearFieldError box
+            for box in [ idBox; labelBox; urlBox; keyBox; modelsBox; defaultModelBox ] do Ui.clearFieldError box
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
+            let label = if isNull labelBox.Text then "" else labelBox.Text.Trim()
             let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
             let models =
                 (if isNull modelsBox.Text then "" else modelsBox.Text)
@@ -171,8 +176,13 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             elif existing.IsNone && List.contains id takenIds then
                 fail idBox "该标识已存在，请换一个。"
 
+            if String.IsNullOrWhiteSpace label then
+                fail labelBox "显示名称不能为空。"
+
             if String.IsNullOrWhiteSpace url then
                 fail urlBox "端点地址不能为空。"
+            elif not (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) then
+                fail urlBox "端点地址必须以 http:// 或 https:// 开头。"
             else
                 match Uri.TryCreate(url, UriKind.Absolute) with
                 | true, uri when uri.Scheme = "http" || uri.Scheme = "https" -> ()
@@ -181,19 +191,37 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             if List.isEmpty models then
                 fail modelsBox "至少填写一个模型名（每行一个）。"
 
+            let rawDefaultModel = if isNull defaultModelBox.Text then "" else defaultModelBox.Text.Trim()
+            let defaultModel =
+                if String.IsNullOrWhiteSpace rawDefaultModel then
+                    match models with
+                    | head :: _ ->
+                        defaultModelBox.Text <- head
+                        actions.toast (sprintf "未指定默认模型，已自动选用“%s”。" head) Neutral
+                        head
+                    | [] -> ""
+                elif not (List.isEmpty models) && not (List.contains rawDefaultModel models) then
+                    fail defaultModelBox (sprintf "默认模型“%s”不在模型列表中，请从列表中选择或留空自动选用。" rawDefaultModel)
+                    rawDefaultModel
+                else
+                    rawDefaultModel
+
             match firstInvalid with
             | Some box ->
-                box.Focus(NavigationMethod.Directional) |> ignore
+                let errorMsg = (Ui.fieldValidationMessage box).Text
+                if not (String.IsNullOrWhiteSpace errorMsg) then
+                    actions.toast errorMsg Warning
                 box.BringIntoView()
+                box.Focus(NavigationMethod.Directional) |> ignore
+                Dispatcher.UIThread.Post(fun () ->
+                    if box.IsEffectivelyVisible && box.IsEnabled then
+                        box.BringIntoView()
+                        box.Focus(NavigationMethod.Directional) |> ignore)
             | None ->
-                let defaultModel =
-                    match existing with
-                    | Some p when List.contains p.defaultModel models -> p.defaultModel
-                    | _ -> List.head models
                 let payload =
                     providerPayload
                         id
-                        (if isNull labelBox.Text then "" else labelBox.Text.Trim())
+                        label
                         selectedKind
                         url
                         (if isNull keyBox.Text then None else Some(keyBox.Text.Trim()))
@@ -208,8 +236,16 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                     if ok && editorActive then overlay.CloseDialog())
 
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        cancelButton.Margin <- Thickness 0.0
+        cancelButton.Focusable <- true
+        Avalonia.Automation.AutomationProperties.SetName(cancelButton, "取消")
+        Avalonia.Automation.AutomationProperties.SetHelpText(cancelButton, "取消并关闭服务商设置 (Esc)")
         ToolTip.SetTip(cancelButton, "取消并关闭 (Esc)")
         let saveButton = Ui.button Ui.Primary idleSaveText save
+        saveButton.Margin <- Thickness 0.0
+        saveButton.Focusable <- true
+        Avalonia.Automation.AutomationProperties.SetName(saveButton, idleSaveText)
+        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, sprintf "确认%s服务商设置 (Ctrl+Enter)" idleSaveText)
         ToolTip.SetTip(saveButton, sprintf "确认%s (Ctrl+Enter)" idleSaveText)
         Ui.preparePendingButton saveButton
         setPending <- fun pending ->
@@ -217,13 +253,14 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             Ui.setEnabled cancelButton (not pending)
         let buttons =
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+            row.Margin <- Thickness 0.0
             row.Children.Add cancelButton
             row.Children.Add saveButton
             row.KeyDown.Add(fun e ->
                 if e.Key = Key.Escape then
                     e.Handled <- true
                     overlay.CloseDialog()
-                elif e.Key = Key.Enter && not cancelButton.IsFocused then
+                elif (e.Key = Key.Enter || e.Key = Key.Space) && not cancelButton.IsFocused then
                     e.Handled <- true
                     save ())
             row
@@ -239,6 +276,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                   urlField
                   keyField
                   modelsField
+                  defaultModelField
                   probeButton :> Control
                   enabledRow :> Control
                   Ui.hairline () :> Control

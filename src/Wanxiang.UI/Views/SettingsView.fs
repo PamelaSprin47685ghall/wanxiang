@@ -143,7 +143,10 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         host.GotFocus.Add(fun _ -> this.UpdateNavButtonStates())
         host.LostFocus.Add(fun _ -> this.UpdateNavButtonStates())
         host.KeyDown.Add(fun e ->
-            if e.Key = Key.Up then
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                this.Select section
+            elif e.Key = Key.Up then
                 e.Handled <- true
                 this.NavigateSection -1
             elif e.Key = Key.Down then
@@ -165,7 +168,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         host.Tag <- section
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
-            Nullable Avalonia.Automation.Peers.AutomationControlType.ListItem)
+            Nullable Avalonia.Automation.Peers.AutomationControlType.TabItem)
         Ui.onClick host (fun () -> this.Select section)
         navButtons[section] <- host
         host
@@ -256,8 +259,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                     if compact then
                         DockPanel.SetDock(nav, Dock.Top)
                         nav.Width <- Double.NaN
-                        nav.Height <- 58.0
-                        nav.Padding <- Thickness(Tokens.space2, Tokens.space2)
+                        nav.Height <- 56.0
+                        nav.Padding <- Thickness(Tokens.space3, Tokens.space2)
+                        navPanel.Spacing <- Tokens.space2
                         nav.BorderThickness <- Thickness(0.0, 0.0, 0.0, 1.0)
                         navPanel.Orientation <- Orientation.Horizontal
                         navScroll.HorizontalScrollBarVisibility <- ScrollBarVisibility.Auto
@@ -267,6 +271,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                         nav.Width <- ControlMetrics.settingsNavWidth
                         nav.Height <- Double.NaN
                         nav.Padding <- Thickness(Tokens.space3, Tokens.space4)
+                        navPanel.Spacing <- 2.0
                         nav.BorderThickness <- Thickness(0.0, 0.0, 1.0, 0.0)
                         navPanel.Orientation <- Orientation.Vertical
                         navScroll.HorizontalScrollBarVisibility <- ScrollBarVisibility.Hidden

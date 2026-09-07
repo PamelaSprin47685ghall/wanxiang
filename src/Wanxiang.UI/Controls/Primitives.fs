@@ -13,6 +13,23 @@ open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Threading
+open Avalonia.Automation.Peers
+
+[<RequireQualifiedAccess>]
+type internal AutomationRole =
+    | Button
+
+[<AutoOpen>]
+module internal AutomationExtensions =
+    type AutomationProperties with
+        static member SetRole(element: Control, role: AutomationRole) =
+            let controlType =
+                match role with
+                | AutomationRole.Button -> AutomationControlType.Button
+            AutomationProperties.SetControlTypeOverride(element, Nullable controlType)
+
+        static member SetExpanded(element: Control, expanded: bool) =
+            AutomationProperties.SetItemStatus(element, if expanded then "已展开" else "已折叠")
 
 /// 保留万象自绘 Border 的几何与视觉，但把“按钮”语义暴露给自动化层。
 /// 这样屏幕阅读器得到真正的 Invoke pattern，而不是只看到一个可聚焦容器。

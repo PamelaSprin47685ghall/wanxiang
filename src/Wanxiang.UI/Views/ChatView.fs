@@ -122,7 +122,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Spacing = Tokens.space3,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = Thickness(Tokens.space4, 0.0, Tokens.space4, ContentMetrics.messageEndBreathing / 2.0),
+            Margin = Thickness(Tokens.space4, 0.0),
             MaxWidth = ContentMetrics.emptyStateMaxWidth,
             IsVisible = false)
     let emptyTitle =
@@ -130,8 +130,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Text = "",
             FontSize = Tokens.fontHeading,
             FontWeight = FontWeight.Medium,
-            Foreground = Tokens.text,
+            Foreground = Tokens.textPrimary,
             TextAlignment = TextAlignment.Center,
+            LineHeight = ReadingRhythm.headingLineHeight,
             LetterSpacing = 0.4)
     let emptyHint =
         TextBlock(
@@ -140,8 +141,23 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Foreground = Tokens.textMuted,
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
-            LineHeight = ReadingRhythm.emptyStateLineHeight)
-    let emptyActions = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Center)
+            LineHeight = ReadingRhythm.emptyStateLineHeight,
+            MaxWidth = ContentMetrics.emptyStateMaxWidth)
+    let mutable currentPrimaryAction: unit -> unit = ignore
+    let emptyActionButton =
+        let btn = Ui.button Ui.Primary "" (fun () -> currentPrimaryAction ())
+        btn.HorizontalAlignment <- HorizontalAlignment.Center
+        btn.VerticalAlignment <- VerticalAlignment.Center
+        btn.MinWidth <- 120.0
+        btn.Height <- 36.0
+        btn.Padding <- Thickness(Tokens.space4, 0.0)
+        btn.Focusable <- true
+        btn.IsVisible <- false
+        btn
+    let emptyActions =
+        let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Center, IsVisible = false)
+        panel.Children.Add emptyActionButton
+        panel
     let mutable lastEmptyState: (ChatEmptyState * string option) option = None
     let skeletonPanel =
         StackPanel(
@@ -211,7 +227,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleEditBox.VerticalAlignment <- VerticalAlignment.Center
         ToolTip.SetTip(generatingChip, "正在生成回答")
         Avalonia.Automation.AutomationProperties.SetName(generatingChip, "正在生成回答")
-        emptyActions.Margin <- Thickness(0.0, Tokens.space4, 0.0, 0.0)
+        emptyActions.Margin <- Thickness 0.0
         titleHost.Children.Add titleAction
         titleHost.Children.Add titleEditShell
         titleEditShell.IsVisible <- false
@@ -282,11 +298,13 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         forkButton.IsVisible <- hasConversationChrome && not value
 
     member this.ShowEmpty(state: ChatEmptyState, onPrimary: (string * (unit -> unit)) option) =
+        match onPrimary with
+        | Some(_, action) -> currentPrimaryAction <- action
+        | None -> currentPrimaryAction <- ignore
         let primaryLabel = onPrimary |> Option.map fst
         let currentStateKey = (state, primaryLabel)
         if lastEmptyState <> Some currentStateKey then
             lastEmptyState <- Some currentStateKey
-            emptyActions.Children.Clear()
             let title, hint =
                 match state with
                 | NotConnected -> "先连接一台万象服务器", "服务端负责运行模型与保存会话；客户端只是它的一个视图。"
@@ -296,16 +314,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             emptyTitle.Text <- title
             emptyHint.Text <- hint
             match onPrimary with
-            | Some(label, action) ->
-                let button = Ui.button Ui.Primary label action
-                button.Focusable <- true
-                ToolTip.SetTip(button, label)
-                Avalonia.Automation.AutomationProperties.SetName(button, label)
-                Avalonia.Automation.AutomationProperties.SetHelpText(button, label)
-                button.HorizontalAlignment <- HorizontalAlignment.Center
-                button.VerticalAlignment <- VerticalAlignment.Center
-                emptyActions.Children.Add button
-            | None -> ()
+            | Some(label, _) ->
+                Ui.setButtonText emptyActionButton label
+                ToolTip.SetTip(emptyActionButton, label)
+                Avalonia.Automation.AutomationProperties.SetName(emptyActionButton, label)
+                Avalonia.Automation.AutomationProperties.SetHelpText(emptyActionButton, label)
+                emptyActionButton.IsVisible <- true
+                emptyActions.IsVisible <- true
+            | None ->
+                emptyActionButton.IsVisible <- false
+                emptyActions.IsVisible <- false
         emptyPanel.IsVisible <- true
         scroller.IsVisible <- false
         this.HideSkeletonLoading()
@@ -313,6 +331,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member this.HideEmpty() =
         lastEmptyState <- None
+        currentPrimaryAction <- ignore
+        emptyActionButton.IsVisible <- false
+        emptyActions.IsVisible <- false
         this.ResetScrollState()
         emptyPanel.IsVisible <- false
         scroller.IsVisible <- true
