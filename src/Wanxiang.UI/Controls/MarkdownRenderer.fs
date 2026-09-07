@@ -238,21 +238,28 @@ type MarkdownRenderer(
             button
 
         let copyButton = headerButton Icons.copy "复制代码"
+        Avalonia.Automation.AutomationProperties.SetName(copyButton, "复制代码")
+        let mutable copyTimer: DispatcherTimer option = None
         let doCopy () =
             copyText code
+            copyTimer |> Option.iter (fun t -> t.Stop())
             Ui.setIcon copyButton Icons.check Tokens.success
             ToolTip.SetTip(copyButton, "已复制！")
+            Avalonia.Automation.AutomationProperties.SetName(copyButton, "已复制！")
             let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
             timer.Tick.Add(fun _ ->
                 timer.Stop()
                 Ui.setIcon copyButton Icons.copy Tokens.codeMuted
-                ToolTip.SetTip(copyButton, "复制代码"))
+                ToolTip.SetTip(copyButton, "复制代码")
+                Avalonia.Automation.AutomationProperties.SetName(copyButton, "复制代码"))
+            copyTimer <- Some timer
             timer.Start()
         Ui.onClick copyButton doCopy
 
         // 长行原来只能横向滚动：一行长命令要么看不全，要么读一行拖一次。
         // 折行是逐块开关，初值取自 UI 偏好。
         let wrapButton = headerButton Icons.textWrap "长行折行 / 横向滚动"
+        Avalonia.Automation.AutomationProperties.SetName(wrapButton, "长行折行 / 横向滚动")
         let mutable wrapped = MarkdownRenderer.DefaultCodeWrap
         let applyWrap () =
             block.TextWrapping <- (if wrapped then TextWrapping.Wrap else TextWrapping.NoWrap)

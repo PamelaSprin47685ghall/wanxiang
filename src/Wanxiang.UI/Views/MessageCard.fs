@@ -1,8 +1,10 @@
 namespace Wanxiang.UI
 
 open System
+open System.Text.Json
 open Avalonia
 open Avalonia.Controls
+open Avalonia.Controls.Documents
 open Avalonia.Controls.Primitives
 open Avalonia.Input
 open Avalonia.Layout
@@ -57,7 +59,11 @@ module MessageCard =
         let mutable toggleFull: unit -> unit = ignore
         let expandButton = Ui.button Ui.Ghost "展开全部" (fun () -> toggleFull ())
         expandButton.HorizontalAlignment <- HorizontalAlignment.Left
+        expandButton.Cursor <- handCursor
+        expandButton.Focusable <- true
         expandButton.IsVisible <- false
+        ToolTip.SetTip(expandButton, "展开查看全部内容")
+        Avalonia.Automation.AutomationProperties.SetName(expandButton, "展开全部")
         let refreshButton () =
             let clipped = scroller.Extent.Height > scroller.Viewport.Height + 1.0
             expandButton.IsVisible <- visible && (full || clipped)
@@ -65,6 +71,8 @@ module MessageCard =
             full <- not full
             scroller.MaxHeight <- if full then Double.PositiveInfinity else LayoutPolicy.expandedDetailMaxHeight
             Ui.setButtonText expandButton (if full then "收回限高" else "展开全部")
+            ToolTip.SetTip(expandButton, if full then "收回到限高区域" else "展开查看全部内容")
+            Avalonia.Automation.AutomationProperties.SetName(expandButton, if full then "收回限高" else "展开全部")
             Dispatcher.UIThread.Post refreshButton
         scroller.PropertyChanged.Add(fun args ->
             if args.Property = ScrollViewer.ExtentProperty || args.Property = ScrollViewer.ViewportProperty then
@@ -79,6 +87,8 @@ module MessageCard =
                 full <- false
                 scroller.MaxHeight <- LayoutPolicy.expandedDetailMaxHeight
                 Ui.setButtonText expandButton "展开全部"
+                ToolTip.SetTip(expandButton, "展开查看全部内容")
+                Avalonia.Automation.AutomationProperties.SetName(expandButton, "展开全部")
             Dispatcher.UIThread.Post refreshButton
         host :> Control, setVisible
 
@@ -116,12 +126,19 @@ module MessageCard =
             | Some ms -> sprintf " · %s" (formatDuration ms)
             | None -> ""
         let caption =
-            TextBlock(
-                Text = (if ctx.streaming then "正在思考" + durationText else "思考过程" + durationText),
-                FontSize = ctx.fontSize - 2.0,
-                FontWeight = FontWeight.Medium,
-                Foreground = Tokens.textMuted,
-                VerticalAlignment = VerticalAlignment.Center)
+            let titleRun = Run(if ctx.streaming then "正在思考" else "思考过程")
+            titleRun.Foreground <- Tokens.textMuted
+            let tb =
+                TextBlock(
+                    FontSize = ctx.fontSize - 2.0,
+                    FontWeight = FontWeight.Medium,
+                    VerticalAlignment = VerticalAlignment.Center)
+            tb.Inlines.Add titleRun
+            if not (String.IsNullOrWhiteSpace durationText) then
+                let durRun = Run durationText
+                durRun.Foreground <- Tokens.textFaint
+                tb.Inlines.Add durRun
+            tb
         let headerRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1)
         headerRow.Children.Add chevronHost
         headerRow.Children.Add caption
@@ -134,9 +151,10 @@ module MessageCard =
         Avalonia.Automation.AutomationProperties.SetName(header, "切换思考过程")
         let mutable bodyVisible = not collapsed
         let syncHeaderName () =
+            let actionName = if bodyVisible then "收起思考过程" else "展开思考过程"
             Avalonia.Automation.AutomationProperties.SetName(
-                header,
-                if bodyVisible then "收起思考过程" else "展开思考过程")
+                header, actionName)
+            ToolTip.SetTip(header, if bodyVisible then "收起思考过程" else "展开思考过程")
         let toggle () =
             bodyVisible <- not bodyVisible
             setBodyVisible bodyVisible
@@ -184,13 +202,22 @@ module MessageCard =
                         Foreground = statusBrush,
                         VerticalAlignment = VerticalAlignment.Center))
         /// 未展开时也给一行参数摘要：多数时候用户只想确认「传了什么」。
+        let argCount, previewText =
+            if String.IsNullOrWhiteSpace call.argumentsJson then
+                0, ""
+            else
+                let count =
+                    try
+                        use doc = JsonDocument.Parse call.argumentsJson
+                        match doc.RootElement.ValueKind with
+                        | JsonValueKind.Object -> doc.RootElement.EnumerateObject() |> Seq.length
+                        | JsonValueKind.Array -> doc.RootElement.GetArrayLength()
+                        | _ -> 1
+                    with _ -> 0
+                let single = call.argumentsJson.Replace('\n', ' ').Replace('\r', ' ').Trim()
+                count, (if single.Length > 96 then single.Substring(0, 96) + "…" else single)
         let summaryText =
-            let compact (raw: string) =
-                if String.IsNullOrWhiteSpace raw then ""
-                else
-                    let single = raw.Replace('\n', ' ').Replace('\r', ' ').Trim()
-                    if single.Length > 96 then single.Substring(0, 96) + "…" else single
-            compact call.argumentsJson
+            previewText
         let summary =
             TextBlock(
                 Text = summaryText,
@@ -210,12 +237,18 @@ module MessageCard =
         let detail, setDetailVisible = detailViewport (detailText :> Control) false
         detail.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
         let chevronHost = Border(Child = Icons.chevronRight Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
-        let headerRow = DockPanel(LastChildFill = false)
+        let headerDock = DockPanel(LastChildFill = false)
         let left = Ui.hstack Tokens.space2 [ icon; name :> Control; state :> Control ]
         DockPanel.SetDock(left, Dock.Left)
         DockPanel.SetDock(chevronHost, Dock.Right)
-        headerRow.Children.Add left
-        headerRow.Children.Add chevronHost
+        headerDock.Children.Add left
+        headerDock.Children.Add chevronHost
+        let headerRow =
+            ActionBorder(
+                Background = Brushes.Transparent,
+                Cursor = handCursor,
+                Focusable = true,
+                Child = headerDock)
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         stack.Children.Add headerRow
         stack.Children.Add summary
@@ -233,9 +266,21 @@ module MessageCard =
                 Child = stack)
         let mutable detailVisible = false
         let syncToolName () =
+            let statusText = if running then "执行中" else "已完成"
+            let argInfo =
+                if argCount > 0 && not (String.IsNullOrWhiteSpace previewText) then
+                    sprintf "，%d 个参数：%s" argCount previewText
+                elif not (String.IsNullOrWhiteSpace previewText) then
+                    sprintf "，参数：%s" previewText
+                else
+                    ""
+            let label = sprintf "%s工具调用 %s（%s%s）" (if detailVisible then "收起" else "展开") call.name statusText argInfo
             Avalonia.Automation.AutomationProperties.SetName(
-                host,
-                sprintf "%s工具调用 %s" (if detailVisible then "收起" else "展开") call.name)
+                host, sprintf "%s工具调用 %s" (if detailVisible then "收起" else "展开") call.name)
+            Avalonia.Automation.AutomationProperties.SetName(headerRow, label)
+            Avalonia.Automation.AutomationProperties.SetItemStatus(headerRow, statusText)
+            ToolTip.SetTip(headerRow, if detailVisible then "点击收起参数与结果" else "点击展开参数与结果")
+            ToolTip.SetTip(host, if detailVisible then "点击收起参数与结果" else "点击展开参数与结果")
         let toggle () =
             detailVisible <- not detailVisible
             setDetailVisible detailVisible
@@ -244,8 +289,8 @@ module MessageCard =
                 if detailVisible then Icons.chevronDown Tokens.textFaint else Icons.chevronRight Tokens.textFaint
             syncToolName ()
         Ui.onClick host toggle
+        Ui.onClick headerRow toggle
         syncToolName ()
-        ToolTip.SetTip(host, "点击展开参数与结果")
         host :> Control
 
     /// 附件：图片给缩略入口，其余给文件条。
@@ -415,10 +460,17 @@ module MessageCard =
             let mutable visible = false
             let mutable toggleDetail: unit -> unit = ignore
             let detailButton = Ui.button Ui.Ghost "技术细节" (fun () -> toggleDetail ())
+            detailButton.Cursor <- handCursor
+            detailButton.Focusable <- true
+            let syncDetailButton () =
+                Ui.setButtonText detailButton (if visible then "收起技术细节" else "技术细节")
+                ToolTip.SetTip(detailButton, if visible then "收起错误技术细节" else "展开查看技术细节")
+                Avalonia.Automation.AutomationProperties.SetName(detailButton, if visible then "收起技术细节" else "技术细节")
             toggleDetail <- fun () ->
                 visible <- not visible
                 setDetailVisible visible
-                Ui.setButtonText detailButton (if visible then "收起技术细节" else "技术细节")
+                syncDetailButton ()
+            syncDetailButton ()
             actionRow.Children.Add detailButton
             if actionRow.Children.Count > 0 then column.Children.Add actionRow
             column.Children.Add detailHost

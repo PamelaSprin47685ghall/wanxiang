@@ -657,3 +657,135 @@ let ``Sidebar search navigation moves focus and handles escape`` () =
         Assert.Equal("", searchBox.Text)
     finally
         window.Close()
+
+// =========================================================================
+// 8. Batch 5, 6, 7 Craftsmanship Polish Tests
+// =========================================================================
+
+[<Fact>]
+let ``SettingsView supports Up and Down arrow traversal across navigation sections`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let actions: SettingsActions =
+        { upsertProvider = fun _ cb -> cb true
+          deleteProvider = ignore
+          probeProvider = ignore
+          upsertMcp = fun _ cb -> cb true
+          deleteMcp = ignore
+          updateGeneration = fun _ cb -> cb true
+          savePrefs = ignore
+          toast = fun _ _ -> () }
+    let settings = SettingsView(overlay, actions, ignore, ignore)
+    let control = settings.Build()
+    let window = Window(Width = 800.0, Height = 600.0, Content = settings)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        let navButtons =
+            descendants settings
+            |> Seq.choose (fun d ->
+                if d.Focusable && not (isNull d.Tag) && (d.Tag :? SettingsSection) then Some(d.Tag :?> SettingsSection, d) else None)
+            |> dict
+
+        let providersBtn = navButtons.[SettingsSection.Providers]
+        providersBtn.Focus() |> ignore
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(providersBtn.IsFocused)
+
+        // Press Down arrow on Providers -> should move focus to Tools
+        let downArgs = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down, KeyModifiers = KeyModifiers.None)
+        providersBtn.RaiseEvent downArgs
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(downArgs.Handled)
+        let toolsBtn = navButtons.[SettingsSection.Tools]
+        Assert.True(toolsBtn.IsFocused)
+
+        // Press Up arrow on Tools -> should move focus back to Providers
+        let upArgs = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Up, KeyModifiers = KeyModifiers.None)
+        toolsBtn.RaiseEvent upArgs
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(upArgs.Handled)
+        Assert.True(providersBtn.IsFocused)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``Dialogs confirm focuses the destructive action button by default`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    overlay.WireDismiss()
+    let window = Window(Width = 480.0, Height = 360.0, Content = root)
+    window.Show()
+    try
+        let mutable confirmed = false
+        Dialogs.confirm overlay "删除测试" "此操作不可逆" "确定删除" (fun () -> confirmed <- true)
+        Dispatcher.UIThread.RunJobs()
+
+        Assert.True(overlay.IsDialogOpen)
+        let buttons =
+            descendants root
+            |> Seq.filter (fun c -> c.Focusable)
+            |> Seq.toList
+
+        let confirmButton =
+            buttons
+            |> List.tryFind (fun b ->
+                descendants b
+                |> Seq.exists (function :? TextBlock as tb -> tb.Text = "确定删除" | _ -> false))
+
+        Assert.True(confirmButton.IsSome)
+        Assert.True(confirmButton.Value.IsFocused)
+    finally
+        overlay.CloseDialog()
+        window.Close()
+
+[<Fact>]
+let ``MessageCard toolCallCard header toggles argument and result details`` () =
+    Headless.ensure ()
+    let ctx: MessageContext =
+        { fontSize = 15.0
+          autoCollapseReasoning = false
+          streaming = false
+          isLastAssistant = true
+          usage = None
+          missingAttachments = Set.empty
+          brandAvatar = fun () -> Border() :> Control }
+    let msgActions: MessageActions =
+        { copyText = ignore
+          regenerate = ignore
+          editAndFork = ignore
+          deleteMessage = ignore
+          downloadAttachment = ignore
+          openLink = ignore }
+    let message =
+        { MessageView.empty with
+            commitId = Some 1UL
+            toolCalls =
+                [ { callId = "call_1"
+                    name = "weather"
+                    argumentsJson = "{\"city\": \"Beijing\"}"
+                    result = Some "Sunny, 24C" } ] }
+    let card =
+        MessageCard.render message ctx msgActions
+
+    let window = Window(Width = 600.0, Height = 400.0, Content = card)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        let tool =
+            descendants card
+            |> Seq.find (fun control -> Avalonia.Automation.AutomationProperties.GetName(control) = "展开工具调用 weather")
+        let invoke = Avalonia.Automation.Peers.ControlAutomationPeer.CreatePeerForElement tool |> Assert.IsAssignableFrom<Avalonia.Automation.Provider.IInvokeProvider>
+        invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        let toolName1: string = Avalonia.Automation.AutomationProperties.GetName(tool)
+        Assert.Equal("收起工具调用 weather", toolName1)
+
+        invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        let toolName2: string = Avalonia.Automation.AutomationProperties.GetName(tool)
+        Assert.Equal("展开工具调用 weather", toolName2)
+    finally
+        window.Close()

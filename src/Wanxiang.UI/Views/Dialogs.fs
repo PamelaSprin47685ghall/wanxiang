@@ -21,11 +21,21 @@ type ConnectRequest = {
 /// 应用内对话框。桌面与 PWA 共用，全部画在 OverlayHost 上。
 module Dialogs =
 
+    /// 返回按钮行与主操作按钮：调用方可在 ShowDialog 之后把焦点 post 到主按钮上
+    ///（ShowDialog 内部的 focusFirst 会先聚焦第一个可聚焦项，后 post 者胜出）。
     let private actionRow (overlay: OverlayHost) (confirmLabel: string) (tone: Ui.ButtonTone) (onConfirm: unit -> unit) =
+        let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        ToolTip.SetTip(cancelButton, "取消并关闭对话框 (Esc)")
+        let confirmButton = Ui.button tone confirmLabel onConfirm
+        let confirmTip =
+            match tone with
+            | Ui.Danger -> sprintf "确认“%s”，此操作可能无法撤销" confirmLabel
+            | _ -> confirmLabel
+        ToolTip.SetTip(confirmButton, confirmTip)
         let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
-        row.Children.Add(Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog()))
-        row.Children.Add(Ui.button tone confirmLabel onConfirm)
-        row
+        row.Children.Add cancelButton
+        row.Children.Add confirmButton
+        row, confirmButton
 
     /// 单行输入对话框（重命名等）。
     let prompt
@@ -54,7 +64,9 @@ module Dialogs =
                 e.Handled <- true
                 submit ())
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        ToolTip.SetTip(cancelButton, "取消并关闭对话框 (Esc)")
         let confirmButton = Ui.button Ui.Primary confirmLabel submit
+        ToolTip.SetTip(confirmButton, sprintf "确认“%s”(Enter)" confirmLabel)
         Ui.preparePendingButton confirmButton
         setPending <- fun value ->
             pending <- value
@@ -70,7 +82,7 @@ module Dialogs =
             box.Focus() |> ignore
             box.SelectAll())
 
-    /// 破坏性操作确认。
+    /// 破坏性操作确认：主按钮用 Danger 语气 + 警示 tooltip，打开后焦点直接落在它上面。
     let confirm (overlay: OverlayHost) (title: string) (body: string) (confirmLabel: string) (onConfirm: unit -> unit) =
         let message =
             TextBlock(
@@ -79,32 +91,35 @@ module Dialogs =
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = ReadingRhythm.uiBodyLineHeight)
+        let buttons, dangerButton =
+            actionRow overlay confirmLabel Ui.Danger (fun () ->
+                overlay.CloseDialog()
+                onConfirm ())
         let content =
             Ui.vstack
                 Tokens.space4
                 [ Ui.title title :> Control
                   message :> Control
-                  actionRow overlay confirmLabel Ui.Danger (fun () ->
-                      overlay.CloseDialog()
-                      onConfirm ())
-                  :> Control ]
+                  buttons :> Control ]
         overlay.ShowDialog(content :> Control, 420.0)
+        Dispatcher.UIThread.Post(fun () -> dangerButton.Focus() |> ignore)
 
     /// 长文本编辑（编辑消息并分叉）。
     let editText (overlay: OverlayHost) (title: string) (initial: string) (confirmLabel: string) (onConfirm: string -> unit) =
         let shell, box = Ui.textArea "消息内容" 160.0
         box.Text <- initial
+        let buttons, _ =
+            actionRow overlay confirmLabel Ui.Primary (fun () ->
+                let value = if isNull box.Text then "" else box.Text
+                overlay.CloseDialog()
+                onConfirm value)
         let content =
             Ui.vstack
                 Tokens.space4
                 [ Ui.title title :> Control
                   Ui.caption "会以你编辑后的内容新建一个分叉会话，原会话保持不变。" :> Control
                   shell :> Control
-                  actionRow overlay confirmLabel Ui.Primary (fun () ->
-                      let value = if isNull box.Text then "" else box.Text
-                      overlay.CloseDialog()
-                      onConfirm value)
-                  :> Control ]
+                  buttons :> Control ]
         overlay.ShowDialog(content :> Control, 520.0)
         Dispatcher.UIThread.Post(fun () -> box.Focus() |> ignore)
 

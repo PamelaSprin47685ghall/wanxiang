@@ -54,15 +54,42 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
     let switchRow (title: string) (hint: string) (initial: bool) (onChanged: bool -> unit) : Control * (unit -> bool) * (bool -> unit) =
         let toggle, read, write, flip = Ui.toggle initial onChanged
         Avalonia.Automation.AutomationProperties.SetName(toggle, title)
+        Avalonia.Automation.AutomationProperties.SetHelpText(toggle, hint)
         let caption = Ui.label title
         let note = Ui.caption hint
-        let column = Ui.vstack 1.0 [ caption :> Control; note :> Control ]
-        let row = DockPanel(LastChildFill = true)
+        let column = Ui.vstack Tokens.space1 [ caption :> Control; note :> Control ]
+        let dock = DockPanel(LastChildFill = true)
         DockPanel.SetDock(toggle, Dock.Right)
-        row.Children.Add toggle
-        row.Children.Add column
-        row.MinHeight <- 40.0
-        row.Cursor <- new Cursor(StandardCursorType.Hand)
+        dock.Children.Add toggle
+        dock.Children.Add column
+        let row =
+            ActionBorder(
+                Padding = Thickness(Tokens.space2, Tokens.space2),
+                CornerRadius = CornerRadius Tokens.radiusMd,
+                Background = Brushes.Transparent,
+                Cursor = new Cursor(StandardCursorType.Hand),
+                Focusable = true,
+                MinHeight = 44.0,
+                Child = dock)
+        Avalonia.Automation.AutomationProperties.SetName(row, title)
+        Avalonia.Automation.AutomationProperties.SetHelpText(row, hint)
+        Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
+            row,
+            Nullable Avalonia.Automation.Peers.AutomationControlType.Button)
+        let updateRowBackground () =
+            row.Background <- if row.IsPointerOver || row.IsFocused then Tokens.hover :> IBrush else Brushes.Transparent :> IBrush
+        row.PointerEntered.Add(fun _ -> updateRowBackground ())
+        row.PointerExited.Add(fun _ -> updateRowBackground ())
+        row.GotFocus.Add(fun _ -> updateRowBackground ())
+        row.LostFocus.Add(fun _ -> updateRowBackground ())
+        row.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter || e.Key = Key.Space then
+                e.Handled <- true
+                flip ()
+                updateRowBackground ())
+        Ui.onClick row (fun () ->
+            flip ()
+            updateRowBackground ())
         row.PointerReleased.Add(fun e ->
             if e.InitialPressMouseButton = MouseButton.Left then
                 e.Handled <- true
@@ -126,7 +153,10 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         let toolRounds = parseRequiredInt toolRoundsBox (fun value -> value > 0) "请输入大于 0 的整数。"
 
         match firstInvalid with
-        | Some box -> box.Focus() |> ignore
+        | Some box ->
+            box.Focus(NavigationMethod.Directional) |> ignore
+            box.BringIntoView()
+            (box.Parent :?> Control).BringIntoView()
         | None ->
             let payload = JsonObject()
             match temperature with Some v -> payload["temperature"] <- v | None -> payload["temperature"] <- null
@@ -150,7 +180,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         saveButton.HorizontalAlignment <- HorizontalAlignment.Left
         setGenerationPending <- fun pending ->
             Ui.setButtonPending saveButton pending "保存生成设置" "正在保存…"
-        let grid = Grid(ColumnSpacing = Tokens.space3, RowSpacing = Tokens.space3)
+        let grid = Grid(ColumnSpacing = Tokens.space4, RowSpacing = Tokens.space3)
         grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
         for _ in 1 .. 5 do grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
@@ -180,7 +210,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             if args.Property = Visual.BoundsProperty then applyGridLayout grid.Bounds.Width)
         applyGridLayout grid.Bounds.Width
         Ui.vstack
-            Tokens.space4
+            Tokens.space6
             [ Ui.vstack
                   Tokens.space1
                   [ Ui.heading "生成" :> Control
@@ -227,13 +257,17 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         let larger = Ui.iconButton Icons.plus "更大"
         Ui.onClick larger (fun () -> adjust 0.5)
         let fontRow =
-            let controls = Ui.hstack Tokens.space1 [ smaller :> Control; fontSizeCaption :> Control; larger :> Control ]
-            let column = Ui.vstack 1.0 [ Ui.label "消息字号" :> Control; Ui.caption "影响对话正文与代码块。" :> Control ]
-            let row = DockPanel(LastChildFill = true)
+            let controls = Ui.hstack Tokens.space2 [ smaller :> Control; fontSizeCaption :> Control; larger :> Control ]
+            let column = Ui.vstack Tokens.space1 [ Ui.label "消息字号" :> Control; Ui.caption "影响对话正文与代码块。" :> Control ]
+            let dock = DockPanel(LastChildFill = true)
             DockPanel.SetDock(controls, Dock.Right)
-            row.Children.Add controls
-            row.Children.Add column
-            row :> Control
+            dock.Children.Add controls
+            dock.Children.Add column
+            Border(
+                Padding = Thickness(Tokens.space2, Tokens.space2),
+                MinHeight = 44.0,
+                Child = dock)
+            :> Control
 
         let enterRow, _, setEnterSends =
             switchRow "Enter 直接发送" "关闭后用 Ctrl+Enter 发送，Enter 换行。" prefs.enterSends (fun value ->
@@ -267,7 +301,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         syncAppearance prefs
 
         Ui.vstack
-            Tokens.space4
+            Tokens.space6
             [ Ui.vstack
                   Tokens.space1
                   [ Ui.heading "外观与交互" :> Control
@@ -316,7 +350,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                 | clip -> clip.SetTextAsync diag |> ignore)
         copyDiagButton.HorizontalAlignment <- HorizontalAlignment.Left
         Ui.vstack
-            Tokens.space4
+            Tokens.space6
             [ Ui.vstack Tokens.space1 [ Ui.heading "关于与系统诊断" :> Control ] :> Control
               Ui.card(
                   Ui.vstack

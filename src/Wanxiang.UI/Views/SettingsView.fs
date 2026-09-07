@@ -7,6 +7,7 @@ open Avalonia.Controls.Primitives
 open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Threading
 
 /// 设置界面分区。
 type SettingsSection =
@@ -47,6 +48,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     let generalPanel = SettingsGeneral(overlay, actions, onPrefsChanged)
 
     let contentHost = ContentControl()
+    let mutable contentScroll: ScrollViewer option = None
     let navPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = 2.0)
     let mutable current = Providers
     let mutable instanceId = ""
@@ -80,13 +82,42 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         for section in sections do
             builtSections.Remove section |> ignore
 
-    member private this.Select(section: SettingsSection) =
-        current <- section
+    member private this.UpdateNavButtonStates() =
         for KeyValue(key, button) in navButtons do
-            let selected = key = section
-            button.Background <- if selected then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
+            let selected = key = current
+            let bg =
+                if selected then Tokens.selected :> IBrush
+                elif button.IsPointerOver || button.IsFocused then Tokens.hover :> IBrush
+                else Brushes.Transparent :> IBrush
+            button.Background <- bg
             Avalonia.Automation.AutomationProperties.SetItemStatus(button, if selected then "当前分区" else "")
+
+    member private this.Select(section: SettingsSection) =
+        let changed = current <> section
+        current <- section
+        this.UpdateNavButtonStates()
+        if changed then
+            contentScroll |> Option.iter (fun scroller -> scroller.Offset <- Vector(0.0, 0.0))
         contentHost.Content <- renderSection section
+        match navButtons.TryGetValue section with
+        | true, button -> button.BringIntoView()
+        | _ -> ()
+
+    member private this.NavigateSection(direction: int) =
+        let sections = SettingsSection.all
+        let idx = sections |> List.tryFindIndex ((=) current) |> Option.defaultValue 0
+        let nextIdx = Math.Clamp(idx + direction, 0, sections.Length - 1)
+        let target = sections[nextIdx]
+        this.Select target
+        match navButtons.TryGetValue target with
+        | true, button -> button.Focus(NavigationMethod.Directional) |> ignore
+        | _ -> ()
+
+    member private this.FocusSection(section: SettingsSection) =
+        this.Select section
+        match navButtons.TryGetValue section with
+        | true, button -> button.Focus(NavigationMethod.Directional) |> ignore
+        | _ -> ()
 
     member private this.NavButton(section: SettingsSection) : Border =
         let glyph = (SettingsSection.icon section) Tokens.textMuted
@@ -107,7 +138,31 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 Focusable = true,
                 MinHeight = ControlMetrics.settingsNavMinHeight,
                 Child = Ui.hstack Tokens.space2 [ glyph; caption :> Control ])
+        host.PointerEntered.Add(fun _ -> this.UpdateNavButtonStates())
+        host.PointerExited.Add(fun _ -> this.UpdateNavButtonStates())
+        host.GotFocus.Add(fun _ -> this.UpdateNavButtonStates())
+        host.LostFocus.Add(fun _ -> this.UpdateNavButtonStates())
+        host.KeyDown.Add(fun e ->
+            if e.Key = Key.Up then
+                e.Handled <- true
+                this.NavigateSection -1
+            elif e.Key = Key.Down then
+                e.Handled <- true
+                this.NavigateSection 1
+            elif e.Key = Key.Left && responsiveCompact = Some true then
+                e.Handled <- true
+                this.NavigateSection -1
+            elif e.Key = Key.Right && responsiveCompact = Some true then
+                e.Handled <- true
+                this.NavigateSection 1
+            elif e.Key = Key.Home then
+                e.Handled <- true
+                this.FocusSection SettingsSection.all.Head
+            elif e.Key = Key.End then
+                e.Handled <- true
+                this.FocusSection (List.last SettingsSection.all))
         Avalonia.Automation.AutomationProperties.SetName(host, SettingsSection.label section)
+        host.Tag <- section
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
             Nullable Avalonia.Automation.Peers.AutomationControlType.ListItem)
@@ -185,6 +240,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch)
+        contentScroll <- Some content
 
         let split = DockPanel()
         DockPanel.SetDock(nav, Dock.Left)
@@ -195,6 +251,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
             if width > 0.0 then
                 let compact = width < LayoutPolicy.compactBreakpoint
                 if responsiveCompact <> Some compact then
+                    let previousOffset = content.Offset
                     responsiveCompact <- Some compact
                     if compact then
                         DockPanel.SetDock(nav, Dock.Top)
@@ -214,6 +271,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                         navPanel.Orientation <- Orientation.Vertical
                         navScroll.HorizontalScrollBarVisibility <- ScrollBarVisibility.Hidden
                         contentFrame.Padding <- Thickness(Tokens.space8, Tokens.space6, Tokens.space8, Tokens.space10)
+                    Dispatcher.UIThread.Post(
+                        (fun () -> content.Offset <- previousOffset),
+                        DispatcherPriority.Background)
 
         let layout = DockPanel()
         DockPanel.SetDock(header, Dock.Top)
@@ -223,4 +283,4 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         this.PropertyChanged.Add(fun args ->
             if args.Property = Visual.BoundsProperty then applyResponsive this.Bounds.Width)
         applyResponsive this.Bounds.Width
-        this.Select Providers
+        this.Select current

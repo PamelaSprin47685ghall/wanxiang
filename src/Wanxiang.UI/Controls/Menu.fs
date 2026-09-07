@@ -55,7 +55,7 @@ module Menu =
                 Foreground = foreground,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis)
-        let left = Grid(ColumnSpacing = Tokens.space2)
+        let left = Grid(ColumnSpacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
         left.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
         left.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
         Grid.SetColumn(iconSlot, 0)
@@ -81,7 +81,7 @@ module Menu =
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = Thickness(Tokens.space4, 0.0, 0.0, 0.0))
             rightSlot.Child <- hint
-        let row = Grid(ColumnSpacing = Tokens.space2)
+        let row = Grid(ColumnSpacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
         row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
         row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
         Grid.SetColumn(left, 0)
@@ -101,9 +101,12 @@ module Menu =
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
             Nullable Avalonia.Automation.Peers.AutomationControlType.MenuItem)
-        host.PointerEntered.Add(fun _ -> host.Background <- Tokens.hover)
+        // 危险项（删除会话等）用 dangerSoft 做 hover/focus 底，与常规 hover 拉开差距；
+        // 键盘激活（Enter/Space）由 Ui.onClick 统一绑定，Tab 焦点环由 ActionBorder 绘制。
+        let hoverBrush: IBrush = if entry.danger then Tokens.dangerSoft :> IBrush else Tokens.hover :> IBrush
+        host.PointerEntered.Add(fun _ -> host.Background <- hoverBrush)
         host.PointerExited.Add(fun _ -> host.Background <- Brushes.Transparent)
-        host.GotFocus.Add(fun _ -> host.Background <- Tokens.hover)
+        host.GotFocus.Add(fun _ -> host.Background <- hoverBrush)
         host.LostFocus.Add(fun _ -> host.Background <- Brushes.Transparent)
         Ui.onClick host (fun () ->
             overlay.ClosePopup()

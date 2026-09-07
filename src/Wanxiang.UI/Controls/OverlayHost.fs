@@ -88,8 +88,12 @@ type OverlayHost(root: Grid) =
 
     let restoreFocus (previous: IInputElement option) =
         match previous with
-        | Some (:? Control as control) when control.IsVisible && control.IsEnabled ->
-            Dispatcher.UIThread.Post(fun () -> control.Focus() |> ignore)
+        | Some (:? Control as control) when control.IsEffectivelyVisible && control.IsEnabled ->
+            // 对话框 / 浮层关闭时原控件可能已 detach：真正聚焦前再检查一次，
+            // 避免把焦点抢到不可见或不可用的控件上。
+            Dispatcher.UIThread.Post(fun () ->
+                if control.IsEffectivelyVisible && control.IsEnabled then
+                    control.Focus() |> ignore)
         | _ -> ()
 
     let rememberDialogFocus () =
@@ -303,6 +307,7 @@ type OverlayHost(root: Grid) =
                     FontSize = Tokens.fontSmall,
                     Foreground = Tokens.text,
                     TextWrapping = TextWrapping.Wrap,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
                     LineHeight = ReadingRhythm.helperLineHeight,
                     VerticalAlignment = VerticalAlignment.Center)
             let bodyScroller =
@@ -324,6 +329,7 @@ type OverlayHost(root: Grid) =
                     BorderBrush = Tokens.border,
                     BorderThickness = Thickness 1.0,
                     CornerRadius = CornerRadius Tokens.radiusLg,
+                    MaxWidth = ContentMetrics.toastMaxWidth,
                     Padding = Thickness(Tokens.space4, Tokens.space3),
                     Child = row,
                     Focusable = true)
