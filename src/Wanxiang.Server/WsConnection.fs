@@ -551,6 +551,15 @@ type WsConnection(
                 match handshakeState with
                 | Authenticated -> this.SendCatalog()
                 | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
+            | ConversationExportRead d ->
+                match handshakeState with
+                | Authenticated ->
+                    let ev =
+                        match ServerModel.exportPage (getProjection ()) d with
+                        | Ok page -> ConversationExportPage page
+                        | Error message -> ConversationExportFailed {| exportId = d.exportId; message = message |}
+                    this.TrySend ev |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | ProviderProbeRequest d ->
                 match handshakeState with
                 | Authenticated ->

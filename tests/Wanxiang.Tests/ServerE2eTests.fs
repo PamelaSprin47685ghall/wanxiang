@@ -19,7 +19,7 @@ open Wanxiang.Tests.Helpers
 /// 验证 P0-1 修复：观察快照 → cursor.advanced → 写命令不再被 stale-projection 拒绝。
 module private E2e =
 
-    type ServerHandle(port: int, token: string, ?providerUrl: string) =
+    type ServerHandle(port: int, token: string, ?providerUrl: string, ?initialCommits: Events.Commit list) =
         let dir = tempDir ()
         let configPath = Path.Combine(dir, "config.toml")
         let mutable server: Wanxiang.Server.ServerApp option = None
@@ -53,9 +53,16 @@ module private E2e =
                             lastSeenUtc = None
                             revoked = false } ] }
             File.WriteAllText(configPath, TomlCodec.serialize cfg)
+            match initialCommits with
+            | Some commits ->
+                DataPaths.ensureDataDirs dir
+                File.WriteAllLines(DataPaths.eventFilePath dir DateTime.UtcNow, commits |> List.map CommitCodec.commitToJsonLine)
+            | None -> ()
             let app = new Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
             app.Start(false)
             server <- Some app
+        member _.CommitCount =
+            Directory.GetFiles(DataPaths.eventsDir dir, "*.ndjson") |> Array.sumBy (fun path -> File.ReadLines(path) |> Seq.length)
         member _.Dispose() =
             match server with
             | Some s -> (s :> IDisposable).Dispose()
@@ -111,6 +118,66 @@ let private pickPort () =
     let port = (listener.LocalEndpoint :?> Net.IPEndPoint).Port
     listener.Stop()
     port
+
+[<Fact>]
+let ``e2e full export is read-only and stable while another client deletes and renames`` () =
+    let port, token, id = pickPort (), Auth.generateToken (), Guid.NewGuid()
+    let now = DateTimeOffset.UtcNow
+    let commits =
+        Events.Commit.create 1UL now [ ConversationCreated { conversationId = id; title = "原始标题"; config = testConfig () } ]
+        :: [ for n in 1 .. 450 -> Events.Commit.create (uint64 n + 1UL) now [ AgentMessageRecorded { conversationId = id; payloadJson = userMessageJson (sprintf "message-%04d" n) } ] ]
+    let server = E2e.ServerHandle(port, token, initialCommits = commits)
+    try
+        use timeout = new CancellationTokenSource(TimeSpan.FromSeconds 20.0)
+        let ct = timeout.Token
+        use reader = E2e.conn port token ct
+        use writer = E2e.conn port token ct
+        let wait ws name =
+            let event = E2e.waitFor ws ct (fun ev -> ev["type"].GetValue<string>() = name)
+            Assert.Equal(name, event["type"].GetValue<string>())
+            event
+        let send ws event = E2e.send ws (JsonNode.Parse(WireCodec.encode event).AsObject()) ct
+        let command ws cmd = E2e.send ws (JsonNode.Parse(WireCodec.encodeCommand cmd).AsObject()) ct
+        let value (event: JsonObject) (key: string) = event["payload"].AsObject()[key]
+        wait reader "auth.accepted" |> ignore
+        wait writer "auth.accepted" |> ignore
+        let controller = Wanxiang.UI.ConversationExportController id
+        let readPage query =
+            send reader (ConversationExportRead query)
+            let event = wait reader "conversation.export-page"
+            match WireCodec.tryDecode(event.ToJsonString()) with
+            | Ok (ConversationExportPage page) -> page
+            | other -> failwithf "bad page: %A" other
+        let first = readPage (controller.Start())
+        Assert.Equal(451UL, first.atCommitId)
+        Assert.Equal(450, first.totalMessages)
+        let mutable next = controller.Accept first
+        Assert.True next.IsSome
+        send writer ObserveConversationList
+        let list = wait writer "conversation-list.snapshot"
+        send writer (CursorAdvanced {| id = (value list "lastCommitId").GetValue<uint64>() |})
+        command writer (DeleteMessage {| invocationId = Guid.NewGuid(); conversationId = id; messageCommitId = 2UL |})
+        let deleted = wait writer "command.committed"
+        send writer (CursorAdvanced {| id = (value deleted "commitId").GetValue<uint64>() |})
+        command writer (RenameConversation {| invocationId = Guid.NewGuid(); conversationId = id; title = "更新后的标题" |})
+        wait writer "command.committed" |> ignore
+        while next.IsSome do next <- controller.Accept(readPage next.Value)
+        let document = controller.Document |> Option.get
+        Assert.Equal("原始标题", document.title)
+        Assert.Equal(450, document.messages.Length)
+        Assert.Equal("message-0001", document.messages.Head.text)
+        Assert.Equal("message-0450", (List.last document.messages).text)
+        Assert.Equal(453, server.CommitCount)
+        // 读者仅导出，既没 observe 也没推进 cursor，随后写入必须仍被 stale 检查挡住。
+        command reader (RenameConversation {| invocationId = Guid.NewGuid(); conversationId = id; title = "不应生效" |})
+        let rejected = wait reader "command.rejected"
+        Assert.Equal("stale-projection", (value rejected "code").GetValue<string>())
+        Assert.Equal(453, server.CommitCount)
+        let missing = { controller.Start() with conversationId = Guid.NewGuid() }
+        send reader (ConversationExportRead missing)
+        let failed = wait reader "conversation.export-failed"
+        Assert.Equal(missing.exportId.ToString("D"), (value failed "exportId").GetValue<string>())
+    finally server.Dispose()
 
 [<Fact>]
 let ``e2e reobserve restores cancel identity and retrying the original send is idempotent`` () =

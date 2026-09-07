@@ -183,6 +183,23 @@ module WireCodec =
             p["items"] <- d.items.DeepClone()
             p["hasMore"] <- d.hasMore
         | Command _ -> failwith "Command 事件使用 encodeCommand"
+        | ConversationExportRead d ->
+            putGuid p "exportId" d.exportId
+            putGuid p "conversationId" d.conversationId
+            p["beforeCommitId"] <- d.beforeCommitId
+            match d.atCommitId with Some id -> p["atCommitId"] <- id | None -> ()
+        | ConversationExportPage d ->
+            putGuid p "exportId" d.exportId
+            putGuid p "conversationId" d.conversationId
+            p["atCommitId"] <- d.atCommitId
+            p["beforeCommitId"] <- d.beforeCommitId
+            p["title"] <- d.title
+            p["items"] <- d.items.DeepClone()
+            p["totalMessages"] <- d.totalMessages
+            p["hasMore"] <- d.hasMore
+        | ConversationExportFailed d ->
+            putGuid p "exportId" d.exportId
+            p["message"] <- d.message
         | CommandAccepted d -> putGuid p "invocationId" d.invocationId
         | CommandCommitted d ->
             putGuid p "invocationId" d.invocationId
@@ -533,6 +550,25 @@ module WireCodec =
                     | None -> Error "history.page: missing conversationId"
                 | Some "command.accepted" ->
                     match tryGuid p "invocationId" with Some inv -> Ok(CommandAccepted {| invocationId = inv |}) | None -> Error "command.accepted: missing invocationId"
+                | Some "conversation.export-read" ->
+                    let at = tryUInt64 p "atCommitId"
+                    let validAt = (tryGet p "atCommitId").IsNone || at.IsSome
+                    match tryGuid p "exportId", tryGuid p "conversationId", tryUInt64 p "beforeCommitId" with
+                    | Some exportId, Some conversationId, Some before when validAt ->
+                        Ok(ConversationExportRead { exportId = exportId; conversationId = conversationId; atCommitId = at; beforeCommitId = before })
+                    | _ -> Error "conversation.export-read: invalid identity or boundary"
+                | Some "conversation.export-page" ->
+                    match tryGuid p "exportId", tryGuid p "conversationId", tryUInt64 p "atCommitId", tryUInt64 p "beforeCommitId", tryInt p "totalMessages", tryString p "title", tryGet p "items", tryGet p "hasMore" with
+                    | Some exportId, Some conversationId, Some at, Some before, Some count, Some title, Some (:? JsonArray as items), Some more
+                        when count >= 0 && (more.GetValueKind() = JsonValueKind.True || more.GetValueKind() = JsonValueKind.False) ->
+                        Ok(ConversationExportPage
+                            { exportId = exportId; conversationId = conversationId; atCommitId = at; beforeCommitId = before
+                              title = title; items = items; totalMessages = count; hasMore = more.GetValue<bool>() })
+                    | _ -> Error "conversation.export-page: incomplete or invalid page"
+                | Some "conversation.export-failed" ->
+                    match tryGuid p "exportId", tryString p "message" with
+                    | Some exportId, Some message -> Ok(ConversationExportFailed {| exportId = exportId; message = message |})
+                    | _ -> Error "conversation.export-failed: missing exportId/message"
                 | Some "command.committed" ->
                     match tryGuid p "invocationId" with
                     | Some inv -> Ok(CommandCommitted {| invocationId = inv; commandId = tryString p "commandId" |> Option.defaultValue ""; commitId = tryUInt64 p "commitId" |> Option.defaultValue 0UL |})

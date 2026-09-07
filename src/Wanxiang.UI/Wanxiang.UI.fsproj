@@ -22,6 +22,7 @@
     <Compile Include="Rich/MathVisual.fs" />
     <Compile Include="Model/Markdown.fs" />
     <Compile Include="Model/MessageModel.fs" />
+    <Compile Include="Model/ConversationExport.fs" />
     <Compile Include="Model/UiControllers.fs" />
     <Compile Include="Model/Catalog.fs" />
     <Compile Include="Model/ConversationSummary.fs" />
@@ -32,6 +33,7 @@
     <Compile Include="Controls/MarkdownRenderer.fs" />
     <Compile Include="CredentialStore.fs" />
     <Compile Include="Views/Brand.fs" />
+    <Compile Include="Views/ExportDialog.fs" />
     <Compile Include="Views/MessageCard.fs" />
     <Compile Include="Views/ChatView.fs" />
     <Compile Include="Views/Composer.fs" />

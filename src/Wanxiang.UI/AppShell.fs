@@ -67,6 +67,7 @@ type MainView() as this =
     let mutable hostViewportWidth: float option = None
     let commandFeedback = CommandFeedbackTracker()
     let configFeedback = ConfigFeedbackTracker()
+    let mutable exportDialog: ConversationExportDialog option = None
 
     let toast message tone = overlay.Toast(message, tone)
     let topLevel () = TopLevel.GetTopLevel this
@@ -290,6 +291,7 @@ type MainView() as this =
         let attempt = connectAttempt
         authenticated <- false
         runs.Disconnect()
+        exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
         outbox.Disconnect instanceId
         commandFeedback.RejectAll()
         configFeedback.RejectAll()
@@ -625,11 +627,20 @@ type MainView() as this =
             |> Async.Start
 
     member private this.ExportConversation(summary: ConversationSummary) =
-        match state.Conversations.TryFind summary.id with
-        | None -> toast "请先打开这个会话再导出。" Warning
-        | Some view ->
-            let markdown = Export.toMarkdown summary.title (messagesOf view)
-            this.SaveDownload(summary.title + ".md", Text.Encoding.UTF8.GetBytes markdown)
+        if not authenticated then toast "连接服务器后才能读取完整历史。" Warning
+        elif exportDialog |> Option.exists (fun dialog -> dialog.IsOpen) then ()
+        else
+            let ownerInstance = instanceId
+            let dialog =
+                ConversationExportDialog(
+                    overlay, summary.id, summary.title,
+                    (fun query ->
+                        if authenticated && instanceId = ownerInstance then
+                            client.TrySendAtGenerationAsync(client.ConnectionGeneration, ConversationExportRead query)
+                        else System.Threading.Tasks.Task.FromResult false),
+                    topLevel)
+            exportDialog <- Some dialog
+            dialog.Show()
 
     member this.ToggleSidebar() =
         let state = navigation.ToggleSidebar()
@@ -684,6 +695,7 @@ type MainView() as this =
         | Hello _ -> ()
         | AuthAccepted d ->
             if instanceId <> "" && instanceId <> d.instanceId then
+                if exportDialog |> Option.exists (fun dialog -> dialog.IsOpen) then overlay.CloseDialog()
                 (drafts.Get(instanceId, activeConvId)).text <- composer.Text
                 outbox.Disconnect instanceId
                 state.Reset()
@@ -699,7 +711,7 @@ type MainView() as this =
             // 连接真的成功了，退避归零
             reconnectDelayMs <- ReconnectBackoff.baseDelayMs
             pairingRequested <- false
-            overlay.CloseDialog()
+            if not (exportDialog |> Option.exists (fun dialog -> dialog.IsOpen)) then overlay.CloseDialog()
             let host = try Uri(lastUrl).Host with _ -> lastUrl
             sidebar.SetConnection(true, sprintf "已连接 · %s" host)
             settings.SetConnection(instanceId, lastUrl)
@@ -715,6 +727,7 @@ type MainView() as this =
             this.Render()
         | AuthRejected d ->
             authenticated <- false
+            exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
             lastToken <- None
             sidebar.SetConnection(false, "认证失败")
             setConnectStatus (sprintf "认证失败：%s" d.reason)
@@ -798,6 +811,8 @@ type MainView() as this =
                 pageLoading <- false
                 this.Render()
                 chat.RestoreHistoryPrependAnchorDeferred()
+        | ConversationExportPage page -> exportDialog |> Option.iter (fun dialog -> dialog.Handle page)
+        | ConversationExportFailed d -> exportDialog |> Option.iter (fun dialog -> dialog.Fail(d.exportId, d.message))
         | GenerationStarted d ->
             runs.Start(d.conversationId, d.generationId)
             if (runs.Get(Some d.conversationId)).generationId = Some d.generationId then
@@ -1157,6 +1172,7 @@ type MainView() as this =
                 if epoch = client.ConnectionGeneration then
                     authenticated <- false
                     runs.Disconnect()
+                    exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
                     outbox.Disconnect instanceId
                     commandFeedback.RejectAll()
                     configFeedback.RejectAll()

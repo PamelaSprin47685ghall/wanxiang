@@ -4,6 +4,32 @@ open System
 open System.Text.Json.Nodes
 open Wanxiang.Core
 
+/// 导出是独立的只读视图，不推进 observe 游标，也不填充聊天窗口的历史缓存。
+/// 首页由服务端选定 atCommitId；后续按同一水位、稳定消息 ID 反向分页。
+type ConversationExportQuery = {
+    exportId: Guid
+    conversationId: Guid
+    atCommitId: CommitId option
+    beforeCommitId: CommitId
+}
+
+type ConversationExportPageData = {
+    exportId: Guid
+    conversationId: Guid
+    atCommitId: CommitId
+    beforeCommitId: CommitId
+    title: string
+    items: JsonArray
+    totalMessages: int
+    hasMore: bool
+}
+
+module ConversationExportLimits =
+    let pageMessages = 100
+    let pageBytes = 512 * 1024
+    let maxMessageBytes = 16 * 1024 * 1024
+    let maxTranscriptBytes = 64L * 1024L * 1024L
+
 /// 线上协议事件（fire-and-forget 对称事件，决策 25）。
 /// C→S 与 S→C 使用同一外壳；权限差异由事件类型决定。
 type WireEvent =
@@ -30,6 +56,10 @@ type WireEvent =
     // ---- 历史分页（Q127：按 commitID 反向分页，稳定 ID 作页边界）----
     | HistoryRequest of {| conversationId: Guid; beforeCommitId: CommitId; limit: int |}
     | HistoryPage of {| conversationId: Guid; beforeCommitId: CommitId; items: JsonArray; hasMore: bool |}
+    // ---- 完整导出；exportId 只关联这次导出，不是通用传输 requestId ----
+    | ConversationExportRead of ConversationExportQuery
+    | ConversationExportPage of ConversationExportPageData
+    | ConversationExportFailed of {| exportId: Guid; message: string |}
     // ---- 命令（C→S）与确认 ----
     | Command of ClientCommand
     | CommandAccepted of {| invocationId: Guid |}
@@ -92,6 +122,9 @@ module WireEvent =
         | ConversationSnapshot _ -> "conversation.snapshot"
         | HistoryRequest _ -> "history.request"
         | HistoryPage _ -> "history.page"
+        | ConversationExportRead _ -> "conversation.export-read"
+        | ConversationExportPage _ -> "conversation.export-page"
+        | ConversationExportFailed _ -> "conversation.export-failed"
         | ConversationUpdated _ -> "conversation.updated"
         | MessageCommitted _ -> "conversation.message-committed"
         | Command c -> ClientCommand.commandType c
