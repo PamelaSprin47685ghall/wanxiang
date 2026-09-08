@@ -47,10 +47,6 @@ module MessageCard =
 
     let private handCursor = new Cursor(StandardCursorType.Hand)
 
-    /// 用户气泡选中底：半透明白只把深底提亮一档，浅/深主题下暖白字都保持可读。
-    /// 主题无关因此不进 Tokens，只在气泡内使用。
-    let private userBubbleSelection = SolidColorBrush(Color.FromArgb(0x59uy, 255uy, 255uy, 255uy)) :> IBrush
-
     /// 大段详情统一使用“限高阅读窗 → 主动展开全文”的二阶段 contract。
     /// 首次展开不会把当前阅读位置瞬间推走数屏；需要全文时用户仍有明确入口。
     let private detailViewport (content: Control) (initiallyVisible: bool) : Control * (bool -> unit) =
@@ -1198,7 +1194,7 @@ module MessageCard =
                         FontSize = ctx.fontSize,
                         Foreground = Tokens.userBubbleText,
                         LineHeight = ReadingRhythm.proseLineHeight ctx.fontSize,
-                        SelectionBrush = userBubbleSelection))
+                        SelectionBrush = Tokens.userBubbleSelection))
             else
                 body.Children.Add(renderer.RenderText message.text)
 

@@ -504,37 +504,11 @@ module Dialogs =
                                 setPending false
                                 if ok then overlay.CloseDialog())
 
-        let paramGrid = Grid(ColumnSpacing = Tokens.space3, RowSpacing = Tokens.space3)
-        paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-        paramGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-        for _ in 1 .. 4 do paramGrid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
         let temperatureColumn = Ui.inputFieldGroup "Temperature" "0–2，留空跟随服务端默认" temperatureBox
         let topPColumn = Ui.inputFieldGroup "Top P" "0–1，留空跟随服务端默认" topPBox
         let maxTokensColumn = Ui.inputFieldGroup "最大输出 token" "限制单次回复，留空不限制" maxTokensBox
         let thinkingBudgetColumn = Ui.inputFieldGroup "思维链预算（token）" "0 关闭思维链，留空跟随默认" thinkingBudgetBox
-        paramGrid.Children.Add temperatureColumn
-        paramGrid.Children.Add topPColumn
-        paramGrid.Children.Add maxTokensColumn
-        paramGrid.Children.Add thinkingBudgetColumn
-        let applyParamLayout width =
-            let single = width > 0.0 && width < LayoutPolicy.formSingleColumnBreakpoint
-            paramGrid.ColumnDefinitions[1].Width <-
-                if single then GridLength(0.0) else GridLength(1.0, GridUnitType.Star)
-            let place (control: Control) row column =
-                Grid.SetRow(control, row)
-                Grid.SetColumn(control, column)
-            if single then
-                place temperatureColumn 0 0
-                place topPColumn 1 0
-                place maxTokensColumn 2 0
-                place thinkingBudgetColumn 3 0
-            else
-                place temperatureColumn 0 0
-                place topPColumn 0 1
-                place maxTokensColumn 1 0
-                place thinkingBudgetColumn 1 1
-        paramGrid.PropertyChanged.Add(fun args ->
-            if args.Property = Visual.BoundsProperty then applyParamLayout paramGrid.Bounds.Width)
+        let paramGrid, applyParamLayout = Ui.twoColumnForm Tokens.space3 Tokens.space3 4 [ temperatureColumn; topPColumn; maxTokensColumn; thinkingBudgetColumn ]
 
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
         AutomationProperties.SetName(cancelButton, "取消")
@@ -589,7 +563,7 @@ module Dialogs =
                 MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
-        applyParamLayout paramGrid.Bounds.Width
+        applyParamLayout ()
         overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () ->
             dialogActive <- false),
             canDismiss = (fun () -> not pending))

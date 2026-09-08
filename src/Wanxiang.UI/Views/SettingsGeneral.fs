@@ -198,35 +198,15 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         setGenerationPending <- fun pending ->
             generationSaving <- pending
             Ui.setButtonPending saveButton pending "保存生成设置" "正在保存…"
-        let grid = Grid(ColumnSpacing = Tokens.space4, RowSpacing = Tokens.space3)
-        grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-        grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-        for _ in 1 .. 5 do grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
         let temperatureField = Ui.inputFieldGroup "Temperature" "越高越发散。留空则用服务商默认值。" temperatureBox
         let topPField = Ui.inputFieldGroup "Top P" "核采样阈值，0–1。" topPBox
         let maxTokensField = Ui.inputFieldGroup "最大输出 token" "限制单次回复长度。" maxTokensBox
         let contextField = Ui.inputFieldGroup "上下文消息上限" "每次请求最多携带多少条历史，防止长会话撞上模型上限。" contextBox
         let toolRoundsField = Ui.inputFieldGroup "工具调用轮数上限" "模型连续调用工具超过这个轮数就中止本次生成。" toolRoundsBox
-        for control in [ temperatureField; topPField; maxTokensField; contextField; toolRoundsField ] do grid.Children.Add control
-        let applyGridLayout width =
-            let single = width > 0.0 && width < LayoutPolicy.formSingleColumnBreakpoint
-            grid.ColumnDefinitions[1].Width <-
-                if single then GridLength(0.0) else GridLength(1.0, GridUnitType.Star)
-            let place (control: Control) row column =
-                Grid.SetRow(control, row)
-                Grid.SetColumn(control, column)
-            if single then
+        let grid, applyGridLayout =
+            Ui.twoColumnForm Tokens.space4 Tokens.space3 5
                 [ temperatureField; topPField; maxTokensField; contextField; toolRoundsField ]
-                |> List.iteri (fun row control -> place control row 0)
-            else
-                place temperatureField 0 0
-                place topPField 0 1
-                place maxTokensField 1 0
-                place contextField 1 1
-                place toolRoundsField 2 0
-        grid.PropertyChanged.Add(fun args ->
-            if args.Property = Visual.BoundsProperty then applyGridLayout grid.Bounds.Width)
-        applyGridLayout grid.Bounds.Width
+        applyGridLayout ()
         Ui.vstack
             Tokens.space6
             [ Ui.vstack

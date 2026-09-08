@@ -213,6 +213,119 @@ let ``navigation controller owns compact and collapsed state transitions`` () =
     Assert.False closed.compactNavigationOpen
 
 [<Fact>]
+let ``main layout controller is the only column projector and survives every matrix boundary`` () =
+    Headless.ensure ()
+    let sidebarActions =
+        { newConversation = ignore
+          openConversation = ignore
+          renameConversation = ignore
+          deleteConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let messageActions =
+        { copyText = ignore
+          regenerate = ignore
+          editAndFork = ignore
+          deleteMessage = ignore
+          downloadAttachment = ignore
+          openLink = ignore }
+    let chatActions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message = messageActions }
+    let sidebar = Sidebar(OverlayHost(Grid()), sidebarActions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    let chat = ChatView(chatActions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
+    chat.Build()
+    let composer =
+        Composer(
+            { submit = fun _ -> true
+              stopGeneration = ignore
+              pickAttachment = ignore
+              removeAttachment = ignore
+              openModelPicker = ignore
+              dropFiles = ignore
+              pasteFromClipboard = fun () -> false })
+    composer.Build()
+    let chatColumn = DockPanel()
+    DockPanel.SetDock(composer, Dock.Bottom)
+    chatColumn.Children.Add composer
+    chatColumn.Children.Add chat
+    let splitter = GridSplitter()
+    let shell = Grid()
+    shell.ColumnDefinitions.Add(ColumnDefinition(MaxWidth = Tokens.sidebarMaxWidth))
+    shell.ColumnDefinitions.Add(ColumnDefinition())
+    shell.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+    shell.Children.Add sidebar
+    shell.Children.Add splitter
+    shell.Children.Add chatColumn
+    let window = show shell 1000.0 640.0
+    try
+        let mutable savedWidth = Tokens.sidebarWidth
+        let controller = MainLayoutController(shell, sidebar, splitter, chatColumn, composer, chat, fun () -> savedWidth)
+        let compact = NavigationController(false).ApplyViewport(719.0, false) |> snd
+        let wide = NavigationController(false).ApplyViewport(721.0, false) |> snd
+        let collapsed = { wide with sidebarCollapsed = true }
+
+        // 宽视口：三列投影，splitter 只在未折叠时可见。
+        controller.Apply wide
+        Assert.False wide.compactMode
+        Assert.Equal(GridLength(float Tokens.sidebarWidth), shell.ColumnDefinitions[0].Width)
+        Assert.Equal(GridLength LayoutPolicy.sidebarSplitterWidth, shell.ColumnDefinitions[1].Width)
+        Assert.Equal(GridLength.Star, shell.ColumnDefinitions[2].Width)
+        Assert.True splitter.IsVisible
+        Assert.True sidebar.IsVisible
+        Assert.Equal(0, Grid.GetColumn sidebar)
+        Assert.Equal(1, Grid.GetColumn splitter)
+        Assert.Equal(2, Grid.GetColumn chatColumn)
+
+        // 折叠：第 0/1 列清零，splitter 隐藏，chatColumn 拿满宽度。
+        controller.Apply collapsed
+        Assert.Equal(GridLength 0.0, shell.ColumnDefinitions[0].Width)
+        Assert.Equal(GridLength 0.0, shell.ColumnDefinitions[1].Width)
+        Assert.False splitter.IsVisible
+        Assert.False sidebar.IsVisible
+
+        // 紧凑：全部折叠到第 0 列，抽屉 ZIndex 抬高，splitter 不可见。
+        controller.Apply compact
+        Assert.True compact.compactMode
+        Assert.Equal(GridLength.Star, shell.ColumnDefinitions[0].Width)
+        Assert.Equal(GridLength 0.0, shell.ColumnDefinitions[1].Width)
+        Assert.Equal(GridLength 0.0, shell.ColumnDefinitions[2].Width)
+        Assert.Equal(0, Grid.GetColumn chatColumn)
+        Assert.Equal(2, sidebar.ZIndex)
+        Assert.False splitter.IsVisible
+
+        // 拖拽落定：钳制在 Min/Max 之间，并写回第 0 列。
+        let noted = controller.NoteUserSidebarWidth(9999.0)
+        Assert.Equal(Tokens.sidebarMaxWidth, noted)
+        Assert.Equal(GridLength Tokens.sidebarMaxWidth, shell.ColumnDefinitions[0].Width)
+        let clampedLow = controller.NoteUserSidebarWidth(1.0)
+        Assert.Equal(Tokens.sidebarMinWidth, clampedLow)
+
+        // compact↔wide 往返后投影仍一致（矩阵 resize sweep 的核心序列）。
+        controller.Apply wide
+        Assert.Equal(GridLength(float savedWidth), shell.ColumnDefinitions[0].Width)
+        Assert.True splitter.IsVisible
+        controller.Apply compact
+        Assert.False splitter.IsVisible
+        controller.Apply wide
+        Assert.True splitter.IsVisible
+    finally
+        window.Close()
+
+[<Fact>]
 let ``shortcut router maps global keys without executing UI effects`` () =
     let event key modifiers = KeyEventArgs(Key = key, KeyModifiers = modifiers)
     Assert.Equal(ToggleSidebar, ShortcutRouter.resolve (event Key.B KeyModifiers.Control))
@@ -450,6 +563,77 @@ let ``composer attachment slots stay stable across uploading ready and thirty it
         Assert.True(attachmentScroller.Bounds.Height <= LayoutPolicy.attachmentDraftMaxHeight + 0.5)
     finally
         window.Close()
+
+[<Fact>]
+let ``download buffers cap single transfer and dispose on cap`` () =
+    let buffers = DownloadBuffers(1024L)
+    buffers.Begin("ABC", "report.pdf")
+    Assert.Equal(1, buffers.PendingCount)
+
+    // 正常分片按小写键归一接收。
+    Assert.Equal(Accepted, buffers.Append("abc", Array.zeroCreate 600))
+    Assert.Equal(Accepted, buffers.Append("abc", Array.zeroCreate 400))
+
+    // 触顶：缓冲整体丢弃，后续 chunk 变为 Unknown，内存不随异常流增长。
+    Assert.Equal(Capped, buffers.Append("abc", Array.zeroCreate 100))
+    Assert.Equal(0, buffers.PendingCount)
+    Assert.Equal(Unknown, buffers.Append("abc", Array.zeroCreate 8))
+    Assert.True(Option.isNone (buffers.Take("abc")))
+
+    // Capped 之后重新 Begin 是全新下载：缓冲恢复可用。
+    buffers.Begin("abc", "again.pdf")
+    Assert.Equal(Accepted, buffers.Append("abc", Array.zeroCreate 10))
+    match buffers.Take("ABC") with
+    | Some(fileName, bytes) ->
+        Assert.Equal("again.pdf", fileName)
+        Assert.Equal(10, bytes.Length)
+    | None -> failwith "restarted download should complete"
+    Assert.Equal(0, buffers.PendingCount)
+
+[<Fact>]
+let ``download buffers reset on repeated begin and clear on disconnect`` () =
+    let buffers = DownloadBuffers(4096L)
+    buffers.Begin("aa", "first.bin")
+    Assert.Equal(Accepted, buffers.Append("aa", Array.zeroCreate 100))
+
+    // 同键重试：重置而不是叠加，不会把两半份文件拼在一起。
+    buffers.Begin("AA", "retry.bin")
+    Assert.Equal(Accepted, buffers.Append("aa", Array.zeroCreate 50))
+    match buffers.Take("aa") with
+    | Some(fileName, bytes) ->
+        Assert.Equal("retry.bin", fileName)
+        Assert.Equal(50, bytes.Length)
+    | None -> failwith "retry download should complete"
+
+    buffers.Begin("bb", "lost.bin")
+    Assert.Equal(1, buffers.PendingCount)
+    // 断连：底层流已死，所有在途缓冲整体丢弃。
+    buffers.Clear()
+    Assert.Equal(0, buffers.PendingCount)
+    Assert.True(Option.isNone (buffers.Take("bb")))
+    // Clear 后可继续服务新下载。
+    buffers.Begin("cc", "next.bin")
+    Assert.Equal(Accepted, buffers.Append("cc", Array.zeroCreate 4))
+
+[<Fact>]
+let ``conversation runs retire ledger is bounded with fifo eviction`` () =
+    let runs = ConversationRuns()
+    let conversation = Guid.NewGuid()
+    // 生成 1025 个退休条目，超过容量 1024：最旧的被淘汰，集合不再单调增长。
+    for generation in 1 .. 1025 do
+        runs.Start(conversation, Guid.NewGuid()) |> ignore
+        let generationId = (runs.Get(Some conversation)).generationId |> Option.get
+        Assert.True(runs.Finish(conversation, generationId, None, None))
+    Assert.True(runs.RetiredCount <= 1024, sprintf "retired = %d" runs.RetiredCount)
+
+    // 被淘汰的最旧条目重新 Finish 会被再次记账：淘汰语义是真实的，不是摆设。
+    // （纵深防御的边界就是“窗口内去重”，窗口外的迟到事件允许重新适用。）
+    let latest = (runs.Get(Some conversation))
+    Assert.False latest.running
+
+    // Clear 全量清空：换实例/重置时不残留。
+    runs.Clear()
+    Assert.Equal(0, runs.RetiredCount)
 
 [<Fact>]
 let ``attachment draft uses upload identity so duplicate files stay independent`` () =
@@ -1331,6 +1515,60 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
             window.Close()
 
 [<Fact>]
+let ``escape precedence closes topmost overlay first and guards pending dialog`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    overlay.WireDismiss()
+    let window = show root 360.0 260.0
+    try
+        let anchor = Ui.button Ui.Secondary "锚点" ignore
+        root.Children.Add anchor
+        anchor.Focus NavigationMethod.Tab |> ignore
+
+        // 三层同时打开：popup 盖在 dialog 上，toast 垫底。
+        let dialogContent = Ui.button Ui.Primary "对话框按钮" ignore
+        overlay.ShowDialog(dialogContent, 300.0)
+        Dispatcher.UIThread.RunJobs()
+        overlay.ShowPopup(anchor, Ui.button Ui.Secondary "菜单项" ignore, false)
+        Dispatcher.UIThread.RunJobs()
+        overlay.Toast("底层提示条", Warning)
+        Dispatcher.UIThread.RunJobs()
+        Assert.True overlay.IsDialogOpen
+        Assert.True overlay.IsPopupOpen
+
+        // 第一次 Escape：只关 popup，dialog 保持。
+        Assert.True(overlay.HandleEscape())
+        Dispatcher.UIThread.RunJobs()
+        Assert.False overlay.IsPopupOpen
+        Assert.True overlay.IsDialogOpen
+
+        // 第二次 Escape：关 dialog。
+        Assert.True(overlay.HandleEscape())
+        Dispatcher.UIThread.RunJobs()
+        Assert.False overlay.IsDialogOpen
+
+        // 守卫拦截：提交 pending 中 Escape 不关闭但已消费（不落到 StopGeneration）。
+        // 守卫用可变单元：同一对话框先拒绝后放行，避免 ShowDialog 嵌套语义干扰断言。
+        let mutable guard = false
+        overlay.ShowDialog(
+            Ui.button Ui.Primary "保存中" ignore,
+            300.0,
+            canDismiss = (fun () -> guard))
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(overlay.HandleEscape())
+        Dispatcher.UIThread.RunJobs()
+        Assert.True overlay.IsDialogOpen
+
+        // 守卫放行后 Escape 正常关闭。
+        guard <- true
+        Assert.True(overlay.HandleEscape())
+        Dispatcher.UIThread.RunJobs()
+        Assert.False overlay.IsDialogOpen
+    finally
+        window.Close()
+
+[<Fact>]
 let ``toast stays inside narrow viewport and is keyboard dismissible live content`` () =
     Headless.ensure ()
     let root = Grid()
@@ -1397,6 +1635,36 @@ let ``tertiary text keeps readable contrast in both palette modes`` () =
         Assert.True(contrast palette.textFaint palette.canvas >= 4.5)
         Assert.True(contrast palette.textFaint palette.surface >= 4.5)
         Assert.True(contrast palette.textMuted palette.canvas >= 4.5)
+
+[<Fact>]
+let ``user bubble stays dark in both palettes so its selection overlay is theme independent`` () =
+    // 用户气泡选中底（Tokens.userBubbleSelection）是主题无关的半透明白叠加层，
+    // 其前提是气泡在浅/深两套调色板里都是深底、文字都是浅色。
+    // 这里锁住前提：若未来有人把气泡改成浅底，叠加层会失效，测试立即报警。
+    let relativeLuminance (color: Color) =
+        let channel (value: byte) =
+            let c = float value / 255.0
+            if c <= 0.03928 then c / 12.92 else Math.Pow((c + 0.055) / 1.055, 2.4)
+        0.2126 * channel color.R + 0.7152 * channel color.G + 0.0722 * channel color.B
+    let contrast foreground background =
+        let a = relativeLuminance foreground
+        let b = relativeLuminance background
+        (max a b + 0.05) / (min a b + 0.05)
+    for palette in [ Palette.light; Palette.dark ] do
+        // 气泡底 vs 气泡文字：深底浅字，方向一致。
+        Assert.True(contrast palette.userBubble palette.userBubbleText >= 7.0)
+        // 选中底是半透明白（α=0x59/255），真实视觉效果是它与气泡底的混合色。
+        // 混合后与文字的对比度必须仍达 3.0（大字号 WCAG AA）——这是叠加层
+        // 「只提亮一档」的量化定义，气泡变浅或白变浓都会在这里报警。
+        let selectionOverlay =
+            let a = float 0x59 / 255.0
+            let blend (f: byte) (b: byte) = byte (int (float f * a + float b * (1.0 - a)))
+            Color.FromArgb(
+                255uy,
+                blend 255uy palette.userBubble.R,
+                blend 255uy palette.userBubble.G,
+                blend 255uy palette.userBubble.B)
+        Assert.True(contrast selectionOverlay palette.userBubbleText >= 3.0)
 
 [<Fact>]
 let ``appearance preference update keeps the same focused control instance`` () =

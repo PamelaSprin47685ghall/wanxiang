@@ -2,6 +2,7 @@ namespace Wanxiang.UI
 
 open System
 open System.Collections.Generic
+open System.IO
 open System.Text.Json.Nodes
 open Avalonia.Input
 open Wanxiang.Core
@@ -18,7 +19,20 @@ type ConversationRun = {
 type ConversationRuns() =
     let empty = { generationId = None; running = false; message = None; error = None; usage = None }
     let mutable items: Map<Guid, ConversationRun> = Map.empty
+    // 退休台账防同代事件的重复记账（重复 Finish/迟到 Start）。generationId 是 GUID
+    // 不复用，台账只需覆盖「同一次连接内可能的重复/迟到投递窗口」——游标协议本身
+    // 已按 cursor 去重，这里只是纵深防御。没有上限时每次生成都永久增加一个条目，
+    // 长会话用户会让集合单调增长（Phase 0 风险 R2），因此给 FIFO 总量上限。
+    let retiredCapacity = 1024
     let mutable retired: Set<Guid * Guid> = Set.empty
+    let retiredOrder = Queue<Guid * Guid>()
+    let retire (id: Guid) (generationId: Guid) =
+        if not (retired.Contains(id, generationId)) then
+            retired <- retired.Add(id, generationId)
+            retiredOrder.Enqueue(id, generationId)
+            while retiredOrder.Count > retiredCapacity do
+                let oldest = retiredOrder.Dequeue()
+                retired <- retired.Remove oldest
 
     member _.Get(id: Guid option) = id |> Option.bind items.TryFind |> Option.defaultValue empty
 
@@ -37,7 +51,7 @@ type ConversationRuns() =
     member this.Start(id: Guid, generationId: Guid) =
         let current = this.Get(Some id)
         if current.generationId <> Some generationId && not (retired.Contains(id, generationId)) then
-            current.generationId |> Option.iter (fun previous -> retired <- retired.Add(id, previous))
+            current.generationId |> Option.iter (fun previous -> retire id previous)
             items <- items.Add(id, { current with generationId = Some generationId; running = true; message = None; error = None })
 
     member this.Delta(id: Guid, generationId: Guid, message: MessageView) =
@@ -50,7 +64,7 @@ type ConversationRuns() =
     member this.Finish(id: Guid, generationId: Guid, error: GenerationError option, usage: GenerationUsage option) =
         let current = this.Get(Some id)
         let applicable = not (retired.Contains(id, generationId)) && (current.generationId.IsNone || current.generationId = Some generationId)
-        retired <- retired.Add(id, generationId)
+        retire id generationId
         if applicable then
             items <- items.Add(id,
                 { current with generationId = None; running = false; message = None; error = error
@@ -67,9 +81,13 @@ type ConversationRuns() =
     member _.Disconnect() =
         items <- items |> Map.map (fun _ item -> { item with generationId = None; running = false; message = None })
 
+    /// 退休台账当前条目数（诊断/测试用：证明 FIFO 淘汰在生效）。
+    member _.RetiredCount = retired.Count
+
     member _.Clear() =
         items <- Map.empty
         retired <- Set.empty
+        retiredOrder.Clear()
 
 /// Composer 中的一条附件草稿。用 attachmentId 而不是 sha256 作为身份：
 /// 同一文件被选择两次时，两条草稿仍能独立上传、删除和完成。
@@ -182,6 +200,75 @@ type AttachmentDraftController() =
             let consumed = items
             items <- []
             Some consumed
+
+/// 附件下载的在途接收缓冲，键为小写 sha256。
+///
+/// 服务端按 chunk 推流，只有完成事件会消费缓冲。断连、重试或完成事件丢失时
+/// 缓冲必须能整体丢弃，否则每个半途而废的下载都会在内存里留下一个永不释放的
+/// MemoryStream（Phase 0 风险 R1）。单个下载另有硬上限，超限即丢弃缓冲并让
+/// 调用方给出一次性提示，内存不随异常流无限增长。不持久化任何内容；
+/// 断连由 AppShell 调用 Clear 清零。
+type DownloadChunkResult =
+    | Accepted
+    /// 本次写入触顶：缓冲已整体丢弃，调用方应提示一次
+    | Capped
+    /// 没有在途缓冲（尚未 Begin、已被 Capped 清掉或已完成）
+    | Unknown
+
+type DownloadBuffers(?capBytes: int64) =
+    let capBytes = defaultArg capBytes (128L * 1024L * 1024L)
+    let buffers = Dictionary<string, MemoryStream>()
+    let names = Dictionary<string, string>()
+
+    member _.PendingCount = buffers.Count
+
+    /// 开始接收。同键重复 Begin（重试）会重置缓冲并更新文件名，不叠加第二个流。
+    member _.Begin(sha256: string, fileName: string) =
+        let key = sha256.ToLowerInvariant()
+        match buffers.TryGetValue key with
+        | true, existing ->
+            existing.Dispose()
+            buffers[key] <- new MemoryStream()
+        | _ -> buffers[key] <- new MemoryStream()
+        names[key] <- fileName
+
+    member _.Append(sha256: string, bytes: byte[]) : DownloadChunkResult =
+        let key = sha256.ToLowerInvariant()
+        match buffers.TryGetValue key with
+        | true, buffer ->
+            if int64 buffer.Length + int64 bytes.Length > capBytes then
+                buffer.Dispose()
+                buffers.Remove key |> ignore
+                names.Remove key |> ignore
+                Capped
+            else
+                buffer.Write(bytes, 0, bytes.Length)
+                Accepted
+        | _ -> Unknown
+
+    /// 完成接收：取走文件名与字节并移除缓冲。文件名缺失时回落到 sha256。
+    member _.Take(sha256: string) : (string * byte[]) option =
+        let key = sha256.ToLowerInvariant()
+        match buffers.TryGetValue key with
+        | true, buffer ->
+            buffers.Remove key |> ignore
+            let fileName =
+                match names.TryGetValue key with
+                | true, name ->
+                    names.Remove key |> ignore
+                    name
+                | _ -> sha256
+            let bytes = buffer.ToArray()
+            buffer.Dispose()
+            Some(fileName, bytes)
+        | _ -> None
+
+    /// 断连/重连：底层流已死，不会再有完成事件，丢弃所有在途缓冲。
+    member _.Clear() =
+        for entry in buffers do
+            entry.Value.Dispose()
+        buffers.Clear()
+        names.Clear()
 
 type ComposerDraft = {
     mutable text: string

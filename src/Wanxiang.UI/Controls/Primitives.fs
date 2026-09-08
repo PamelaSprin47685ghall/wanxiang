@@ -645,3 +645,39 @@ module Ui =
             value <- v
             render ()),
         flip
+
+    /// 双列表单网格：宽时两列并排，窄时（< formSingleColumnBreakpoint）退化为单列。
+    /// 返回网格本身与「按当前宽度重新投影」的函数；调用方把后者挂到
+    /// PropertyChanged(Bounds) 上并在构建末尾调用一次。
+    ///
+    /// 两个调用点（Dialogs 参数表单、SettingsGeneral 生成表单）此前各写了一份
+    /// 几乎相同的 apply*Layout 闭包（R5）：列宽写入与行/列放置是同一份契约，
+    /// 提取到这里后，两处共享唯一实现，断点只出自 LayoutPolicy。
+    let twoColumnForm
+        (columnSpacing: float)
+        (rowSpacing: float)
+        (rowCount: int)
+        (fields: Control list)
+        : Grid * (unit -> unit) =
+        let grid = Grid(ColumnSpacing = columnSpacing, RowSpacing = rowSpacing)
+        grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
+        grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
+        for _ in 1 .. rowCount do grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
+        for field in fields do grid.Children.Add field
+        let apply () =
+            let width = grid.Bounds.Width
+            let single = width > 0.0 && width < LayoutPolicy.formSingleColumnBreakpoint
+            grid.ColumnDefinitions[1].Width <-
+                if single then GridLength(0.0) else GridLength(1.0, GridUnitType.Star)
+            let place (control: Control) row column =
+                Grid.SetRow(control, row)
+                Grid.SetColumn(control, column)
+            if single then
+                fields |> List.iteri (fun row control -> place control row 0)
+            else
+                // 双列：奇数个字段时最后一个字段占左列，右列留空。
+                fields
+                |> List.iteri (fun index control -> place control (index / 2) (index % 2))
+        grid.PropertyChanged.Add(fun args ->
+            if args.Property = Visual.BoundsProperty then apply ())
+        grid, apply

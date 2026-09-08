@@ -122,6 +122,11 @@ module Tokens =
     let userBubble = track (fun p -> p.userBubble)
     let userBubbleText = track (fun p -> p.userBubbleText)
 
+    /// 用户气泡选中底：半透明白只把深底提亮一档。气泡在浅/深两套调色板里都是深底
+    /// （对比度测试锁住这一前提），叠加层因此主题无关，不随 Palette 换值。
+    /// 移入 Tokens 是为了守住「视觉常量只出自 Tokens」的不变量，而非让它跟随主题。
+    let userBubbleSelection = SolidColorBrush(Color.FromArgb(0x59uy, 255uy, 255uy, 255uy)) :> IBrush
+
     // ---- 状态 ----
     let success = track (fun p -> p.success)
     let warning = track (fun p -> p.warning)

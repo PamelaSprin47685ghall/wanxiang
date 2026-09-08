@@ -50,8 +50,9 @@ type MainView() as this =
     let drafts = ComposerDrafts()
     let outbox = MessageOutbox()
     let attachmentDraft () = (drafts.Get(instanceId, activeConvId)).attachments
-    let downloadBuffers = System.Collections.Generic.Dictionary<string, MemoryStream>()
-    let mutable downloadMeta: Map<string, string> = Map.empty
+    // 附件下载在途缓冲：容量上限 + 断连整体丢弃，替代此前无上限的裸字典（R1）。
+    let downloads = DownloadBuffers()
+    let mutable downloadCappedNotified = false
     let mutable missingAttachments: Set<string> = Set.empty
 
     let mutable lastUrl = CredentialStore.defaultServerUrl ()
@@ -351,6 +352,9 @@ type MainView() as this =
         commandFeedback.RejectAll()
         configFeedback.RejectAll()
         this.FailUploadingAttachments()
+        // 断连后底层下载流已死，不会有 Complete 事件；缓冲必须整体丢弃（R1）。
+        downloads.Clear()
+        downloadCappedNotified <- false
         this.Render()
         match reconnectCts with
         | Some cts -> cts.Cancel()
@@ -1085,27 +1089,22 @@ type MainView() as this =
                 toast (sprintf "上传失败：%s" upload.fileName) Warning
             | None -> ()
         | AttachmentDownloadBegin d ->
-            let key = d.sha256.ToLowerInvariant()
-            downloadBuffers[key] <- new MemoryStream()
-            downloadMeta <- downloadMeta.Add(key, d.fileName)
+            // 重试同键 Begin 会重置缓冲；新下载开始时也解除一次性的超限提示记忆。
+            downloads.Begin(d.sha256, d.fileName)
+            downloadCappedNotified <- false
         | AttachmentDownloadChunk d ->
-            match downloadBuffers.TryGetValue(d.sha256.ToLowerInvariant()) with
-            | true, buffer ->
-                try
-                    let bytes = Convert.FromBase64String d.dataBase64
-                    buffer.Write(bytes, 0, bytes.Length)
-                with _ -> ()
-            | _ -> ()
+            try
+                let bytes = Convert.FromBase64String d.dataBase64
+                match downloads.Append(d.sha256, bytes) with
+                | Capped when not downloadCappedNotified ->
+                    downloadCappedNotified <- true
+                    toast "附件过大，下载已中止。" Warning
+                | _ -> ()
+            with _ -> ()
         | AttachmentDownloadComplete d ->
-            let key = d.sha256.ToLowerInvariant()
-            match downloadBuffers.TryGetValue key with
-            | true, buffer ->
-                let fileName = downloadMeta.TryFind key |> Option.defaultValue d.sha256
-                let bytes = buffer.ToArray()
-                buffer.Dispose()
-                downloadBuffers.Remove key |> ignore
-                this.SaveDownload(fileName, bytes)
-            | _ -> ()
+            match downloads.Take(d.sha256) with
+            | Some(fileName, bytes) -> this.SaveDownload(fileName, bytes)
+            | None -> ()
         | CommandAccepted d ->
             outbox.Accept d.invocationId
             this.Render()
@@ -1419,6 +1418,9 @@ type MainView() as this =
                     commandFeedback.RejectAll()
                     configFeedback.RejectAll()
                     this.FailUploadingAttachments()
+                    // 与主动断开同路径：连接死了，在途下载缓冲一并丢弃（R1）。
+                    downloads.Clear()
+                    downloadCappedNotified <- false
                     let detail = match error with Some e -> e.Message | None -> ""
                     sidebar.SetConnection(false, "连接已断开")
                     if not (String.IsNullOrWhiteSpace detail) then toast (sprintf "连接已断开：%s" detail) Warning
