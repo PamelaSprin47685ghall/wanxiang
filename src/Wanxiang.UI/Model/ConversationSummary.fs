@@ -21,8 +21,9 @@ type ConversationSummary = {
     lastCommitId: uint64
 }
 
-/// 侧栏分组。置顶单独一组，其余按最近活动的时间粒度归组。
+/// 侧栏分组。置顶单独一组，其余按最近活动的时间粒度归组；order 是 UI 稳定键。
 type ConversationGroup = {
+    order: int
     label: string
     items: ConversationSummary list
 }
@@ -162,13 +163,16 @@ module ConversationSummary =
             regular
             |> List.groupBy (bucketOf now)
             |> List.sortBy (fun ((order, _), _) -> order)
-            |> List.map (fun ((_, label), items) ->
-                { label = label
+            |> List.map (fun ((order, label), items) ->
+                { order = order
+                  label = label
                   items = sortDescending items })
         [ if not (List.isEmpty pinned) then
-              { label = "置顶"
+              { order = -1
+                label = "置顶"
                 items = sortPinnedArchived pinned }
           yield! byBucket
           if not (List.isEmpty archived) then
-              { label = "已归档"
+              { order = 100
+                label = "已归档"
                 items = sortPinnedArchived archived } ]

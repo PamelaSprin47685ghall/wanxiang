@@ -36,6 +36,9 @@ module Brand =
     let private bitmap = tryLoad ()
 
     /// 圆角方形品牌标。找不到图时退化成「万」字。
+    /// 资产按方形安全区绘制；Stretch 用 Uniform 而非 UniformToFill，
+    /// 非方形图只露出底色而不裁剪。底色与字色都是 Tokens 跟踪画笔，
+    /// 切主题时原地换色，无需另订 Tokens.Changed。
     let logo (size: float) : Control =
         let tile =
             Border(
@@ -45,7 +48,7 @@ module Brand =
                 Background = Tokens.surface,
                 ClipToBounds = true)
         match bitmap with
-        | Some image -> tile.Child <- Image(Source = image, Stretch = Stretch.UniformToFill)
+        | Some image -> tile.Child <- Image(Source = image, Stretch = Stretch.Uniform)
         | None ->
             tile.Child <-
                 TextBlock(

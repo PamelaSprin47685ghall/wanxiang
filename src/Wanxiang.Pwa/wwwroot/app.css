@@ -2,17 +2,19 @@
  * wanxiang PWA · Kami 纸感体系（warm parchment + ink-blue）
  * Tokens 对齐 kami/references/tokens.json；运行时视觉 SSOT 在 Palette.fs / Tokens.fs
  * 规则：单墨蓝强调 ≤5%，暖灰四阶，hairline 分割，whisper 阴影
+ * PWA 壳例外：--brand-tint/--tag-bg 为 Kami 纸感浅底（非 Palette accentFaint/Soft）；
+ *   暖灰三阶为壳层暖灰（非 Palette textMuted/Faint）；同色号同含义，不同色号不互换
  * ============================================================ */
 
 :root {
-    /* 纸感基底（Kami --parchment #f5f4ed / --ivory #faf9f5） */
+    /* 纸感基底（Kami --parchment #f5f4ed；--ivory 对齐 Palette surface #FBFAF7） */
     --parchment:  #f5f4ed;
-    --ivory:      #faf9f5;
+    --ivory:      #fbfaf7; /* 对齐 Palette surface：抬起面同一含义 */
     --warm-sand:  #e8e6dc;
     --brand:      #1B365D;
-    --brand-light:#2D5A8A;
-    --brand-tint: #EEF2F7;
-    --tag-bg:     #E4ECF5;
+    --brand-light:#25476F; /* 对齐 Palette accentHover */
+    --brand-tint: #EEF2F7; /* PWA 壳例外：Kami 浅底，非 Palette accentFaint */
+    --tag-bg:     #E4ECF5; /* PWA 壳例外：Kami 标签底，非 Palette accentSoft */
     --near-black: #141413;
     --dark-warm:  #3d3d3a;
     --olive:      #504e49;
@@ -164,7 +166,7 @@ html, body {
 }
 
 /* ============================================================
- * Toast：墨蓝底 + ivory 字；Kami 单强调
+ * Toast：近黑底 + ivory 字；Kami 单强调
  * ============================================================ */
 .toast {
     position: fixed;

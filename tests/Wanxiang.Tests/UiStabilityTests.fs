@@ -577,7 +577,7 @@ let ``download buffers cap single transfer and dispose on cap`` () =
     // 触顶：缓冲整体丢弃，后续 chunk 变为 Unknown，内存不随异常流增长。
     Assert.Equal(Capped, buffers.Append("abc", Array.zeroCreate 100))
     Assert.Equal(0, buffers.PendingCount)
-    Assert.Equal(Unknown, buffers.Append("abc", Array.zeroCreate 8))
+    Assert.Equal(Unknown "没有在途缓冲：尚未开始、已被丢弃或已完成。", buffers.Append("abc", Array.zeroCreate 8))
     Assert.True(Option.isNone (buffers.Take("abc")))
 
     // Capped 之后重新 Begin 是全新下载：缓冲恢复可用。

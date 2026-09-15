@@ -3,6 +3,7 @@ namespace Wanxiang.UI
 open System
 open System.Text
 open System.Threading.Tasks
+open Avalonia.Automation
 open Avalonia.Controls
 open Avalonia.Layout
 open Avalonia.Media
@@ -35,25 +36,29 @@ type ConversationExportDialog(
     let saveButton = Ui.button Ui.Primary "保存 Markdown" (fun () -> this.Save())
 
     member private _.Refresh() =
-        let reading, ready, failed =
+        let reading, ready, failed, isEmpty =
             match controller.Status with
             | ExportReading(received, total) ->
                 status.Text <- match total with None -> "正在读取完整历史…" | Some total -> sprintf "已读取 %d / %d 条消息…" received total
                 progress.IsIndeterminate <- total.IsNone
                 progress.Value <- total |> Option.filter ((<) 0) |> Option.map (fun total -> float received / float total * 100.0) |> Option.defaultValue 0.0
-                true, false, false
+                true, false, false, false
             | ExportReady count ->
+                let empty = count = 0
                 status.Text <-
-                    if saving then "正在保存…"
+                    if empty then "当前会话没有已保存的消息，无需导出"
+                    elif saving then "正在保存…"
                     elif saved then sprintf "已保存完整记录（%d 条消息）。" count
                     else saveError |> Option.defaultValue (sprintf "已完整读取 %d 条消息，可以保存。" count)
-                false, output.IsSome, output.IsNone
-            | ExportFailed message -> status.Text <- message; false, false, true
-            | ExportCancelled -> status.Text <- "导出已取消。"; false, false, false
+                // 空态不提供保存：按钮保持可见但禁用，文案已说明无需导出。
+                false, output.IsSome, output.IsNone, empty
+            | ExportFailed message -> status.Text <- message; false, false, true, false
+            | ExportCancelled -> status.Text <- "导出已取消。"; false, false, false, false
+            | ExportIdle -> status.Text <- "正在准备导出…"; false, false, false, false
         progress.IsVisible <- reading
         retryButton.IsVisible <- failed
         saveButton.IsVisible <- ready && not saved
-        Ui.setEnabled saveButton (ready && not saving)
+        Ui.setEnabled saveButton (ready && not saving && not isEmpty)
         Ui.setButtonText closeButton (if reading then "取消导出" else "关闭")
 
     member private this.Dispatch(query: ConversationExportQuery) =
@@ -85,6 +90,14 @@ type ConversationExportDialog(
                             Ui.caption "导出开始时已保存的消息、工具记录和附件说明。未完成的生成、排队消息及附件文件本体不包含在内；这不是完整备份。" :> Control
                             buttons :> Control ]
         active <- true
+        // D6：读屏需要按钮名称/说明与进度 live；初始焦点落在取消导出上（读取中唯一可用操作）。
+        AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Assertive)
+        AutomationProperties.SetName(closeButton, "取消导出")
+        AutomationProperties.SetHelpText(closeButton, "取消导出并关闭对话框 (Esc)")
+        AutomationProperties.SetName(retryButton, "重新导出")
+        AutomationProperties.SetHelpText(retryButton, "重新读取并导出当前会话")
+        AutomationProperties.SetName(saveButton, "保存 Markdown")
+        AutomationProperties.SetHelpText(saveButton, "保存导出的 Markdown 文件")
         overlay.ShowDialog(content :> Control, 480.0, onClosed = (fun () ->
             active <- false
             timer.Stop()
@@ -92,6 +105,9 @@ type ConversationExportDialog(
             output <- None))
         timer.Start()
         this.Start()
+        Dispatcher.UIThread.Post(fun () ->
+            if closeButton.IsEffectivelyVisible && closeButton.IsEnabled then
+                closeButton.Focus() |> ignore)
 
     member this.Handle(page: ConversationExportPageData) =
         if active then
@@ -101,7 +117,7 @@ type ConversationExportDialog(
                 try
                     let markdown = Export.toMarkdown document.title document.messages
                     if int64 (Encoding.UTF8.GetByteCount markdown) > ConversationExportLimits.maxTranscriptBytes then
-                        saveError <- Some "生成的 Markdown 超过 64 MiB 安全上限；没有保存截断的文件。"
+                        saveError <- Some "生成的 Markdown 超过 64 MiB 安全上限；没有保存不完整文件。"
                     else output <- Some(Encoding.UTF8.GetBytes markdown)
                 with ex -> saveError <- Some("无法生成完整 Markdown：" + ex.Message)
             | _ -> ()

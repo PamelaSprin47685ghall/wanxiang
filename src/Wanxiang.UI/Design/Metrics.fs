@@ -66,6 +66,12 @@ module ControlMetrics =
     let sidebarStateSlotWidth = 19.0
     let sidebarStateGlyphSize = 11.0
     let sidebarRunningDotSize = 6.0
+    /// 选中行左缘强调条宽：非色线索，与悬停态区分。
+    let sidebarSelectedEdgeWidth = 2.0
+    /// 侧栏外框/页脚分隔线宽：唯一来源，避免各处自发明 1.0。
+    let sidebarDividerWidth = 1.0
+    /// 行内标题+预览垂直间距：紧凑堆叠是语义，不是“顺手写 0”。
+    let sidebarRowContentSpacing = 0.0
 
     let composerInputMinHeight = 30.0
     let composerMaxHeight = 240.0

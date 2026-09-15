@@ -1,5 +1,29 @@
 namespace Wanxiang.UI
 
+/// UI 侧传输类型闭合枚举：协议层字符串只在映射边界进出，不直接参与 UI 分支。
+type ProviderKind =
+    | OpenAiCompatible
+    | AnthropicNative
+    | GeminiNative
+    | UnknownKind of string
+
+module ProviderKind =
+
+    let toText (kind: ProviderKind) =
+        match kind with
+        | OpenAiCompatible -> "openai"
+        | AnthropicNative -> "anthropic"
+        | GeminiNative -> "gemini"
+        | UnknownKind raw -> raw
+
+    let ofText (raw: string) =
+        match raw with
+        | "anthropic" -> AnthropicNative
+        | "gemini" -> GeminiNative
+        | "openai" -> OpenAiCompatible
+        | _ when System.String.IsNullOrWhiteSpace raw -> OpenAiCompatible
+        | _ -> UnknownKind raw
+
 /// 一个服务商预设：填好端点与常见模型，用户只需要粘贴密钥。
 type ProviderPreset = {
     key: string
@@ -101,7 +125,7 @@ module ProviderPresets =
             baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1"
             models = [ "qwen3-max"; "qwen-plus"; "qwen-turbo" ]
             needsApiKey = true
-            hint = "在阿里云百炼控制台创建 API-KEY。" }
+            hint = "在阿里云百炼控制台创建密钥。" }
 
           { key = "siliconflow"
             label = "硅基流动"
@@ -160,6 +184,9 @@ module ProviderPresets =
             hint = "任何提供 /v1/chat/completions 的服务都可以填在这里。" } ]
 
     let tryFind (key: string) = all |> List.tryFind (fun p -> p.key = key)
+
+    /// 预设的传输类型（UI 分支请用它，而不是直接比字符串）。
+    let kindOf (preset: ProviderPreset) = ProviderKind.ofText preset.kind
 
     /// 归一化端点：首尾空白与末尾斜杠不产生新身份。
     /// 粘贴 `https://api.openai.com/v1/` 与手打 `https://api.openai.com/v1`

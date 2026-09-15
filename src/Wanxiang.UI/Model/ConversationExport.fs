@@ -7,6 +7,7 @@ open Wanxiang.Core
 open Wanxiang.Protocol
 
 type ConversationExportStatus =
+    | ExportIdle
     | ExportReading of received: int * total: int option
     | ExportReady of messageCount: int
     | ExportFailed of message: string
@@ -18,11 +19,11 @@ type ConversationExportDocument = {
     messages: MessageView list
 }
 
-/// 单次导出的内存状态。所有页验证完整后才允许取出文档，失败／取消立即释放半份数据。
+/// 单次导出的内存状态。所有页验证完整后才允许取出文档，失败／取消立即释放不完整数据，不保存不完整文件。
 type ConversationExportController(conversationId: Guid, ?maxBytes: int64) =
     let byteLimit = defaultArg maxBytes ConversationExportLimits.maxTranscriptBytes
     let mutable query: ConversationExportQuery option = None
-    let mutable status = ExportCancelled
+    let mutable status: ConversationExportStatus = ExportIdle
     let mutable pages: MessageView list list = []
     let mutable received = 0
     let mutable total: int option = None
@@ -67,13 +68,13 @@ type ConversationExportController(conversationId: Guid, ?maxBytes: int64) =
 
     member _.Disconnect() =
         match status with
-        | ExportReading _ -> fail "连接已断开，导出未完成。重新连接后可重新导出；没有保存半份文件。"
+        | ExportReading _ -> fail "连接已断开，导出未完成。重新连接后可重新导出；没有保存不完整文件。"
         | _ -> ()
 
     member _.Expire(now: DateTimeOffset, timeout: TimeSpan) =
         match status with
         | ExportReading _ when now - lastActivity >= timeout ->
-            fail "读取历史超时。请检查连接并重试；旧版服务端需先更新才能完整导出。"
+            fail "读取历史超时。导出未完成，请重试；没有保存不完整文件。"
             true
         | _ -> false
 
@@ -101,7 +102,7 @@ type ConversationExportController(conversationId: Guid, ?maxBytes: int64) =
                 if page.hasMore && (List.isEmpty ids || count >= page.totalMessages) then failwith "导出分页没有继续前进。"
                 if not page.hasMore && count <> page.totalMessages then failwith "导出内容不完整。"
                 bytes <- bytes + int64 (Encoding.UTF8.GetByteCount(page.items.ToJsonString()))
-                if bytes > byteLimit then failwith "会话超过 64 MiB 导出安全上限；已停止，没有截断内容。"
+                if bytes > byteLimit then failwith (sprintf "会话超过 %s 导出安全上限；已停止，没有保存不完整文件。" (AttachmentRef.formatSize byteLimit))
                 let parsed =
                     page.items |> Seq.map (fun item ->
                         let message = MessageView.ofSnapshotItem item

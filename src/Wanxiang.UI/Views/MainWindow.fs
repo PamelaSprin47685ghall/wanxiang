@@ -21,6 +21,15 @@ type MainWindow() as this =
         this.MinWidth <- LayoutPolicy.desktopMinWidth
         this.MinHeight <- 620.0
 
+        // D7：Closing 存 Width/Height/X/Y，启动同样恢复 Width；下限与 MinWidth 同源，
+        // 上限钳到屏幕最大可用宽，避免换显示器后窗口超出可视区。
+        let maxWidth =
+            try
+                let widths = this.Screens.All |> Seq.map (fun s -> float s.WorkingArea.Width) |> Seq.toList
+                match widths with [] -> prefs.windowWidth | _ -> List.max widths
+            with _ ->
+                prefs.windowWidth
+        this.Width <- Math.Clamp(prefs.windowWidth, LayoutPolicy.desktopMinWidth, Math.Max(LayoutPolicy.desktopMinWidth, maxWidth))
         this.Height <- prefs.windowHeight
         this.WindowStartupLocation <-
             if prefs.hasWindowPosition then WindowStartupLocation.Manual else WindowStartupLocation.CenterScreen

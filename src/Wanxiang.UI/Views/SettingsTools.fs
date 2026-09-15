@@ -96,8 +96,19 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let timeoutField = Ui.inputFieldGroup "单次调用超时（秒）" "1–3600 秒。" timeoutBox
         let allBoxes = [ idBox; labelBox; commandBox; argsBox; urlBox; timeoutBox ]
         for box in allBoxes do attachFieldValidation box
-
-
+        let errorSummary =
+            TextBlock(
+                Text = "",
+                FontSize = Tokens.fontCaption,
+                Foreground = Tokens.danger,
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = ReadingRhythm.captionLineHeight,
+                IsVisible = false,
+                Focusable = true)
+        Avalonia.Automation.AutomationProperties.SetName(errorSummary, "表单错误摘要")
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(
+            errorSummary,
+            Avalonia.Automation.Peers.AutomationLiveSetting.Assertive)
         match existing with
         | Some server ->
             idBox.Text <- server.id
@@ -127,6 +138,8 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let mutable savePending = false
         let saveCore () =
             for box in allBoxes do clearFieldError box
+            errorSummary.IsVisible <- false
+            errorSummary.Text <- ""
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
             let label = if isNull labelBox.Text then "" else labelBox.Text.Trim()
             let command = if isNull commandBox.Text then "" else commandBox.Text.Trim()
@@ -139,8 +152,10 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 |> List.ofArray
             let rawTimeout = if isNull timeoutBox.Text then "" else timeoutBox.Text.Trim()
             let mutable firstInvalid: TextBox option = None
+            let errorMessages = ResizeArray<string>()
             let fail (box: TextBox) msg =
                 applyFieldError box msg
+                errorMessages.Add msg
                 if firstInvalid.IsNone then firstInvalid <- Some box
 
             if String.IsNullOrWhiteSpace id then
@@ -176,12 +191,26 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 | false, _ -> fail timeoutBox "请输入有效的正整数秒数（1–3600）。"
 
             match firstInvalid with
+            | Some _ when errorMessages.Count > 1 ->
+                let summaryText = String.Join("；", errorMessages)
+                errorSummary.Text <- sprintf "有 %d 处需要修正：%s" errorMessages.Count summaryText
+                errorSummary.IsVisible <- true
+                Avalonia.Automation.AutomationProperties.SetName(errorSummary, errorSummary.Text)
+                actions.toast (sprintf "有 %d 处需要修正，请查看表单顶部摘要。" errorMessages.Count) Warning
+                // 多错时聚焦摘要：逐字段内联错误保留，焦点只落一处，不逐个跳转。
+                errorSummary.BringIntoView()
+                errorSummary.Focus(NavigationMethod.Directional) |> ignore
+                Dispatcher.UIThread.Post(fun () ->
+                    if errorSummary.IsEffectivelyVisible then
+                        errorSummary.BringIntoView()
+                        errorSummary.Focus(NavigationMethod.Directional) |> ignore)
             | Some box ->
+                errorSummary.IsVisible <- false
                 let errorMsg = (Ui.fieldValidationMessage box).Text
                 if not (String.IsNullOrWhiteSpace errorMsg) then
                     actions.toast errorMsg Warning
                 // 错误行只展开自己所在的组（hint 与 error 互换），边框粗细不变；
-                // 这里只把焦点送到第一个错误处，不碰兄弟。
+                // 单错时焦点仍送到字段本身，不打断摘要节律。
                 box.BringIntoView()
                 box.Focus(NavigationMethod.Directional) |> ignore
                 Dispatcher.UIThread.Post(fun () ->
@@ -236,6 +265,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 Tokens.space3
                 [ Ui.title (if existing.IsSome then "编辑 MCP 服务器" else "添加 MCP 服务器") :> Control
                   Ui.caption "本地服务器以子进程方式启动（stdio）；远程服务器走 Streamable HTTP。" :> Control
+                  errorSummary :> Control
                   idField
                   labelField
                   commandField

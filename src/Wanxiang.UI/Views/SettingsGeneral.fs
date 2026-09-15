@@ -27,6 +27,21 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
     let contextBox = snd (Ui.textField "200")
     let toolRoundsBox = snd (Ui.textField "12")
     let instructionsBox = snd (Ui.textArea "新会话的默认系统指令（可留空）" 96.0)
+    let generationErrorSummary =
+        let summary =
+            TextBlock(
+                Text = "",
+                FontSize = Tokens.fontCaption,
+                Foreground = Tokens.danger,
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = ReadingRhythm.captionLineHeight,
+                IsVisible = false,
+                Focusable = true)
+        Avalonia.Automation.AutomationProperties.SetName(summary, "表单错误摘要")
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(
+            summary,
+            Avalonia.Automation.Peers.AutomationLiveSetting.Assertive)
+        summary
 
     let mutable readAutoTitle: unit -> bool = fun () -> true
     let mutable setAutoTitle: bool -> unit = ignore
@@ -119,9 +134,13 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
     member private this.SaveGenerationCore() =
         let fields = [ temperatureBox; topPBox; maxTokensBox; contextBox; toolRoundsBox ]
         for box in fields do Ui.clearFieldError box
+        generationErrorSummary.IsVisible <- false
+        generationErrorSummary.Text <- ""
         let mutable firstInvalid: TextBox option = None
+        let errorMessages = ResizeArray<string>()
         let fail box message =
             Ui.setFieldError box message
+            errorMessages.Add message
             if firstInvalid.IsNone then firstInvalid <- Some box
         let raw (box: TextBox) = if isNull box.Text then "" else box.Text.Trim()
         let parseOptionalFloat box valid message =
@@ -158,12 +177,26 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         let toolRounds = parseRequiredInt toolRoundsBox (fun value -> value > 0) "请输入大于 0 的整数。"
 
         match firstInvalid with
+        | Some _ when errorMessages.Count > 1 ->
+            let summaryText = String.Join("；", errorMessages)
+            generationErrorSummary.Text <- sprintf "有 %d 处需要修正：%s" errorMessages.Count summaryText
+            generationErrorSummary.IsVisible <- true
+            Avalonia.Automation.AutomationProperties.SetName(generationErrorSummary, generationErrorSummary.Text)
+            actions.toast (sprintf "有 %d 处需要修正，请查看表单顶部摘要。" errorMessages.Count) Warning
+            // 多错时聚焦摘要：逐字段内联错误保留，焦点只落一处，不逐个跳转。
+            generationErrorSummary.BringIntoView()
+            generationErrorSummary.Focus(NavigationMethod.Directional) |> ignore
+            Dispatcher.UIThread.Post(fun () ->
+                if generationErrorSummary.IsEffectivelyVisible then
+                    generationErrorSummary.BringIntoView()
+                    generationErrorSummary.Focus(NavigationMethod.Directional) |> ignore)
         | Some box ->
+            generationErrorSummary.IsVisible <- false
             let errorMsg = (Ui.fieldValidationMessage box).Text
             if not (String.IsNullOrWhiteSpace errorMsg) then
                 actions.toast errorMsg Warning
             // 错误行只展开自己所在的组（hint 与 error 互换），边框粗细不变；
-            // 这里只把焦点送到第一个错误处，不碰兄弟。
+            // 单错时焦点仍送到字段本身，不打断摘要节律。
             box.BringIntoView()
             box.Focus(NavigationMethod.Directional) |> ignore
             Dispatcher.UIThread.Post(fun () ->
@@ -214,6 +247,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                   [ Ui.heading "生成" :> Control
                     Ui.caption "这些是新会话的默认值。单个会话可以在会话设置里单独调整。" :> Control ]
               :> Control
+              generationErrorSummary :> Control
               grid :> Control
               Ui.controlFieldGroup "默认系统指令" "会作为 system 消息随每次请求发送。" (instructionsBox.Parent :?> Control)
               autoTitleRow

@@ -235,6 +235,7 @@ module Dialogs =
             onConfirm value
         let buttons, confirmButton =
             actionRow overlay confirmLabel Ui.Primary submit
+        AutomationProperties.SetHelpText(confirmButton, sprintf "确认“%s”(Ctrl+Enter)" confirmLabel)
         ToolTip.SetTip(confirmButton, sprintf "确认“%s”(Ctrl+Enter)" confirmLabel)
         box.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
@@ -575,10 +576,11 @@ module Dialogs =
               [ "Ctrl / ⌘ + N", "新建会话"
                 "Ctrl / ⌘ + B", "切换侧边栏展开 / 折叠"
                 "Ctrl / ⌘ + K", "快速聚焦搜索栏"
-                "Ctrl / ⌘ + 1 ~ 9", "快速跳转至对应会话"
+                "Ctrl / ⌘ + 1 ~ 9", "按侧栏当前可见顺序快速跳转至对应会话"
                 "Ctrl / ⌘ + ,", "打开全局设置"
-                "Ctrl / ⌘ + Shift + S", "切换深色 / 浅色主题"
-                "Ctrl / ⌘ + /", "显示快捷键帮助" ]
+                "Ctrl / ⌘ + Shift + S", "切换主题（跟随系统 → 浅色 → 深色轮转）"
+                "Ctrl / ⌘ + /", "显示快捷键帮助"
+                "F1", "显示快捷键帮助" ]
               "输入与会话",
               [ "Enter", "发送消息（或换行，按偏好）"
                 "Shift + Enter", "换行输入"

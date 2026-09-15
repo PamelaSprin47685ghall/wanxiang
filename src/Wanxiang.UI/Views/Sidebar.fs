@@ -78,7 +78,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         ListBox(
             Background = Brushes.Transparent,
             BorderThickness = Thickness 0.0,
-            Focusable = false)
+            // V24: ListBox 本体可聚焦，键盘 Tab/Directional 才能进入侧栏；行聚焦仍走 FocusRowAt 的 Post 机制，容器 ListBoxItem 保持 Focusable=false。
+            Focusable = true)
     let emptyState = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, IsVisible = false, Margin = Thickness(Tokens.space5, Tokens.space8, Tokens.space5, Tokens.space8), VerticalAlignment = VerticalAlignment.Center)
     let emptyTitle =
         TextBlock(
@@ -214,6 +215,16 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 键盘焦点环由 ActionBorder 统一绘制（outline 语义、零位移）；
         // 这里只管选中底与左缘，悬停由事件处理补，避免两套阴影互相覆盖。
         host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
+        // V25: 选中补非色线索（字重）：悬停只动底色，选中另加标题半粗体。
+        match host.Child with
+        | :? StackPanel as column when column.Children.Count >= 2 ->
+            match column.Children.[0] with
+            | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
+                match titleRow.Children.[2] with
+                | :? TextBlock as titleBlock -> titleBlock.FontWeight <- if isActive then FontWeight.SemiBold else FontWeight.Medium
+                | _ -> ()
+            | _ -> ()
+        | _ -> ()
         let status =
             match isActive, summary.running with
             | true, true -> "当前会话，生成中"
@@ -235,6 +246,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
                 // 焦点环同上：归 ActionBorder，避免与选中态阴影打架。
                 host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
+                match host.Child with
+                | :? StackPanel as column when column.Children.Count >= 2 ->
+                    match column.Children.[0] with
+                    | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
+                        match titleRow.Children.[2] with
+                        | :? TextBlock as titleBlock -> titleBlock.FontWeight <- if isActive then FontWeight.SemiBold else FontWeight.Medium
+                        | _ -> ()
+                    | _ -> ()
+                | _ -> ()
                 Avalonia.Automation.AutomationProperties.SetItemStatus(host, if isActive then "当前会话" else "")
 
     member private _.FocusRowAt(index: int) =
@@ -350,7 +370,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             | _ -> ())
         let accessibleName =
             if expanded then "收起已归档会话"
-            else sprintf "已归档会话，共 %d 个，点击展开" archivedCount
+            // V26: Name 包含可见原文 labelText（含计数），再补“点击展开”，不重复计数。
+            else sprintf "%s，点击展开" labelText
         Avalonia.Automation.AutomationProperties.SetName(host, accessibleName)
         Avalonia.Automation.AutomationProperties.SetRole(host, AutomationRole.Button)
         Avalonia.Automation.AutomationProperties.SetExpanded(host, expanded)
@@ -474,7 +495,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         DockPanel.SetDock(moreButton, Dock.Right)
         titleRow.Children.Add moreButton
         titleRow.Children.Add title
-        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0, VerticalAlignment = VerticalAlignment.Center)
+        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = ControlMetrics.sidebarRowContentSpacing, VerticalAlignment = VerticalAlignment.Center)
         column.Children.Add titleRow
         column.Children.Add preview
         let host =
@@ -483,7 +504,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
-                BorderThickness = Thickness(2.0, 0.0, 0.0, 0.0),
+                BorderThickness = Thickness(ControlMetrics.sidebarSelectedEdgeWidth, 0.0, 0.0, 0.0),
                 Cursor = handCursor,
                 Focusable = true,
                 MinHeight = ControlMetrics.sidebarRowMinHeight,
@@ -658,7 +679,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         archivedToggleHost <- Some host
         let accessibleName =
             if expanded then "收起已归档会话"
-            else sprintf "已归档会话，共 %d 个，点击展开" count
+            else sprintf "%s，点击展开" labelText
         Avalonia.Automation.AutomationProperties.SetName(host, accessibleName)
         Avalonia.Automation.AutomationProperties.SetExpanded(host, expanded)
         ToolTip.SetTip(host, accessibleName)
@@ -755,7 +776,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         emptyState.IsVisible <- List.isEmpty visible && not isSearchEmpty
         if List.isEmpty visible then
             if not connected then
-                emptyTitle.Text <- "尚未连接服务器"
+                // V20: 与 ChatView NotConnected 同句式，不在 Sidebar 另造术语。
+                emptyTitle.Text <- "先连接一台万象服务器"
                 emptyHint.Text <- "连接后即可看到会话记录。"
             else
                 emptyTitle.Text <- "还没有会话"
@@ -842,7 +864,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     member this.Build() =
         this.Background <- Tokens.rail
         this.BorderBrush <- Tokens.borderSoft
-        this.BorderThickness <- Thickness(0.0, 0.0, 1.0, 0.0)
+        this.BorderThickness <- Thickness(0.0, 0.0, ControlMetrics.sidebarDividerWidth, 0.0)
 
         let brand = brandLogo Tokens.logoSidebar
         brand.VerticalAlignment <- VerticalAlignment.Center
@@ -926,7 +948,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 Height = Tokens.barHeight,
                 Padding = Thickness(Tokens.space4, 0.0, Tokens.space3, 0.0),
                 BorderBrush = Tokens.borderSoft,
-                BorderThickness = Thickness(0.0, 1.0, 0.0, 0.0),
+                BorderThickness = Thickness(0.0, ControlMetrics.sidebarDividerWidth, 0.0, 0.0),
                 Child = dock)
 
         conversationList.ItemsPanel <- FuncTemplate<Panel>(fun () -> VirtualizingStackPanel() :> Panel)

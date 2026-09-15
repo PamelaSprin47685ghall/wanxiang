@@ -49,11 +49,13 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
 
     let contentHost = ContentControl()
     let mutable contentScroll: ScrollViewer option = None
-    let navPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = 2.0)
+    let navPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
     let mutable current = Providers
     let mutable instanceId = ""
     let mutable serverUrl = ""
     let navButtons = System.Collections.Generic.Dictionary<SettingsSection, Border>()
+    let navCaptions = System.Collections.Generic.Dictionary<SettingsSection, TextBlock>()
+    let navGlyphs = System.Collections.Generic.Dictionary<SettingsSection, Control>()
     let scrollPositions = System.Collections.Generic.Dictionary<SettingsSection, float>()
     let mutable responsiveCompact: bool option = None
 
@@ -92,6 +94,16 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 else Brushes.Transparent :> IBrush
             button.Background <- bg
             Avalonia.Automation.AutomationProperties.SetItemStatus(button, if selected then "当前分区" else "")
+            let label = SettingsSection.label key
+            Avalonia.Automation.AutomationProperties.SetHelpText(button, if selected then label + "，当前分区" else label)
+            match navCaptions.TryGetValue key with
+            | true, caption ->
+                caption.Foreground <- (if selected then Tokens.text else Tokens.textMuted) :> IBrush
+                caption.FontWeight <- (if selected then FontWeight.Bold else FontWeight.Medium)
+            | _ -> ()
+            match navGlyphs.TryGetValue key with
+            | true, glyph -> glyph.Opacity <- (if selected then 1.0 else Tokens.opacitySubtle)
+            | _ -> ()
 
     member private this.Select(section: SettingsSection) =
         let changed = current <> section
@@ -154,7 +166,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 VerticalAlignment = VerticalAlignment.Center)
         let host =
             ActionBorder(
-                Padding = Thickness(Tokens.space3, 8.0),
+                Padding = Thickness(Tokens.space3, Tokens.space2),
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 Background = Brushes.Transparent,
                 Cursor = new Cursor(StandardCursorType.Hand),
@@ -167,7 +179,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         host.LostFocus.Add(fun _ -> this.UpdateNavButtonStates())
         host.KeyDown.Add(fun e ->
             // Enter/Space 由 Ui.onClick 拥有（选中是幂等的，但双通道无意义）；
-            // 选中态靠 Tokens.selected 底，键盘焦点另有 focusRingSpread 外环，两者可区分。
+            // 选中态靠 Tokens.selected 底 + 标题前景/字重 + 图标不透明度，键盘焦点另有 focusRingSpread 外环，两者可区分。
             if e.Key = Key.Up then
                 e.Handled <- true
                 this.NavigateSection -1
@@ -186,6 +198,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
             elif e.Key = Key.End then
                 e.Handled <- true
                 this.FocusSection (List.last SettingsSection.all))
+        navCaptions[section] <- caption
+        navGlyphs[section] <- glyph
+        glyph.Opacity <- Tokens.opacitySubtle
         Avalonia.Automation.AutomationProperties.SetName(host, SettingsSection.label section)
         host.Tag <- section
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
@@ -252,6 +267,10 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 BorderBrush = Tokens.borderSoft,
                 BorderThickness = Thickness(0.0, 0.0, 1.0, 0.0),
                 Child = navScroll)
+        Avalonia.Automation.AutomationProperties.SetName(nav, "设置分区导航")
+        Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
+            nav,
+            Nullable Avalonia.Automation.Peers.AutomationControlType.Tab)
 
         let contentFrame =
             Border(
@@ -281,7 +300,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                     if compact then
                         DockPanel.SetDock(nav, Dock.Top)
                         nav.Width <- Double.NaN
-                        nav.Height <- 56.0
+                        nav.Height <- Tokens.barHeight
                         nav.Padding <- Thickness(Tokens.space3, Tokens.space2)
                         navPanel.Spacing <- Tokens.space2
                         nav.BorderThickness <- Thickness(0.0, 0.0, 0.0, 1.0)
@@ -293,7 +312,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                         nav.Width <- ControlMetrics.settingsNavWidth
                         nav.Height <- Double.NaN
                         nav.Padding <- Thickness(Tokens.space3, Tokens.space4)
-                        navPanel.Spacing <- 2.0
+                        navPanel.Spacing <- Tokens.space1
                         nav.BorderThickness <- Thickness(0.0, 0.0, 1.0, 0.0)
                         navPanel.Orientation <- Orientation.Vertical
                         navScroll.HorizontalScrollBarVisibility <- ScrollBarVisibility.Hidden
