@@ -40,7 +40,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         Avalonia.Automation.AutomationProperties.SetName(summary, "表单错误摘要")
         Avalonia.Automation.AutomationProperties.SetLiveSetting(
             summary,
-            Avalonia.Automation.Peers.AutomationLiveSetting.Assertive)
+            Avalonia.Automation.AutomationLiveSetting.Assertive)
         summary
 
     let mutable readAutoTitle: unit -> bool = fun () -> true

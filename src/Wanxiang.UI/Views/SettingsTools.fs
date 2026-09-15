@@ -108,7 +108,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         Avalonia.Automation.AutomationProperties.SetName(errorSummary, "表单错误摘要")
         Avalonia.Automation.AutomationProperties.SetLiveSetting(
             errorSummary,
-            Avalonia.Automation.Peers.AutomationLiveSetting.Assertive)
+            Avalonia.Automation.AutomationLiveSetting.Assertive)
         match existing with
         | Some server ->
             idBox.Text <- server.id
