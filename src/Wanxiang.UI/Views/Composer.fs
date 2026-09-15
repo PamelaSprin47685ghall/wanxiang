@@ -46,7 +46,7 @@ type Composer(actions: ComposerActions) as this =
             PlaceholderForeground = Tokens.textMuted,
             FontSize = Tokens.fontReading,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            Padding = Thickness(0.0, 4.0, 0.0, 4.0),
+            Padding = Thickness(0.0, Tokens.space1, LayoutPolicy.nestedScrollGutter, Tokens.space1),
             MinHeight = ControlMetrics.composerInputMinHeight,
             MaxHeight = ControlMetrics.composerMaxHeight,
             VerticalContentAlignment = VerticalAlignment.Center)
@@ -65,7 +65,7 @@ type Composer(actions: ComposerActions) as this =
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             AllowAutoHide = true,
             IsVisible = false,
-            Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2))
+            Margin = Thickness(0.0, 0.0, LayoutPolicy.nestedScrollGutter, Tokens.space2))
 
     // 几何全由 Ui.iconButtonAccent 固定（发送↔停止只换字形）；此处不再复述尺寸，避免双写漂移。
     let sendButton = Ui.iconButtonAccent Icons.send "发送"
@@ -74,7 +74,18 @@ type Composer(actions: ComposerActions) as this =
     let pendingScroller =
         ScrollViewer(Content = pendingPanel, MaxHeight = LayoutPolicy.pendingMessagesMaxHeight, IsVisible = false,
                      HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                     VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
+                     VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                     Margin = Thickness(0.0, 0.0, LayoutPolicy.nestedScrollGutter, 0.0))
+    let pendingContainer =
+        Border(
+            Background = Tokens.surfaceSoft,
+            BorderBrush = Tokens.borderSoft,
+            BorderThickness = Thickness 1.0,
+            CornerRadius = CornerRadius Tokens.radiusMd,
+            Padding = Thickness(Tokens.space3, Tokens.space2, Tokens.space2, Tokens.space2),
+            Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2),
+            IsVisible = false,
+            Child = pendingScroller)
     let mutable pendingKeys: (Guid * DeliveryState * bool * bool) list = []
     let attachButton = Ui.iconButton Icons.paperclip "添加附件"
     let modelCaption =
@@ -573,6 +584,8 @@ type Composer(actions: ComposerActions) as this =
                         ScrollViewer(
                             MaxHeight = LayoutPolicy.pendingMessagePreviewMaxHeight,
                             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                            Margin = Thickness(0.0, 0.0, LayoutPolicy.nestedScrollGutter, 0.0),
                             Content = SelectableTextBlock(Text = item.text, TextWrapping = TextWrapping.Wrap,
                                                           FontSize = Tokens.fontSmall, Foreground = Tokens.text)))
                 if not (List.isEmpty item.attachments) then
@@ -595,6 +608,7 @@ type Composer(actions: ComposerActions) as this =
             if not (List.isEmpty items) then
                 pendingPanel.Children.Add(Ui.caption "未确认内容只保留在当前窗口，关闭或刷新前请先确认保存。")
             pendingScroller.IsVisible <- not (List.isEmpty items)
+            pendingContainer.IsVisible <- not (List.isEmpty items)
 
     member this.SetGenerating(value: bool) =
         generating <- value
@@ -773,7 +787,7 @@ type Composer(actions: ComposerActions) as this =
 
         let outer = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, MaxWidth = Tokens.readingWidth)
         outer.Children.Add disabledNotice
-        outer.Children.Add pendingScroller
+        outer.Children.Add pendingContainer
         outer.Children.Add shell
         this.Child <- outer
         this.SetEnterSends true

@@ -34,6 +34,9 @@ module LayoutPolicy =
     let pendingMessagesMaxHeight = 168.0
     let pendingMessagePreviewMaxHeight = 76.0
 
+    /// 嵌套滚动容器与外层滚动条之间的安全留白（避免滚动条紧贴或重叠）。
+    let nestedScrollGutter = Tokens.space2
+
     /// Toast 长错误正文的局部阅读高度。
     let toastBodyMaxHeight = 160.0
 

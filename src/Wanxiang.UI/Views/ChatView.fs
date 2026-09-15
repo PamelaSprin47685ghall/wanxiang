@@ -86,7 +86,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         Border(
             Background = Tokens.accentFaint,
             CornerRadius = CornerRadius Tokens.radiusPill,
-            Padding = Thickness(Tokens.space3, 3.0),
+            Padding = Thickness(Tokens.space3, Tokens.space1),
             VerticalAlignment = VerticalAlignment.Center,
             IsVisible = true,
             Opacity = 0.0,
@@ -227,8 +227,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             // 不再额外跑第二个 spinner 与正文竞争注意力 / UI thread。
             let stateDot =
                 Border(
-                    Width = 5.0,
-                    Height = 5.0,
+                    Width = ControlMetrics.sidebarRunningDotSize,
+                    Height = ControlMetrics.sidebarRunningDotSize,
                     CornerRadius = CornerRadius Tokens.radiusPill,
                     Background = Tokens.accent,
                     VerticalAlignment = VerticalAlignment.Center)
