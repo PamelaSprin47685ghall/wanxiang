@@ -909,6 +909,9 @@ type MainView() as this =
             e.Handled <- true
             // 焦点在输入框时不必先找到左下角芯片：锚点取芯片本身，菜单位置与点击一致。
             this.ShowModelPicker(composer.ModelAnchor())
+        | JumpExchange direction ->
+            e.Handled <- true
+            chat.JumpExchange direction
         | ToggleTheme ->
             e.Handled <- true
             // 主题三态轮转：跟随系统 → 浅色 → 深色 → 回到跟随系统。

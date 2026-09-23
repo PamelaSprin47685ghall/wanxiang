@@ -98,6 +98,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Foreground = Tokens.accent,
             VerticalAlignment = VerticalAlignment.Center)
 
+    // 上一条 / 下一条：跨问答跳转。长会话里找「上一个提问」不该靠滚轮拖半屏。
+    // 借 kelivo scroll_nav_buttons 的上/下一条语义，但收敛到顶栏按钮组：
+    // 桌面端的全局聊天动作本来就在这一行（停止 / 分叉 / 会话设置），
+    // 不再引入第二套悬浮按钮层——那会压住消息内容，也和顶栏形成第二个动作入口。
+    let prevExchangeButton = Ui.iconButton Icons.chevronsUp "上一条提问"
+    let nextExchangeButton = Ui.iconButton Icons.chevronsDown "下一条提问"
     let stopButton = Ui.iconButton Icons.stop "停止生成"
     let forkButton = Ui.iconButton Icons.fork "从当前分叉"
     let sessionSettingsButton = Ui.iconButton Icons.sliders "会话设置"
@@ -185,6 +191,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable smoothScrollTimer: DispatcherTimer option = None
 
     let mutable atBottom = true
+    /// 当前「上一条 / 下一条」跳转锚点：用户消息卡的身份。
+    /// None 表示还没跳转过，此时以当前所在的那一轮问答为基准（kelivo 的
+    /// jump-to-question 语义；见 currentExchangeIndex）。
+    let mutable exchangeAnchor: CardKey option = None
     let mutable headerBar: Border = Unchecked.defaultof<Border>
     let mutable pendingHistoryAnchor: (float * float) option = None
     let mutable compactMode = false
@@ -195,6 +205,78 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable canStop = false
     let mutable titleEditable = false
     let mutable editingTitle = false
+
+    // ---------- 问答跳转（上一条 / 下一条） ----------
+
+    /// 当前面板上每张卡的「用户消息」身份，按挂载顺序。
+    /// mountedKeys 与 messagePanel.Children 逐一对齐（渲染循环一帧一卡），
+    /// 所以这里是用户卡的下标表，不必给卡打 Tag。
+    let exchangeIndices () : int list =
+        mountedKeys
+        |> Array.mapi (fun index key ->
+            match key with
+            | Some k when k.role = "user" -> Some index
+            | _ -> None)
+        |> Array.choose id
+        |> Array.toList
+
+    /// 当前所在的那一轮问答 = 最后一张「开头已经在视口内」的用户卡。
+    /// 不用 slack：贴底时倒数第二轮的回答可能还压在视口里，把它当成当前轮会让
+    /// 「下一条」在已经最后一条时仍然可点。开场流式（没有已提交用户卡）时退回首张。
+    let currentExchangeIndex () : int =
+        let viewportBottom = scroller.Offset.Y + scroller.Viewport.Height
+        let cards = exchangeIndices ()
+        cards
+        |> List.filter (fun index ->
+            index < messagePanel.Children.Count
+            && messagePanel.Children.[index].Bounds.Y <= viewportBottom)
+        |> List.tryLast
+        |> Option.orElseWith (fun () -> List.tryHead cards)
+        |> Option.defaultValue 0
+
+    /// 把某张用户卡平滑带到视口顶部：目标卡片尽量完整可见，不被输入区挡住。
+    let smoothScrollToCard (child: Control) =
+        let target = max 0.0 (child.Bounds.Y - Tokens.space5)
+        if abs (scroller.Offset.Y - target) < 5.0 then
+            scroller.Offset <- Vector(scroller.Offset.X, target)
+        elif MotionPolicy.isReduced () then
+            scroller.Offset <- Vector(scroller.Offset.X, target)
+        else
+            // 与 SmoothScrollToEnd 同一条曲线、同一帧节拍；只换目标点。
+            let startOffset = scroller.Offset.Y
+            let startTime = DateTime.UtcNow
+            let durationMs = MotionLedger.smoothScrollDuration.TotalMilliseconds
+            let timer = new DispatcherTimer(Interval = MotionLedger.smoothScrollFrame)
+            timer.Tick.Add(fun _ ->
+                let elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds
+                if elapsed >= durationMs then
+                    timer.Stop()
+                    scroller.Offset <- Vector(scroller.Offset.X, target)
+                else
+                    let progress = min 1.0 (elapsed / durationMs)
+                    let eased = MotionPolicy.easeOutCubic.Ease progress
+                    let newY = startOffset + (target - startOffset) * eased
+                    scroller.Offset <- Vector(scroller.Offset.X, newY))
+            timer.Start()
+
+
+    /// 顶栏两个跳转钮的可用态：端点处不可点，但保留槽位（只切 opacity/命中，不动宽度），
+    /// 否则用户每翻到第一条按钮就消失一次，顶栏按钮会左右跳。
+    let syncExchangeNavState () =
+        let cards = exchangeIndices ()
+        let anchorIndex =
+            match exchangeAnchor with
+            | Some key -> mountedKeys |> Array.tryFindIndex ((=) (Some key)) |> Option.defaultValue -1
+            | None -> currentExchangeIndex ()
+        let hasPrev = cards |> List.exists (fun index -> index < anchorIndex)
+        let hasNext = cards |> List.exists (fun index -> index > anchorIndex)
+        Ui.setEnabled prevExchangeButton hasPrev
+        Ui.setEnabled nextExchangeButton hasNext
+        // 提示随手性走：禁用写原因，重新可用时还原成动作名，不留下一条过时的
+        // 「已经是第一条提问」骗用户（滚回去后它明明又可用）。
+        ToolTip.SetTip(prevExchangeButton, if hasPrev then "上一条提问" else "已经是第一条提问")
+        ToolTip.SetTip(nextExchangeButton, if hasNext then "下一条提问" else "已经是最后一条提问")
+
 
     do
         generatingChip.Child <-
@@ -404,6 +486,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.SetConversationChrome(hasConversation: bool) =
         hasConversationChrome <- hasConversation
         forkButton.IsVisible <- hasConversation && not compactMode
+        // 问答跳转只在有会话时出现；compact 档顶栏让位，和 forkButton 同一判据。
+        prevExchangeButton.IsVisible <- hasConversation && not compactMode
+        nextExchangeButton.IsVisible <- hasConversation && not compactMode
+        syncExchangeNavState ()
         sessionSettingsButton.IsVisible <- hasConversation
         if not (isNull (box headerBar)) then headerBar.IsVisible <- true
 
@@ -411,7 +497,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.SetCompactMode(value: bool) =
         compactMode <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
-        for button in [ sidebarToggleButton; stopButton; forkButton; sessionSettingsButton; scrollToBottomButton ] do
+        for button in [ sidebarToggleButton; stopButton; forkButton; sessionSettingsButton; prevExchangeButton; nextExchangeButton; scrollToBottomButton ] do
             Ui.setSquareTarget button size
         this.SyncStopSlot()
         sessionSettingsButton.IsVisible <- hasConversationChrome
@@ -470,7 +556,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         atBottom <- true
         unreadSinceScrolledUp <- 0
         previousRenderedMessageCount <- 0
+        // 锚点跟着会话一起丢：换会话后旧锚引用的卡片已不在面板上。
+        exchangeAnchor <- None
         this.UpdateScrollToBottomAppearance()
+        syncExchangeNavState ()
     /// 停止骨架呼吸动画。
     member private this.StopSkeletonBreathing() =
         skeletonTimer |> Option.iter (fun t -> t.Stop())
@@ -692,6 +781,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             messagePanel.Children.Add control
 
         mountedKeys <- desired |> Seq.map fst |> Array.ofSeq
+        // 锚点指向的卡可能已经不在了（流式卡换代、错误卡消失）：丢掉锚点，
+        // 下一次跳转重新用视口位置起算，不会指向一张不存在的卡。
+        match exchangeAnchor with
+        | Some key when not (Array.contains (Some key) mountedKeys) -> exchangeAnchor <- None
+        | _ -> ()
+        syncExchangeNavState ()
 
         // 缓存只保留这一帧用到的身份：换会话、改字号都会让旧身份失效，
         // 留着只是占内存
@@ -842,9 +937,47 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member _.CancelHistoryPrependAnchor() = pendingHistoryAnchor <- None
 
+    /// 跳转到上一条 / 下一条用户提问。`direction` < 0 向上，> 0 向下。
+    /// 锚点语义与 kelivo 一致：跳过一次之后箭头就跟着锚点走，不再受当前滚动位置影响，
+    /// 连续按「上一条」能一排排往回翻。
+    member this.JumpExchange(direction: int) =
+        let cards = exchangeIndices ()
+        if not (List.isEmpty cards) then
+            let current =
+                match exchangeAnchor with
+                | Some key ->
+                    mountedKeys
+                    |> Array.tryFindIndex ((=) (Some key))
+                    |> Option.defaultValue -1
+                | None -> currentExchangeIndex ()
+            let target =
+                if direction < 0 then
+                    cards
+                    |> List.filter (fun index -> index < current)
+                    |> List.tryLast
+                else
+                    cards |> List.tryFind (fun index -> index > current)
+            match target with
+            | Some index ->
+                match mountedKeys.[index] with
+                | Some key -> exchangeAnchor <- Some key
+                | None -> ()
+                if index < messagePanel.Children.Count then
+                    smoothScrollToCard messagePanel.Children.[index]
+                // 跳转离开底部：新回复不该把用户从正在看的历史里拽走。
+                // atBottom 只在目标真的是底部时才保持，否则置假让「回到最新」接管。
+                atBottom <- index = List.max cards
+                unreadSinceScrolledUp <- 0
+                this.UpdateScrollToBottomAppearance()
+            | None -> ()
+        // 顶按钮的可用态随时跟着收敛：跳转后可能已经到了端点。
+        syncExchangeNavState ()
+
     member this.Build() =
         this.Background <- Tokens.canvas
 
+        Ui.onClick prevExchangeButton (fun () -> this.JumpExchange -1)
+        Ui.onClick nextExchangeButton (fun () -> this.JumpExchange 1)
         Ui.onClick titleAction (fun () -> this.BeginTitleEdit())
         titleAction.KeyDown.Add(fun e ->
             if (e.Key = Key.F2 || e.Key = Key.Enter) && titleEditable then
@@ -908,8 +1041,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         leftGroup.Children.Add sidebarToggleButton
         leftGroup.Children.Add titleHost
         leftGroup.Children.Add generatingChip
-        // 从左到右按保留优先级排列：Stop > Session Settings > Fork。
-        let rightGroup = Ui.hstack Tokens.space1 [ stopButton :> Control; sessionSettingsButton :> Control; forkButton :> Control ]
+        // 从左到右按保留优先级排列：Stop > Session Settings > Fork > Prev/Next。
+        // 问答跳转排最后：它不是每次生成都会用的动作，优先级低于停止与分叉。
+        let rightGroup =
+            Ui.hstack
+                Tokens.space1
+                [ stopButton :> Control
+                  sessionSettingsButton :> Control
+                  forkButton :> Control
+                  prevExchangeButton :> Control
+                  nextExchangeButton :> Control ]
         let headerDock = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
         DockPanel.SetDock(rightGroup, Dock.Right)
         headerDock.Children.Add rightGroup
@@ -950,6 +1091,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             if nowAtBottom then
                 unreadSinceScrolledUp <- 0
                 scrollToBottomButton.IsVisible <- false
+            // 手动滚动会改变「当前是哪一轮」：没有锚点时锚点由视口定，
+            // 所以端点禁用态必须跟着滚动走，只在渲染时刷一次会停在旧状态。
+            syncExchangeNavState ()
             this.UpdateScrollToBottomAppearance()
             // 骨架可见时不预取更早历史：会话切换中的 extent 抖动会误触发，
             // 等真实内容挂载后再按正常阈值取。

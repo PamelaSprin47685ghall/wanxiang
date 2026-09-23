@@ -62,6 +62,14 @@ module GenerationUsage =
             | Some ms when ms >= 1000L -> Some(sprintf "%s · %.1fs" tok (float ms / 1000.0))
             | Some ms -> Some(sprintf "%s · %dms" tok (int ms))
             | None -> Some tok
+ 
+     /// 缓存命中数（有值且 > 0 时）。客户端据此在用量角标上补一段「缓存 N」：
+    /// 缓存命中省钱，用户看得到才可能去把 PromptCache 打开。0 与 None 一样不显示。
+    /// 只给数字：文案由展示层决定，format* 一族职责是「取数」而非「排版」。
+    let cachedCount (u: GenerationUsage) : int option =
+        match u.cachedTokens with
+        | Some c when c > 0 -> Some c
+        | _ -> None
 
     let formatDetail (u: GenerationUsage) : string =
         let part label v =

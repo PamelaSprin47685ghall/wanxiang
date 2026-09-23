@@ -1219,6 +1219,14 @@ module MessageCard =
                 durRun.Foreground <- Tokens.textMuted
                 tb.Inlines.Add durRun
             | None -> ()
+ 
+             // 缓存命中补一段「缓存 N」：命中省钱，用户看得到才可能去打开 PromptCache。
+            // 放在耗时之后收尾，脚注仍是同一行，不变成两行。
+            match GenerationUsage.cachedCount u with
+            | Some cached ->
+                if hasPrev then appendSep ()
+                appendMetric "缓存" cached
+            | None -> ()
 
             // 悬停交互高亮
             tb.PointerEntered.Add(fun _ ->
