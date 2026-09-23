@@ -26,6 +26,7 @@
     <Compile Include="ScrollLayoutTests.fs" />
     <Compile Include="OperabilityTests.fs" />
     <Compile Include="ExchangeNavTests.fs" />
+    <Compile Include="EndpointScrollTests.fs" />
     <Compile Include="MathBaselineTests.fs" />
     <Compile Include="RenderCostTests.fs" />
     <Compile Include="IncrementalRenderTests.fs" />

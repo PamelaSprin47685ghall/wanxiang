@@ -568,6 +568,10 @@ type ShortcutAction =
     | FocusComposer
     /// 跳到上一条 / 下一条用户提问：长会话里找上一个提问不必拖滚轮。
     | JumpExchange of int
+    /// 回到会话顶部 / 底部：长会话此前只有「回到最新」一条路，想看最早那个提问
+    /// 只能一路拖滚轮，还没有锚点。端点两侧对称可达，翻回开头才有落脚处。
+    | ScrollToBeginning
+    | ScrollToEnd
     | NoShortcut
 
 module ShortcutRouter =
@@ -585,6 +589,8 @@ module ShortcutRouter =
         // 与顶栏两个跳转按钮完全同一动作；输入框里也能直接翻，不必先移开焦点。
         elif ctrl && not shift && e.Key = Key.Up then JumpExchange -1
         elif ctrl && not shift && e.Key = Key.Down then JumpExchange 1
+        elif ctrl && not shift && e.Key = Key.Home then ScrollToBeginning
+        elif ctrl && not shift && e.Key = Key.End then ScrollToEnd
         elif ctrl && shift && e.Key = Key.S then ToggleTheme
         elif ctrl && shift && e.Key = Key.E then ExportConversation
         elif ctrl && not shift && e.Key >= Key.D1 && e.Key <= Key.D9 then

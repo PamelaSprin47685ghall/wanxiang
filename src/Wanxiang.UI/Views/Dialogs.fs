@@ -601,12 +601,15 @@ module Dialogs =
                 "Ctrl / ⌘ + Shift + S", "切换主题（跟随系统 → 浅色 → 深色轮转）"
                 "Ctrl / ⌘ + /", "显示快捷键帮助"
                 "F1", "显示快捷键帮助" ]
+              // 端点滚动与问答跳转同组：三条都是「在会话里移动阅读位置」。
               "输入与会话",
               [ "Enter", "发送消息（或换行，按偏好）"
                 "Shift + Enter", "换行输入"
                 "Ctrl / ⌘ + Enter", "强制发送消息"
                 "Ctrl / ⌘ + Shift + E", "导出当前会话为 Markdown"
                 "Ctrl / ⌘ + 上 / 下", "跳到上一条 / 下一条提问（顶栏同款按钮）"
+                "Ctrl / ⌘ + Home", "滚到会话开头（最早的提问）"
+                "Ctrl / ⌘ + End", "滚到会话结尾（最新消息）"
                 "Ctrl / ⌘ + L", "聚焦消息输入框"
                 "Esc", "关闭弹层 / 取消编辑 / 停止生成" ] ]
         let contentPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space3)

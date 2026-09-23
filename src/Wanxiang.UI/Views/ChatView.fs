@@ -875,6 +875,72 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member this.ScrollToEnd() = this.ScrollToEndDeferred()
 
+    /// 平滑滚动到顶部：与 SmoothScrollToEnd 同一条曲线、同一帧节拍，只换目标点。
+    ///
+    /// 为什么不能只写 Offset <- 0：ctrl+Home 常连着一次「看一下最早那个提问」的意图，
+    /// 直接从数万像素高处瞬移会让用户失去当前位置感，平滑上滚与既有的「回到最新」
+    /// 体感一致。Reduced motion 下退化为瞬移，与 ScrollToEndDeferred 同口径。
+    ///
+    /// 锚点同样在这里作废：这条路径也是用户意图入口（快捷键走的就是它），
+    /// 理由见 ScrollToBeginning。
+    member this.SmoothScrollToBeginning() =
+        exchangeAnchor <- None
+        // 一离开底部就不再是「贴底」：否则整个上滚过程里「回到最新」一直藏着，
+        // 用户中途改主意只能继续滚。与 ScrollChanged 里 nowAtBottom 同一个判据的方向。
+        atBottom <- false
+        smoothScrollTimer |> Option.iter (fun t -> t.Stop())
+        smoothScrollTimer <- None
+        if MotionPolicy.isReduced () then
+            this.ScrollToBeginningDeferred()
+        else
+            let startOffset = scroller.Offset.Y
+            if startOffset < 5.0 then
+                this.UpdateScrollToBottomAppearance()
+            else
+                let startTime = DateTime.UtcNow
+                let durationMs = MotionLedger.smoothScrollDuration.TotalMilliseconds
+                let timer = new DispatcherTimer(Interval = MotionLedger.smoothScrollFrame)
+                timer.Tick.Add(fun _ ->
+                    let elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds
+                    if elapsed >= durationMs then
+                        timer.Stop()
+                        smoothScrollTimer <- None
+                        scroller.Offset <- Vector(scroller.Offset.X, 0.0)
+                        this.UpdateScrollToBottomAppearance()
+                    else
+                        let progress = min 1.0 (elapsed / durationMs)
+                        // 同一 easeOutCubic：上滚与下滚共享同一条曲线，端点两条路手感不劈叉。
+                        let eased = MotionPolicy.easeOutCubic.Ease progress
+                        let newY = startOffset * (1.0 - eased)
+                        scroller.Offset <- Vector(scroller.Offset.X, newY)
+                        this.UpdateScrollToBottomAppearance())
+                smoothScrollTimer <- Some timer
+                timer.Start()
+
+    /// 滚到顶必须等布局把新内容的高度算进 Extent：与 ScrollToEndDeferred 对称地重试几次，
+    /// 否则 prepend 的更早历史刚到那一帧还会停在旧顶端。
+    member this.ScrollToBeginningDeferred() =
+        let rec attempt (remaining: int) =
+            Dispatcher.UIThread.Post(
+                (fun () ->
+                    scroller.ScrollToHome()
+                    if remaining > 0 then attempt (remaining - 1)),
+                DispatcherPriority.Background)
+        attempt 3
+
+    /// 用户意图入口：回到会话开头。
+    ///
+    /// 与 Deferred/Smooth 两兄弟的分工同 ScrollToEnd：这个成员是「用户说要回到开头」，
+    /// 因此把阅读位置相关的状态一起收口——锚点作废，让接下来的「上一条 / 下一条」
+    /// 从新的视口重新起算。留着旧锚点会让导航从半途那轮开始，看起来像跳过了
+    /// 用户刚刚翻过去的内容。
+    ///
+    /// 锚点只能在这一层清：Deferred 那层被自动跟随（每个流式 delta）反复调用，
+    /// 在那里清等于每次接收都丢锚点。
+    member this.ScrollToBeginning() =
+        exchangeAnchor <- None
+        this.ScrollToBeginningDeferred()
+
     /// 平滑滚动到底部
     member this.SmoothScrollToEnd() =
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())

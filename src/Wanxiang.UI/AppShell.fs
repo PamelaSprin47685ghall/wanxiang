@@ -912,6 +912,14 @@ type MainView() as this =
         | JumpExchange direction ->
             e.Handled <- true
             chat.JumpExchange direction
+        | ScrollToBeginning ->
+            e.Handled <- true
+            // 锚点作废由入口自己负责（见 ScrollToBeginning）：这里是快捷键，
+            // 不需要 shell 再补一遍。
+            chat.SmoothScrollToBeginning()
+        | ScrollToEnd ->
+            e.Handled <- true
+            chat.SmoothScrollToEnd()
         | FocusComposer ->
             e.Handled <- true
             // 与重新生成/重试后「焦点回家」同一个入口（Composer.Focus 自带线程与可见性守卫）。
