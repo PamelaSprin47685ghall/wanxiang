@@ -309,7 +309,7 @@ type MarkdownRenderer(
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.codeMuted,
                 VerticalAlignment = VerticalAlignment.Center,
-                LetterSpacing = 0.4)
+                LetterSpacing = Tokens.letterSpacingEmphasis)
 
         let headerButton (icon: IBrush -> Control) (tip: string) =
             let button = Ui.iconButton icon tip
@@ -327,15 +327,37 @@ type MarkdownRenderer(
         ToolTip.SetTip(copyButton, "复制代码")
 
         let mutable copyTimer: DispatcherTimer option = None
+        let mutable fadeTimer: DispatcherTimer option = None
+        let stopFade () =
+            match fadeTimer with
+            | Some t ->
+                t.Stop()
+                fadeTimer <- None
+            | None -> ()
         let stopTimer () =
             match copyTimer with
             | Some t ->
                 t.Stop()
                 copyTimer <- None
             | None -> ()
+            stopFade ()
+        // 复制确认反馈：opacity 淡到 opacityCopyConfirmFade 再回 1.0，只改透明度、
+        // 不改尺寸（节奏 MotionLedger.copyConfirmationFade）；减弱动效时不做这段淡出。
+        let pulseCopyConfirmation () =
+            if not (MotionPolicy.isReduced ()) then
+                stopFade ()
+                copyButton.Opacity <- Tokens.opacityCopyConfirmFade
+                let fade = new DispatcherTimer(Interval = MotionLedger.copyConfirmationFade)
+                fade.Tick.Add(fun _ ->
+                    fade.Stop()
+                    if fadeTimer = Some fade then fadeTimer <- None
+                    copyButton.Opacity <- 1.0)
+                fadeTimer <- Some fade
+                fade.Start()
 
         let restoreDefaultState () =
             stopTimer ()
+            copyButton.Opacity <- 1.0
             Ui.setIcon copyButton Icons.copy Tokens.codeMuted
             ToolTip.SetTip(copyButton, "复制代码")
             Avalonia.Automation.AutomationProperties.SetName(copyButton, codeCopyName)
@@ -344,6 +366,7 @@ type MarkdownRenderer(
         let doCopy () =
             copyText code
             stopTimer ()
+            pulseCopyConfirmation ()
             Ui.setIcon copyButton Icons.check Tokens.success
             ToolTip.SetTip(copyButton, "已复制！")
             Avalonia.Automation.AutomationProperties.SetName(copyButton, "已复制！")
@@ -353,6 +376,14 @@ type MarkdownRenderer(
                     restoreDefaultState ())
             copyTimer <- Some timer
             timer.Start()
+        // 确认淡出与基控件同一机制：往既有过渡集合追加 opacity 补间，不改几何。
+        let fadeTransition = Avalonia.Animation.DoubleTransition()
+        fadeTransition.Property <- Visual.OpacityProperty
+        fadeTransition.Duration <-
+            (if MotionPolicy.isReduced () then TimeSpan.Zero else MotionLedger.copyConfirmationFade)
+        if isNull copyButton.Transitions then copyButton.Transitions <- Avalonia.Animation.Transitions()
+        copyButton.Transitions.Add fadeTransition
+
         Ui.onClick copyButton doCopy
 
         copyButton.DetachedFromVisualTree.Add(fun _ ->
@@ -382,7 +413,7 @@ type MarkdownRenderer(
         applyWrap ()
 
         let header =
-            let actions = StackPanel(Orientation = Orientation.Horizontal, Spacing = 2.0, VerticalAlignment = VerticalAlignment.Center)
+            let actions = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.compactRowPaddingY, VerticalAlignment = VerticalAlignment.Center)
             actions.Children.Add wrapButton
             actions.Children.Add copyButton
             let dock = DockPanel(LastChildFill = false)
@@ -393,7 +424,7 @@ type MarkdownRenderer(
             Border(
                 Background = Tokens.codeHeaderBg,
                 BorderBrush = Tokens.codeBorder,
-                BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0),
+                BorderThickness = Thickness(0.0, 0.0, 0.0, ControlMetrics.borderWidth),
                 Padding = Thickness(Tokens.blockPaddingX, Tokens.space1, Tokens.space1, Tokens.space1),
                 Child = dock)
 
@@ -420,7 +451,7 @@ type MarkdownRenderer(
             Border(
                 Background = Tokens.codeBg,
                 BorderBrush = Tokens.codeBorder,
-                BorderThickness = Thickness 1.0,
+                BorderThickness = Thickness ControlMetrics.borderWidth,
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 ClipToBounds = true,
                 // 与段落同一节奏：只留底外边距一段 paragraphGap。
@@ -440,6 +471,7 @@ type MarkdownRenderer(
             // 窄表（<= 4 列）采用 1.0 Star 自然撑满阅读列宽；
             // 多列宽表（> 4 列）设置每列最小宽度（120px），并放入横向 ScrollViewer，
             // 避免在 748px 阅读宽度下被强行压成挤压错乱的细条。
+            // 列宽最小阶梯是内容策略（防窄表被压扁的排版下限），不是视觉令牌：刻意不并入 Tokens/ControlMetrics。
             let minColumnWidth =
                 match columnCount with
                 | 1 | 2 -> 100.0
@@ -532,8 +564,8 @@ type MarkdownRenderer(
                     let host =
                         Border(
                             Padding = Thickness(Tokens.blockPaddingX, Tokens.blockPaddingY),
-                            BorderBrush = Tokens.borderSoft,
-                            BorderThickness = Thickness(0.0, 0.0, 0.0, (if gridRowIndex < totalRowCount - 1 then 1.0 else 0.0)),
+                            BorderBrush = Tokens.hairline,
+                            BorderThickness = Thickness(0.0, 0.0, 0.0, (if gridRowIndex < totalRowCount - 1 then ControlMetrics.borderWidth else 0.0)),
                             Background = background,
                             ClipToBounds = true,
                             UseLayoutRounding = true,
@@ -557,8 +589,8 @@ type MarkdownRenderer(
                     grid :> Control
 
             Border(
-                BorderBrush = Tokens.border,
-                BorderThickness = Thickness 1.0,
+                BorderBrush = Tokens.hairlineStrong,
+                BorderThickness = Thickness ControlMetrics.borderWidth,
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 ClipToBounds = true,
                 UseLayoutRounding = true,
@@ -617,9 +649,9 @@ type MarkdownRenderer(
                     else
                         let dot =
                             Border(
-                                Width = 4.0,
-                                Height = 4.0,
-                                CornerRadius = CornerRadius 2.0,
+                                Width = ControlMetrics.listMarkerDotSize,
+                                Height = ControlMetrics.listMarkerDotSize,
+                                CornerRadius = CornerRadius ControlMetrics.listMarkerDotRadius,
                                 Background = Tokens.textMuted,
                                 VerticalAlignment = VerticalAlignment.Center)
                         Border(
@@ -646,18 +678,18 @@ type MarkdownRenderer(
             for (isChecked, content) in items do
                 let box =
                     Border(
-                        Width = 14.0,
-                        Height = 14.0,
+                        Width = ControlMetrics.taskBoxSize,
+                        Height = ControlMetrics.taskBoxSize,
                         CornerRadius = CornerRadius Tokens.radiusXs,
                         BorderBrush = (if isChecked then Tokens.accent else Tokens.line),
-                        BorderThickness = Thickness 1.4,
+                        BorderThickness = Thickness ControlMetrics.taskBoxBorderWidth,
                         Background = (if isChecked then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush),
                         Margin = Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space2, 0.0),
                         VerticalAlignment = VerticalAlignment.Top)
                 if isChecked then
                     let mark = Icons.check Tokens.textOnAccent
-                    mark.Width <- 10.0
-                    mark.Height <- 10.0
+                    mark.Width <- ControlMetrics.taskCheckGlyphSize
+                    mark.Height <- ControlMetrics.taskCheckGlyphSize
                     box.Child <- mark
                 let body = this.RenderInlineRow(content, fontSize, FontWeight.Normal, (if isChecked then Tokens.textMuted else textColor), lineHeight = textLineHeight)
                 let row = DockPanel()
@@ -686,19 +718,20 @@ type MarkdownRenderer(
                     Thickness(Tokens.space2, 0.0, 0.0, ReadingRhythm.paragraphGap)
                 else
                     Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap)
-            [ Border(
-                  // 无卡片铬：只有左缘强调条 + 弱化文字，不加底色与圆角。
-                  Background = Brushes.Transparent,
-                  BorderBrush = Tokens.accent,
-                  BorderThickness = Thickness(3.0, 0.0, 0.0, 0.0),
-                  Padding = Thickness(Tokens.space3, Tokens.space2, Tokens.space3, Tokens.space2),
-                  Margin = quoteMargin,
-                  Child = stack)
+            [ (Ui.groupingCard
+                (Thickness(Tokens.space1, Tokens.space1, Tokens.space1, Tokens.space1))
+                (Border(
+                    BorderBrush = Tokens.accent,
+                    BorderThickness = Thickness(ControlMetrics.quoteEdgeWidth, 0.0, 0.0, 0.0),
+                    Padding = Thickness(Tokens.space2, Tokens.space1, Tokens.space1, Tokens.space1),
+                    Child = stack))
+                Tokens.radiusSm
+                |> fun card -> card.ClipToBounds <- true; card.Margin <- quoteMargin; card)
               :> Control ]
         | MdCode(language, code) -> [ this.RenderCode(language, code) ]
         | MdRule ->
             [ Border(
-                  Height = 1.0,
+                  Height = ControlMetrics.borderWidth,
                   Background = Tokens.borderSoft,
                   Margin = Thickness(0.0, ReadingRhythm.headingBefore 3, 0.0, ReadingRhythm.headingBefore 3),
                   HorizontalAlignment = HorizontalAlignment.Stretch)

@@ -18,10 +18,17 @@ type Palette = {
     surface: Color
     /// 再抬一层：悬浮菜单、对话框
     surfaceRaised: Color
+    /// rail 与 surface 之间的暖纸中间容器：分组容器、行条、内嵌面板。
+    /// 比卡片轻、比侧栏亮，仍是暖纸——与 `selected` 的暖中性一致，不引入冷色块。
+    surfaceContainer: Color
     /// 主描边
     border: Color
     /// 更轻的描边（分割线）
     borderSoft: Color
+    /// 发丝线：最轻的描边/分割（嵌套线、列间隔），比 borderSoft 再退一档
+    hairline: Color
+    /// 强发丝线：介于 borderSoft 与 border 之间的描边（卡片外缘、控件描边）
+    hairlineStrong: Color
     /// 实色细线
     line: Color
 
@@ -58,11 +65,14 @@ type Palette = {
     /// 墨蓝浅底在暖纸上是冷的，会让表头成为整篇文档里唯一的冷色块。
     tableHeader: Color
 
-    /// 成功 / 警告 / 危险：只用于状态点与提示条，不做大面积
+    /// 成功 / 警告 / 危险 / 信息：只用于状态点与提示条，不做大面积。
+    /// info 与 accent 同源（墨蓝）但独立成档：状态表达不与品牌强调混用。
     success: Color
     warning: Color
     danger: Color
     dangerSoft: Color
+    info: Color
+    infoSoft: Color
 
     /// 代码块
     codeBg: Color
@@ -104,8 +114,11 @@ module Palette =
           rail = c "#F0EEE5"
           surface = c "#FBFAF7"
           surfaceRaised = c "#FFFFFF"
+          surfaceContainer = c "#F5F4EE"
           border = c "#D9D5C7"
           borderSoft = c "#E3E0D3"
+          hairline = c "#ECE9DE"
+          hairlineStrong = c "#DDD9CA"
           line = c "#C7C3B3"
 
           text = c "#141413"
@@ -128,6 +141,8 @@ module Palette =
           warning = c "#8A5A18"
           danger = c "#8E3B2F"
           dangerSoft = c "#F5E4DF"
+          info = c "#2F5578"
+          infoSoft = c "#DEE7F1"
 
           codeBg = c "#17171A"
           codeHeaderBg = c "#202024"
@@ -159,8 +174,11 @@ module Palette =
           rail = c "#1A1A22"
           surface = c "#22222A"
           surfaceRaised = c "#2C2C35"
+          surfaceContainer = c "#1E1E26"
           border = c "#45454F"
           borderSoft = c "#3A3A43"
+          hairline = c "#2E2E37"
+          hairlineStrong = c "#40404A"
           line = c "#55555F"
 
           text = c "#EDEBE4"
@@ -183,6 +201,8 @@ module Palette =
           warning = c "#D6A75E"
           danger = c "#E09385"
           dangerSoft = c "#422421"
+          info = c "#95A9C6"
+          infoSoft = c "#2A3442"
 
           codeBg = c "#1E1E28"
           codeHeaderBg = c "#262634"

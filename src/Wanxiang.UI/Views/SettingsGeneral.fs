@@ -26,7 +26,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
     let maxTokensBox = snd (Ui.textField "留空不限制")
     let contextBox = snd (Ui.textField "200")
     let toolRoundsBox = snd (Ui.textField "12")
-    let instructionsBox = snd (Ui.textArea "新会话的默认系统指令（可留空）" 96.0)
+    let instructionsBox = snd (Ui.textArea "新会话的默认系统指令（可留空）" ControlMetrics.textAreaMinHeight)
     let generationErrorSummary =
         let summary =
             TextBlock(
@@ -69,52 +69,11 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             | true, v -> Some v
             | _ -> None
 
-    let switchRow (title: string) (hint: string) (initial: bool) (onChanged: bool -> unit) : Control * (unit -> bool) * (bool -> unit) =
-        let toggle, read, write, flip = Ui.toggle initial onChanged
-        // 一行只有一个 Tab 停靠点：内层开关不进 Tab 序，行容器统一代理键盘，
-        // Enter/Space 只走 Ui.onClick 一次，单次翻转不变。鼠标点开关本身仍有效。
-        toggle.Focusable <- false
-        Avalonia.Automation.AutomationProperties.SetName(toggle, title)
-        Avalonia.Automation.AutomationProperties.SetHelpText(toggle, hint)
-        let caption = Ui.label title
-        let note = Ui.caption hint
-        let column = Ui.vstack Tokens.space1 [ caption :> Control; note :> Control ]
-        let dock = DockPanel(LastChildFill = true)
-        DockPanel.SetDock(toggle, Dock.Right)
-        dock.Children.Add toggle
-        dock.Children.Add column
-        let row =
-            ActionBorder(
-                Padding = Thickness(Tokens.space2, Tokens.space2),
-                CornerRadius = CornerRadius Tokens.radiusMd,
-                Background = Brushes.Transparent,
-                Cursor = new Cursor(StandardCursorType.Hand),
-                Focusable = true,
-                MinHeight = 44.0,
-                Child = dock)
-        Avalonia.Automation.AutomationProperties.SetName(row, title)
-        Avalonia.Automation.AutomationProperties.SetHelpText(row, hint)
-        Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
-            row,
-            Nullable Avalonia.Automation.Peers.AutomationControlType.CheckBox)
-        let updateRowBackground () =
-            row.Background <- if row.IsPointerOver || row.IsFocused then Tokens.hover :> IBrush else Brushes.Transparent :> IBrush
-        row.PointerEntered.Add(fun _ -> updateRowBackground ())
-        row.PointerExited.Add(fun _ -> updateRowBackground ())
-        row.GotFocus.Add(fun _ -> updateRowBackground ())
-        row.LostFocus.Add(fun _ -> updateRowBackground ())
-        let toggleAndRefresh () =
-            flip ()
-            updateRowBackground ()
-            let currentState = if read () then "开启" else "关闭"
-            Avalonia.Automation.AutomationProperties.SetItemStatus(row, currentState)
-        Avalonia.Automation.AutomationProperties.SetItemStatus(row, if initial then "开启" else "关闭")
-        // Enter/Space 由 Ui.onClick 拥有：这里再绑一次会翻转两次，键盘用户将永远打不开开关。
-        Ui.onClick row toggleAndRefresh
-        let syncWrite v =
-            write v
-            Avalonia.Automation.AutomationProperties.SetItemStatus(row, if v then "开启" else "关闭")
-        row :> Control, read, syncWrite
+    // 分组卡统一走 Ui.groupingCard（Primitives 单一来源）：本地副本已删除。
+
+    /// 组内分隔线走内容档（Ui.hairline = borderSoft）：分隔面板内多行内容的发丝线与其它
+    /// 内容分隔线同一档；窗口 / 导航这类 chrome 分隔才用更轻的 Tokens.hairline。
+    let groupDivider () : Border = Ui.hairline ()
 
     member this.SetCatalog(next: Catalog) =
         catalog <- next
@@ -136,12 +95,10 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         for box in fields do Ui.clearFieldError box
         generationErrorSummary.IsVisible <- false
         generationErrorSummary.Text <- ""
-        let mutable firstInvalid: TextBox option = None
-        let errorMessages = ResizeArray<string>()
+        let errors = ResizeArray<TextBox * string>()
         let fail box message =
             Ui.setFieldError box message
-            errorMessages.Add message
-            if firstInvalid.IsNone then firstInvalid <- Some box
+            errors.Add(box, message)
         let raw (box: TextBox) = if isNull box.Text then "" else box.Text.Trim()
         let parseOptionalFloat box valid message =
             let text = raw box
@@ -176,34 +133,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         let contextMessages = parseRequiredInt contextBox (fun value -> value >= 0) "请输入 0 或正整数。"
         let toolRounds = parseRequiredInt toolRoundsBox (fun value -> value > 0) "请输入大于 0 的整数。"
 
-        match firstInvalid with
-        | Some _ when errorMessages.Count > 1 ->
-            let summaryText = String.Join("；", errorMessages)
-            generationErrorSummary.Text <- sprintf "有 %d 处需要修正：%s" errorMessages.Count summaryText
-            generationErrorSummary.IsVisible <- true
-            Avalonia.Automation.AutomationProperties.SetName(generationErrorSummary, generationErrorSummary.Text)
-            actions.toast (sprintf "有 %d 处需要修正，请查看表单顶部摘要。" errorMessages.Count) Warning
-            // 多错时聚焦摘要：逐字段内联错误保留，焦点只落一处，不逐个跳转。
-            generationErrorSummary.BringIntoView()
-            generationErrorSummary.Focus(NavigationMethod.Directional) |> ignore
-            Dispatcher.UIThread.Post(fun () ->
-                if generationErrorSummary.IsEffectivelyVisible then
-                    generationErrorSummary.BringIntoView()
-                    generationErrorSummary.Focus(NavigationMethod.Directional) |> ignore)
-        | Some box ->
-            generationErrorSummary.IsVisible <- false
-            let errorMsg = (Ui.fieldValidationMessage box).Text
-            if not (String.IsNullOrWhiteSpace errorMsg) then
-                actions.toast errorMsg Warning
-            // 错误行只展开自己所在的组（hint 与 error 互换），边框粗细不变；
-            // 单错时焦点仍送到字段本身，不打断摘要节律。
-            box.BringIntoView()
-            box.Focus(NavigationMethod.Directional) |> ignore
-            Dispatcher.UIThread.Post(fun () ->
-                if box.IsEffectivelyVisible && box.IsEnabled then
-                    box.BringIntoView()
-                    box.Focus(NavigationMethod.Directional) |> ignore)
-        | None ->
+        if List.isEmpty (List.ofSeq errors) then
             let payload = JsonObject()
             match temperature with Some v -> payload["temperature"] <- v | None -> payload["temperature"] <- null
             match topP with Some v -> payload["topP"] <- v | None -> payload["topP"] <- null
@@ -214,7 +144,11 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             payload["maxToolRounds"] <- toolRounds.Value
             payload["autoTitle"] <- readAutoTitle ()
             setGenerationPending true
-            actions.updateGeneration payload (fun _ -> setGenerationPending false)
+            actions.updateGeneration payload (fun ok ->
+                setGenerationPending false
+                if not ok then actions.toast "保存失败，请重试。" Failure)
+        else
+            Ui.applyValidationFeedback (List.ofSeq errors) (Some generationErrorSummary) (fun message -> actions.toast message Warning)
 
     /// pending 中的保存直接返回，不做二次提交。
     member private this.SaveGeneration() =
@@ -222,7 +156,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
 
     member this.BuildGeneration() : Control =
         let autoTitleRow, readAuto, writeAuto =
-            switchRow "自动生成会话标题" "首轮对话后用同一个模型起一个短标题；失败时回落到你的第一句话。" true ignore
+            Ui.switchRow "自动生成会话标题" "首轮对话后用同一个模型起一个短标题；失败时回落到你的第一句话。" true ignore
         readAutoTitle <- readAuto
         setAutoTitle <- writeAuto
         let saveButton = Ui.button Ui.Primary "保存生成设置" (fun () -> this.SaveGeneration())
@@ -248,9 +182,18 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                     Ui.caption "这些是新会话的默认值。单个会话可以在会话设置里单独调整。" :> Control ]
               :> Control
               generationErrorSummary :> Control
-              grid :> Control
-              Ui.controlFieldGroup "默认系统指令" "会作为 system 消息随每次请求发送。" (instructionsBox.Parent :?> Control)
-              autoTitleRow
+              // 数值表单、指令框与开关行收进与 Appearance/About 同档的分组面板卡
+              //（面板档 padding (space4, space4) + radiusLg），卡内用 groupDivider 分行，
+              // 与其余设置页共用同一「卡/区」中间层；字段、顺序与保存入口不变。
+              (Ui.groupingCard (Thickness(Tokens.space4, Tokens.space4))
+                  (Ui.vstack
+                      Tokens.space1
+                      [ grid :> Control
+                        groupDivider () :> Control
+                        Ui.controlFieldGroup "默认系统指令" "会作为 system 消息随每次请求发送。" (instructionsBox.Parent :?> Control)
+                        groupDivider () :> Control
+                        autoTitleRow ])
+                  Tokens.radiusLg) :> Control
               Ui.hairline () :> Control
               saveButton :> Control ]
         :> Control
@@ -277,54 +220,56 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                 FontSize = Tokens.fontSmall,
                 Foreground = Tokens.textMuted,
                 VerticalAlignment = VerticalAlignment.Center,
-                MinWidth = 56.0)
+                MinWidth = ControlMetrics.fontSizeValueMinWidth)
+        let smaller = Ui.iconButton Icons.minus "更小"
+        let larger = Ui.iconButton Icons.plus "更大"
+        // 边界即禁用：字号到达下限／上限时对应方向的按钮不可点，替代原先静默跳过——
+        // 按钮点下去毫无变化就是坏反馈，禁用是即可见的边界说明。初始态与外部偏好同步都经这里。
+        let applyFontBounds () =
+            Ui.setEnabled smaller (prefs.fontScale > UiPrefs.minFontScale + 0.01)
+            Ui.setEnabled larger (prefs.fontScale < UiPrefs.maxFontScale - 0.01)
         let adjust (delta: float) =
             let next = Math.Clamp(prefs.fontScale + delta, UiPrefs.minFontScale, UiPrefs.maxFontScale)
             if abs (next - prefs.fontScale) > 0.01 then
                 prefs <- { prefs with fontScale = next }
                 fontSizeCaption.Text <- sprintf "%.1f pt" next
                 onPrefsChanged prefs
-        let smaller = Ui.iconButton Icons.minus "更小"
+            applyFontBounds ()
         Ui.onClick smaller (fun () -> adjust -0.5)
-        let larger = Ui.iconButton Icons.plus "更大"
         Ui.onClick larger (fun () -> adjust 0.5)
+        applyFontBounds ()
         let fontRow =
             let controls = Ui.hstack Tokens.space2 [ smaller :> Control; fontSizeCaption :> Control; larger :> Control ]
-            let column = Ui.vstack Tokens.space1 [ Ui.label "消息字号" :> Control; Ui.caption "影响对话正文与代码块。" :> Control ]
-            let dock = DockPanel(LastChildFill = true)
-            DockPanel.SetDock(controls, Dock.Right)
-            dock.Children.Add controls
-            dock.Children.Add column
-            Border(
-                Padding = Thickness(Tokens.space2, Tokens.space2),
-                MinHeight = 44.0,
-                Child = dock)
-            :> Control
+            // 与 Ui.switchRow 同一行壳（settingsRowShell）：右侧换成了字号调节组；
+            // 原手抄的 Border + DockPanel 收回共享原语，几何逐字不变，无开关交互层。
+            Ui.settingsRowShell "消息字号" "影响对话正文与代码块。" controls :> Control
 
         let enterRow, _, setEnterSends =
-            switchRow "Enter 直接发送" "关闭后用 Ctrl+Enter 发送，Enter 换行。" prefs.enterSends (fun value ->
+            Ui.switchRow "Enter 直接发送" "关闭后用 Ctrl+Enter 发送，Enter 换行。" prefs.enterSends (fun value ->
                 prefs <- { prefs with enterSends = value }
                 onPrefsChanged prefs)
         let collapseRow, _, setCollapseReasoning =
-            switchRow "完成后收起思考过程" "生成结束时自动折叠模型的思维链。" prefs.autoCollapseReasoning (fun value ->
+            Ui.switchRow "完成后收起思考过程" "生成结束时自动折叠模型的思维链。" prefs.autoCollapseReasoning (fun value ->
                 prefs <- { prefs with autoCollapseReasoning = value }
                 onPrefsChanged prefs)
         let codeWrapRow, _, setCodeWrap =
-            switchRow "代码块长行折行" "关闭时长行横向滚动；开启后折行显示，一屏读完。" prefs.codeWrap (fun value ->
+            Ui.switchRow "代码块长行折行" "关闭时长行横向滚动；开启后折行显示，一屏读完。" prefs.codeWrap (fun value ->
                 prefs <- { prefs with codeWrap = value }
                 onPrefsChanged prefs)
         let archivedRow, _, setArchived =
-            switchRow "在侧栏显示已归档会话" "归档会话默认收起，避免长列表。" prefs.showArchived (fun value ->
+            Ui.switchRow "在侧栏显示已归档会话" "归档会话默认收起，避免长列表。" prefs.showArchived (fun value ->
                 prefs <- { prefs with showArchived = value }
                 onPrefsChanged prefs)
         let motionRow, _, setReduceMotion =
-            switchRow "减少动态效果" "停止加载指示器等持续旋转；状态变化仍会即时显示。" prefs.reduceMotion (fun value ->
+            Ui.switchRow "减少动态效果" "停止加载指示器等持续旋转；状态变化仍会即时显示。" prefs.reduceMotion (fun value ->
                 prefs <- { prefs with reduceMotion = value }
                 onPrefsChanged prefs)
 
         syncAppearance <- fun next ->
             setThemeText (ThemePreference.label next.theme)
             fontSizeCaption.Text <- sprintf "%.1f pt" next.fontScale
+            // 外部偏好同步（AppShell.SavePrefs → SettingsView.SetPrefs）同样刷新边界禁用态。
+            applyFontBounds ()
             setEnterSends next.enterSends
             setCollapseReasoning next.autoCollapseReasoning
             setCodeWrap next.codeWrap
@@ -339,19 +284,33 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                   [ Ui.heading "外观与交互" :> Control
                     Ui.caption "这些偏好只保存在本机，不会同步到服务端。" :> Control ]
               :> Control
-              Ui.controlFieldGroup "主题" "深色主题是同一套纸感在低光下的版本。" (themeButton :> Control)
-              fontRow
-              Ui.hairline () :> Control
-              enterRow
-              collapseRow
-              codeWrapRow
-              archivedRow
-              motionRow ]
+              // 分组面板内边距走面板档 (space4, space4)：比列表行卡 (space4/space3) 更宽松、四角均衡，
+              // 用于承载多行/多字段的容器卡；设置四页共用这一小档集合。
+              (Ui.groupingCard (Thickness(Tokens.space4, Tokens.space4))
+                  (Ui.vstack
+                      Tokens.space1
+                      [ Ui.controlFieldGroup "主题" "深色主题是同一套纸感在低光下的版本。" (themeButton :> Control)
+                        groupDivider () :> Control
+                        fontRow ])
+                  Tokens.radiusLg) :> Control
+              (Ui.groupingCard (Thickness(Tokens.space4, Tokens.space4))
+                  (Ui.vstack
+                      Tokens.space1
+                      [ enterRow
+                        groupDivider () :> Control
+                        collapseRow
+                        groupDivider () :> Control
+                        codeWrapRow
+                        groupDivider () :> Control
+                        archivedRow
+                        groupDivider () :> Control
+                        motionRow ])
+                  Tokens.radiusLg) :> Control ]
         :> Control
 
     member this.BuildAbout(instanceId: string, serverUrl: string) : Control =
         let row (key: string) (value: string) : Control =
-            let k = TextBlock(Text = key, FontSize = Tokens.fontSmall, Foreground = Tokens.textMuted, MinWidth = 110.0)
+            let k = TextBlock(Text = key, FontSize = Tokens.fontSmall, Foreground = Tokens.textMuted, MinWidth = ControlMetrics.aboutKeyMinWidth)
             let v =
                 SelectableTextBlock(
                     Text = value,
@@ -392,8 +351,9 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         Ui.vstack
             Tokens.space6
             [ Ui.vstack Tokens.space1 [ Ui.heading "关于与系统诊断" :> Control ] :> Control
-              Ui.card(
-                  Ui.vstack
+              Ui.groupingCard
+                  (Thickness(Tokens.space4, Tokens.space4))
+                  (Ui.vstack
                       Tokens.space2
                       [ row "协议版本" (string Constants.ProtocolVersion)
                         row "日志格式版本" (string Constants.FormatVersion)
@@ -401,23 +361,26 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                         row "操作系统" osDesc
                         row "服务器实例" (if String.IsNullOrWhiteSpace instanceId then "未连接" else instanceId)
                         row "连接地址" (if String.IsNullOrWhiteSpace serverUrl then "未连接" else serverUrl)
-                        Border(Height = Tokens.space2) :> Control
+                        Ui.hairline () :> Control
                         copyDiagButton :> Control ])
+                  Tokens.radiusLg
               :> Control
-              Ui.card(
-                  Ui.vstack
+              Ui.groupingCard
+                  (Thickness(Tokens.space4, Tokens.space4))
+                  (Ui.vstack
                       Tokens.space2
                       [ Ui.label "设计与实现" :> Control
-                        Ui.caption
-                            "万象是独立实现的对等 C/S 聊天客户端：每个实例既是服务端也是客户端，"
-                        :> Control
+                        Ui.caption "万象是独立实现的对等 C/S 聊天客户端：每个实例既是服务端也是客户端，" :> Control
                         Ui.caption "会话以 NDJSON 事件日志为唯一权威，界面只是投影的一个视图。" :> Control ])
+                  Tokens.radiusLg
               :> Control
-              Ui.card(
-                  Ui.vstack
+              Ui.groupingCard
+                  (Thickness(Tokens.space4, Tokens.space4))
+                  (Ui.vstack
                       Tokens.space2
                       [ Ui.label "致谢" :> Control
                         Ui.caption "界面思路受 Kelivo 启发，代码与数据模型均为独立实现。" :> Control
                         Ui.caption "内嵌字体 Sarasa Term SC 采用 OFL-1.1 许可。" :> Control ])
+                  Tokens.radiusLg
               :> Control ]
         :> Control

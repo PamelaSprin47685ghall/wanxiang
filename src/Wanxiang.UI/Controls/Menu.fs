@@ -33,8 +33,6 @@ module MenuEntry =
 module Menu =
 
     let private handCursor = new Cursor(StandardCursorType.Hand)
-    // 浮层菜单内部滚动上限：show / showGrouped 共用，长菜单在浮层内滚动，不把卡片撑出视口。
-    let private menuMaxHeight = 380.0
 
     let private renderEntry (overlay: OverlayHost) (entry: MenuEntry) : Control =
         let foreground: IBrush = if entry.danger then Tokens.danger else Tokens.text
@@ -100,9 +98,13 @@ module Menu =
                 MinHeight = ControlMetrics.menuItemMinHeight,
                 Child = row)
         Avalonia.Automation.AutomationProperties.SetName(host, entry.label)
+        // 长文案被 CharacterEllipsis 截断时补原生 tooltip（悬停即读全文，不新增 type-ahead）。
+        ToolTip.SetTip(host, entry.label)
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
             Nullable Avalonia.Automation.Peers.AutomationControlType.MenuItem)
+        // hover/focus 底色补间走 Ui.surfaceTransitions：与全应用基控件同一机制、同一时长。
+        host.Transitions <- Ui.surfaceTransitions ()
         // 危险项（删除会话等）用 dangerSoft 做 hover/focus 底，与常规 hover 拉开差距；
         // 键盘激活（Enter/Space）由 Ui.onClick 统一绑定，Tab 焦点环由 ActionBorder 绘制。
         let hoverBrush: IBrush = if entry.danger then Tokens.dangerSoft :> IBrush else Tokens.hover :> IBrush
@@ -110,6 +112,10 @@ module Menu =
         host.PointerExited.Add(fun _ -> host.Background <- Brushes.Transparent)
         host.GotFocus.Add(fun _ -> host.Background <- hoverBrush)
         host.LostFocus.Add(fun _ -> host.Background <- Brushes.Transparent)
+        // 按压反馈与项目基元按钮同源（Primitives.attachSurfaceFeedback：按下 Opacity←opacityPressed、
+        // 松开 Opacity←1.0）。只写不透明度，不触碰任何几何 / 布局。
+        host.PointerPressed.Add(fun _ -> host.Opacity <- Tokens.opacityPressed)
+        host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
         Ui.onClick host (fun () ->
             overlay.ClosePopup()
             entry.action ())
@@ -140,14 +146,14 @@ module Menu =
     /// 打开一个菜单。`entries` 为空时不打开。
     let show (overlay: OverlayHost) (anchor: Control) (alignRight: bool) (entries: MenuEntry list) =
         if not (List.isEmpty entries) then
-            let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = 1.0)
+            let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.tightRowPaddingY)
             for entry in entries do
                 panel.Children.Add(renderEntry overlay entry)
             wireDirectionalNavigation panel
             let scroller =
                 ScrollViewer(
                     Content = panel,
-                    MaxHeight = menuMaxHeight,
+                    MaxHeight = LayoutPolicy.menuMaxHeight,
                     HorizontalScrollBarVisibility = Primitives.ScrollBarVisibility.Disabled,
                     VerticalScrollBarVisibility = Primitives.ScrollBarVisibility.Auto)
             overlay.ShowPopup(anchor, scroller :> Control, alignRight, 200.0)
@@ -156,12 +162,14 @@ module Menu =
     let showGrouped (overlay: OverlayHost) (anchor: Control) (alignRight: bool) (groups: (string * MenuEntry list) list) =
         let visible = groups |> List.filter (fun (_, items) -> not (List.isEmpty items))
         if not (List.isEmpty visible) then
-            let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = 1.0)
+            let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.tightRowPaddingY)
             visible
             |> List.iteri (fun index (groupLabel, items) ->
                 if index > 0 then
-                    panel.Children.Add(
-                        Border(Height = 1.0, Background = Tokens.borderSoft, Margin = Thickness(Tokens.space2, Tokens.space1)))
+                    // 组间分隔与全应用同一拼写：Ui.hairline（borderSoft 标准档），只补分组边距。
+                    let divider = Ui.hairline ()
+                    divider.Margin <- Thickness(Tokens.space2, Tokens.space1)
+                    panel.Children.Add divider
                 if not (String.IsNullOrWhiteSpace groupLabel) then
                     let header = Ui.sectionLabel groupLabel
                     header.Margin <- Thickness(Tokens.space3, Tokens.space2, Tokens.space3, Tokens.space1)
@@ -172,7 +180,7 @@ module Menu =
             let scroller =
                 ScrollViewer(
                     Content = panel,
-                    MaxHeight = menuMaxHeight,
+                    MaxHeight = LayoutPolicy.menuMaxHeight,
                     HorizontalScrollBarVisibility = Primitives.ScrollBarVisibility.Disabled,
                     VerticalScrollBarVisibility = Primitives.ScrollBarVisibility.Auto)
             overlay.ShowPopup(anchor, scroller :> Control, alignRight, 240.0)
@@ -201,9 +209,11 @@ module Menu =
             ActionBorder(
                 Background = Tokens.surface,
                 BorderBrush = Tokens.border,
-                BorderThickness = Thickness 1.0,
-                CornerRadius = CornerRadius Tokens.radiusMd,
-                Padding = Thickness(Tokens.space3, 6.0),
+                BorderThickness = Thickness ControlMetrics.borderWidth,
+                // 下拉/托盘类控件圆角统一到 radiusLg，与卡片一致。
+                CornerRadius = CornerRadius Tokens.radiusLg,
+                // 垂直内边距引 ControlMetrics.selectButtonPaddingY（单一来源），水平仍用 space3，不再写裸 6.0。
+                Padding = Thickness(Tokens.space3, ControlMetrics.selectButtonPaddingY),
                 Cursor = handCursor,
                 Focusable = true,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -211,8 +221,14 @@ module Menu =
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
             Nullable Avalonia.Automation.Peers.AutomationControlType.ComboBox)
+        // 悬停只换描边色：与 hover 底色同一时长，走带描边的过渡集合。
+        host.Transitions <- Ui.surfaceBorderedTransitions ()
         host.PointerEntered.Add(fun _ -> host.BorderBrush <- Tokens.line)
         host.PointerExited.Add(fun _ -> host.BorderBrush <- Tokens.border)
+        // 按压反馈与项目基元按钮同源（Primitives.attachSurfaceFeedback：按下 Opacity←opacityPressed、
+        // 松开 Opacity←1.0）。只写不透明度，不触碰任何几何 / 布局。
+        host.PointerPressed.Add(fun _ -> host.Opacity <- Tokens.opacityPressed)
+        host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
         let openMenu () = showGrouped overlay (host :> Control) false (optionsOf ())
         Ui.onClick host openMenu
         host.KeyDown.Add(fun e ->
@@ -220,4 +236,8 @@ module Menu =
             if e.Key = Key.Down || e.Key = Key.Up then
                 e.Handled <- true
                 openMenu ())
-        host, (fun text -> caption.Text <- text)
+        // 当前值被 CharacterEllipsis 截断时补原生 tooltip；显示文本切换时同步刷新。
+        ToolTip.SetTip(host, initialText)
+        host, (fun text ->
+            caption.Text <- text
+            ToolTip.SetTip(host, text))

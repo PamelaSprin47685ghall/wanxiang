@@ -1,13 +1,17 @@
 namespace Wanxiang.UI
 
 open System
+open System.Threading
 open Avalonia
 open Avalonia.Media
+open Avalonia.Threading
 
 /// 设计令牌：全应用唯一的视觉常量来源。
 ///
-/// 画笔是 **可变实例**：切主题时只改 `Color`，已挂在视图树上的控件会自动重绘，
-/// 不需要重建整棵树。非画笔量（阴影颜色、字号）由 `Changed` 事件通知重建。
+/// 画笔是 **可变实例**：切主题时逐帧把 `Color` 从旧色补间到新色（时长消费
+/// `MotionLedger.themeColorTransition`），已挂在视图树上的控件会自动重绘，
+/// 不需要重建整棵树。补间只改颜色，不触及 transform、尺寸或位置。
+/// 非画笔量（阴影颜色、字号）由 `Changed` 事件通知重建。
 module Tokens =
 
     // ---- 间距（4pt 基准）----
@@ -19,6 +23,22 @@ module Tokens =
     let space6 = 24.0
     let space8 = 32.0
     let space10 = 40.0
+    /// 宽屏水平留白顶档：4pt 基准延伸，供 LayoutPolicy.horizontalInset 的最宽一档。
+    let space12 = 48.0
+
+    /// 紧凑纵向微节奏族："同一行密度"曾散成 1.0 / 2.0 / 3.0 三种裸值
+    ///（tag / chip / 状态 pill、校验消息、字段标签、hint、toggle、披露头等）。
+    /// 三档各自对应真实共享语义，保留三档、不强行压平。除行内边距外，
+    /// tight / compact 两档还充当紧凑堆叠（菜单面板、操作行、紧凑纵向栈）
+    /// 的 mini 垂直间距：
+    /// - tight（1）：单行小控件（tag、chip、pill）的纵向呼吸，以及紧凑
+    ///   堆叠（菜单等紧排纵向栈）的 mini 间距；
+    /// - compact（2）：紧凑行容器的上下内边距，以及紧凑堆叠（操作行、
+    ///   紧凑纵向栈）的 mini 垂直间距；
+    /// - field（3）：字段标签 / 校验行 / hint 这类贴字段的纵向留白。
+    let tightRowPaddingY = 1.0
+    let compactRowPaddingY = 2.0
+    let fieldRowPaddingY = 3.0
 
     // ---- 圆角 ----
     let radiusXs = 4.0
@@ -46,6 +66,15 @@ module Tokens =
     /// 页面主标题
     let fontDisplay = 25.0
 
+    /// 字距档：0.2–0.8 的裸 letterSpacing 曾散在字段标签、空态标题、区块标签、
+    /// 侧栏测量标签等处。四档各有既有调用点与不同视觉重量，保留四档：
+    /// label（字段标签）→ emphasis（空态标题等强调）→ section（区块标签）
+    /// → display（侧栏测量标签，最宽）。
+    let letterSpacingLabel = 0.3
+    let letterSpacingEmphasis = 0.4
+    let letterSpacingSection = 0.6
+    let letterSpacingDisplay = 0.8
+
     /// 键盘焦点环的外扩宽度。用外阴影画而不是加边框：
     /// 改边框粗细会让按钮内容跳一下，而焦点本该是「无位移的提示」。
     let focusRingSpread = 2.0
@@ -59,7 +88,26 @@ module Tokens =
     let opacitySubtle = 0.62
     let opacityComposerDisabled = 0.72
     let opacityPressed = 0.78
-    let opacityStreamingCaret = 0.85
+    /// 流式光标呼吸的不透明度区间：只改 opacity、不改尺寸；
+    /// 节奏由 MotionLedger.caretBreathPhase + caretBreathFrame 驱动（MessageCard 已消费）
+    let opacityCaretBreathMin = 0.55
+    let opacityCaretBreathMax = 1.0
+    /// 复制确认反馈淡出时经过的中间不透明度（随后回到 1.0），
+    /// 节奏消费 MotionLedger.copyConfirmationFade（MessageCard 复制确认已消费）
+    let opacityCopyConfirmFade = 0.6
+
+    /// hover 微暗：整条可点内容（消息头、操作条）hover 时从 1.0 压到 0.9。
+    /// 有意不并入上面的状态阶梯：那几档服务禁用/按压/输入态，这一档服务 hover 提
+    /// 示，比 opacityPressed 轻；MessageCard 曾有三处裸 0.9。
+    let opacityHoverDim = 0.9
+
+    /// 骨架不透明度组：骨架只切不透明度，不改尺寸（几何契约不变）。
+    /// - base：静态骨架条（侧栏任务条等）的基准档；
+    /// - breathMin：呼吸区间下限（上限历来是 1.0，见 MotionLedger.skeletonBreathFrame）；
+    /// - reduced：减弱动效时的静态整屏值；此前该值只活在 ChatView 的注释里。
+    let skeletonOpacityBase = 0.65
+    let skeletonOpacityBreathMin = 0.55
+    let skeletonOpacityReduced = 0.85
 
     /// 带框块（代码块、表格）的统一内边距。两者常在同一段回答里前后出现，
     /// 各自取值会让左缘差几个像素，读起来像没对齐的两张卡片。
@@ -100,15 +148,21 @@ module Tokens =
     let rail = track (fun p -> p.rail)
     let surface = track (fun p -> p.surface)
     let surfaceRaised = track (fun p -> p.surfaceRaised)
+    /// rail 与 surface 之间的暖纸中间容器（分组容器、行条）：
+    /// 比卡片轻、比侧栏亮，仍是暖纸层，不抢卡片层级
+    let surfaceContainer = track (fun p -> p.surfaceContainer)
     /// 柔和表面微底色（思考过程、次级容器背景）
     let surfaceSoft = track (fun p -> Color.FromArgb(0x55uy, p.surface.R, p.surface.G, p.surface.B))
     let border = track (fun p -> p.border)
     let borderSoft = track (fun p -> p.borderSoft)
+    /// 发丝线：最轻的分割/描边，比 borderSoft 再退一档；
+    /// hairlineStrong 介于 borderSoft 与 border 之间，两档各自独立
+    let hairline = track (fun p -> p.hairline)
+    let hairlineStrong = track (fun p -> p.hairlineStrong)
     let line = track (fun p -> p.line)
 
     // ---- 文字 ----
     let text = track (fun p -> p.text)
-    let textPrimary = text
     let textMuted = track (fun p -> p.textMuted)
     let textFaint = track (fun p -> p.textFaint)
     let textOnAccent = track (fun p -> p.textOnAccent)
@@ -132,6 +186,8 @@ module Tokens =
     let warning = track (fun p -> p.warning)
     let danger = track (fun p -> p.danger)
     let dangerSoft = track (fun p -> p.dangerSoft)
+    let info = track (fun p -> p.info)
+    let infoSoft = track (fun p -> p.infoSoft)
 
     // ---- 代码 ----
     let codeBg = track (fun p -> p.codeBg)
@@ -169,19 +225,143 @@ module Tokens =
 
     let isDark () = mode = Dark
 
+    // ---- 主题颜色补间 ----
+    // 只补间 Color：不触碰 RenderTransform、尺寸、边距与 BoxShadow，
+    // 因此 MotionLedger.geometryAnimationAllowed 保持 false，不引入任何几何/位移/尺寸动画。
+
+    /// 补间帧节奏：由主题过渡令牌推导（200ms / 12 帧 ≈ 16.7ms）。散落裸毫秒只写在
+    /// MotionLedger，这里不再发出新的裸毫秒。
+    let private colorTransitionFrame =
+        TimeSpan.FromTicks(max 1L (MotionLedger.themeColorTransition.Ticks / 12L))
+
+    /// 补间有效时长：尊重 MotionPolicy 的减弱动效偏好，降级为零（同步到位）。
+    let private colorTransitionDuration () =
+        if MotionPolicy.isReduced () then TimeSpan.Zero else MotionLedger.themeColorTransition
+
+    /// 单通道插值（纯逻辑）。t = 1 时四舍五入精确落在目标通道，收尾无偏差。
+    let private lerpChannel (from: byte) (target: byte) (t: float) =
+        let raw = Math.Round(float from + (float target - float from) * t) |> int
+        if raw < 0 then 0uy elif raw > 255 then 255uy else byte raw
+
+    let private lerpColor (from: Color) (target: Color) (t: float) : Color =
+        Color.FromArgb(
+            lerpChannel from.A target.A t,
+            lerpChannel from.R target.R t,
+            lerpChannel from.G target.G t,
+            lerpChannel from.B target.B t)
+
+    /// 每支画笔本段补间的起点色。apply 时从 brush.Color 现读：补间途中再切换时
+    /// 起点就是当前中间色，后来的切换因此接管前一段补间，两段不会叠加。
+    let mutable private transitionFrom = System.Collections.Generic.Dictionary<SolidColorBrush, Color>()
+    let mutable private transitionStarted = DateTime.UtcNow
+    /// 当前补间段的时长（ms）。接管时按它计算前段已滚到哪个逻辑进度。
+    let mutable private transitionSegmentMs = MotionLedger.themeColorTransition.TotalMilliseconds
+
+    // ---- 帧调度 ----
+    // 为什么不用 DispatcherTimer 驱动补间：本项目的无显示测试制度是
+    // `SetupWithoutStarting` + `Dispatcher.UIThread.RunJobs()`，不起消息循环。
+    // 实测（Avalonia 12.1.2，headless + Skia）：DispatcherTimer 在此制度下
+    // 每个实例每次 `Start` 至多被服务一个 tick 就再也不响（进程里是否曾挂载过
+    // 视图树还会影响它甚至一次都不响）。补间需要 200ms 内约 12 帧连续推进，
+    // DispatcherTimer 在这里不可依赖；只用真实时钟的计时器逐帧往 dispatcher
+    // 投递 job：生产环境按墙钟平滑逐帧、颜色计算与状态修改全部收敛在 UI 线程，
+    // 无显示测试里这些 job 也能被 `RunJobs` 稳定泵起，补间进度因此可验证。
+    let mutable private frameTimer : System.Threading.Timer option = None
+    /// 补间代次：apply 接管（中途重新计时）时递增；过期帧不负责收尾停帧，
+    /// 免得上一段补间的迟到一帧误停新补间。
+    let mutable private frameGeneration = 0
+
+    let private stopFrames () =
+        match frameTimer with
+        | Some timer ->
+            frameTimer <- None
+            timer.Dispose()
+        | None -> ()
+
+    /// 在 UI 线程上按墙钟推进一帧。t 由 `transitionStarted` 实时计算，
+    /// 因此中途被接管时迟到的帧也只是按新起点画一帧，不会叠加两段补间。
+    let private advanceFrame generation =
+        if transitionFrom.Count > 0 then
+            let duration = colorTransitionDuration ()
+            if duration.Ticks <= 0L then
+                // 运行中被降级：立即到位并收尾，避免除零。
+                for brush, pick in brushes do
+                    brush.Color <- pick palette
+                transitionFrom.Clear()
+                if generation = frameGeneration then stopFrames ()
+            else
+                let elapsed = (DateTime.UtcNow - transitionStarted).TotalMilliseconds
+                let t = min 1.0 (elapsed / transitionSegmentMs)
+                for brush, pick in brushes do
+                    brush.Color <- lerpColor transitionFrom[brush] (pick palette) t
+                if t >= 1.0 then
+                    transitionFrom.Clear()
+                    if generation = frameGeneration then stopFrames ()
+
+    let private startFrames () =
+        frameGeneration <- frameGeneration + 1
+        stopFrames ()
+        let generation = frameGeneration
+        // 计时器在线程池上走真实时钟；每帧把推进逻辑 post 到 UI 线程执行，
+        // 补间状态与画笔只在 dispatcher 上被读改写，不跨线程共享可变状态。
+        frameTimer <-
+            Some(
+                new System.Threading.Timer(
+                    (fun _ ->
+                        Dispatcher.UIThread.InvokeAsync(fun () -> advanceFrame generation)
+                        |> ignore),
+                    null,
+                    colorTransitionFrame,
+                    colorTransitionFrame))
+
     /// 应用主题。已有画笔实例原地改色，因此不必重建视图树。
+    ///
+    /// mode/palette 同步更新、`Changed` 即刻触发：非画笔量（阴影、字号）的
+    /// 重建语义与触发时机完全不变。变的是画笔：`Color` 不再硬切，而是从当前色
+    /// 向新色补间，时长消费 `MotionLedger.themeColorTransition`。
+    ///
+    /// 补间途中再次 apply：起点重取为 brush 的当前色、计时重新起算，后来的切换
+    /// 接管前一段补间。减弱动效或同主题重放则同步到位。
     let apply (next: ThemeMode) : unit =
-        mode <- next
-        palette <- Palette.ofMode next
-        for brush, pick in brushes do
-            brush.Color <- pick palette
+        let sameMode = (mode = next)
+        let duration = colorTransitionDuration ()
+        if sameMode || duration.Ticks <= 0L then
+            mode <- next
+            palette <- Palette.ofMode next
+            stopFrames ()
+            transitionFrom.Clear()
+            for brush, pick in brushes do
+                brush.Color <- pick palette
+        else
+            // 接管前一段未完成的补间：起点取前段的「逻辑当前色」——按前段已经历的
+            // 墙上时间把它的 from/target 滚到这一刻应处的位置，而不是读最后一次
+            // 落笔的物理画笔色。真实应用里帧一直在跑，两者本就一致；无 Pump 的
+            // 无显示测试环境里（两次 apply 之间没有 RunJobs），逻辑进度依然定义
+            // 良好，接管因此不丢进度、两段也不会叠加。
+            let rolloverT =
+                if transitionFrom.Count > 0 then
+                    let elapsed = (DateTime.UtcNow - transitionStarted).TotalMilliseconds
+                    min 1.0 (elapsed / transitionSegmentMs)
+                else
+                    0.0
+            let previousFrom = transitionFrom
+            let previousPalette = palette
+            mode <- next
+            palette <- Palette.ofMode next
+            transitionFrom <- System.Collections.Generic.Dictionary<SolidColorBrush, Color>()
+            for brush, pick in brushes do
+                let startColor =
+                    if previousFrom.Count > 0 then
+                        lerpColor previousFrom.[brush] (pick previousPalette) rolloverT
+                    else
+                        brush.Color
+                transitionFrom.Add(brush, startColor)
+            transitionStarted <- DateTime.UtcNow
+            transitionSegmentMs <- duration.TotalMilliseconds
+            startFrames ()
         Changed.Trigger next
 
     // ---- 阴影（跟随主题，需在重建时重新读取）----
-    /// 极轻抬升：输入框、卡片
-    let shadowSoft () =
-        BoxShadows(BoxShadow(OffsetX = 0.0, OffsetY = 2.0, Blur = 10.0, Spread = -4.0, Color = palette.shadow))
-
     /// 中等抬升：下拉、气泡
     let shadowPopup () =
         BoxShadows(

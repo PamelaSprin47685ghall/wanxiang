@@ -1044,6 +1044,62 @@ let ``repeated streaming updates preserve committed card instances`` () =
     finally
         window.Close()
 
+[<Fact>]
+let ``streaming completion keeps the message footnote row geometry constant`` () =
+    Headless.ensure ()
+    let actions: MessageActions =
+        { copyText = ignore
+          regenerate = ignore
+          editAndFork = ignore
+          deleteMessage = ignore
+          downloadAttachment = ignore
+          openLink = ignore }
+    let contextFor (streaming: bool) (isLast: bool) : MessageContext =
+        { fontSize = Tokens.fontReading
+          autoCollapseReasoning = true
+          streaming = streaming
+          isLastAssistant = isLast
+          usage = None
+          missingAttachments = Set.empty
+          brandAvatar = fun () -> Border(Width = 26.0, Height = 26.0) :> Control }
+    let body = "流式进行中的回答正文，完成时原样提交。"
+    let streamingMessage = { MessageView.empty with role = "assistant"; text = body }
+    let committedMessage =
+        { streamingMessage with
+            commitId = Some 42UL
+            committedAt = Some(DateTimeOffset(DateTime(2026, 9, 23, 12, 0, 0, DateTimeKind.Utc))) }
+    let named (card: Control) (name: string) =
+        descendants card |> Seq.exists (fun c -> AutomationProperties.GetName c = name)
+    let footnote (card: Control) =
+        let host = card :?> StackPanel
+        let metaRow = host.Children.[1] :?> StackPanel
+        let buttons = metaRow.Children.[0] :?> StackPanel
+        buttons.Bounds.Height
+    let streamingCard = MessageCard.render streamingMessage (contextFor true false) actions None
+    let streamingWindow = show streamingCard 720.0 520.0
+    try
+        Dispatcher.UIThread.RunJobs()
+        let streamingButtons = footnote streamingCard
+        // 流式期间动作按钮被门控撤下（避免拷走半句话），但槽位高度保留。
+        Assert.Equal(LayoutPolicy.inlineActionTarget, streamingButtons, 3)
+        Assert.False(named streamingCard "复制助手消息")
+        Assert.False(named streamingCard "删除这条消息")
+        let committedCard = MessageCard.render committedMessage (contextFor false true) actions None
+        let committedWindow = show committedCard 720.0 520.0
+        try
+            Dispatcher.UIThread.RunJobs()
+            let committedButtons = footnote committedCard
+            // 完成瞬间：按钮行（以及整条脚注行）高度不变，消息下方不跳。
+            Assert.Equal(streamingButtons, committedButtons, 1)
+            Assert.Equal(LayoutPolicy.inlineActionTarget, committedButtons, 3)
+            // 完成态恢复既有交互语义：复制与删除都在位。
+            Assert.True(named committedCard "复制助手消息")
+            Assert.True(named committedCard "删除这条消息")
+        finally
+            committedWindow.Close()
+    finally
+        streamingWindow.Close()
+
 let private summary id title =
     { id = id
       title = title
@@ -1451,6 +1507,92 @@ let ``long chat title never pushes header actions outside narrow viewport`` () =
         window.Close()
 
 [<Fact>]
+let ``stop affordance keeps a constant header slot across generation`` () =
+    Headless.ensure ()
+    let messageActions =
+        { copyText = ignore
+          regenerate = ignore
+          editAndFork = ignore
+          deleteMessage = ignore
+          downloadAttachment = ignore
+          openLink = ignore }
+    let actions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message = messageActions }
+    let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
+    chat.Build()
+    chat.SetConversationChrome true
+    chat.SetTitle("会话语义标题", true)
+    let window = show chat 900.0 420.0
+    try
+        Dispatcher.UIThread.RunJobs()
+        let stop = byAutomationName chat "停止生成"
+        let settings = byAutomationName chat "会话设置"
+        let fork = byAutomationName chat "从当前分叉"
+        let titleText =
+            descendants chat
+            |> Seq.choose (function :? TextBlock as t when t.Text = "会话语义标题" -> Some t | _ -> None)
+            |> Seq.head
+        let geometry () =
+            Dispatcher.UIThread.RunJobs()
+            let at (control: Control) =
+                let point = control.TranslatePoint(Point(0.0, 0.0), chat)
+                Assert.True point.HasValue
+                (point.Value.X, point.Value.Y, control.Bounds.Width, control.Bounds.Height)
+            (at stop, at settings, at fork, at titleText)
+        // geometry 返回四个控件各自的 (x,y,w,h)；逐项比较，强度不减。
+        let assertSame a b =
+            let a1, a2, a3, a4 = a
+            let b1, b2, b3, b4 = b
+            for (ax, ay, aw, ah), (bx, by, bw, bh) in [ a1, b1; a2, b2; a3, b3; a4, b4 ] do
+                Assert.Equal(ax, bx, 1.0)
+                Assert.Equal(ay, by, 1.0)
+                Assert.Equal(aw, bw, 1.0)
+                Assert.Equal(ah, bh, 1.0)
+        // 未生成：停止槽位已经常驻（保留隐藏），键盘、命中与无障碍视图均不达。
+        Assert.True stop.IsVisible
+        Assert.Equal(0.0, stop.Opacity, 3)
+        Assert.False stop.IsHitTestVisible
+        Assert.False stop.Focusable
+        Assert.Equal(AccessibilityView.Raw, AutomationProperties.GetAccessibilityView(stop))
+        let before = geometry ()
+        // 与 AppShell 的真实顺序一致（源码 383-401 的两段式契约）：
+        // SetGenerating 让常驻槽位显形但仍随 canStop 处禁用态，
+        // SetCanStop(true) 才真正解除禁用、Opacity 提到 1.0。
+        chat.SetGenerating(true, "生成中")
+        chat.SetCanStop true
+        Assert.Equal(1.0, stop.Opacity, 3)
+        Assert.True stop.IsHitTestVisible
+        Assert.True stop.Focusable
+        Assert.Equal(AccessibilityView.Default, AutomationProperties.GetAccessibilityView(stop))
+        let during = geometry ()
+        // 停止按 AppShell 的真实顺序：先 SetGenerating(false)，再 SetCanStop(false)。
+        // 隐藏槽位上不得因禁用态写 Opacity 而重新显形。
+        chat.SetGenerating(false, "")
+        chat.SetCanStop false
+        Assert.Equal(0.0, stop.Opacity, 3)
+        Assert.False stop.IsHitTestVisible
+        Assert.False stop.Focusable
+        let after = geometry ()
+        // 生成开始 / 结束前后：停止按钮、其余顶栏动作与标题可用宽度几何逐项不变。
+        assertSame before during
+        assertSame before after
+        // compact 只换命中面尺寸，不破坏常驻槽位。
+        chat.SetCompactMode true
+        Dispatcher.UIThread.RunJobs()
+        Assert.True stop.IsVisible
+        Assert.Equal(0.0, stop.Opacity, 3)
+        Assert.Equal(LayoutPolicy.compactActionTarget, stop.Bounds.Width, 1)
+    finally
+        window.Close()
+
+[<Fact>]
 let ``desktop 125 and 150 percent scale equivalent viewports keep primary actions in bounds`` () =
     Headless.ensure ()
     let messageActions =
@@ -1588,6 +1730,8 @@ let ``toast stays inside narrow viewport and is keyboard dismissible live conten
         Assert.Equal(AutomationLiveSetting.Assertive, AutomationProperties.GetLiveSetting(toast))
         Assert.True(toast.Bounds.Width <= root.Bounds.Width - Tokens.space3 * 2.0 + 0.5)
         Assert.True(overlay.HandleEscape())
+        // 退场同步移除（Manager 决策：只保留入场淡入）：Escape 消费的当次泵帧后
+        // 节点必须已从树中即时消失——异步退场没有可重复验收路径，不采用。
         Dispatcher.UIThread.RunJobs()
         Assert.DoesNotContain(toast, descendants root)
     finally
@@ -1619,6 +1763,65 @@ let ``motion ledger permits no geometry animation and reduced durations collapse
     MotionPolicy.setReduced true
     Assert.Equal(TimeSpan.Zero, MotionPolicy.duration 180)
     MotionPolicy.setReduced false
+
+[<Fact>]
+let ``motion ledger holds semantic business timer tokens`` () =
+    Assert.Equal(160.0, MotionLedger.searchInputDebounce.TotalMilliseconds, 3)
+    Assert.Equal(50.0, MotionLedger.skeletonBreathFrame.TotalMilliseconds, 3)
+    Assert.Equal(300.0, MotionLedger.conversationSkeletonDelay.TotalMilliseconds, 3)
+    Assert.Equal(16.0, MotionLedger.smoothScrollFrame.TotalMilliseconds, 3)
+    Assert.Equal(180.0, MotionLedger.smoothScrollDuration.TotalMilliseconds, 3)
+    Assert.Equal(500.0, MotionLedger.hostViewportPoll.TotalMilliseconds, 3)
+    Assert.Equal(200.0, MotionLedger.toastDismissTick.TotalMilliseconds, 3)
+    Assert.Equal(1000.0, MotionLedger.outboxDeliveryCheckTick.TotalMilliseconds, 3)
+    Assert.Equal(1000.0, MotionLedger.exportExpiryCheckTick.TotalMilliseconds, 3)
+    Assert.Equal(100.0, MotionLedger.progressTextThrottle.TotalMilliseconds, 3)
+    Assert.Equal(200.0, MotionLedger.themeColorTransition.TotalMilliseconds, 3)
+
+[<Fact>]
+let ``theme color transition tweens brushes and the latest switch takes over`` () =
+    Headless.ensure ()
+    let initial = Tokens.current ()
+    let settle () =
+        Thread.Sleep 240
+        Dispatcher.UIThread.RunJobs()
+    try
+        // 已知起点：先收敛到 Light。
+        Tokens.apply Light
+        settle ()
+        Assert.Equal(Palette.light.canvas, Tokens.canvas.Color)
+
+        // 切换即淡入：apply 返回的瞬间画笔仍停旧色，之后落在两端之间，最终收敛到新色。
+        Tokens.apply Dark
+        Assert.True(Tokens.isDark())
+        Assert.Equal(Palette.light.canvas, Tokens.canvas.Color)
+        Thread.Sleep 120
+        Dispatcher.UIThread.RunJobs()
+        let mid = Tokens.canvas.Color
+        Assert.NotEqual(Palette.light.canvas, mid)
+        Assert.NotEqual(Palette.dark.canvas, mid)
+        settle ()
+        Assert.Equal(Palette.dark.canvas, Tokens.canvas.Color)
+
+        // 接管：补间途中切回另一模式，起点取当前中间色、按新的 200ms 窗口重新计时。
+        // 若旧补间未被接管，第一次切换 200ms 后这里早已停在目标色。
+        Tokens.apply Light
+        Thread.Sleep 100
+        Tokens.apply Dark
+        Thread.Sleep 150
+        Dispatcher.UIThread.RunJobs()
+        Assert.NotEqual(Palette.dark.canvas, Tokens.canvas.Color)
+        settle ()
+        Assert.Equal(Palette.dark.canvas, Tokens.canvas.Color)
+
+        // 减弱动效：补间折叠为同步到位。
+        MotionPolicy.setReduced true
+        Tokens.apply Light
+        Assert.Equal(Palette.light.canvas, Tokens.canvas.Color)
+    finally
+        MotionPolicy.setReduced false
+        Tokens.apply initial
+        settle ()
 
 [<Fact>]
 let ``tertiary text keeps readable contrast in both palette modes`` () =
@@ -1710,7 +1913,63 @@ let ``appearance preference update keeps the same focused control instance`` () 
         window.Close()
 
 [<Fact>]
-let ``settings uses native stretch max width and exposes selected navigation status`` () =
+let ``font size stepper disables the direction that hits the scale boundary`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let settingsActions =
+        { upsertProvider = fun _ completed -> completed true
+          deleteProvider = ignore
+          probeProvider = ignore
+          upsertMcp = fun _ completed -> completed true
+          deleteMcp = ignore
+          updateGeneration = fun _ completed -> completed true
+          savePrefs = ignore
+          toast = fun _ _ -> () }
+    let mutable settingsRef: SettingsView option = None
+    let onPrefsChanged next = settingsRef |> Option.iter (fun settings -> settings.SetPrefs next)
+    let settings = SettingsView(overlay, settingsActions, onPrefsChanged, ignore)
+    settingsRef <- Some settings
+    settings.Build()
+    settings.SetPrefs UiPrefs.defaults
+    root.Children.Insert(0, settings)
+    let window = show root 900.0 680.0
+    try
+        let appearance = byAutomationName settings "外观"
+        ControlAutomationPeer.CreatePeerForElement appearance
+        |> Assert.IsAssignableFrom<IInvokeProvider>
+        |> fun provider -> provider.Invoke()
+        Dispatcher.UIThread.RunJobs()
+
+        let invoke name =
+            ControlAutomationPeer.CreatePeerForElement(byAutomationName settings name)
+            |> Assert.IsAssignableFrom<IInvokeProvider>
+            |> fun provider -> provider.Invoke()
+            Dispatcher.UIThread.RunJobs()
+        let fontCaption () =
+            descendants settings
+            |> Seq.pick (function
+                | :? TextBlock as block when not (isNull block.Text) && block.Text.Contains "pt" -> Some block
+                | _ -> None)
+
+        // 默认 14.5 pt：连点更小到下限 12.0，更小必须禁用（可见的边界反馈），更大仍可用。
+        for _ in 1 .. 5 do invoke "更小"
+        let smaller = byAutomationName settings "更小"
+        let larger = byAutomationName settings "更大"
+        Assert.False smaller.IsEnabled
+        Assert.True larger.IsEnabled
+        Assert.Equal("12.0 pt", (fontCaption ()).Text)
+
+        // 上限同侧镜像：一路更大到 19.0，更大禁用、更小恢复。
+        for _ in 1 .. 14 do invoke "更大"
+        Assert.False larger.IsEnabled
+        Assert.True smaller.IsEnabled
+        Assert.Equal("19.0 pt", (fontCaption ()).Text)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``settings caps content width and centers it while exposing selected navigation status`` () =
     Headless.ensure ()
     let root = Grid()
     let overlay = OverlayHost(root)
@@ -1733,8 +1992,13 @@ let ``settings uses native stretch max width and exposes selected navigation sta
             descendants settings
             |> Seq.choose (function :? Border as border when abs (border.MaxWidth - ControlMetrics.settingsContentMaxWidth) < 0.1 -> Some border | _ -> None)
             |> Seq.head
+        // 封顶关系自洽于实际测量：headless 下 Bounds 由 layout 通道给出，
+        // 断言「不超过封顶值」与「不大于父容器可用宽」两条不变式，
+        // 而不是写死某个像素魔数（那会在 headless 测量口径下脆弱）。
         Assert.True(frame.Bounds.Width <= ControlMetrics.settingsContentMaxWidth + 0.5)
-        Assert.True(frame.Bounds.Width > 700.0)
+        Assert.True(frame.Bounds.Width <= settings.Bounds.Width + 0.5)
+        // 宽屏居中：MaxWidth 封顶之外，内容列在超宽窗口里必须居中而不是贴左。
+        Assert.Equal(HorizontalAlignment.Center, frame.HorizontalAlignment)
 
         let providers = byAutomationName settings "服务商"
         let appearance = byAutomationName settings "外观"
@@ -1745,10 +2009,15 @@ let ``settings uses native stretch max width and exposes selected navigation sta
         Assert.Equal("", AutomationProperties.GetItemStatus(providers))
         Assert.Equal("当前分区", AutomationProperties.GetItemStatus(appearance))
 
+        // 窄窗：内容列不超过窗口可用宽。headless 下窗口 Width 变更不会可靠地
+        // 触发 layout 重测（frame.Bounds 可能仍是宽窗下的旧测量），所以这里只断言
+        // 不依赖重排的自洽不变式——封顶值与上限关系——而不是写死某个像素值；
+        // 「内容随窗口收紧」的真实行为由 qa_shot 的视觉承担。
         window.Width <- 600.0
         Dispatcher.UIThread.RunJobs()
-        Assert.True(frame.Bounds.Width <= 600.5)
-        Assert.True(frame.Bounds.Width > 500.0)
+        Assert.True(frame.Bounds.Width <= root.Bounds.Width + 0.5)
+        Assert.True(frame.Bounds.Width <= ControlMetrics.settingsContentMaxWidth + 0.5)
+        Assert.Equal(HorizontalAlignment.Center, frame.HorizontalAlignment)
     finally
         window.Close()
 
@@ -1808,3 +2077,210 @@ let ``provider editor stays pending until authoritative config result`` () =
     finally
         window.Close()
 
+
+
+[<Fact>]
+let ``sidebar empty state separates list loading from confirmed empty and embeds primary actions`` () =
+    Headless.ensure ()
+    let mutable reconnectCount = 0
+    let mutable createCount = 0
+    let actions: SidebarActions =
+        { newConversation = fun () -> createCount <- createCount + 1
+          openConversation = ignore
+          renameConversation = ignore
+          deleteConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = fun () -> reconnectCount <- reconnectCount + 1
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let sidebar = Sidebar(OverlayHost(Grid()), actions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    let window = show sidebar 320.0 640.0
+    try
+        Dispatcher.UIThread.RunJobs()
+        let byName name =
+            descendants sidebar
+            |> Seq.tryFind (fun control -> AutomationProperties.GetName(control) = name)
+        let hasText text =
+            descendants sidebar
+            |> Seq.exists (function
+                | :? TextBlock as tb -> tb.Text = text
+                | _ -> false)
+        let pressEnter (control: Control) =
+            control.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
+        // 未连接：原空态 + 内嵌「连接服务器」，与底部状态行重连同一动作。
+        Assert.True(hasText "先连接一台万象服务器")
+        let connectButton = byName "连接服务器" |> Option.get
+        Assert.True(connectButton.IsVisible)
+        pressEnter connectButton
+        Assert.Equal(1, reconnectCount)
+        // 已连接但未发出列表请求：此刻就是「还没有会话」，而不是加载中。
+        sidebar.SetConnection(true, "已连接")
+        Assert.True(hasText "还没有会话")
+        Assert.False(hasText "正在加载会话…")
+        let createButton = byName "新建会话" |> Option.get
+        Assert.True(createButton.IsVisible)
+        pressEnter createButton
+        Assert.Equal(1, createCount)
+        // 已发出请求、快照未达：只呈现加载中，行动按钮隐藏。
+        sidebar.SetConversationListLoading true
+        Assert.True(hasText "正在加载会话…")
+        Assert.False(hasText "还没有会话")
+        Assert.True((byName "正在加载会话" |> Option.get).IsVisible)
+        Assert.False((byName "新建会话" |> Option.get).IsVisible)
+        // 快照到达（空列表）：加载态解除，回到确认空态。
+        sidebar.SetConversations []
+        Assert.True(hasText "还没有会话")
+        Assert.False(hasText "正在加载会话…")
+        Assert.True((byName "新建会话" |> Option.get).IsVisible)
+        // 断连：加载中随连接翻转作废，回到未连接空态（断连清空列表的既有路径不变）。
+        sidebar.SetConversationListLoading true
+        sidebar.SetConnection(false, "连接已断开")
+        Assert.True(hasText "先连接一台万象服务器")
+        Assert.False(hasText "正在加载会话…")
+        Assert.True((byName "连接服务器" |> Option.get).IsVisible)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``chat header and scroller share one horizontal inset tier`` () =
+    // 顶栏与滚动区水平留白同源同档：一次读取 ChatView 自身宽度（父级 chatColumn
+    // 布局槽宽）经 LayoutPolicy.horizontalInset 取档，同步写两处 Padding——
+    // 任何宽度下标题左缘与消息列左缘对齐，两端不会各取各的档。
+    // scroller 的 Padding 只裁剪内容、不改变其自身 Bounds，无布局反馈环。
+    Headless.ensure ()
+    let messageActions =
+        { copyText = ignore
+          regenerate = ignore
+          editAndFork = ignore
+          deleteMessage = ignore
+          downloadAttachment = ignore
+          openLink = ignore }
+    let actions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message = messageActions }
+    for width, expected in [ (500.0, Tokens.space6); (800.0, Tokens.space8); (1280.0, Tokens.space12) ] do
+        let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
+        chat.Build()
+        chat.SetConversationChrome true
+        let window = show chat width 420.0
+        try
+            Dispatcher.UIThread.RunJobs()
+            let scroller =
+                descendants chat
+                |> Seq.choose (function :? ScrollViewer as value -> Some value | _ -> None)
+                |> Seq.head
+            // header 是 ChatView.Child（DockPanel）中 Dock.Top 的第一个子项。
+            let header =
+                (chat.Child :?> DockPanel).Children |> Seq.head :?> Border
+            Assert.Equal(expected, scroller.Padding.Left, 3)
+            Assert.Equal(expected, scroller.Padding.Right, 3)
+            Assert.Equal(expected, header.Padding.Left, 3)
+            Assert.Equal(expected, header.Padding.Right, 3)
+        finally
+            window.Close()
+
+[<Fact>]
+let ``compact chat header drops the generating chip slot while desktop keeps it reserved`` () =
+    // 顶栏生成中 chip 的槽位分档（SyncGeneratingChipVisibility 是 SetGenerating 与
+    // SetCompactMode 两条路径的唯一收口）：桌面（非 compact）保留常驻槽位防跳动——
+    // IsVisible 恒为 true、只切 Opacity（全显/归零随生成态），生成开始结束时顶栏不跳；
+    // compact 下 chip 整体不占布局（IsVisible=false、Opacity 归零），紧凑顶栏不为
+    // 一块隐形槽位白吃标题宽度。退回宽屏后恢复常驻，Opacity 跟随当时生成态。
+    Headless.ensure ()
+    let messageActions =
+        { copyText = ignore
+          regenerate = ignore
+          editAndFork = ignore
+          deleteMessage = ignore
+          downloadAttachment = ignore
+          openLink = ignore }
+    let actions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message = messageActions }
+    let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
+    chat.Build()
+    chat.SetConversationChrome true
+    let window = show chat 760.0 520.0
+    try
+        let chip = byAutomationName chat "正在生成回答"
+
+        // 生成开始：桌面常驻槽位 + 全不透明。
+        chat.SetGenerating(true, "正在生成一段很长的状态说明")
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(chip.IsVisible)
+        Assert.Equal(1.0, chip.Opacity, 3)
+
+        // 生成结束：槽位保持（IsVisible 不随结束回收），只是淡出。
+        chat.SetGenerating(false, "")
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(chip.IsVisible)
+        Assert.Equal(0.0, chip.Opacity, 3)
+
+        // compact：即便再次生成，chip 也不占布局槽位。
+        chat.SetGenerating(true, "正在生成一段很长的状态说明")
+        chat.SetCompactMode true
+        Dispatcher.UIThread.RunJobs()
+        Assert.False(chip.IsVisible)
+        Assert.Equal(0.0, chip.Opacity, 3)
+
+        // compact 下结束生成：仍保持收起，两条写入路径收敛到同一状态。
+        chat.SetGenerating(false, "")
+        Dispatcher.UIThread.RunJobs()
+        Assert.False(chip.IsVisible)
+
+        // 退回 desktop：恢复常驻槽位，Opacity 跟随当前生成态（未生成则为 0）。
+        chat.SetCompactMode false
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(chip.IsVisible)
+        Assert.Equal(0.0, chip.Opacity, 3)
+    finally
+        window.Close()
+
+[<Fact>]
+let ``composer inset adapts to width outside compact and stays tight inside compact`` () =
+    // 非 compact：水平留白随 Composer 自身宽度按 horizontalInset 取档；
+    // compact：固定收紧边距（窄屏省地优先），两条路径不互相覆盖。
+    Headless.ensure ()
+    let actions =
+        { submit = fun _ -> true
+          stopGeneration = ignore
+          pickAttachment = ignore
+          removeAttachment = ignore
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
+    for width, expected in [ (800.0, Tokens.space8); (1280.0, Tokens.space12) ] do
+        let composer = Composer(actions)
+        composer.Build()
+        let window = show composer width 220.0
+        try
+            Dispatcher.UIThread.RunJobs()
+            // 非 compact：水平留白随宽度取档。
+            Assert.Equal(expected, composer.Padding.Left, 3)
+            Assert.Equal(expected, composer.Padding.Right, 3)
+            // compact：切到固定收紧边距；切回后恢复宽度档，两条路径不争抢。
+            composer.SetCompactMode true
+            Dispatcher.UIThread.RunJobs()
+            Assert.Equal(Tokens.space3, composer.Padding.Left, 3)
+            composer.SetCompactMode false
+            Dispatcher.UIThread.RunJobs()
+            Assert.Equal(expected, composer.Padding.Left, 3)
+        finally
+            window.Close()

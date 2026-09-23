@@ -1410,6 +1410,136 @@ let ``Sidebar conversation row activates on Enter and Space keys`` () =
         window.Close()
 
 [<Fact>]
+let ``Sidebar row more action stays reachable in compact mode`` () =
+    // 触屏/PWA 无 hover、无右键、无 Shift+F10：compact 下行上下文菜单只能由
+    // moreButton 触达，因此它必须常驻可命中、可聚焦、可被读屏发现；桌面与 compact
+    // 现已同构（常驻一档淡显），扫视列表即可感知每行有更多操作，不喧宾夺主。
+    // 命中面仍按模式分档：桌面 iconButton、compact 触控下限 compactActionTarget。
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let actions: SidebarActions =
+        { newConversation = ignore
+          openConversation = ignore
+          renameConversation = ignore
+          deleteConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    let rowId = Guid.NewGuid()
+    let now = DateTimeOffset.Now
+    let item =
+        { id = rowId
+          title = "Alpha Session"
+          preview = "Hello world"
+          messageCount = 2
+          pinned = false
+          running = false
+          archived = false
+          isFork = false
+          providerId = "openai"
+          model = "gpt-4o"
+          lastCommitId = 1UL
+          createdAt = now
+          updatedAt = now }
+    sidebar.SetConversations [ item ]
+    sidebar.SetConnection(true, "已连接")
+    root.Children.Insert(0, sidebar)
+    let window = Window(Width = 360.0, Height = 600.0, Content = root)
+    window.Show()
+    try
+        let rec visualControls (visual: Visual) =
+            seq {
+                match visual with
+                | :? Control as control -> yield control
+                | _ -> ()
+                for child in visual.GetVisualChildren() do
+                    yield! visualControls child
+            }
+        let moreButton () =
+            let list =
+                descendants sidebar
+                |> Seq.pick (function :? ListBox as lb -> Some lb | _ -> None)
+            list.GetRealizedContainers()
+            |> Seq.collect visualControls
+            |> Seq.find (fun c ->
+                Avalonia.Automation.AutomationProperties.GetName(c) = "会话“Alpha Session”的操作菜单")
+            :?> Border
+        // 桌面默认（与 compact 同构）：常驻一档淡显，可命中、可聚焦、读屏可见；
+        // 命中面保持 iconButton——常驻可点不抬高行高，扫视密度优先。
+        let desktop = moreButton ()
+        Assert.True desktop.IsHitTestVisible
+        Assert.True desktop.Focusable
+        Assert.Equal(Tokens.opacitySubtle, desktop.Opacity, 3)
+        Assert.Equal(Tokens.iconButton, desktop.MinWidth, 3)
+        // compact：常驻一档淡显，可命中、可聚焦、读屏可见，命中面抬到触控下限。
+        sidebar.SetCompactMode true
+        Dispatcher.UIThread.RunJobs()
+        let compact = moreButton ()
+        Assert.True compact.IsHitTestVisible
+        Assert.True compact.Focusable
+        Assert.Equal(Tokens.opacitySubtle, compact.Opacity, 3)
+        Assert.Equal(LayoutPolicy.compactActionTarget, compact.MinWidth, 3)
+        // 退回桌面：仍是常驻淡显 + iconButton 命中面（两种模式仅命中面分档）。
+        sidebar.SetCompactMode false
+        Dispatcher.UIThread.RunJobs()
+        let restored = moreButton ()
+        Assert.True restored.IsHitTestVisible
+        Assert.True restored.Focusable
+        Assert.Equal(Tokens.opacitySubtle, restored.Opacity, 3)
+        Assert.Equal(Tokens.iconButton, restored.MinWidth, 3)
+        // 键盘聚焦：聚焦瞬间回全不透明度（与 hover 同一路径，均走
+        // ApplyRowActionVisibility visible=true）。
+        restored.Focus() |> ignore
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal(1.0, restored.Opacity, 3)
+    finally
+        window.Close()
+
+// =========================================================================
+// 10. Composer 拖放入口可发现性（footer 常驻弱提示）
+// =========================================================================
+
+[<Fact>]
+let ``Composer footer keeps a persistent drop hint outside compact and folds it inside compact`` () =
+    // 拖放入口的可发现性：footer caption 行的常驻弱提示（「可将文件拖入此处添加附件」）
+    // 在宽屏默认可见——静态界面不拖文件也能看到入口线索；compact 档与键位提示
+    // hintText 走同一显隐逻辑一并折叠（Composer.SetCompactMode），footer 高度由
+    // modelChip.MinHeight 兜底。控件以 AutomationName 暴露（读屏可发现），与文本同名。
+    Headless.ensure ()
+    let composerActions =
+        { submit = fun _ -> true
+          stopGeneration = ignore
+          pickAttachment = ignore
+          removeAttachment = ignore
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
+
+    let composer = Composer(composerActions)
+    composer.Build()
+
+    let dropHint =
+        descendants composer
+        |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "可将文件拖入此处添加附件")
+
+    // 宽屏默认：常驻可见（不只看拖放 banner 的拖放中态）。
+    Assert.True(dropHint.IsVisible)
+    // compact：与 hintText 一起折叠，不占 footer 行位。
+    composer.SetCompactMode true
+    Assert.False(dropHint.IsVisible)
+    // 退回宽屏：恢复常驻。
+    composer.SetCompactMode false
+    Assert.True(dropHint.IsVisible)
+
+[<Fact>]
 let ``ChatView header title tooltip reflects full title and preserves character ellipsis`` () =
     Headless.ensure ()
     let actions: ChatActions =

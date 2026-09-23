@@ -88,7 +88,8 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let _, argsBox = Ui.textField "每行一个参数"
         let argsField = Ui.inputFieldGroup "命令参数" "每行一个参数。" argsBox
         argsBox.AcceptsReturn <- true
-        argsBox.MinHeight <- 72.0
+        argsBox.TextWrapping <- TextWrapping.Wrap
+        argsBox.MinHeight <- ControlMetrics.textAreaMinHeight
         argsBox.VerticalContentAlignment <- VerticalAlignment.Top
         let _, urlBox = Ui.textField "https://example.com/mcp"
         let urlField = Ui.inputFieldGroup "远程端点" "http(s) 地址；与本地命令二选一。" urlBox
@@ -120,17 +121,14 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             timeoutBox.Text <- string server.callTimeoutSeconds
         | None -> timeoutBox.Text <- "60"
 
-        let enabledToggle, readEnabled, _, _ =
-            Ui.toggle (existing |> Option.map (fun s -> s.enabled) |> Option.defaultValue true) ignore
-        Avalonia.Automation.AutomationProperties.SetName(enabledToggle, "启用这个服务器")
-        let enabledRow =
-            let row = DockPanel(LastChildFill = false)
-            let caption = Ui.label "启用这个服务器"
-            DockPanel.SetDock(caption, Dock.Left)
-            DockPanel.SetDock(enabledToggle, Dock.Right)
-            row.Children.Add caption
-            row.Children.Add enabledToggle
-            row
+        // 启用开关行统一走 Ui.switchRow：行容器 / hover / CheckBox 语义 / ItemStatus /
+        // 行最小高与其它设置页同一来源；读取端取值与开关语义不变。
+        let enabledRow, readEnabled, _ =
+            Ui.switchRow
+                "启用这个服务器"
+                ""
+                (existing |> Option.map (fun s -> s.enabled) |> Option.defaultValue true)
+                ignore
 
         let idleSaveText = if existing.IsSome then "保存" else "添加"
         let mutable setPending: bool -> unit = ignore
@@ -151,12 +149,10 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 |> Array.filter (String.IsNullOrWhiteSpace >> not)
                 |> List.ofArray
             let rawTimeout = if isNull timeoutBox.Text then "" else timeoutBox.Text.Trim()
-            let mutable firstInvalid: TextBox option = None
-            let errorMessages = ResizeArray<string>()
+            let errors = ResizeArray<TextBox * string>()
             let fail (box: TextBox) msg =
                 applyFieldError box msg
-                errorMessages.Add msg
-                if firstInvalid.IsNone then firstInvalid <- Some box
+                errors.Add(box, msg)
 
             if String.IsNullOrWhiteSpace id then
                 fail idBox "稳定标识不能为空。"
@@ -190,41 +186,17 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 | true, _ -> fail timeoutBox "请输入 1 到 3600 之间的秒数。"
                 | false, _ -> fail timeoutBox "请输入有效的正整数秒数（1–3600）。"
 
-            match firstInvalid with
-            | Some _ when errorMessages.Count > 1 ->
-                let summaryText = String.Join("；", errorMessages)
-                errorSummary.Text <- sprintf "有 %d 处需要修正：%s" errorMessages.Count summaryText
-                errorSummary.IsVisible <- true
-                Avalonia.Automation.AutomationProperties.SetName(errorSummary, errorSummary.Text)
-                actions.toast (sprintf "有 %d 处需要修正，请查看表单顶部摘要。" errorMessages.Count) Warning
-                // 多错时聚焦摘要：逐字段内联错误保留，焦点只落一处，不逐个跳转。
-                errorSummary.BringIntoView()
-                errorSummary.Focus(NavigationMethod.Directional) |> ignore
-                Dispatcher.UIThread.Post(fun () ->
-                    if errorSummary.IsEffectivelyVisible then
-                        errorSummary.BringIntoView()
-                        errorSummary.Focus(NavigationMethod.Directional) |> ignore)
-            | Some box ->
-                errorSummary.IsVisible <- false
-                let errorMsg = (Ui.fieldValidationMessage box).Text
-                if not (String.IsNullOrWhiteSpace errorMsg) then
-                    actions.toast errorMsg Warning
-                // 错误行只展开自己所在的组（hint 与 error 互换），边框粗细不变；
-                // 单错时焦点仍送到字段本身，不打断摘要节律。
-                box.BringIntoView()
-                box.Focus(NavigationMethod.Directional) |> ignore
-                Dispatcher.UIThread.Post(fun () ->
-                    if box.IsEffectivelyVisible && box.IsEnabled then
-                        box.BringIntoView()
-                        box.Focus(NavigationMethod.Directional) |> ignore)
-            | None ->
+            if List.isEmpty (List.ofSeq errors) then
                 let timeout = match Int32.TryParse rawTimeout with true, t -> t | _ -> 60
                 setPending true
                 actions.upsertMcp
                     (mcpPayload id label command args url timeout (readEnabled ()))
                     (fun ok ->
                         setPending false
-                        if ok && editorActive then overlay.CloseDialog())
+                        if ok && editorActive then overlay.CloseDialog()
+                        elif not ok then actions.toast "保存失败，请重试。" Failure)
+            else
+                Ui.applyValidationFeedback (List.ofSeq errors) (Some errorSummary) (fun message -> actions.toast message Warning)
 
         /// pending 中的 save 直接返回，不做二次提交。
         let save () =
@@ -252,12 +224,9 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             row.Margin <- Thickness 0.0
             row.Children.Add cancelButton
             row.Children.Add saveButton
-            row.KeyDown.Add(fun e ->
-                if e.Key = Key.Escape then
-                    e.Handled <- true
-                    overlay.CloseDialog())
             // Enter/Space 归 Ui.onClick：行级再处理会导致保存被触发两次，
-            // 多行参数框里的回车也会误提交。这里只处理 Esc。
+            // 多行参数框里的回车也会误提交。Escape 不再本地处理，
+            // 统一走 OverlayHost.HandleEscape（pending 保存中被 canDismiss 守卫拦截）。
             row
 
         let form =
@@ -272,15 +241,13 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                   argsField
                   urlField
                   timeoutField
-                  enabledRow :> Control
+                  enabledRow
                   Ui.hairline () :> Control
                   buttons :> Control ]
         form.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
-            if e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog()
-            elif e.Key = Key.Enter && ctrl then
+            // Escape 统一走 OverlayHost.HandleEscape：本地分支会让 pending 保存绕过 canDismiss 守卫。
+            if e.Key = Key.Enter && ctrl then
                 e.Handled <- true
                 save ())
         let scroller =
@@ -289,7 +256,11 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
-        overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () -> editorActive <- false))
+        overlay.ShowDialog(
+            scroller :> Control,
+            520.0,
+            onClosed = (fun () -> editorActive <- false),
+            canDismiss = (fun () -> not savePending))
 
     member private _.RenderTool(tool: ToolInfo) : Control =
         let icon = if tool.source = "mcp" then Icons.server Tokens.textMuted else Icons.wrench Tokens.textMuted
@@ -298,7 +269,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let name =
             TextBlock(
                 Text = tool.label,
-                FontSize = Tokens.fontSmall,
+                FontSize = Tokens.fontBody,
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text)
         let identifier =
@@ -315,17 +286,12 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = ReadingRhythm.captionLineHeight,
                 Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0))
-        let column = Ui.vstack 1.0 [ name :> Control; identifier :> Control; description :> Control ]
+        let column = Ui.vstack Tokens.tightRowPaddingY [ name :> Control; identifier :> Control; description :> Control ]
         let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)
         row.Children.Add icon
         row.Children.Add column
-        Border(
-            Background = Tokens.surface,
-            BorderBrush = Tokens.border,
-            BorderThickness = Thickness 1.0,
-            CornerRadius = CornerRadius Tokens.radiusMd,
-            Padding = Thickness(Tokens.space3, Tokens.space3),
-            Child = row)
+        // 列表行卡内边距走行卡档 (space4, space3)：与同页 MCP 行、服务商行同一档。
+        Ui.groupingCard (Thickness(Tokens.space4, Tokens.space3)) row Tokens.radiusMd
         :> Control
 
     member private this.RenderMcp(server: McpInfo) : Control =
@@ -342,6 +308,9 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
                 VerticalAlignment = VerticalAlignment.Center)
+        // 已停用卡弱化：只把行文字列的前景转 textMuted（tag 与编辑 / 更多按钮不压暗）。
+        // meta 已是 textFaint，无需再降。
+        if not server.enabled then name.Foreground <- Tokens.textMuted
         let titleRow = Ui.hstack Tokens.space2 [ name :> Control ]
         titleRow.Children.Add(Ui.tag(sprintf "%d 个工具" toolCount))
         if not server.enabled then titleRow.Children.Add(Ui.tag "已停用")
@@ -351,7 +320,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 FontSize = Tokens.fontMicro,
                 Foreground = Tokens.textFaint,
                 TextTrimming = TextTrimming.CharacterEllipsis)
-        let column = Ui.vstack 2.0 [ titleRow :> Control; meta :> Control ]
+        let column = Ui.vstack Tokens.compactRowPaddingY [ titleRow :> Control; meta :> Control ]
         let editButton = Ui.iconButton Icons.pencil "编辑"
         Ui.onClick editButton (fun () -> this.ShowEditor(Some server))
         let moreButton = Ui.iconButton Icons.more "更多"
@@ -379,13 +348,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         DockPanel.SetDock(actionsRow, Dock.Right)
         dock.Children.Add actionsRow
         dock.Children.Add column
-        Border(
-            Background = Tokens.surface,
-            BorderBrush = Tokens.border,
-            BorderThickness = Thickness 1.0,
-            CornerRadius = CornerRadius Tokens.radiusMd,
-            Padding = Thickness(Tokens.space4, Tokens.space3),
-            Child = dock)
+        Ui.groupingCard (Thickness(Tokens.space4, Tokens.space3)) dock Tokens.radiusMd
         :> Control
 
     member this.SetCatalog(next: Catalog) =
@@ -395,12 +358,23 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             builtinPanel.Children.Add(this.RenderTool tool)
         if List.isEmpty next.tools then
             builtinPanel.Children.Add(
-                Ui.card(Ui.caption "当前没有可用工具。内置文件工具需要服务端配置沙箱根目录后才会出现。") :> Control)
+                Ui.emptyState
+                    (Brand.logo Tokens.logoEmpty)
+                    None
+                    "当前没有可用工具。内置文件工具需要服务端配置沙箱根目录后才会出现。"
+                    None
+                    None)
         mcpPanel.Children.Clear()
         for server in next.mcpServers do
             mcpPanel.Children.Add(this.RenderMcp server)
         if List.isEmpty next.mcpServers then
-            mcpPanel.Children.Add(Ui.card(Ui.caption "还没有 MCP 服务器。添加后它提供的工具会自动出现在上面的清单里。") :> Control)
+            mcpPanel.Children.Add(
+                Ui.emptyState
+                    (Brand.logo Tokens.logoEmpty)
+                    None
+                    "还没有 MCP 服务器。添加后它提供的工具会自动出现在上面的清单里。"
+                    None
+                    None)
         sandboxNote.Text <-
             if List.isEmpty next.generation.fileReadRoots then
                 "文件读取工具当前不可用：服务端未配置 tools.fileReadRoots 沙箱根目录。这是有意的——没有沙箱就等于把整台机器的文件交给模型。"
@@ -419,6 +393,8 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
               :> Control
               Ui.vstack Tokens.space2 [ Ui.sectionLabel "可用工具" :> Control; builtinPanel :> Control ] :> Control
               sandboxNote :> Control
+              // 内容分区之间用内容档分隔线（Ui.hairline = borderSoft），与编辑器表单内的分隔线同一档；
+              // 窗口 / 导航这类 chrome 分隔才用更轻的 Tokens.hairline。
               Ui.hairline () :> Control
               Ui.vstack
                   Tokens.space2

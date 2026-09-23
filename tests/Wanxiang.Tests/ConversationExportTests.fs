@@ -7,6 +7,8 @@ open System.Text.Json.Nodes
 open System.Threading.Tasks
 open Avalonia
 open Avalonia.Automation
+open Avalonia.Automation.Peers
+open Avalonia.Automation.Provider
 open Avalonia.Controls
 open Avalonia.Threading
 open Avalonia.VisualTree
@@ -332,3 +334,54 @@ let ``reconnecting the same instance keeps export recovery but changing instance
         invoke "HandleEvent" [| box (AuthAccepted {| instanceId = "different" |}) |] |> ignore
         Assert.False overlay.IsDialogOpen
     finally overlay.CloseDialog()
+
+[<Fact>]
+let ``cancel stays in the dialog and offers the retry entry`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost root
+    let window = Window(Content = root, Width = 480.0, Height = 600.0)
+    let dialog =
+        ConversationExportDialog(
+            overlay,
+            Guid.NewGuid(),
+            "取消后可重试",
+            (fun _ -> Task.FromResult true),
+            fun () -> window :> TopLevel)
+    window.Show()
+    try
+        dialog.Show()
+        Dispatcher.UIThread.RunJobs()
+        let byName name =
+            root.GetVisualDescendants()
+            |> Seq.choose (function :? Control as control -> Some control | _ -> None)
+            |> Seq.find (fun control -> AutomationProperties.GetName control = name)
+        let invoke control =
+            ControlAutomationPeer.CreatePeerForElement control
+            |> Assert.IsAssignableFrom<IInvokeProvider>
+            |> fun provider -> provider.Invoke()
+            Dispatcher.UIThread.RunJobs()
+
+        // 读取中点「取消导出」：对话框保持打开，原地进入取消态。
+        invoke (byName "取消导出")
+        let cancelledText =
+            root.GetVisualDescendants()
+            |> Seq.choose (function :? TextBlock as block -> Some block | _ -> None)
+            |> Seq.tryFind (fun block -> block.Text = "导出已取消。")
+        Assert.True(cancelledText.IsSome, "取消后对话框必须原地呈现取消态，而不是直接关掉。")
+
+        // 取消态提供重试入口：重新导出按钮可见。
+        let retry = byName "重新导出"
+        Assert.True retry.IsVisible
+
+        // 重新导出回到读取态：进度条回来，重试入口收起。
+        invoke retry
+        let bars =
+            root.GetVisualDescendants()
+            |> Seq.choose (function :? ProgressBar as bar -> Some bar | _ -> None)
+            |> Seq.toList
+        Assert.Equal(1, List.length bars)
+        Assert.True(List.forall (fun (bar: ProgressBar) -> bar.IsVisible) bars)
+    finally
+        overlay.CloseDialog()
+        window.Close()

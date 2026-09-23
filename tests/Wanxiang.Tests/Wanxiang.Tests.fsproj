@@ -37,6 +37,11 @@
     <Compile Include="ConversationExportTests.fs" />
     <Compile Include="CraftsmanshipPolishTests.fs" />
     <Compile Include="IconCenteringTests.fs" />
+    <Compile Include="PresentationRefreshTests.fs" />
+    <Compile Include="DesignConvergenceTests.fs" />
+    <Compile Include="SettingsSurfaceTests.fs" />
+    <Compile Include="ConversationPresentationTests.fs" />
+    <Compile Include="OverlayMenuTests.fs" />
   </ItemGroup>
 
   <!-- 真 KaTeX 生成的 HTML 夹具：公式排版测试不必带一个 JS 引擎 -->

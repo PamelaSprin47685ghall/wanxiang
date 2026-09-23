@@ -134,12 +134,27 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let modelsField = Ui.inputFieldGroup "模型列表" "每行一个；也可用逗号分隔。" modelsBox
         modelsBox.AcceptsReturn <- true
         modelsBox.TextWrapping <- TextWrapping.Wrap
-        modelsBox.MinHeight <- 92.0
+        modelsBox.MinHeight <- ControlMetrics.textAreaMinHeight
         modelsBox.VerticalContentAlignment <- VerticalAlignment.Top
         let _, defaultModelBox = Ui.textField "留空则自动使用列表中第一个"
         let defaultModelField = Ui.inputFieldGroup "默认模型" "必须在模型列表中；留空自动选用第一个。" defaultModelBox
         let allBoxes = [ idBox; labelBox; urlBox; keyBox; modelsBox; defaultModelBox ]
         for box in allBoxes do attachFieldValidation box
+        // 表单错误摘要：与 SettingsGeneral / SettingsTools 同款的可聚焦 live region，
+        // 多错时由 Ui.applyValidationFeedback 汇总呈现，单错时收起。
+        let errorSummary =
+            TextBlock(
+                Text = "",
+                FontSize = Tokens.fontCaption,
+                Foreground = Tokens.danger,
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = ReadingRhythm.captionLineHeight,
+                IsVisible = false,
+                Focusable = true)
+        Avalonia.Automation.AutomationProperties.SetName(errorSummary, "表单错误摘要")
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(
+            errorSummary,
+            Avalonia.Automation.AutomationLiveSetting.Assertive)
 
 
         let presetHint =
@@ -277,24 +292,21 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         if String.IsNullOrWhiteSpace currentDefault || not (List.contains currentDefault models) then
                             defaultModelBox.Text <- models |> List.tryHead |> Option.defaultValue ""), setProbeStatus)
                 actions.probeProvider id
-                actions.toast "正在向服务商请求模型列表…" Neutral
+                actions.toast "正在向服务商请求模型列表…" Info
         let probeButton = Ui.button Ui.Secondary probeIdleText runProbe
         // pending 文案更长，预留最小宽度：label 切换不改变按钮几何。
         Ui.preparePendingButton probeButton
         setProbePending <- fun pending ->
             Ui.setButtonPending probeButton pending probeIdleText "正在获取…"
 
-        let enabledToggle, readEnabled, _, _ =
-            Ui.toggle (existing |> Option.map (fun p -> p.enabled) |> Option.defaultValue true) ignore
-        Avalonia.Automation.AutomationProperties.SetName(enabledToggle, "启用这个服务商")
-        let enabledRow =
-            let row = DockPanel(LastChildFill = false)
-            let caption = Ui.label "启用这个服务商"
-            DockPanel.SetDock(caption, Dock.Left)
-            DockPanel.SetDock(enabledToggle, Dock.Right)
-            row.Children.Add caption
-            row.Children.Add enabledToggle
-            row
+        // 启用开关行统一走 Ui.switchRow：行容器 / hover / CheckBox 语义 / ItemStatus /
+        // 行最小高与其它设置页同一来源；读取端取值与开关语义不变。
+        let enabledRow, readEnabled, _ =
+            Ui.switchRow
+                "启用这个服务商"
+                ""
+                (existing |> Option.map (fun p -> p.enabled) |> Option.defaultValue true)
+                ignore
 
         let idleSaveText = if existing.IsSome then "保存" else "添加"
         let mutable setPending: bool -> unit = ignore
@@ -302,6 +314,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let mutable savePending = false
         let saveCore () =
             for box in allBoxes do clearFieldError box
+            errorSummary.IsVisible <- false
+            errorSummary.Text <- ""
             let id = if isNull idBox.Text then "" else idBox.Text.Trim()
             let label = if isNull labelBox.Text then "" else labelBox.Text.Trim()
             // 同一端点只有一个身份：末尾斜杠在入库前归一，预设连续性不断。
@@ -313,10 +327,10 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 |> Array.filter (String.IsNullOrWhiteSpace >> not)
                 |> Array.distinct
                 |> List.ofArray
-            let mutable firstInvalid: TextBox option = None
+            let errors = ResizeArray<TextBox * string>()
             let fail (box: TextBox) msg =
                 applyFieldError box msg
-                if firstInvalid.IsNone then firstInvalid <- Some box
+                errors.Add(box, msg)
 
             if String.IsNullOrWhiteSpace id then
                 fail idBox "稳定标识不能为空。"
@@ -346,7 +360,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                     match models with
                     | head :: _ ->
                         defaultModelBox.Text <- head
-                        actions.toast (sprintf "未指定默认模型，已自动选用“%s”。" head) Neutral
+                        actions.toast (sprintf "未指定默认模型，已自动选用“%s”。" head) Info
                         head
                     | [] -> ""
                 elif not (List.isEmpty models) && not (List.contains rawDefaultModel models) then
@@ -355,20 +369,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 else
                     rawDefaultModel
 
-            match firstInvalid with
-            | Some box ->
-                let errorMsg = (Ui.fieldValidationMessage box).Text
-                if not (String.IsNullOrWhiteSpace errorMsg) then
-                    actions.toast errorMsg Warning
-                // 错误行只展开自己所在的组（hint 与 error 互换），边框粗细不变；
-                // 这里只把焦点送到第一个错误处，不碰兄弟。
-                box.BringIntoView()
-                box.Focus(NavigationMethod.Directional) |> ignore
-                Dispatcher.UIThread.Post(fun () ->
-                    if box.IsEffectivelyVisible && box.IsEnabled then
-                        box.BringIntoView()
-                        box.Focus(NavigationMethod.Directional) |> ignore)
-            | None ->
+            if List.isEmpty (List.ofSeq errors) then
                 let payload =
                     providerPayload
                         id
@@ -384,7 +385,10 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 setPending true
                 actions.upsertProvider payload (fun ok ->
                     setPending false
-                    if ok && editorActive then overlay.CloseDialog())
+                    if ok && editorActive then overlay.CloseDialog()
+                    elif not ok then actions.toast "保存失败，请重试。" Failure)
+            else
+                Ui.applyValidationFeedback (List.ofSeq errors) (Some errorSummary) (fun message -> actions.toast message Warning)
 
         /// pending 中的 save 直接返回，不做二次提交。
         let save () =
@@ -412,12 +416,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             row.Margin <- Thickness 0.0
             row.Children.Add cancelButton
             row.Children.Add saveButton
-            row.KeyDown.Add(fun e ->
-                if e.Key = Key.Escape then
-                    e.Handled <- true
-                    overlay.CloseDialog())
             // Enter/Space 归 Ui.onClick：行级再处理会导致保存被触发两次，
-            // 多行模型框里的回车也会误提交。这里只处理 Esc。
+            // 多行模型框里的回车也会误提交。Escape 不再本地处理，
+            // 统一走 OverlayHost.HandleEscape（pending 保存中被 canDismiss 守卫拦截）。
             row
 
         let form =
@@ -427,6 +428,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                   Ui.controlFieldGroup "预设" "" (presetButton :> Control)
                   kindCaption :> Control
                   presetHint :> Control
+                  errorSummary :> Control
                   idField
                   labelField
                   urlField
@@ -435,15 +437,13 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                   defaultModelField
                   probeButton :> Control
                   probeStatus :> Control
-                  enabledRow :> Control
+                  enabledRow
                   Ui.hairline () :> Control
                   buttons :> Control ]
         form.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
-            if e.Key = Key.Escape then
-                e.Handled <- true
-                overlay.CloseDialog()
-            elif e.Key = Key.Enter && ctrl then
+            // Escape 统一走 OverlayHost.HandleEscape：本地分支会让 pending 保存绕过 canDismiss 守卫。
+            if e.Key = Key.Enter && ctrl then
                 e.Handled <- true
                 save ())
         let scroller =
@@ -452,7 +452,11 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
-        overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () -> editorActive <- false; activeProbe <- None))
+        overlay.ShowDialog(
+            scroller :> Control,
+            520.0,
+            onClosed = (fun () -> editorActive <- false; activeProbe <- None),
+            canDismiss = (fun () -> not savePending))
 
     /// 探活结果回填：把服务商的模型列表直接更新到配置里。
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
@@ -474,7 +478,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             | Some provider when not (List.isEmpty models) ->
                 let defaultModel =
                     if List.contains provider.defaultModel models then provider.defaultModel else List.head models
-                actions.toast (sprintf "已获取 %d 个模型，正在保存…" (List.length models)) Neutral
+                actions.toast (sprintf "已获取 %d 个模型，正在保存…" (List.length models)) Info
                 actions.upsertProvider
                     (providerPayload
                         provider.id
@@ -505,7 +509,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             if not provider.enabled then Tokens.textFaint
             elif configured then Tokens.accent
             else Tokens.warning
-        let dot = Ellipse(Width = 7.0, Height = 7.0, Fill = statusBrush, VerticalAlignment = VerticalAlignment.Center)
+        // 状态点直径走唯一真源 statusDotSize（此前本地裸 7.0）；填充仍是状态色 statusBrush，
+        // 因此不直接用 Ui.statusDot（它的填充固定为 textFaint）。
+        let dot = Ellipse(Width = ControlMetrics.statusDotSize, Height = ControlMetrics.statusDotSize, Fill = statusBrush, VerticalAlignment = VerticalAlignment.Center)
         let name =
             TextBlock(
                 Text = provider.label,
@@ -513,6 +519,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
                 VerticalAlignment = VerticalAlignment.Center)
+        // 已停用卡弱化：只把行文字列的前景转 textMuted（dot / tag / 操作按钮不压暗，
+        // 编辑与更多必须保持可点）。meta 已是 textFaint，无需再降。
+        if not provider.enabled then name.Foreground <- Tokens.textMuted
         let meta =
             TextBlock(
                 Text =
@@ -524,13 +533,15 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 FontSize = Tokens.fontMicro,
                 Foreground = Tokens.textFaint,
                 TextTrimming = TextTrimming.CharacterEllipsis)
-        let stateLabel =
-            if not provider.enabled then "已停用"
-            elif configured then "已配置"
-            else "缺少密钥"
+        // tag 语气按语义分档：缺少密钥是需要用户处置的状态（Warning）；
+        // 已配置 / 已停用是信息性状态（Neutral），已停用的弱化交由文字列弱化表达。
+        let stateLabel, stateTone =
+            if not provider.enabled then "已停用", Ui.TagTone.Neutral
+            elif configured then "已配置", Ui.TagTone.Neutral
+            else "缺少密钥", Ui.TagTone.Warning
         let titleRow = Ui.hstack Tokens.space2 [ dot :> Control; name :> Control ]
-        titleRow.Children.Add(Ui.tag stateLabel)
-        let column = Ui.vstack 2.0 [ titleRow :> Control; meta :> Control ]
+        titleRow.Children.Add(Ui.tagWith stateTone stateLabel)
+        let column = Ui.vstack Tokens.compactRowPaddingY [ titleRow :> Control; meta :> Control ]
         let editButton = Ui.iconButton Icons.pencil "编辑"
         Ui.onClick editButton (fun () -> this.ShowEditor(Some provider))
         let moreButton = Ui.iconButton Icons.more "更多"
@@ -540,7 +551,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 (moreButton :> Control)
                 true
                 [ MenuEntry.create "获取模型列表" (fun () ->
-                      actions.toast "正在向服务商请求模型列表…" Neutral
+                      actions.toast "正在向服务商请求模型列表…" Info
                       actions.probeProvider provider.id)
                   |> MenuEntry.withIcon Icons.refresh
                   MenuEntry.create (if provider.enabled then "停用" else "启用") (fun () ->
@@ -565,13 +576,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         DockPanel.SetDock(actionsRow, Dock.Right)
         dock.Children.Add actionsRow
         dock.Children.Add column
-        Border(
-            Background = Tokens.surface,
-            BorderBrush = Tokens.border,
-            BorderThickness = Thickness 1.0,
-            CornerRadius = CornerRadius Tokens.radiusMd,
-            Padding = Thickness(Tokens.space4, Tokens.space3),
-            Child = dock)
+        // 列表行卡内边距走行卡档 (space4, space3)：服务商 / MCP / 内置工具等列表单行同一档；
+        // 分组面板（外观 / 关于卡）另用更宽松的面板档 (space4, space4)。
+        Ui.groupingCard (Thickness(Tokens.space4, Tokens.space3)) dock Tokens.radiusMd
         :> Control
 
     member this.SetCatalog(next: Catalog) =
@@ -579,12 +586,14 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         listPanel.Children.Clear()
         if List.isEmpty next.providers then
             listPanel.Children.Add(
-                Ui.card(
-                    Ui.vstack
-                        Tokens.space2
-                        [ Ui.label "还没有任何服务商" :> Control
-                          Ui.caption "添加一个服务商后就能开始对话。预设已经填好端点和常见模型，你只需要粘贴密钥。" :> Control ])
-                :> Control)
+                // 空态统一为单行说明（logo + 一行 caption），与 SettingsTools 的两个空态同一节律：
+                // 不再单独给服务商面板加标题，三个设置空态一致。
+                Ui.emptyState
+                    (Brand.logo Tokens.logoEmpty)
+                    None
+                    "添加一个服务商后就能开始对话。预设已经填好端点和常见模型，你只需要粘贴密钥。"
+                    None
+                    None)
         else
             for provider in next.providers do
                 listPanel.Children.Add(this.RenderRow provider)

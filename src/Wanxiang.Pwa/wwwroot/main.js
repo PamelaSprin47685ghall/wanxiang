@@ -177,7 +177,13 @@ try {
 } catch (e) {
     console.error("wanxiang boot failed", e);
     const d = document.createElement("pre");
-    d.style.cssText = "position:fixed;inset:12px;overflow:auto;background:#1a1b21;color:#f88;padding:16px;z-index:99999;font:12px/1.4 monospace;white-space:pre-wrap";
+    // 崩溃屏镜像 Palette.dark（壳层无法运行时读 F# 令牌，此处「镜像 + 注释同源」）：
+    // 底色取 dark.codeBg #1E1E28（诊断暗面），字形取 dark.danger #E09385（异常通道），
+    // 等宽字体经 var(--wx-mono)（同源 Tokens.monoFontFamily：Sarasa Term SC + Sarasa Gothic SC 回落）。
+    d.style.cssText =
+        "position:fixed;inset:12px;overflow:auto;" +
+        "background:#1E1E28;color:#E09385;padding:16px;z-index:99999;" +
+        "font-size:12px;line-height:1.4;font-family:var(--wx-mono);white-space:pre-wrap";
     d.textContent = "万象启动失败\n" + (e && (e.stack || e.message || String(e)));
     document.body.appendChild(d);
     throw e;

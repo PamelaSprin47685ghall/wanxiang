@@ -13,7 +13,36 @@ type MainLayoutController(
     chatColumn: DockPanel,
     composer: Composer,
     chat: ChatView,
-    sidebarWidth: unit -> float) =
+    sidebarWidth: unit -> float) as this =
+
+    /// compact 抽屉遮罩：shellGrid 里位于内容(ZIndex 0)与侧栏(2)之间的一整层，
+    /// 与侧栏同在 shellGrid。只做不透明度淡入（MotionLedger.scrimFade，经
+    /// MotionPolicy 降级），不碰列宽/尺寸/transform——几何动画被 MotionPolicy 钉死。
+    /// 打开才可见并可命中：按下即收起 compact 抽屉（与 Escape/侧栏行同一归宿）。
+    let scrim =
+        Border(
+            Background = Tokens.scrim,
+            IsVisible = false,
+            Opacity = 0.0,
+            ZIndex = 1)
+
+    do
+        let fade = Avalonia.Animation.DoubleTransition()
+        fade.Property <- Avalonia.Visual.OpacityProperty
+        fade.Duration <- (if MotionPolicy.isReduced () then TimeSpan.Zero else MotionLedger.scrimFade)
+        let fadeTransitions = Avalonia.Animation.Transitions()
+        fadeTransitions.Add fade
+        scrim.Transitions <- fadeTransitions
+        Grid.SetColumn(scrim, 0)
+        shellGrid.Children.Add scrim
+        scrim.PointerPressed.Add(fun e ->
+            e.Handled <- true
+            match this.OnScrimPressed with
+            | Some dismiss -> dismiss ()
+            | None -> ())
+
+    /// 由 AppShell 注入：点击遮罩时收起 compact 抽屉。
+    member val OnScrimPressed : (unit -> unit) option = None with get, set
 
     member _.Apply(state: NavigationSnapshot) =
         composer.SetCompactMode state.compactMode
@@ -30,6 +59,14 @@ type MainLayoutController(
             sidebarSplitter.IsVisible <- false
             sidebar.IsVisible <- state.compactNavigationOpen
             sidebar.ZIndex <- 2
+            // 抽屉 scrim 跟随 compactNavigationOpen：打开淡入，关闭立即隐藏并复位
+            // 不透明度（收起是状态切换，不做淡出）。几何一律不碰。
+            if state.compactNavigationOpen then
+                scrim.IsVisible <- true
+                scrim.Opacity <- 1.0
+            else
+                scrim.IsVisible <- false
+                scrim.Opacity <- 0.0
         else
             shellGrid.ColumnDefinitions[0].MinWidth <- if state.sidebarCollapsed then 0.0 else Tokens.sidebarMinWidth
             shellGrid.ColumnDefinitions[0].Width <-
@@ -43,6 +80,9 @@ type MainLayoutController(
             sidebar.IsVisible <- not state.sidebarCollapsed
             sidebarSplitter.IsVisible <- not state.sidebarCollapsed
             sidebar.ZIndex <- 0
+            // 非 compact 布局不挂遮罩：离开 compact 时收起遗留层并复位不透明度。
+            scrim.IsVisible <- false
+            scrim.Opacity <- 0.0
 
     /// 用户拖拽后的宽度落定：钳制并写回第 0 列。列宽写操作只出自本控制器，
     /// AppShell 只负责把返回值存进 prefs。
