@@ -144,6 +144,22 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         | true, button -> button.Focus(NavigationMethod.Directional) |> ignore
         | _ -> ()
 
+    /// 打开设置时的焦点归宿：分区导航按钮。此前 ShowSettings 只切可见性，
+    /// 焦点悬在已隐藏的 workspace 里（或脱落顶层），键盘用户按 Tab 前无处可去。
+    /// kelivo 打开设置/历史浮层即 autofocus（chat_history_dialog.dart:192、
+    /// settings_search_view.dart:147-150），这里对齐同一条体感。
+    member this.FocusInitial() =
+        let target =
+            match navButtons.TryGetValue current with
+            | true, button -> button
+            | _ ->
+                // 极端情形（分区还没建出来）：退回第一个分区。
+                match navButtons.TryGetValue SettingsSection.all.[0] with
+                | true, button -> button
+                | _ -> null
+        if not (isNull target) then
+            target.Focus(NavigationMethod.Directional) |> ignore
+
     member private this.FocusSection(section: SettingsSection) =
         this.Select section
         match navButtons.TryGetValue section with

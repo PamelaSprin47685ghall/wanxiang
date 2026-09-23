@@ -645,6 +645,11 @@ type MainView() as this =
         settingsReturnFocus <- this.CurrentFocusControl()
         settingsHost.IsVisible <- true
         workspace.IsVisible <- false
+        // 打开即有焦点归宿：分区导航按钮。刚翻可见性时控件还没过布局，
+        // 直接 Focus 会落空，所以延一帧到 Render 之后。
+        Dispatcher.UIThread.Post(
+            (fun () -> settings.FocusInitial()),
+            DispatcherPriority.Render)
         send CatalogRequest
 
     member private this.CloseSettings() =
@@ -1225,7 +1230,12 @@ type MainView() as this =
                                     // 删除后焦点有家：邻行，否则搜索框（C3）。
                                     sidebar.FocusAfterDelete(summary.id.ToString())
                                     if activeConvId = Some summary.id then
-                                        this.SelectConversation None
+                                        // 删的正是正在看的会话时，落到邻行继续，不进空屏：
+                                        // 焦点已经瞄准邻位（FocusAfterDelete），打开同一行，
+                                        // 键盘与指针看到的是同一个会话，不必再点一次。
+                                        // 列表空了（None）才退回欢迎页。
+                                        let neighbor = sidebar.NeighborAfterDelete(summary.id.ToString())
+                                        this.SelectConversation neighbor
                                         sidebar.SetActive None
                                         this.Render()))
               setPinned =

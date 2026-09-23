@@ -751,7 +751,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                   |> MenuEntry.withIcon Icons.pencil
                   MenuEntry.create "多选" (fun () -> this.EnterSelection(live.id))
                   |> MenuEntry.withIcon Icons.check
-                  MenuEntry.create (if live.pinned then "取消置顶" else "置顶") (fun () -> actions.setPinned live (not live.pinned))
+                  MenuEntry.create (if live.pinned then "取消置顶 (P)" else "置顶 (P)") (fun () -> actions.setPinned live (not live.pinned))
                   |> MenuEntry.withIcon Icons.pin
                   MenuEntry.create (if live.archived then "取消归档" else "归档") (fun () -> actions.setArchived live (not live.archived))
                   |> MenuEntry.withIcon Icons.archive
@@ -816,6 +816,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 match summaryById.TryGetValue summary.id with
                 | true, live -> actions.deleteConversation live
                 | _ -> actions.deleteConversation summary
+            elif e.Key = Key.P && not (e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta) then
+                // 置顶此前只有右键菜单一条路：行已拿到焦点时还要再唤菜单。
+                // 与 F2 / Delete 同一约定——Rename 用它、Delete 用它，
+                // 取 summaryById 里的活摘要，不信任渲染时那一版快照。
+                e.Handled <- true
+                match summaryById.TryGetValue summary.id with
+                | true, live -> actions.setPinned live (not live.pinned)
+                | _ -> actions.setPinned summary (not summary.pinned)
             elif selectionMode && e.Key = Key.Escape then
                 // 搜索框为空时 Escape 退出批量模式：焦点留在当前行，选择立刻清零。
                 if String.IsNullOrEmpty searchBox.Text then
@@ -1147,23 +1155,32 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     /// 契约 C3：删除后聚焦邻位（下一行优先），行空了就回搜索框。
     /// 删除前调用（id 还在）直接瞄邻位并记下意图，Rebuild 后补聚焦；
     /// 删除后调用（id 已不在）按上次行焦点位置钳制。
-    member this.FocusAfterDelete(removedId: string) =
-        let neighborIndex () =
-            if visibleRowIds.Length = 0 then
-                None
-            else
-                match Guid.TryParse removedId with
-                | true, removed ->
-                    match visibleRowIds |> Array.tryFindIndex ((=) removed) with
-                    | Some idx ->
-                        if idx + 1 < visibleRowIds.Length then Some(idx + 1)
-                        elif idx - 1 >= 0 then Some(idx - 1)
-                        else None
-                    | None ->
-                        Some(min (max focusedRowIndex 0) (visibleRowIds.Length - 1))
-                | _ ->
+    /// 邻位口径与 FocusAfterDelete 完全一致：同一个 neighborIndex，
+    /// 不另写一份挑选规则——两份规则必然漂移。
+    member this.NeighborAfterDelete(removedId: string) : Guid option =
+        this.NeighborIndexAfterDelete(removedId)
+        |> Option.map (fun idx -> visibleRowIds.[idx])
+
+    /// 邻位在 visibleRowIds 里的下标（下一行优先，其次上一行）；没有行时为 None。
+    /// 抽出来是为了让「删除后打开谁」与「删除后焦点落谁」读同一个答案。
+    member private this.NeighborIndexAfterDelete(removedId: string) : int option =
+        if visibleRowIds.Length = 0 then
+            None
+        else
+            match Guid.TryParse removedId with
+            | true, removed ->
+                match visibleRowIds |> Array.tryFindIndex ((=) removed) with
+                | Some idx ->
+                    if idx + 1 < visibleRowIds.Length then Some(idx + 1)
+                    elif idx - 1 >= 0 then Some(idx - 1)
+                    else None
+                | None ->
                     Some(min (max focusedRowIndex 0) (visibleRowIds.Length - 1))
-        match neighborIndex () with
+            | _ ->
+                Some(min (max focusedRowIndex 0) (visibleRowIds.Length - 1))
+
+    member this.FocusAfterDelete(removedId: string) =
+        match this.NeighborIndexAfterDelete(removedId) with
         | Some idx ->
             let id = visibleRowIds.[idx]
             pendingFocusId <- Some id

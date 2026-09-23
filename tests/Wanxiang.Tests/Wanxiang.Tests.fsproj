@@ -48,6 +48,7 @@
     <Compile Include="SettingsSurfaceTests.fs" />
     <Compile Include="ConversationPresentationTests.fs" />
     <Compile Include="OverlayMenuTests.fs" />
+    <Compile Include="KeyConvergenceTests.fs" />
   </ItemGroup>
 
   <!-- 真 KaTeX 生成的 HTML 夹具：公式排版测试不必带一个 JS 引擎 -->
