@@ -572,6 +572,8 @@ type ShortcutAction =
     /// 只能一路拖滚轮，还没有锚点。端点两侧对称可达，翻回开头才有落脚处。
     | ScrollToBeginning
     | ScrollToEnd
+    /// 关闭主窗口：桌面端 Ctrl+W 的通用语义，与 kelivo 的 close_window 同键。
+    | CloseWindow
     | NoShortcut
 
 module ShortcutRouter =
@@ -581,6 +583,8 @@ module ShortcutRouter =
         let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
         if e.Key = Key.Escape then Escape
         elif ctrl && e.Key = Key.B then ToggleSidebar
+        // 与指针点右上角叉号同一个动作：桌面端关窗只有一条路，键盘用户也得有。
+        elif ctrl && not shift && e.Key = Key.W then CloseWindow
         elif ctrl && e.Key = Key.N then NewConversation
         elif ctrl && e.Key = Key.K then FocusSearch
         elif ctrl && e.Key = Key.OemComma then OpenSettings

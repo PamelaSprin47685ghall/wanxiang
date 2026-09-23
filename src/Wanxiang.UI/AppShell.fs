@@ -894,6 +894,16 @@ type MainView() as this =
         | NoShortcut -> ()
         | _ when overlay.IsDialogOpen || overlay.IsPopupOpen -> ()
         | ToggleSidebar -> e.Handled <- true; this.ToggleSidebar()
+        | CloseWindow ->
+            // 与右上角叉号同一路径：走 Window.Close 才会触发 MainWindow.Closing
+            // 里的几何持久化，快捷键关窗不会丢窗口位置。
+            // PWA 没有 Window（决策 48：browser 宿主下根视图是 Control），
+            // 浏览器自身的关闭语义不由我们代理，这里安全降级为空操作。
+            match topLevel () with
+            | :? Window as window ->
+                e.Handled <- true
+                window.Close()
+            | _ -> ()
         | NewConversation -> e.Handled <- true; this.CreateConversation() |> ignore
         | FocusSearch ->
             e.Handled <- true
