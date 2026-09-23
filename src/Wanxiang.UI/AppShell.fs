@@ -905,6 +905,10 @@ type MainView() as this =
                 UiPrefs.save prefs
             sidebar.FocusSearch()
         | OpenSettings -> e.Handled <- true; this.ShowSettings()
+        | OpenModelPicker ->
+            e.Handled <- true
+            // 焦点在输入框时不必先找到左下角芯片：锚点取芯片本身，菜单位置与点击一致。
+            this.ShowModelPicker(composer.ModelAnchor())
         | ToggleTheme ->
             e.Handled <- true
             // 主题三态轮转：跟随系统 → 浅色 → 深色 → 回到跟随系统。
@@ -1223,6 +1227,58 @@ type MainView() as this =
                         command
                         (Some(if archived then sprintf "已归档「%s」" summary.title else sprintf "已取消归档「%s」" summary.title))
                         ignore
+              /// 批量选择：置顶 / 归档按当前选择逐个发命令——每条命令独立可确认，
+              /// 失败的那条不会被同伴的成功掩盖。删除先统一确认，再逐个删除。
+              selectionAllPinned =
+                fun ids ->
+                    let selected = summaries |> List.filter (fun s -> List.contains s.id ids)
+                    not (List.isEmpty selected) && selected |> List.forall (fun s -> s.pinned)
+              setPinnedMany =
+                fun ids pin ->
+                    for id in ids do
+                        match summaries |> List.tryFind (fun s -> s.id = id) with
+                        | Some summary ->
+                            let command =
+                                SetConversationFlags
+                                    {| invocationId = newInvocation ()
+                                       conversationId = summary.id
+                                       pinned = pin
+                                       archived = summary.archived |}
+                            sendCommand command
+                        | None -> ()
+                    toast (sprintf "%s %d 个会话" (if pin then "已置顶" else "已取消置顶") (List.length ids)) Info
+                    sidebar.ExitSelection()
+              setArchivedMany =
+                fun ids archived ->
+                    for id in ids do
+                        match summaries |> List.tryFind (fun s -> s.id = id) with
+                        | Some summary ->
+                            let command =
+                                SetConversationFlags
+                                    {| invocationId = newInvocation ()
+                                       conversationId = summary.id
+                                       pinned = summary.pinned
+                                       archived = archived |}
+                            sendCommand command
+                        | None -> ()
+                    toast (sprintf "%s %d 个会话" (if archived then "已归档" else "已取消归档") (List.length ids)) Info
+                    sidebar.ExitSelection()
+              deleteMany =
+                fun ids ->
+                    let count = List.length ids
+                    if count > 0 then
+                        Dialogs.confirm
+                            overlay
+                            "删除会话"
+                            (sprintf "选中的 %d 个会话及其消息将不再出现在列表里。此操作无法撤销。" count)
+                            "删除"
+                            (fun () ->
+                                for id in ids do
+                                    let command =
+                                        DeleteConversation
+                                            {| invocationId = newInvocation (); conversationId = id |}
+                                    sendCommand command
+                                sidebar.ExitSelection())
               duplicateAsFork =
                 fun summary ->
                     this.OpenConversation summary.id

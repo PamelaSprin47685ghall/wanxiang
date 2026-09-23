@@ -20,6 +20,12 @@ type SidebarActions = {
     deleteConversation: ConversationSummary -> unit
     setPinned: ConversationSummary -> bool -> unit
     setArchived: ConversationSummary -> bool -> unit
+    /// 置顶是否对当前选中的全部会话成立（true = 全已置顶，操作即取消置顶）。
+    selectionAllPinned: Guid list -> bool
+    /// 对选中的整批会话置顶 / 取消置顶。
+    setPinnedMany: Guid list -> bool -> unit
+    setArchivedMany: Guid list -> bool -> unit
+    deleteMany: Guid list -> unit
     duplicateAsFork: ConversationSummary -> unit
     exportConversation: ConversationSummary -> unit
     openSettings: unit -> unit
@@ -177,6 +183,37 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let mutable compactMode = false
     let mutable focusedRowIndex = -1
     let mutable pendingFocusId: Guid option = None
+    /// 批量选择模式：行点击改为切换选中，底部换成批量操作条。
+    /// 桌面端从行的右键菜单进入；触屏没有右键与 Shift+F10，行的更多菜单同样提供入口。
+    let mutable selectionMode = false
+    let selectedIds = System.Collections.Generic.Dictionary<Guid, unit>()
+    /// 选择模式头 / 底部操作条只在模式翻转时换控件：同模式内的选中变化只刷计数与按钮态，
+    /// 不重建这棵树，按钮与计数文本的焦点保持连续。
+    let selectionHeader =
+        Border(
+            Background = Tokens.surfaceContainer,
+            Padding = Thickness(Tokens.space3, Tokens.space2),
+            IsVisible = false,
+            BorderBrush = Tokens.hairline,
+            BorderThickness = Thickness(0.0, 0.0, 0.0, ControlMetrics.sidebarDividerWidth))
+    let selectionCountText =
+        TextBlock(
+            Text = "已选 0 项",
+            FontSize = Tokens.fontSmall,
+            FontWeight = FontWeight.Medium,
+            Foreground = Tokens.text,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis)
+    let selectionActionBar =
+        Border(
+            Background = Tokens.surface,
+            Padding = Thickness(Tokens.space2, Tokens.space2),
+            IsVisible = false,
+            BorderBrush = Tokens.hairline,
+            BorderThickness = Thickness(0.0, ControlMetrics.sidebarDividerWidth, 0.0, 0.0))
+    /// 品牌行与页脚在 Build 时构造；选择模式要把它们收起让位，故提升为字段。
+    let mutable brandHeader: Border = Unchecked.defaultof<Border>
+    let mutable sidebarFooter: Border = Unchecked.defaultof<Border>
 
     do
         Ui.setReservedActionVisible clearSearchButton false
@@ -244,22 +281,25 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
     member private _.ApplyRowState(summary: ConversationSummary, host: Border) =
         let isActive = activeId = Some summary.id
-        host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
+        // 选择模式下选中行与「当前会话」共用同一套选中语言（selected 底 + accent 左缘 +
+        // 半粗体），不引入第二套选中色：批量操作是同一语义的复数形式。
+        let highlighted = isActive || (selectionMode && selectedIds.ContainsKey summary.id)
+        host.Background <- if highlighted then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
         // 键盘焦点环由 ActionBorder 统一绘制（outline 语义、零位移）；
         // 这里只管选中底与左缘，悬停由事件处理补，避免两套阴影互相覆盖。
-        host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
+        host.BorderBrush <- if highlighted then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
         // V25: 选中补非色线索（字重）：悬停只动底色，选中另加标题半粗体。
         match host.Child with
         | :? StackPanel as column when column.Children.Count >= 2 ->
             match column.Children.[0] with
             | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
                 match titleRow.Children.[2] with
-                | :? TextBlock as titleBlock -> titleBlock.FontWeight <- if isActive then FontWeight.SemiBold else FontWeight.Medium
+                | :? TextBlock as titleBlock -> titleBlock.FontWeight <- if highlighted then FontWeight.SemiBold else FontWeight.Medium
                 | _ -> ()
             | _ -> ()
         | _ -> ()
         let status =
-            match isActive, summary.running with
+            match highlighted, summary.running with
             | true, true -> "当前会话，生成中"
             | true, false -> "当前会话"
             | false, true -> "生成中"
@@ -276,19 +316,20 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             | :? ConversationSummary as summary -> this.ApplyRowState(summary, host)
             | _ ->
                 let isActive = activeId = Some id
-                host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
+                let highlighted = isActive || (selectionMode && selectedIds.ContainsKey id)
+                host.Background <- if highlighted then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
                 // 焦点环同上：归 ActionBorder，避免与选中态阴影打架。
-                host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
+                host.BorderBrush <- if highlighted then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
                 match host.Child with
                 | :? StackPanel as column when column.Children.Count >= 2 ->
                     match column.Children.[0] with
                     | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
                         match titleRow.Children.[2] with
-                        | :? TextBlock as titleBlock -> titleBlock.FontWeight <- if isActive then FontWeight.SemiBold else FontWeight.Medium
+                        | :? TextBlock as titleBlock -> titleBlock.FontWeight <- if highlighted then FontWeight.SemiBold else FontWeight.Medium
                         | _ -> ()
                     | _ -> ()
                 | _ -> ()
-                Avalonia.Automation.AutomationProperties.SetItemStatus(host, if isActive then "当前会话" else "")
+                Avalonia.Automation.AutomationProperties.SetItemStatus(host, if highlighted then "当前会话" else "")
 
     member private _.FocusRowAt(index: int) =
         if index >= 0 && index < visibleRowIds.Length then
@@ -603,6 +644,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 alignRight
                 [ MenuEntry.create "重命名 (F2)" (fun () -> actions.renameConversation live)
                   |> MenuEntry.withIcon Icons.pencil
+                  MenuEntry.create "多选" (fun () -> this.EnterSelection(live.id))
+                  |> MenuEntry.withIcon Icons.check
                   MenuEntry.create (if live.pinned then "取消置顶" else "置顶") (fun () -> actions.setPinned live (not live.pinned))
                   |> MenuEntry.withIcon Icons.pin
                   MenuEntry.create (if live.archived then "取消归档" else "归档") (fun () -> actions.setArchived live (not live.archived))
@@ -620,9 +663,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         host.PointerEntered.Add(fun _ ->
             // 悬停只动背景：选中行的强调左缘不动；悬停在已选项上层叠高亮，绝不比已选项更暗。
             let isActive = activeId = Some summary.id
+            let isSelected = selectionMode && selectedIds.ContainsKey summary.id
             host.Background <-
                 // 悬停叠层与按钮/菜单 hover 同一混合实现（Ui.blendOverlay，Primitives 唯一来源）。
-                if isActive then Ui.blendOverlay Tokens.selected Tokens.hover
+                if isActive || isSelected then Ui.blendOverlay Tokens.selected Tokens.hover
                 else Tokens.hover :> IBrush
             this.ApplyRowActionVisibility moreButton true)
         // 按压反馈与 Ui.attachSurfaceFeedback 同一节奏：瞬时 Opacity 脉冲（不进过渡集合），
@@ -646,7 +690,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         host.LostFocus.Add(fun _ ->
             this.ApplyRowState(summary.id, host)
             if not moreButton.IsFocused then this.ApplyRowActionVisibility moreButton false)
-        Ui.onClick host (fun () -> actions.openConversation summary.id)
+        Ui.onClick host (fun () ->
+            if selectionMode then this.ToggleSelected summary.id
+            else actions.openConversation summary.id)
         // Enter/Space 由 Ui.onClick 统一接管（同一按键只打开一次）；
         // 这里只处理行内导航与行级快捷键。
         host.KeyDown.Add(fun e ->
@@ -656,10 +702,20 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 | true, live -> actions.renameConversation live
                 | _ -> actions.renameConversation summary
             elif e.Key = Key.Delete then
+                // 选择模式下 Delete 走批量删除，与底部操作条同一动作。
+                if selectionMode then
+                    e.Handled <- true
+                    this.DeleteSelected()
+                else
                 e.Handled <- true
                 match summaryById.TryGetValue summary.id with
                 | true, live -> actions.deleteConversation live
                 | _ -> actions.deleteConversation summary
+            elif selectionMode && e.Key = Key.Escape then
+                // 搜索框为空时 Escape 退出批量模式：焦点留在当前行，选择立刻清零。
+                if String.IsNullOrEmpty searchBox.Text then
+                    e.Handled <- true
+                    this.ExitSelection()
             elif e.Key = Key.Down then
                 e.Handled <- true
                 this.MoveRowFocus(summary.id, 1)
@@ -1006,10 +1062,73 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         | None ->
             this.FocusSearch(selectAll = false)
 
+    /// 进入批量选择模式：以 seedId 为第一项选中，底部换成批量操作条。
+    /// 已在模式内则只把 seedId 并入选择（菜单入口可重复点）。
+    member this.EnterSelection(seedId: Guid) =
+        if not selectionMode then
+            selectionMode <- true
+            selectedIds.Clear()
+            selectedIds.[seedId] <- ()
+            this.RefreshSelectionChrome()
+        elif not (selectedIds.ContainsKey seedId) then
+            selectedIds.[seedId] <- ()
+            this.RefreshSelectionChrome()
+
+    /// 切换某一行的选中态。清空最后一项时退出模式——空选择留着操作条没有意义。
+    member this.ToggleSelected(id: Guid) =
+        if selectedIds.ContainsKey id then selectedIds.Remove id |> ignore
+        else selectedIds.[id] <- ()
+        if selectedIds.Count = 0 then this.ExitSelection()
+        else this.RefreshSelectionChrome()
+
+    /// 退出批量选择模式并清空选择。焦点不抢：留在当前行，操作条收起不动布局。
+    member this.ExitSelection() =
+        selectionMode <- false
+        selectedIds.Clear()
+        this.RefreshSelectionChrome()
+
+    /// 全选 / 取消全选当前可见行。
+    member this.ToggleSelectAllVisible() =
+        let allSelected =
+            visibleRowIds.Length > 0
+            && visibleRowIds |> Array.forall selectedIds.ContainsKey
+        if allSelected then this.ExitSelection()
+        else
+            if not selectionMode then selectionMode <- true
+            selectedIds.Clear()
+            for id in visibleRowIds do selectedIds.[id] <- ()
+            this.RefreshSelectionChrome()
+
+    /// 供 AppShell 读取当前选择（顺序与可见行一致，删除后可预期邻位行为）。
+    member _.SelectedIds() : Guid list =
+        visibleRowIds
+        |> Array.filter selectedIds.ContainsKey
+        |> Array.toList
+
+    member _.IsSelectionMode = selectionMode
+
+    /// 刷新批量操作条与计数文本；行视觉由各行事件里的 ApplyRowState 同步。
+    member private this.RefreshSelectionChrome() =
+        let count = selectedIds.Count
+        selectionCountText.Text <- sprintf "已选 %d 项" count
+        selectionHeader.IsVisible <- selectionMode
+        selectionActionBar.IsVisible <- selectionMode
+        // 已渲染的行必须立刻重绘：选中/取消选中如果只改集合不改行视觉，
+        // 用户点了行却看不出任何变化（ hover / 焦点事件不会为纯数据变化补刷）。
+        for row in rowHosts do this.ApplyRowState(row.Key, row.Value)
+        // 选择模式只留「取消 / 全选 / 计数」与底部批量条：品牌行与页脚让位，
+        // 侧栏本来只有 232–420pt 宽，再叠两条常驻条会把列表压成几条。
+        brandHeader.IsVisible <- not selectionMode
+        sidebarFooter.IsVisible <- not selectionMode
+
+    /// 批量删除：AppShell 负责逐个发命令与确认；这里只把选择交出去。
+    member private this.DeleteSelected() = actions.deleteMany(this.SelectedIds())
+
     member this.Build() =
         this.Background <- Tokens.rail
         this.BorderBrush <- Tokens.borderSoft
         this.BorderThickness <- Thickness(0.0, 0.0, ControlMetrics.sidebarDividerWidth, 0.0)
+
 
         let brand = brandLogo Tokens.logoSidebar
         brand.VerticalAlignment <- VerticalAlignment.Center
@@ -1023,7 +1142,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 VerticalAlignment = VerticalAlignment.Center)
         let brandRow = Ui.hstack Tokens.space2 [ brand; wordmark :> Control ]
         let leading = Ui.hstack Tokens.space1 [ compactBackButton :> Control; brandRow :> Control ]
-        let header =
+        brandHeader <-
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(leading, Dock.Left)
             DockPanel.SetDock(newConversationButton, Dock.Right)
@@ -1098,7 +1217,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         ToolTip.SetTip(statusRow, "点击重新连接")
         Avalonia.Automation.AutomationProperties.SetName(statusRow, "重新连接服务器")
         Ui.onClick statusRow (fun () -> actions.reconnect ())
-        let footer =
+        sidebarFooter <-
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(statusRow, Dock.Left)
             DockPanel.SetDock(settingsButton, Dock.Right)
@@ -1174,13 +1293,52 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         body.Children.Add emptyStateHost
         body.Children.Add searchEmptyHint
 
+        // 批量选择模式的头 / 底操作条：只切可见性，几何常驻同一位置（顶条替下品牌行
+        // 之前它自己那行本来就占 barHeight；底条与页脚同 Dock.Bottom，模式内页脚让位）。
+        selectionHeader.Child <-
+            let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
+            let cancelButton = Ui.iconButton Icons.close "退出多选（Esc）"
+            Ui.onClick cancelButton (fun () -> this.ExitSelection())
+            let selectAllButton =
+                Ui.button Ui.Ghost "全选" (fun () -> this.ToggleSelectAllVisible())
+            selectAllButton.Margin <- Thickness 0.0
+            selectAllButton.Padding <- Thickness(Tokens.space3, ControlMetrics.selectButtonPaddingY)
+            DockPanel.SetDock(cancelButton, Dock.Left)
+            DockPanel.SetDock(selectAllButton, Dock.Right)
+            dock.Children.Add cancelButton
+            dock.Children.Add selectAllButton
+            dock.Children.Add selectionCountText
+            dock
+        selectionActionBar.Child <-
+            // 置顶键的文案随当前选择实时判定：全已置顶 → 取消置顶，与单行菜单同语义。
+            let pinButton =
+                Ui.button
+                    Ui.Secondary
+                    (if actions.selectionAllPinned(this.SelectedIds()) then "取消置顶" else "置顶")
+                    (fun () ->
+                        let ids = this.SelectedIds()
+                        let pin = not (actions.selectionAllPinned ids)
+                        actions.setPinnedMany ids pin)
+            let archiveButton =
+                Ui.button Ui.Secondary "归档" (fun () ->
+                    let ids = this.SelectedIds()
+                    actions.setArchivedMany ids true)
+            let deleteButton =
+                Ui.button Ui.Danger "删除" (fun () -> this.DeleteSelected())
+            Ui.hstack
+                Tokens.space2
+                [ pinButton :> Control; archiveButton :> Control; deleteButton :> Control ]
         let layout = DockPanel()
-        DockPanel.SetDock(header, Dock.Top)
+        DockPanel.SetDock(brandHeader, Dock.Top)
         DockPanel.SetDock(searchArea, Dock.Top)
-        DockPanel.SetDock(footer, Dock.Bottom)
-        layout.Children.Add header
+        DockPanel.SetDock(selectionHeader, Dock.Top)
+        DockPanel.SetDock(selectionActionBar, Dock.Bottom)
+        DockPanel.SetDock(sidebarFooter, Dock.Bottom)
+        layout.Children.Add brandHeader
         layout.Children.Add searchArea
-        layout.Children.Add footer
+        layout.Children.Add selectionHeader
+        layout.Children.Add selectionActionBar
+        layout.Children.Add sidebarFooter
         layout.Children.Add body
         this.Child <- layout
         this.Rebuild()

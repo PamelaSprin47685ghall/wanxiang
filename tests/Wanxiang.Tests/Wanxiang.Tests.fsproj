@@ -30,6 +30,7 @@
     <Compile Include="PathologicalRenderTests.fs" />
     <Compile Include="AsyncHighlightTests.fs" />
     <Compile Include="FocusRingTests.fs" />
+    <Compile Include="SelectionOperabilityTests.fs" />
     <Compile Include="ReconnectBackoffTests.fs" />
     <Compile Include="DeliveryPolishingTests.fs" />
     <Compile Include="UiStabilityTests.fs" />

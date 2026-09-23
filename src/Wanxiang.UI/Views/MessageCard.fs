@@ -49,12 +49,15 @@ module MessageCard =
 
     /// 大段详情统一使用“限高阅读窗 → 主动展开全文”的二阶段 contract。
     /// 首次展开不会把当前阅读位置瞬间推走数屏；需要全文时用户仍有明确入口。
-    let private detailViewport (content: Control) (initiallyVisible: bool) : Control * (bool -> unit) =
+    /// `maxHeight` 是这一处阅读窗自己的上限：详情默认值见
+    /// LayoutPolicy.expandedDetailMaxHeight；长用户消息另行取
+    /// LayoutPolicy.expandedLongMessageMaxHeight（更矮，见该常量注释）。
+    let private detailViewport (maxHeight: float) (content: Control) (initiallyVisible: bool) : Control * (bool -> unit) =
         let scroller =
             ScrollViewer(
                 Content = content,
                 ClipToBounds = true,
-                MaxHeight = LayoutPolicy.expandedDetailMaxHeight,
+                MaxHeight = maxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 Margin = Thickness(0.0, 0.0, LayoutPolicy.nestedScrollGutter, 0.0),
@@ -70,13 +73,18 @@ module MessageCard =
         // 文字按钮自解释：tooltip 只会重复可见文案，不挂；无障碍名称保留。
         Avalonia.Automation.AutomationProperties.SetName(expandButton, "展开全部")
         let refreshButton () =
-            let clipped = scroller.Extent.Height > scroller.Viewport.Height + 1.0
+            // 首次布局前 Viewport 为 0，任何非空 Extent 都会算成「被裁」：那会在一段
+            // 明明放得下的短内容下亮出一个假的「展开全部」。以 Viewport > 0 为门，
+            // 真实测量之后才判定是否裁切。
+            let clipped =
+                scroller.Viewport.Height > 0.0
+                && scroller.Extent.Height > scroller.Viewport.Height + 1.0
             expandButton.IsVisible <- visible && (full || clipped)
         scroller.LayoutUpdated.Add(fun _ ->
             if visible then refreshButton ())
         toggleFull <- fun () ->
             full <- not full
-            scroller.MaxHeight <- if full then Double.PositiveInfinity else LayoutPolicy.expandedDetailMaxHeight
+            scroller.MaxHeight <- if full then Double.PositiveInfinity else maxHeight
             Ui.setButtonText expandButton (if full then "收起" else "展开全部")
             Avalonia.Automation.AutomationProperties.SetName(expandButton, if full then "收起" else "展开全部")
             Dispatcher.UIThread.Post refreshButton
@@ -96,7 +104,7 @@ module MessageCard =
             host.IsVisible <- value
             if not value && full then
                 full <- false
-                scroller.MaxHeight <- LayoutPolicy.expandedDetailMaxHeight
+                scroller.MaxHeight <- maxHeight
                 Ui.setButtonText expandButton "展开全部"
                 Avalonia.Automation.AutomationProperties.SetName(expandButton, "展开全部")
             Dispatcher.UIThread.Post refreshButton
@@ -225,7 +233,7 @@ module MessageCard =
                 Foreground = Tokens.textMuted,
                 LineHeight = ReadingRhythm.secondaryLineHeight (ctx.fontSize - 1.5),
                 SelectionBrush = Tokens.accentSoft)
-        let body, setBodyVisible = detailViewport (bodyText :> Control) (not collapsed)
+        let body, setBodyVisible = detailViewport LayoutPolicy.expandedDetailMaxHeight (bodyText :> Control) (not collapsed)
         body.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
         let mutable bodyVisible = not collapsed
         let chevronHost =
@@ -601,7 +609,7 @@ module MessageCard =
         | Some result when not (String.IsNullOrWhiteSpace result) ->
             detailPanel.Children.Add(createDetailSection (if hasError then "执行结果 (异常)" else "执行结果") result hasError)
         | _ -> ()
-        let detail, setDetailVisible = detailViewport (detailPanel :> Control) false
+        let detail, setDetailVisible = detailViewport LayoutPolicy.expandedDetailMaxHeight (detailPanel :> Control) false
         detail.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
         let chevronHost =
             Border(
@@ -1025,7 +1033,7 @@ module MessageCard =
             let detailStack = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
             detailStack.Children.Add detailHeader
             detailStack.Children.Add codeBox
-            let detailHost, setDetailVisible = detailViewport (detailStack :> Control) false
+            let detailHost, setDetailVisible = detailViewport LayoutPolicy.expandedDetailMaxHeight (detailStack :> Control) false
             detailHost.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
             let mutable visible = false
             let mutable toggleDetail: unit -> unit = ignore
@@ -1349,14 +1357,18 @@ module MessageCard =
 
         if not (String.IsNullOrWhiteSpace message.text) then
             if MessageView.isUser message then
-                body.Children.Add(
+                // 长输入先收进小阅读窗：粘贴的大段提示词不再把同屏的回复推走，
+                // 展开入口与思考过程 / 工具详情同一 contract（未超限时按钮不出现）。
+                let text =
                     SelectableTextBlock(
                         Text = message.text,
                         TextWrapping = TextWrapping.Wrap,
                         FontSize = ctx.fontSize,
                         Foreground = Tokens.userBubbleText,
                         LineHeight = ReadingRhythm.proseLineHeight ctx.fontSize,
-                        SelectionBrush = Tokens.userBubbleSelection))
+                        SelectionBrush = Tokens.userBubbleSelection)
+                let host, _ = detailViewport LayoutPolicy.expandedLongMessageMaxHeight (text :> Control) true
+                body.Children.Add host
             else
                 body.Children.Add(renderer.RenderText message.text)
 

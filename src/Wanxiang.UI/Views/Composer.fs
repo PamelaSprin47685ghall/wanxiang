@@ -734,6 +734,9 @@ type Composer(actions: ComposerActions) as this =
 
     member _.SetModelLabel(text: string) = modelCaption.Text <- text
 
+    /// 模型芯片本身：快捷键打开选择器时用它做锚点，菜单与点击芯片时同源同位。
+    member _.ModelAnchor() : Control = modelChip :> Control
+
     member _.SetEnterSends(value: bool) =
         enterSends <- value
         // V35: 分隔符对齐 ChatView/快捷键帮助的“/”惯例（Dialogs 中“Ctrl / ⌘ + N”、关闭提示“Esc / Enter”），不用“·”另造分隔。

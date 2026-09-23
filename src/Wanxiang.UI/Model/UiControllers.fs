@@ -562,6 +562,8 @@ type ShortcutAction =
     | ExportConversation
     | OpenConversationAt of int
     | ShowShortcuts
+    /// 打开当前会话的模型选择器（输入框内可直接换模型，不必先点芯片）。
+    | OpenModelPicker
     | NoShortcut
 
 module ShortcutRouter =
@@ -574,6 +576,7 @@ module ShortcutRouter =
         elif ctrl && e.Key = Key.N then NewConversation
         elif ctrl && e.Key = Key.K then FocusSearch
         elif ctrl && e.Key = Key.OemComma then OpenSettings
+        elif ctrl && not shift && e.Key = Key.M then OpenModelPicker
         elif ctrl && shift && e.Key = Key.S then ToggleTheme
         elif ctrl && shift && e.Key = Key.E then ExportConversation
         elif ctrl && not shift && e.Key >= Key.D1 && e.Key <= Key.D9 then

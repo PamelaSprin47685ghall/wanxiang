@@ -34,6 +34,11 @@ module LayoutPolicy =
     /// 工具结果 / 技术细节首次展开时的内部滚动上限。
     let expandedDetailMaxHeight = 360.0
 
+    /// 长用户消息的阅读窗上限：比工具详情更矮。粘贴进来的长提示词 / 大段代码若全文铺开，
+    /// 会把同一屏里的助手回复推走数屏；先给一小窗 + 明确展开入口，长输入仍可整段读完。
+    /// 与 expandedDetailMaxHeight 同机制、不同语义（他人详情 vs 自己的长输入），分记。
+    let expandedLongMessageMaxHeight = 200.0
+
     /// Dialog 内部表单/帮助正文的阅读窗口；Overlay 外层仍会再按实时 viewport clamp。
     let dialogContentMaxHeight = 560.0
 
