@@ -14,22 +14,34 @@ module Icons =
     /// 图标设计画布边长。渲染时由 Viewbox 缩放到 `Tokens.iconGlyph`。
     let private box = 16.0
 
+    /// 把墨迹几何平移到画布正中。
+    /// Viewbox 只做等比缩放、不做居中，路径数据偏心的图标整个歪在按钮槽位里；
+    /// 描边与圆头线帽沿几何两侧对称扩张，几何包围盒居中即墨迹居中。
+    let private centerOnCanvas (geometry: Geometry) =
+        let bounds = geometry.Bounds
+        TranslateTransform(
+            (box - bounds.Width) / 2.0 - bounds.X,
+            (box - bounds.Height) / 2.0 - bounds.Y)
+
     let private shape (data: string) (brush: IBrush) (thickness: float) : Control =
+        let geometry = Geometry.Parse data
         let path =
             Path(
-                Data = Geometry.Parse data,
+                Data = geometry,
                 Stroke = brush,
                 StrokeThickness = thickness,
                 StrokeLineCap = PenLineCap.Round,
                 StrokeJoin = PenLineJoin.Round,
                 Fill = Brushes.Transparent,
-                Stretch = Stretch.None)
+                Stretch = Stretch.None,
+                RenderTransform = centerOnCanvas geometry)
         let host = Canvas(Width = box, Height = box)
         host.Children.Add path |> ignore
         Viewbox(Width = Tokens.iconGlyph, Height = Tokens.iconGlyph, Stretch = Stretch.Uniform, Child = host) :> Control
 
     let private filled (data: string) (brush: IBrush) : Control =
-        let path = Path(Data = Geometry.Parse data, Fill = brush, Stretch = Stretch.None)
+        let geometry = Geometry.Parse data
+        let path = Path(Data = geometry, Fill = brush, Stretch = Stretch.None, RenderTransform = centerOnCanvas geometry)
         let host = Canvas(Width = box, Height = box)
         host.Children.Add path |> ignore
         Viewbox(Width = Tokens.iconGlyph, Height = Tokens.iconGlyph, Stretch = Stretch.Uniform, Child = host) :> Control

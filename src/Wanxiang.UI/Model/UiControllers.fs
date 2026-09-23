@@ -122,7 +122,7 @@ type AttachmentDraftController() =
 
     member _.Items = items
     member _.HasReady = items |> List.exists _.ready
-    member _.HasUploading = items |> List.exists (fun item -> not item.ready)
+    member _.HasUploading = items |> List.exists (fun item -> not item.ready && not item.failed)
     member _.HasFailed = items |> List.exists _.failed
     member _.OwnerKey with get () = ownerKey and set value = ownerKey <- value
 
@@ -212,8 +212,8 @@ type DownloadChunkResult =
     | Accepted
     /// 本次写入触顶：缓冲已整体丢弃，调用方应提示一次
     | Capped
-    /// 没有在途缓冲（尚未 Begin、已被 Capped 清掉或已完成）
-    | Unknown
+    /// 没有在途缓冲（尚未 Begin、已被 Capped 清掉或已完成），附原因便于诊断。
+    | Unknown of reason: string
 
 type DownloadBuffers(?capBytes: int64) =
     let capBytes = defaultArg capBytes (128L * 1024L * 1024L)
@@ -244,7 +244,7 @@ type DownloadBuffers(?capBytes: int64) =
             else
                 buffer.Write(bytes, 0, bytes.Length)
                 Accepted
-        | _ -> Unknown
+        | _ -> Unknown "没有在途缓冲：尚未开始、已被丢弃或已完成。"
 
     /// 完成接收：取走文件名与字节并移除缓冲。文件名缺失时回落到 sha256。
     member _.Take(sha256: string) : (string * byte[]) option =
@@ -409,7 +409,10 @@ type MessageOutbox() =
     member _.Disconnect(instanceId: string) =
         items <- items |> Map.map (fun _ item ->
             if item.instanceId = instanceId then
-                { item with state = UnconfirmedMessage "连接已断开；重试会核对原命令，不会重复保存。" }
+                match item.state with
+                | PreparingConversation | SendingMessage | QueuedMessage | UnconfirmedMessage _ ->
+                    { item with state = UnconfirmedMessage "连接已断开；重试会核对原命令，不会重复保存。" }
+                | RejectedMessage _ -> item
             else item)
 
 /// 一个命令对应的 UI 后续动作。只有服务端 CommandCommitted 后才执行。

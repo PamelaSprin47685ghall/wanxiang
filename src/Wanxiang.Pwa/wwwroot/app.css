@@ -1,32 +1,33 @@
 /* ============================================================
  * wanxiang PWA · Kami 纸感体系（warm parchment + ink-blue）
- * Tokens 对齐 kami/references/tokens.json；运行时视觉 SSOT 在 Palette.fs / Tokens.fs
- * 规则：单墨蓝强调 ≤5%，暖灰四阶，hairline 分割，whisper 阴影
+ * 运行时视觉 SSOT 是 src/Wanxiang.UI/Design/Palette.fs 与 Tokens.fs；
+ * 壳层无法运行时读 F# 令牌，故本文件以「镜像 + 注释同源」逐字复刻其值，
+ * 每处注明对应角色：壳层不再另立色号体系，也不与 Palette 角色交叉发明语义
  * ============================================================ */
 
 :root {
-    /* 纸感基底（Kami --parchment #f5f4ed / --ivory #faf9f5） */
-    --parchment:  #f5f4ed;
-    --ivory:      #faf9f5;
-    --warm-sand:  #e8e6dc;
-    --brand:      #1B365D;
-    --brand-light:#2D5A8A;
-    --brand-tint: #EEF2F7;
-    --tag-bg:     #E4ECF5;
-    --near-black: #141413;
-    --dark-warm:  #3d3d3a;
-    --olive:      #504e49;
-    --stone:      #6b6a64;
-    --border:     #D9D5C7;
-    --border-soft:#E3E0D3;
-    --line:       #C7C3B3;
+    /* 纸感基底（Kami --parchment #f5f4ed；--ivory 对齐 Palette surface #FBFAF7） */
+    --parchment:  #f5f4ed; /* 镜像 Palette.light canvas */
+    --ivory:      #fbfaf7; /* 镜像 Palette.light surface：抬起面同一含义 */
+    --brand:      #1B365D; /* 镜像 Palette.light accent */
+    --brand-light:#25476F; /* 镜像 Palette.light accentHover */
+    --near-black: #141413; /* 镜像 Palette.light text：壳层近黑正文 */
+    --wx-text-faint: #6E6B62; /* 镜像 Palette.light textFaint（并入原壳层暖灰阶语义） */
+    --border:     #D9D5C7;  /* 镜像 Palette.light border */
+    --border-soft:#E3E0D3;  /* 镜像 Palette.light borderSoft */
+    --line:       #C7C3B3;  /* 镜像 Palette.light line */
 
-    /* 字体栈：PWA 走 Sarasa Term SC 内嵌 + 平替；行高取 Kami 1.55 阅读档 */
+    /* 正文字体栈镜像 Tokens.fontFamily（Sarasa Gothic SC 内嵌 + 中文/系统平替）；
+       行高取 Kami 1.55 阅读档 */
     --wx-font:
         "Sarasa Gothic SC", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
         -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    /* 等宽栈同源 Tokens.monoFontFamily（Sarasa Term SC 等宽子集 + Sarasa Gothic SC
+       中文回落）；壳层不内嵌 Sarasa 字体文件，尾部保留通用等宽兜底。
+       消费点：main.js 崩溃屏经 var(--wx-mono) 引用 */
     --wx-mono:
-        "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        "Sarasa Term SC", "Sarasa Gothic SC",
+        ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
     --wx-r-sm: 6px;
     --wx-r-md: 9px;
@@ -131,7 +132,7 @@ html, body {
 }
 .splash-sub {
     font-size: 12.5px;
-    color: var(--stone);
+    color: var(--wx-text-faint);
     margin-top: 1px;
     letter-spacing: 0.2px;
 }
@@ -164,7 +165,7 @@ html, body {
 }
 
 /* ============================================================
- * Toast：墨蓝底 + ivory 字；Kami 单强调
+ * Toast：近黑底 + ivory 字；Kami 单强调
  * ============================================================ */
 .toast {
     position: fixed;
@@ -182,40 +183,58 @@ html, body {
     cursor: pointer;
     border: 1px solid rgba(245,244,237,0.12);
     box-shadow: 0 12px 32px -16px rgba(20,19,19,0.32), 0 2px 8px rgba(20,19,19,0.12);
-    transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+    /* hover/active 只改描边与阴影、不动几何：本项目 hover 只改颜色/描边的一致纪律 */
+    transition: box-shadow 160ms ease, border-color 160ms ease, opacity 160ms ease;
 }
-.toast:hover { transform: translateX(-50%) translateY(-1px); }
-.toast:active { transform: translateX(-50%) translateY(0); }
+.toast:hover {
+    border-color: rgba(245,244,237,0.22);
+    box-shadow: 0 16px 40px -16px rgba(20,19,19,0.42), 0 3px 10px rgba(20,19,19,0.18);
+}
+.toast:active {
+    border-color: rgba(245,244,237,0.28);
+    box-shadow: 0 6px 18px -14px rgba(20,19,19,0.28), 0 1px 4px rgba(20,19,19,0.10);
+}
 
-/* Focus 环：墨蓝 1.5px + 2px offset；PWA 画布内与桌面一致 */
+/* Focus 环：墨蓝 2px + 2px offset；外扩 2px 同源 Tokens.focusRingSpread=2.0。
+   壳层以 outline 外扩实现，桌面画布内以 box-shadow 外扩实现，两者外扩量一致。
+   环色浅色镜像 Palette.light accent #1B365D，深色镜像 Palette.dark accent #8FB4DE */
 *:focus-visible {
-    outline: 1.5px solid var(--brand);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
     border-radius: 4px;
 }
 #out:focus-visible { outline-offset: 0; }
 
 /* ============================================================
- * 深色系统：仅壳层（html/body/splash/scrollbar）做对比度补偿
- * Avalonia 画布 RequestedThemeVariant=Light 保持纸感，不跟随系统
+ * 深色系统：仅壳层（html/body/splash/scrollbar/focus 环）做对比度补偿
+ * Avalonia 画布 RequestedThemeVariant=Light 保持纸感，不跟随系统——这是既有设计
+ * 壳层深色不是第二套配色：以下值全部镜像 Palette.dark，与 Palette.fs 逐字一致
+ *   canvas  #15151A → 壳层画布与 splash 径向外缘
+ *   surface #22222A → splash 径向中心
+ *   text    #EDEBE4 → 壳层正文与 rgba 叠层基色
+ *   textFaint #A19E95 → 副题
+ *   accent  #8FB4DE → focus 环、splash 进度扫光
  * ============================================================ */
 @media (prefers-color-scheme: dark) {
-    html, body { background: #141413; color: #e8e6dc; }
+    html, body { background: #15151A; color: #EDEBE4; }
     .splash {
         background:
-            radial-gradient(62% 52% at 50% 36%, #1e1e1c 0%, #141413 68%),
-            #141413;
+            radial-gradient(62% 52% at 50% 36%, #22222A 0%, #15151A 68%),
+            #15151A;
     }
-    .splash-title { color: #faf9f5; }
-    .splash-sub { color: #b0aea5; }
-    .splash-bar { background: rgba(250,249,245,0.10); }
+    .splash-title { color: #EDEBE4; }
+    .splash-sub { color: #A19E95; }
+    .splash-bar { background: rgba(237,235,228,0.10); }
     .splash-logo {
         box-shadow:
             0 1px 0 rgba(255,255,255,0.06) inset,
             0 10px 28px -14px rgba(0,0,0,0.42),
             0 2px 6px rgba(0,0,0,0.30);
     }
-    ::-webkit-scrollbar-thumb { background: rgba(250,249,245,0.14); border: 2px solid transparent; background-clip: padding-box; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(250,249,245,0.22); border: 2px solid transparent; background-clip: padding-box; }
-    *:focus-visible { outline-color: #E4ECF5; }
+    ::-webkit-scrollbar-thumb { background: rgba(237,235,228,0.14); border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(237,235,228,0.22); border: 2px solid transparent; background-clip: padding-box; }
+    *:focus-visible { outline-color: #8FB4DE; }
+    /* 扫光镜像 Palette.dark accent #8FB4DE：深色 splash 上若沿用浅色 --brand #1B365D，
+       墨蓝会融进近黑径向外缘；浅色档同理由 --brand 承担 */
+    .splash-bar::after { background: linear-gradient(90deg, transparent, #8FB4DE, transparent); }
 }

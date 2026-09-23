@@ -49,11 +49,15 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
 
     let contentHost = ContentControl()
     let mutable contentScroll: ScrollViewer option = None
-    let navPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = 2.0)
+    let navPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
     let mutable current = Providers
     let mutable instanceId = ""
     let mutable serverUrl = ""
     let navButtons = System.Collections.Generic.Dictionary<SettingsSection, Border>()
+    let navCaptions = System.Collections.Generic.Dictionary<SettingsSection, TextBlock>()
+    let navGlyphs = System.Collections.Generic.Dictionary<SettingsSection, Control>()
+    /// 选中左缘强调条：与侧栏选中同一语言（sidebarSelectedEdgeWidth），独立元素叠画、零几何位移。
+    let navAccents = System.Collections.Generic.Dictionary<SettingsSection, Border>()
     let scrollPositions = System.Collections.Generic.Dictionary<SettingsSection, float>()
     let mutable responsiveCompact: bool option = None
 
@@ -91,7 +95,21 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 elif button.IsPointerOver || button.IsFocused then Tokens.hover :> IBrush
                 else Brushes.Transparent :> IBrush
             button.Background <- bg
+            // 选中左缘强调条：非色线索，宽度同侧栏选中态；只切可见性，不动任何几何。
+            match navAccents.TryGetValue key with
+            | true, accent -> accent.IsVisible <- selected
+            | _ -> ()
             Avalonia.Automation.AutomationProperties.SetItemStatus(button, if selected then "当前分区" else "")
+            let label = SettingsSection.label key
+            Avalonia.Automation.AutomationProperties.SetHelpText(button, if selected then label + "，当前分区" else label)
+            match navCaptions.TryGetValue key with
+            | true, caption ->
+                caption.Foreground <- (if selected then Tokens.text else Tokens.textMuted) :> IBrush
+                caption.FontWeight <- (if selected then FontWeight.Bold else FontWeight.Medium)
+            | _ -> ()
+            match navGlyphs.TryGetValue key with
+            | true, glyph -> glyph.Opacity <- (if selected then 1.0 else Tokens.opacitySubtle)
+            | _ -> ()
 
     member private this.Select(section: SettingsSection) =
         let changed = current <> section
@@ -152,22 +170,39 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
                 VerticalAlignment = VerticalAlignment.Center)
+        // 选中左缘强调条：2px 独立元素，叠在按钮左缘的内边距区里（OverlayHost 里
+        // toastAccentWidth 的同一思路），不进布局流、不抢焦点、不改变任何几何；
+        // 键盘焦点环仍归 ActionBorder 的外阴影，两者可区分。
+        let accentBar =
+            Border(
+                Width = ControlMetrics.sidebarSelectedEdgeWidth,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Background = Tokens.accent,
+                IsHitTestVisible = false,
+                Focusable = false,
+                IsVisible = false)
+        let contentGrid = Grid()
+        contentGrid.Children.Add accentBar
+        contentGrid.Children.Add(Ui.hstack Tokens.space2 [ glyph; caption :> Control ])
         let host =
             ActionBorder(
-                Padding = Thickness(Tokens.space3, 8.0),
+                Padding = Thickness(Tokens.space3, Tokens.space2),
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 Background = Brushes.Transparent,
                 Cursor = new Cursor(StandardCursorType.Hand),
                 Focusable = true,
                 MinHeight = ControlMetrics.settingsNavMinHeight,
-                Child = Ui.hstack Tokens.space2 [ glyph; caption :> Control ])
+                Child = contentGrid)
+        host.Transitions <- Ui.surfaceTransitions ()
         host.PointerEntered.Add(fun _ -> this.UpdateNavButtonStates())
         host.PointerExited.Add(fun _ -> this.UpdateNavButtonStates())
         host.GotFocus.Add(fun _ -> this.UpdateNavButtonStates())
         host.LostFocus.Add(fun _ -> this.UpdateNavButtonStates())
         host.KeyDown.Add(fun e ->
             // Enter/Space 由 Ui.onClick 拥有（选中是幂等的，但双通道无意义）；
-            // 选中态靠 Tokens.selected 底，键盘焦点另有 focusRingSpread 外环，两者可区分。
+            // 选中态靠 Tokens.selected 底 + 标题前景/字重 + 图标不透明度 + 左缘强调条，
+            // 键盘焦点另有 focusRingSpread 外环，两者可区分。
             if e.Key = Key.Up then
                 e.Handled <- true
                 this.NavigateSection -1
@@ -186,6 +221,10 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
             elif e.Key = Key.End then
                 e.Handled <- true
                 this.FocusSection (List.last SettingsSection.all))
+        navCaptions[section] <- caption
+        navGlyphs[section] <- glyph
+        navAccents[section] <- accentBar
+        glyph.Opacity <- Tokens.opacitySubtle
         Avalonia.Automation.AutomationProperties.SetName(host, SettingsSection.label section)
         host.Tag <- section
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
@@ -226,16 +265,25 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         Ui.onClick closeButton onClose
         let header =
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
-            let caption = Ui.title "设置"
+            // 窗口标题用页面主标题档（fontDisplay=25），明确高于分区内的小节标题（Ui.heading=19）；
+            // 此前用 Ui.title(16) 造成「窗口标题 < 小节标题」的层级倒挂。
+            let caption =
+                TextBlock(
+                    Text = "设置",
+                    FontSize = Tokens.fontDisplay,
+                    FontWeight = FontWeight.Medium,
+                    Foreground = Tokens.text,
+                    VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(caption, Dock.Left)
             DockPanel.SetDock(closeButton, Dock.Right)
             dock.Children.Add caption
             dock.Children.Add closeButton
             Border(
                 Height = Tokens.barHeight,
-                Padding = Thickness(Tokens.space5, 0.0, Tokens.space3, 0.0),
-                BorderBrush = Tokens.borderSoft,
-                BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0),
+                // 头部内边距与导航轴对齐且左右对称：左缘落在导航列内容左缘（nav 横向 space3）上。
+                Padding = Thickness(Tokens.space3, 0.0, Tokens.space3, 0.0),
+                BorderBrush = Tokens.hairline,
+                BorderThickness = Thickness(0.0, 0.0, 0.0, ControlMetrics.borderWidth),
                 Child = dock)
 
         for section in SettingsSection.all do
@@ -245,20 +293,32 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 Content = navPanel,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Hidden)
+        // 分区导航轴是有意声明的边界表面，不做成 Ui.groupingCard：它贯穿内容区
+        // 全高（分组卡高度由内容决定），无圆角（rail 与右侧内容区齐边，不是悬浮卡），
+        // 且只朝向内容的那一边（窄模式为底边）描一根 hairline 分隔线，而分组卡是
+        // 四向等宽描边 + 圆角。surfaceContainer / hairline / borderWidth 三件仍取自
+        // 共享令牌，几何差异在此声明，读的人不必再猜它为什么长得像卡却不是卡。
         let nav =
             Border(
                 Width = ControlMetrics.settingsNavWidth,
                 Padding = Thickness(Tokens.space3, Tokens.space4),
-                BorderBrush = Tokens.borderSoft,
-                BorderThickness = Thickness(0.0, 0.0, 1.0, 0.0),
+                Background = Tokens.surfaceContainer,
+                BorderBrush = Tokens.hairline,
+                BorderThickness = Thickness(0.0, 0.0, ControlMetrics.borderWidth, 0.0),
                 Child = navScroll)
+        Avalonia.Automation.AutomationProperties.SetName(nav, "设置分区导航")
+        Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
+            nav,
+            Nullable Avalonia.Automation.Peers.AutomationControlType.Tab)
 
         let contentFrame =
             Border(
                 Padding = Thickness(Tokens.space8, Tokens.space6, Tokens.space8, Tokens.space10),
                 Child = contentHost,
                 MaxWidth = ControlMetrics.settingsContentMaxWidth,
-                HorizontalAlignment = HorizontalAlignment.Stretch)
+                // 宽屏下内容列居中：MaxWidth 仍封顶 settingsContentMaxWidth，超宽窗口不再右侧留大片空白；
+                // 窄屏内容未触顶时居中与拉伸等价（可用宽度小于 MaxWidth 时两者渲染相同）。
+                HorizontalAlignment = HorizontalAlignment.Center)
         let content =
             ScrollViewer(
                 Content = contentFrame,
@@ -281,10 +341,10 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                     if compact then
                         DockPanel.SetDock(nav, Dock.Top)
                         nav.Width <- Double.NaN
-                        nav.Height <- 56.0
+                        nav.Height <- Tokens.barHeight
                         nav.Padding <- Thickness(Tokens.space3, Tokens.space2)
                         navPanel.Spacing <- Tokens.space2
-                        nav.BorderThickness <- Thickness(0.0, 0.0, 0.0, 1.0)
+                        nav.BorderThickness <- Thickness(0.0, 0.0, 0.0, ControlMetrics.borderWidth)
                         navPanel.Orientation <- Orientation.Horizontal
                         navScroll.HorizontalScrollBarVisibility <- ScrollBarVisibility.Auto
                         contentFrame.Padding <- Thickness(Tokens.space4, Tokens.space4, Tokens.space4, Tokens.space8)
@@ -293,13 +353,18 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                         nav.Width <- ControlMetrics.settingsNavWidth
                         nav.Height <- Double.NaN
                         nav.Padding <- Thickness(Tokens.space3, Tokens.space4)
-                        navPanel.Spacing <- 2.0
-                        nav.BorderThickness <- Thickness(0.0, 0.0, 1.0, 0.0)
+                        navPanel.Spacing <- Tokens.space1
+                        nav.BorderThickness <- Thickness(0.0, 0.0, ControlMetrics.borderWidth, 0.0)
                         navPanel.Orientation <- Orientation.Vertical
                         navScroll.HorizontalScrollBarVisibility <- ScrollBarVisibility.Hidden
                         contentFrame.Padding <- Thickness(Tokens.space8, Tokens.space6, Tokens.space8, Tokens.space10)
+                    // 断点切换会改变 extent 与视口高度：恢复值先按新边界钳制再落位。
+                    // 旧写法直接恢复旧 offset，若超过新 extent 上界会被 ScrollViewer 二次钳制，
+                    // 用户先看到一次错位又被拉回；在此钳制一次到位即消除这记瞬跳。
                     Dispatcher.UIThread.Post(
-                        (fun () -> content.Offset <- previousOffset),
+                        (fun () ->
+                            let maxY = max 0.0 (content.Extent.Height - content.Viewport.Height)
+                            content.Offset <- Vector(previousOffset.X, min previousOffset.Y maxY)),
                         DispatcherPriority.Background)
 
         let layout = DockPanel()

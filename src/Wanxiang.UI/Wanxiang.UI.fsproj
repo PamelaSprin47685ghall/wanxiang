@@ -7,10 +7,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- MotionPolicy 必须先于 Tokens 编译：Tokens 的主题颜色补间消费
+         MotionLedger.themeColorTransition 与 MotionPolicy.isReduced，
+         F# 要求被引用的模块在编译顺序上在前。MotionPolicy 自身无项目内依赖，置顶安全。 -->
+    <Compile Include="Design/MotionPolicy.fs" />
     <Compile Include="Design/Palette.fs" />
     <Compile Include="Design/Tokens.fs" />
     <Compile Include="Design/LayoutPolicy.fs" />
-    <Compile Include="Design/MotionPolicy.fs" />
     <Compile Include="Design/Metrics.fs" />
     <Compile Include="Design/Icons.fs" />
     <Compile Include="Model/UiPrefs.fs" />

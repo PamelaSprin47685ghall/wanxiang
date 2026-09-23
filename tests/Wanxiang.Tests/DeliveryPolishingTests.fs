@@ -7,6 +7,7 @@ open System.Text
 open System.Text.Json.Nodes
 open System.Threading
 open System.Threading.Tasks
+open Avalonia.Threading
 open Microsoft.Extensions.AI
 open Xunit
 open Wanxiang.Agent
@@ -364,17 +365,28 @@ let ``textField maintains constant border thickness on focus to prevent layout s
 
 [<Fact>]
 let ``theme mode switching updates palette and dynamic brushes`` () =
+    Headless.ensure ()
+    // 切色从旧色补间到新色（MotionLedger.themeColorTransition）：mode/palette
+    // 同步到位，画笔颜色逐帧收敛。泵到收敛后再断言最终状态。
+    let settle () =
+        Thread.Sleep 240
+        Dispatcher.UIThread.RunJobs()
+
     Tokens.apply Light
     Assert.False(Tokens.isDark())
     let lightCanvas = Tokens.canvas.Color
 
     Tokens.apply Dark
     Assert.True(Tokens.isDark())
+    // 从旧色淡入：切换的瞬间画笔仍停在旧色，不是瞬时硬切。
+    Assert.NotEqual(Palette.dark.canvas, Tokens.canvas.Color)
+    settle ()
     let darkCanvas = Tokens.canvas.Color
     Assert.NotEqual(lightCanvas, darkCanvas)
 
     // Reset back to Light
     Tokens.apply Light
+    settle ()
     Assert.False(Tokens.isDark())
     Assert.Equal(lightCanvas, Tokens.canvas.Color)
 
@@ -388,7 +400,7 @@ let ``error card toggles technical detail and triggers retry action`` () =
           detail = Some "Connection refused at 127.0.0.1:8799"
           retryable = true
           retryAfterSeconds = Some 5 }
-    let card = MessageCard.errorCard err (fun () -> retried <- true)
+    let card = MessageCard.errorCard err (fun () -> retried <- true) None
     Assert.NotNull card
 
 [<Fact>]

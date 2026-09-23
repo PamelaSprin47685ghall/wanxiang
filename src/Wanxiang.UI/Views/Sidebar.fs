@@ -40,23 +40,18 @@ type private SidebarListItem =
 
     member this.IsItem = this.isItem
 
-module private SidebarHelpers =
-    let blendOver (baseBrush: IBrush) (overlayBrush: IBrush) : IBrush =
-        match baseBrush, overlayBrush with
-        | (:? SolidColorBrush as b), (:? SolidColorBrush as o) ->
-            let blend (bc: byte) (oc: byte) (alpha: byte) =
-                byte (int bc + (int oc - int bc) * int alpha / 255)
-            let a = o.Color.A
-            SolidColorBrush(Color.FromArgb(b.Color.A, blend b.Color.R o.Color.R a, blend b.Color.G o.Color.G a, blend b.Color.B o.Color.B a))
-            :> IBrush
-        | _ -> overlayBrush
-
 type private RowToolTip(text: string) as this =
     inherit TextBlock()
     do
         this.Text <- text
         this.FontFamily <- Tokens.fontFamily
     override _.ToString() = text
+
+/// 侧栏空态三态互斥的种类标记：卡只在种类翻转时重建。
+type private EmptyVariant =
+    | NotConnected
+    | ListLoading
+    | NoConversations
 
 /// 会话侧栏。
 ///
@@ -73,29 +68,56 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let compactBackButton = Ui.iconButton Icons.arrowLeft "返回对话"
     let newConversationButton = Ui.iconButtonAccent Icons.plus "新建会话（Ctrl+N）"
     let settingsButton = Ui.iconButton Icons.gear "设置（Ctrl+,）"
-    let searchDebounce = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 160.0)
+    let searchDebounce = DispatcherTimer(Interval = MotionLedger.searchInputDebounce)
     let conversationList =
         ListBox(
             Background = Brushes.Transparent,
             BorderThickness = Thickness 0.0,
-            Focusable = false)
-    let emptyState = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, IsVisible = false, Margin = Thickness(Tokens.space5, Tokens.space8, Tokens.space5, Tokens.space8), VerticalAlignment = VerticalAlignment.Center)
-    let emptyTitle =
-        TextBlock(
-            Text = "",
-            FontSize = Tokens.fontSmall,
-            FontWeight = FontWeight.Medium,
-            Foreground = Tokens.textMuted,
-            TextAlignment = TextAlignment.Center,
-            TextWrapping = TextWrapping.Wrap)
-    let emptyHint =
-        TextBlock(
-            Text = "",
-            FontSize = Tokens.fontCaption,
-            Foreground = Tokens.textFaint,
-            TextAlignment = TextAlignment.Center,
-            TextWrapping = TextWrapping.Wrap,
-            LineHeight = ControlMetrics.sidebarStatusLineHeight)
+            // V24: ListBox 本体可聚焦，键盘 Tab/Directional 才能进入侧栏；行聚焦仍走 FocusRowAt 的 Post 机制，容器 ListBoxItem 保持 Focusable=false。
+            Focusable = true)
+    /// 空态宿主：内容卡按空态种类经 Ui.emptyState 整体构建，按钮与骨架实例跨种类保留，
+    /// 焦点与自动化属性因此连续；margin/垂直居中保持旧观感，视觉锚点与设置面板同源。
+    let emptyStateHost =
+        Border(
+            IsVisible = false,
+            Margin = Thickness(Tokens.space5, Tokens.space8, Tokens.space5, Tokens.space8),
+            VerticalAlignment = VerticalAlignment.Center)
+    /// 当前空态种类：只在种类翻转时换卡，同种类内的列表刷新不重建这棵树。
+    let mutable currentEmptyVariant: EmptyVariant option = None
+    /// 列表加载中骨架：与 ChatView 骨架同一视觉语言（borderSoft 圆角条、错落宽度）。
+    /// 只在「已连接 + 已请求列表 + 快照未达」时出现，绝不与确认空态同时呈现。
+    let emptySkeleton =
+        let panel =
+            StackPanel(
+                Orientation = Orientation.Vertical,
+                Spacing = Tokens.space2,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = Thickness(0.0, Tokens.space2, 0.0, 0.0),
+                IsVisible = false)
+        for (barHeight, widthFraction) in [ (10.0, 0.85); (10.0, 0.60); (10.0, 0.72) ] do
+            let bar =
+                Border(
+                    Height = barHeight,
+                    CornerRadius = CornerRadius Tokens.radiusSm,
+                    Background = Tokens.borderSoft,
+                    Opacity = Tokens.skeletonOpacityBase,
+                    HorizontalAlignment = HorizontalAlignment.Stretch)
+            let row = Grid(HorizontalAlignment = HorizontalAlignment.Stretch)
+            row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(widthFraction, GridUnitType.Star)))
+            row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(max 0.01 (1.0 - widthFraction), GridUnitType.Star)))
+            Grid.SetColumn(bar, 0)
+            row.Children.Add bar
+            panel.Children.Add row
+        Avalonia.Automation.AutomationProperties.SetName(panel, "正在加载会话")
+        panel
+    /// 空态内嵌主按钮：与 ChatView 空态同一模式——单按钮 + 可替换的当前动作，
+    /// 文案/动作随空态种类切换；右上角常驻加号不受影响。
+    let mutable emptyPrimaryAction: unit -> unit = ignore
+    let emptyActionButton =
+        let button = Ui.button Ui.Primary "" (fun () -> emptyPrimaryAction ())
+        button.HorizontalAlignment <- HorizontalAlignment.Center
+        button.IsVisible <- false
+        button
     let searchEmptyHintTitle =
         TextBlock(
             Text = "未找到匹配会话",
@@ -126,7 +148,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             Focusable = true,
             IsVisible = false)
 
-    let statusDot = Ui.statusDot 7.0
+    let statusDot = Ui.statusDot ControlMetrics.sidebarRunningDotSize
     let statusText =
         TextBlock(
             Text = "未连接",
@@ -139,6 +161,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let mutable activeId: Guid option = None
     let mutable showArchived = false
     let mutable connected = false
+    /// 会话列表加载中：已连接且 ObserveConversationList 已发出、ConversationListSnapshot 未达。
+    /// 置位只在 AppShell 发出列表请求时发生；解除只发生在快照数据到达（SetConversations）
+    /// 或连接状态翻转（SetConnection）——同一事实单一写入链，无第二处 reconciliation。
+    let mutable listLoading = false
     let rowHosts = System.Collections.Generic.Dictionary<Guid, Border>()
     let summaryById = System.Collections.Generic.Dictionary<Guid, ConversationSummary>()
     let mutable visibleRowIds: Guid array = [||]
@@ -186,8 +212,6 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         searchRow.Children.Add searchBox
         searchShell.Child <- searchRow
 
-        emptyState.Children.Add emptyTitle
-        emptyState.Children.Add emptyHint
         searchEmptyHintPanel.Children.Add searchEmptyHintTitle
         searchEmptyHintPanel.Children.Add searchEmptyHintSub
         searchEmptyHint.Child <- searchEmptyHintPanel
@@ -208,12 +232,32 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 e.Handled <- true
                 this.ResetSearch true)
 
+        // compact 抽屉的键盘包含：抽屉打开时 Tab / Shift+Tab 只在本侧栏内循环，不在两端漏到
+        // 背景聊天/输入区。与对话框同一套约定（OverlayHost）：MainLayout 的 compact scrim 挡指针，
+        // 这里由 OverlayHost.TrapTab 锁键盘、挡住背景的 Tab 通路；打开即聚焦搜索框、关闭把焦点交还输入区由
+        // AppShell.SetCompactNavigation 负责。非 compact 下本处理器不干预，桌面态侧栏与主区照常互相 Tab。
+        // Tab 包含复用对话框/浮层同一实现 OverlayHost.TrapTab（可聚焦集合取其公共谓词 Focusables：
+        // 有效可见 + 可聚焦 + 可用），不另立第二套循环：只拦 Tab，到头回绕、不漏端。
+        this.KeyDown.Add(fun e ->
+            if compactMode && e.Key = Key.Tab then
+                overlay.TrapTab(this :> Control, e))
+
     member private _.ApplyRowState(summary: ConversationSummary, host: Border) =
         let isActive = activeId = Some summary.id
         host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
         // 键盘焦点环由 ActionBorder 统一绘制（outline 语义、零位移）；
         // 这里只管选中底与左缘，悬停由事件处理补，避免两套阴影互相覆盖。
         host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
+        // V25: 选中补非色线索（字重）：悬停只动底色，选中另加标题半粗体。
+        match host.Child with
+        | :? StackPanel as column when column.Children.Count >= 2 ->
+            match column.Children.[0] with
+            | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
+                match titleRow.Children.[2] with
+                | :? TextBlock as titleBlock -> titleBlock.FontWeight <- if isActive then FontWeight.SemiBold else FontWeight.Medium
+                | _ -> ()
+            | _ -> ()
+        | _ -> ()
         let status =
             match isActive, summary.running with
             | true, true -> "当前会话，生成中"
@@ -235,6 +279,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 host.Background <- if isActive then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
                 // 焦点环同上：归 ActionBorder，避免与选中态阴影打架。
                 host.BorderBrush <- if isActive then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
+                match host.Child with
+                | :? StackPanel as column when column.Children.Count >= 2 ->
+                    match column.Children.[0] with
+                    | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
+                        match titleRow.Children.[2] with
+                        | :? TextBlock as titleBlock -> titleBlock.FontWeight <- if isActive then FontWeight.SemiBold else FontWeight.Medium
+                        | _ -> ()
+                    | _ -> ()
+                | _ -> ()
                 Avalonia.Automation.AutomationProperties.SetItemStatus(host, if isActive then "当前会话" else "")
 
     member private _.FocusRowAt(index: int) =
@@ -323,7 +376,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 Foreground = Tokens.textMuted,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis)
-        let chevronGlyph = (if expanded then Icons.chevronUp else Icons.chevronDown) Tokens.textFaint
+        // 披露箭头与 MessageCard 披露箭头同属一类 affordance，统一到 textMuted 一档。
+        let chevronGlyph = (if expanded then Icons.chevronUp else Icons.chevronDown) Tokens.textMuted
         chevronGlyph.Width <- Tokens.iconGlyph
         chevronGlyph.Height <- Tokens.iconGlyph
         chevronGlyph.VerticalAlignment <- VerticalAlignment.Center
@@ -344,19 +398,26 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 MinHeight = ControlMetrics.sidebarRowMinHeight,
                 Child = row)
         archivedToggleHost <- Some(host :> Border)
+        // 与其它可交互表面一致：底色补间走共享表面过渡（减弱动效瞬时到位，不改几何）。
+        host.Transitions <- Ui.surfaceTransitions ()
         host.DetachedFromVisualTree.Add(fun _ ->
             match archivedToggleHost with
             | Some current when obj.ReferenceEquals(current, host) -> archivedToggleHost <- None
             | _ -> ())
         let accessibleName =
             if expanded then "收起已归档会话"
-            else sprintf "已归档会话，共 %d 个，点击展开" archivedCount
+            // V26: Name 包含可见原文 labelText（含计数），再补“点击展开”，不重复计数。
+            else sprintf "%s，点击展开" labelText
         Avalonia.Automation.AutomationProperties.SetName(host, accessibleName)
         Avalonia.Automation.AutomationProperties.SetRole(host, AutomationRole.Button)
         Avalonia.Automation.AutomationProperties.SetExpanded(host, expanded)
         ToolTip.SetTip(host, accessibleName)
         host.PointerEntered.Add(fun _ -> host.Background <- Tokens.hover)
+        // 按压反馈与 Ui.attachSurfaceFeedback 同一节奏：瞬时 Opacity 脉冲，不进过渡集合，焦点/几何不变。
+        host.PointerPressed.Add(fun _ -> host.Opacity <- Tokens.opacityPressed)
+        host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
         host.PointerExited.Add(fun _ ->
+            host.Opacity <- 1.0
             if not host.IsFocused then host.Background <- Brushes.Transparent)
         host.GotFocus.Add(fun _ -> host.Background <- Tokens.hover)
         host.LostFocus.Add(fun _ -> host.Background <- Brushes.Transparent)
@@ -434,6 +495,29 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         else
             stateSlot.Child <- null
 
+    /// 行“更多操作”按钮的可见反馈。桌面与 compact/touch 同一行为：按钮槽位常驻，
+    /// 常驻一档淡显，hover/focus 时回全不透明度，其余时刻是 opacitySubtle
+    ///（与消息操作条常驻淡显同一档），不抢标题注意力。
+    ///
+    /// 原桌面走 hover 才现（Ui.setReservedActionVisible：闲置时不透明度 0、不可命中、
+    /// 读屏不可见），扫视列表时看不出每行还藏着六项操作。改为常驻淡显后，可发现性
+    /// 不再依赖 hover，且保持“存在但不喧宾夺主”的视觉重量。
+    /// compact/touch 单独成立的理由（触屏没有 hover、没有右键、没有 Shift+F10，行上下文
+    /// 菜单只能由这一个按钮触达）并入本统一路径：始终可命中、可聚焦、可被读屏发现。
+    /// visible = true 即行正在被交互（hover/focus），按钮回全不透明；
+    /// false 是常驻淡显，但依然可命中。
+    /// 命中面不随本统一：仍按模式分档（RenderRow 初始值 / SetCompactMode 同步），
+    /// compact/touch 用 LayoutPolicy.compactActionTarget（触控下限），
+    /// 桌面用 Tokens.iconButton——常驻可点不等于抬高行高，扫视密度优先。
+    member private _.ApplyRowActionVisibility(moreButton: Border) (visible: bool) =
+        moreButton.IsVisible <- true
+        moreButton.Opacity <- if visible then 1.0 else Tokens.opacitySubtle
+        moreButton.IsHitTestVisible <- true
+        moreButton.Focusable <- true
+        Avalonia.Automation.AutomationProperties.SetAccessibilityView(
+            moreButton,
+            Avalonia.Automation.AccessibilityView.Default)
+
     /// 一行会话。选中态用强调色浅底 + 左缘，生成中是一个静态圆点（无动画，避免列表常驻动效）。
     member private this.RenderRow(summary: ConversationSummary) : Control =
 
@@ -470,11 +554,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         ToolTip.SetTip(moreButton, "更多操作")
         Avalonia.Automation.AutomationProperties.SetName(moreButton, sprintf "会话“%s”的操作菜单" summary.title)
         Avalonia.Automation.AutomationProperties.SetHelpText(moreButton, "打开会话操作菜单")
-        Ui.setReservedActionVisible moreButton false
+        // 可见性两种模式统一：常驻弱显 + 始终可命中（ApplyRowActionVisibility）。
+        // 命中面按模式分档：compact/touch 抬到 compactActionTarget（触控下限，与顶栏
+        // 主要图标动作同档），桌面保持 iconButton——只抬命中面，glyph 视觉尺寸不变。
+        if compactMode then Ui.setSquareTarget moreButton LayoutPolicy.compactActionTarget
+        this.ApplyRowActionVisibility moreButton false
         DockPanel.SetDock(moreButton, Dock.Right)
         titleRow.Children.Add moreButton
         titleRow.Children.Add title
-        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0, VerticalAlignment = VerticalAlignment.Center)
+        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = ControlMetrics.sidebarRowContentSpacing, VerticalAlignment = VerticalAlignment.Center)
         column.Children.Add titleRow
         column.Children.Add preview
         let host =
@@ -483,12 +571,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 CornerRadius = CornerRadius Tokens.radiusMd,
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
-                BorderThickness = Thickness(2.0, 0.0, 0.0, 0.0),
+                BorderThickness = Thickness(ControlMetrics.sidebarSelectedEdgeWidth, 0.0, 0.0, 0.0),
                 Cursor = handCursor,
                 Focusable = true,
                 MinHeight = ControlMetrics.sidebarRowMinHeight,
                 Child = column)
         host.Tag <- summary
+        // 状态即描边：选中左缘 2px 强调条本身就是边框态，底色另承载选中/悬停，
+        // 因此并入描边补间，与全应用表面反馈同一机制、同一时长（减弱动效瞬时到位，不动几何）。
+        host.Transitions <- Ui.surfaceBorderedTransitions ()
         this.ApplyRowState(summary, host)
         rowHosts[summary.id] <- host
         host.DetachedFromVisualTree.Add(fun _ ->
@@ -523,20 +614,26 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                   |> MenuEntry.asDanger ]
         Ui.onClick moreButton (fun () -> openMenu (moreButton :> Control) true)
         moreButton.GotFocus.Add(fun _ ->
-            Ui.setReservedActionVisible moreButton true)
+            this.ApplyRowActionVisibility moreButton true)
         moreButton.LostFocus.Add(fun _ ->
-            if not host.IsFocused then Ui.setReservedActionVisible moreButton false)
+            if not host.IsFocused then this.ApplyRowActionVisibility moreButton false)
         host.PointerEntered.Add(fun _ ->
             // 悬停只动背景：选中行的强调左缘不动；悬停在已选项上层叠高亮，绝不比已选项更暗。
             let isActive = activeId = Some summary.id
             host.Background <-
-                if isActive then SidebarHelpers.blendOver Tokens.selected Tokens.hover
+                // 悬停叠层与按钮/菜单 hover 同一混合实现（Ui.blendOverlay，Primitives 唯一来源）。
+                if isActive then Ui.blendOverlay Tokens.selected Tokens.hover
                 else Tokens.hover :> IBrush
-            Ui.setReservedActionVisible moreButton true)
+            this.ApplyRowActionVisibility moreButton true)
+        // 按压反馈与 Ui.attachSurfaceFeedback 同一节奏：瞬时 Opacity 脉冲（不进过渡集合），
+        // 焦点环、选中左缘与几何一概不动。
+        host.PointerPressed.Add(fun _ -> host.Opacity <- Tokens.opacityPressed)
+        host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
         host.PointerExited.Add(fun _ ->
-            // hover 还原走 id + 实时快照，不用渲染期闭包里的旧 summary。
+            // 离开先复位按压透明度，再还原 hover 底（走 id + 实时快照，不用渲染期旧 summary）。
+            host.Opacity <- 1.0
             this.ApplyRowState(summary.id, host)
-            if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
+            if not moreButton.IsFocused then this.ApplyRowActionVisibility moreButton false)
         host.GotFocus.Add(fun _ ->
             focusedRowId <- Some summary.id
             focusedRowIndex <-
@@ -545,10 +642,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 |> Option.defaultValue focusedRowIndex
             this.ApplyRowState(summary.id, host)
             if activeId <> Some summary.id then host.Background <- Tokens.hover
-            Ui.setReservedActionVisible moreButton true)
+            this.ApplyRowActionVisibility moreButton true)
         host.LostFocus.Add(fun _ ->
             this.ApplyRowState(summary.id, host)
-            if not moreButton.IsFocused then Ui.setReservedActionVisible moreButton false)
+            if not moreButton.IsFocused then this.ApplyRowActionVisibility moreButton false)
         Ui.onClick host (fun () -> actions.openConversation summary.id)
         // Enter/Space 由 Ui.onClick 统一接管（同一按键只打开一次）；
         // 这里只处理行内导航与行级快捷键。
@@ -647,7 +744,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 | :? TextBlock as label -> label.Text <- labelText
                 | _ -> ()
             | _ -> ()
-            let chevron = (if expanded then Icons.chevronUp else Icons.chevronDown) Tokens.textFaint
+            let chevron = (if expanded then Icons.chevronUp else Icons.chevronDown) Tokens.textMuted
             chevron.Width <- Tokens.iconGlyph
             chevron.Height <- Tokens.iconGlyph
             chevron.VerticalAlignment <- VerticalAlignment.Center
@@ -658,7 +755,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         archivedToggleHost <- Some host
         let accessibleName =
             if expanded then "收起已归档会话"
-            else sprintf "已归档会话，共 %d 个，点击展开" count
+            else sprintf "%s，点击展开" labelText
         Avalonia.Automation.AutomationProperties.SetName(host, accessibleName)
         Avalonia.Automation.AutomationProperties.SetExpanded(host, expanded)
         ToolTip.SetTip(host, accessibleName)
@@ -752,18 +849,61 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         | None -> ()
         let isSearchEmpty = not (String.IsNullOrWhiteSpace query) && List.isEmpty visible
         searchEmptyHint.IsVisible <- isSearchEmpty
-        emptyState.IsVisible <- List.isEmpty visible && not isSearchEmpty
+        emptyStateHost.IsVisible <- List.isEmpty visible && not isSearchEmpty
         if List.isEmpty visible then
-            if not connected then
-                emptyTitle.Text <- "尚未连接服务器"
-                emptyHint.Text <- "连接后即可看到会话记录。"
-            else
-                emptyTitle.Text <- "还没有会话"
-                emptyHint.Text <- "点右上角的加号开始第一次对话。"
+            // 空态三态互斥：未连接 / 列表加载中 / 确认无会话。
+            // 「加载中」只在快照未达时出现——没有快照就没有资格宣判「还没有会话」。
+            let setEmptyAction (label: string) (action: unit -> unit) =
+                emptyPrimaryAction <- action
+                Ui.setButtonText emptyActionButton label
+                ToolTip.SetTip(emptyActionButton, label)
+                Avalonia.Automation.AutomationProperties.SetName(emptyActionButton, label)
+                Avalonia.Automation.AutomationProperties.SetHelpText(emptyActionButton, label)
+                emptyActionButton.IsVisible <- true
+            let variant =
+                if not connected then EmptyVariant.NotConnected
+                elif listLoading then EmptyVariant.ListLoading
+                else EmptyVariant.NoConversations
+            if currentEmptyVariant <> Some variant then
+                // 种类翻转才换卡：同种类内的数据刷新不重建空态树，按钮焦点与读屏名
+                // 跨刷新保持连续（Ui.emptyState 内按卡新建 logo/标题/说明文本）。
+                currentEmptyVariant <- Some variant
+                // 骨架与行动按钮是跨卡复用的持久实例：摘卡前先从旧卡摘下，
+                // 否则 Avalonia 拒绝把已有 visual parent 的控件挂进新卡。
+                let detachShared (control: Control) =
+                    match control.Parent with
+                    | :? Panel as panel -> panel.Children.Remove control |> ignore
+                    | _ -> ()
+                detachShared emptySkeleton
+                detachShared emptyActionButton
+                let logo = brandLogo Tokens.logoEmpty
+                match variant with
+                | EmptyVariant.NotConnected ->
+                    emptySkeleton.IsVisible <- false
+                    // V20: 与 ChatView NotConnected 同句式，不在 Sidebar 另造术语。
+                    // 内嵌入口与底部状态行重连是同一动作，不新造连接路径。
+                    setEmptyAction "连接服务器" actions.reconnect
+                    emptyStateHost.Child <-
+                        Ui.emptyState logo (Some "先连接一台万象服务器") "连接后即可看到会话记录。" (Some(emptySkeleton :> Control)) (Some emptyActionButton)
+                | EmptyVariant.ListLoading ->
+                    emptySkeleton.IsVisible <- true
+                    // 行动按钮保持挂载但隐藏：读屏与自动化树里它始终在场（跨空态
+                    // 种类焦点连续），只是加载中没有可执行动作。
+                    emptyActionButton.IsVisible <- false
+                    emptyStateHost.Child <-
+                        Ui.emptyState logo (Some "正在加载会话…") "" (Some(emptySkeleton :> Control)) (Some emptyActionButton)
+                | EmptyVariant.NoConversations ->
+                    emptySkeleton.IsVisible <- false
+                    // 内嵌入口与右上角常驻加号是同一动作，不新造新建路径。
+                    setEmptyAction "新建会话" actions.newConversation
+                    emptyStateHost.Child <-
+                        Ui.emptyState logo (Some "还没有会话") "点右上角的加号开始第一次对话。" (Some(emptySkeleton :> Control)) (Some emptyActionButton)
 
-    /// 更新列表数据。
+    /// 更新列表数据。快照数据到达即加载结束：listLoading 只在此处随数据解除，
+    /// 与 AppShell 置位点（发出 ObserveConversationList）构成单一写入链。
     member this.SetConversations(items: ConversationSummary list) =
         summaries <- items
+        listLoading <- false
         this.Rebuild()
 
     member this.SetActive(id: Guid option) =
@@ -787,16 +927,43 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
     member this.SetConnection(isConnected: bool, text: string) =
         connected <- isConnected
+        // 连接状态翻转（含断连清空列表的既有路径）时，任何在途的列表加载都已失效：
+        // 快照只可能属于某一代连接，跨连接的 loading 不成立。
+        listLoading <- false
         statusDot.Fill <- if isConnected then Tokens.success :> IBrush else Tokens.textFaint :> IBrush
         statusText.Text <- text
         this.Rebuild()
 
-    member _.SetCompactMode(value: bool) =
+    /// 会话列表加载中显式机制：AppShell 发出 ObserveConversationList 时置位。
+    /// 解除走 SetConversations（快照到达）/ SetConnection（连接翻转），不在此重复清除。
+    member this.SetConversationListLoading(isLoading: bool) =
+        if listLoading <> isLoading then
+            listLoading <- isLoading
+            this.Rebuild()
+
+    member this.SetCompactMode(value: bool) =
         compactMode <- value
         compactBackButton.IsVisible <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         for button in [ compactBackButton; newConversationButton; settingsButton; clearSearchButton ] do
             Ui.setSquareTarget button size
+        // 已渲染的行同步 compact 态：行菜单按钮常驻弱显（可见性两种模式同一路径），
+        // 命中面仍按模式分档（compact 抬到 compactActionTarget，桌面回 iconButton）。
+        // 同时按当前 hover/focus 快照刷新不透明度。按钮槽位本来常驻，标题不跳动。
+        for host in rowHosts.Values do
+            match host.Child with
+            | :? StackPanel as column when column.Children.Count >= 2 ->
+                match column.Children.[0] with
+                | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
+                    match titleRow.Children.[1] with
+                    | :? Border as rowMoreButton ->
+                        Ui.setSquareTarget rowMoreButton (if value then LayoutPolicy.compactActionTarget else Tokens.iconButton)
+                        this.ApplyRowActionVisibility
+                            rowMoreButton
+                            (rowMoreButton.IsPointerOver || host.IsPointerOver || rowMoreButton.IsFocused || host.IsFocused)
+                    | _ -> ()
+                | _ -> ()
+            | _ -> ()
 
     /// 搜索框聚焦。行内 Up 回来时保留插入点（selectAll = false）；
     /// Ctrl+K（AppShell）与空输入沿用全选，方便直接替换查询。
@@ -842,7 +1009,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     member this.Build() =
         this.Background <- Tokens.rail
         this.BorderBrush <- Tokens.borderSoft
-        this.BorderThickness <- Thickness(0.0, 0.0, 1.0, 0.0)
+        this.BorderThickness <- Thickness(0.0, 0.0, ControlMetrics.sidebarDividerWidth, 0.0)
 
         let brand = brandLogo Tokens.logoSidebar
         brand.VerticalAlignment <- VerticalAlignment.Center
@@ -852,7 +1019,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 FontSize = Tokens.fontBody,
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
-                LetterSpacing = 0.8,
+                LetterSpacing = Tokens.letterSpacingDisplay,
                 VerticalAlignment = VerticalAlignment.Center)
         let brandRow = Ui.hstack Tokens.space2 [ brand; wordmark :> Control ]
         let leading = Ui.hstack Tokens.space1 [ compactBackButton :> Control; brandRow :> Control ]
@@ -905,7 +1072,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             Ui.setReservedActionVisible clearSearchButton (not (String.IsNullOrWhiteSpace searchBox.Text))
             searchDebounce.Stop()
             searchDebounce.Start())
-        let searchArea = Border(Padding = Thickness(Tokens.space3, 0.0, Tokens.space3, Tokens.space2), Child = searchShell)
+        // 搜索输入归入「分组容器」：用 surfaceContainer 从 rail 中轻轻抬起一块次级面，
+        // 顶部补一档呼吸，与上方品牌行拉开距离（输入控件本体仍是冻结的 Ui.textField）。
+        // 有意不加边框：这是「无描边」分组面的例外（区别于 Ui.groupingCard 的发丝边档）。
+        let searchArea =
+            Border(
+                Background = Tokens.surfaceContainer,
+                Padding = Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space2),
+                Child = searchShell)
         let statusRow =
             ActionBorder(
                 Background = Brushes.Transparent,
@@ -913,6 +1087,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 Cursor = handCursor,
                 Focusable = true,
                 Child = Ui.hstack Tokens.space2 [ statusDot :> Control; statusText :> Control ])
+        // 状态行本身是可点击的重连入口：补上悬停/聚焦底色反馈，补间走共享表面过渡
+        //（减弱动效瞬时到位；命中测试与「点击重连」行为都保持不变）。
+        statusRow.Transitions <- Ui.surfaceTransitions ()
+        statusRow.PointerEntered.Add(fun _ -> statusRow.Background <- Tokens.hover)
+        statusRow.PointerExited.Add(fun _ ->
+            if not statusRow.IsFocused then statusRow.Background <- Brushes.Transparent)
+        statusRow.GotFocus.Add(fun _ -> statusRow.Background <- Tokens.hover)
+        statusRow.LostFocus.Add(fun _ -> statusRow.Background <- Brushes.Transparent)
         ToolTip.SetTip(statusRow, "点击重新连接")
         Avalonia.Automation.AutomationProperties.SetName(statusRow, "重新连接服务器")
         Ui.onClick statusRow (fun () -> actions.reconnect ())
@@ -924,9 +1106,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             dock.Children.Add settingsButton
             Border(
                 Height = Tokens.barHeight,
-                Padding = Thickness(Tokens.space4, 0.0, Tokens.space3, 0.0),
-                BorderBrush = Tokens.borderSoft,
-                BorderThickness = Thickness(0.0, 1.0, 0.0, 0.0),
+                Padding = Thickness(Tokens.space4, 0.0, Tokens.space4, 0.0),
+                // 页脚是侧栏内部的分隔线，用最轻的 hairline，比外框再退一档。
+                BorderBrush = Tokens.hairline,
+                BorderThickness = Thickness(0.0, ControlMetrics.sidebarDividerWidth, 0.0, 0.0),
                 Child = dock)
 
         conversationList.ItemsPanel <- FuncTemplate<Panel>(fun () -> VirtualizingStackPanel() :> Panel)
@@ -935,18 +1118,27 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 (fun item existing ->
                     match item with
                     | SectionHeader label ->
-                        match existing with
-                        | :? TextBlock as header ->
-                            header.Text <- label
-                            header :> Control
-                        | _ ->
-                            let header = Ui.sectionLabel label
-                            header.Margin <- Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space1)
-                            header.LetterSpacing <- 0.8
-                            header.Foreground <- Tokens.textMuted
-                            header.FontSize <- Tokens.fontMicro
+                        // 分组表头：弱化小标签 + 下方一条 hairline 分组分隔线（更轻盈的分组边界）。
+                        // 用 Border 包裹只为让分隔线拉满整宽；TextBlock 标签仍可回收——
+                        // 复用到同型 TextBlock 直接改文案，遇到异型容器（回收到行容器）则重建。
+                        let buildHeader () =
+                            let header = Ui.sectionLabelWide label
                             header.Focusable <- false
-                            header :> Control
+                            let wrapper =
+                                Border(
+                                    Background = Brushes.Transparent,
+                                    BorderBrush = Tokens.hairline,
+                                    BorderThickness = Thickness(0.0, 0.0, 0.0, ControlMetrics.sidebarDividerWidth),
+                                    Padding = Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space1),
+                                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                                    Child = header)
+                            wrapper :> Control
+                        match existing with
+                        | :? Border as host ->
+                            match host.Child with
+                            | :? TextBlock as header -> header.Text <- label; host :> Control
+                            | _ -> buildHeader ()
+                        | _ -> buildHeader ()
                     | ConversationRow summary ->
                         match existing with
                         | :? Border as host ->
@@ -979,7 +1171,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
         let body = Grid()
         body.Children.Add conversationList
-        body.Children.Add emptyState
+        body.Children.Add emptyStateHost
         body.Children.Add searchEmptyHint
 
         let layout = DockPanel()

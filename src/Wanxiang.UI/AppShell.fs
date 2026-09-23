@@ -83,13 +83,24 @@ type MainView() as this =
     let toast message tone = overlay.Toast(message, tone)
     let topLevel () = TopLevel.GetTopLevel this
 
+    // 剪贴板写入可能因权限、焦点或宿主（PWA）被拒：必须等写入落地再报，成功与失败各自说话。
+    // 签名保持 string -> unit，调用方（消息复制、Markdown 代码块复制）无感。
     let copyToClipboard (text: string) =
         try
             match topLevel () with
-            | null -> ()
+            | null -> toast "无法访问剪贴板，复制失败。" Failure
             | top ->
-                top.Clipboard.SetTextAsync text |> ignore
-                toast "已复制到剪贴板" Success
+                match top.Clipboard with
+                | null -> toast "无法访问剪贴板，复制失败。" Failure
+                | clip ->
+                    async {
+                        try
+                            do! clip.SetTextAsync text |> Async.AwaitTask
+                            Dispatcher.UIThread.Post(fun () -> toast "已复制到剪贴板" Success)
+                        with _ ->
+                            Dispatcher.UIThread.Post(fun () -> toast "复制到剪贴板失败，请重试。" Failure)
+                    }
+                    |> Async.Start
         with _ -> ()
 
     let openLink (url: string) =
@@ -114,6 +125,11 @@ type MainView() as this =
     let mutable chatColumn: DockPanel = Unchecked.defaultof<DockPanel>
 
     let send (ev: WireEvent) = client.SendAsync ev |> ignore
+    /// 发出会话列表观察：请求一经发出就置侧栏加载中，
+    /// 快照到达时由 Sidebar.SetConversations 解除（AppShell 不重复清除，避免双写）。
+    let observeConversationList () =
+        sidebar.SetConversationListLoading true
+        send ObserveConversationList
     let sendCommand (cmd: ClientCommand) =
         let epoch = client.ConnectionGeneration
         // 在 UI 操作发生时就进入发送队列，不能让线程池调度改变消息顺序。
@@ -170,14 +186,22 @@ type MainView() as this =
     member private this.ApplyResponsiveLayout(width: float) =
         let effective = hostViewportWidth |> Option.defaultValue width
         if effective > 0.0 && not (isNull (box mainLayout)) then
+            let before = navigation.State
             let needsApply, state = navigation.ApplyViewport(effective, activeConvId.IsSome)
             if needsApply then mainLayout.Apply state
+            // compact 抽屉的焦点归宿与用户手动打开一致（D3/D4）：视口把抽屉自动带开时
+            // （进入 compact 且无会话），也先把焦点送进抽屉（搜索框），避免 Tab 漏到背景聊天/输入区。
+            // 触发条件与 SetCompactNavigation 同口径：抽屉由「未开」翻到「compact 打开」才聚焦——
+            // 关闭态、非 compact、以及开合状态未变的普通缩放都不抢焦点。
+            if state.compactMode && state.compactNavigationOpen
+               && not (before.compactMode && before.compactNavigationOpen) then
+                sidebar.FocusSearch()
 
     /// 浏览器 CSS 视口轮询：zoom、DPR、显示器移动都不会可靠触发 Bounds 更新，
     /// 但 innerWidth 永远是真相。桌面端不调用（保留 Bounds 路径）。
     member private this.WatchHostViewport() =
         if OperatingSystem.IsBrowser() then
-            let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 500.0)
+            let timer = DispatcherTimer(Interval = MotionLedger.hostViewportPoll)
             timer.Tick.Add(fun _ ->
                 try
                     let css = BrowserBridge.ViewportWidth()
@@ -205,7 +229,7 @@ type MainView() as this =
             match skeletonTimer with
             | Some timer -> timer.Stop()
             | None -> ()
-            let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 300.0)
+            let timer = DispatcherTimer(Interval = MotionLedger.conversationSkeletonDelay)
             timer.Tick.Add(fun _ ->
                 timer.Stop()
                 if activeConvId = Some convId && (activeConversation ()).IsNone then
@@ -236,17 +260,17 @@ type MainView() as this =
             chat.SetConversationChrome false
             chat.SetTitle("", false)
             if not authenticated then
-                chat.ShowEmpty(NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
+                chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
                 composer.SetEnabled(false, "连接服务器后即可开始对话。")
                 composer.SetModelLabel "连接已断开"
             elif not (Catalog.isReady catalog) then
-                chat.ShowEmpty(NoProvider, Some("打开设置添加服务商", fun () -> this.ShowSettings()))
+                chat.ShowEmpty(ChatEmptyState.NoProvider, Some("打开设置添加服务商", fun () -> this.ShowSettings()))
                 composer.SetEnabled(false, "还没有可用的模型，先在设置里添加一个服务商。")
                 composer.SetModelLabel "未配置模型"
             else
                 // 输入区保持可用：直接打字就会自动建会话再发出，
                 // 不必先点一次「新建」。空态里的按钮只是另一条同样有效的路径。
-                chat.ShowEmpty(NoConversation, Some("新建会话", fun () -> this.CreateConversation() |> ignore))
+                chat.ShowEmpty(ChatEmptyState.NoConversation, Some("新建会话", fun () -> this.CreateConversation() |> ignore))
                 composer.SetEnabled(true, "")
                 match Catalog.defaultSelection catalog with
                 | Some(providerId, model) -> composer.SetModelLabel(Catalog.describeModel providerId model catalog)
@@ -895,7 +919,7 @@ type MainView() as this =
                  | FollowSystem -> "已切换为跟随系统主题"
                  | AlwaysDark -> "已切换为深色主题"
                  | AlwaysLight -> "已切换为浅色主题")
-                Neutral
+                Info
         | ExportConversation ->
             e.Handled <- true
             match activeSummary() with
@@ -948,7 +972,7 @@ type MainView() as this =
                 | Some token -> CredentialStore.saveBrowserConnectionAsync d.instanceId lastUrl token CredentialStore.clientName |> ignore
                 | None -> ()
             send CatalogRequest
-            send ObserveConversationList
+            observeConversationList ()
             match activeConvId with
             | Some convId -> send (ObserveConversation {| conversationId = convId |})
             | None -> ()
@@ -1002,6 +1026,7 @@ type MainView() as this =
         | ConversationListSnapshot d ->
             state.Handle ev
             summaries <- ConversationSummary.parseList d.items
+            // SetConversations 即快照到达：侧栏加载中状态随数据一并解除。
             sidebar.SetConversations summaries
             sidebar.SetActive activeConvId
             state.AdvanceCursor()
@@ -1029,7 +1054,7 @@ type MainView() as this =
         | ConversationUpdated d ->
             state.Handle ev
             state.AdvanceCursor()
-            send ObserveConversationList
+            observeConversationList ()
             if activeConvId = Some d.conversationId then
                 this.Render()
         | AuthorityCatchUp _ -> state.Handle ev
@@ -1067,7 +1092,7 @@ type MainView() as this =
             if runs.Finish(d.conversationId, d.generationId, error, d.usage) then
                 state.Handle ev
                 match d.status, error with
-                | "cancelled", _ when activeConvId = Some d.conversationId -> toast "已停止" Neutral
+                | "cancelled", _ when activeConvId = Some d.conversationId -> toast "已停止" Info
                 // 非当前会话的失败只 toast（卡片看不见）；当前会话的失败只进卡片，不叠 toast。
                 | _, Some err when activeConvId <> Some d.conversationId ->
                     toast (GenerationError.display err) Failure
@@ -1201,12 +1226,12 @@ type MainView() as this =
               duplicateAsFork =
                 fun summary ->
                     this.OpenConversation summary.id
-                    toast "已打开会话，可从任意消息分叉。" Neutral
+                    toast "已打开会话，可从任意消息分叉。" Info
               exportConversation = fun summary -> this.ExportConversation summary
               openSettings = fun () -> this.ShowSettings()
               reconnect =
                 fun () ->
-                    if authenticated then toast "已连接" Neutral
+                    if authenticated then toast "已连接" Info
                     elif lastToken.IsSome then this.Connect()
                     else this.ShowConnectDialog()
               toggleArchivedVisibility = fun () -> this.SavePrefs { prefs with showArchived = not prefs.showArchived }
@@ -1279,7 +1304,7 @@ type MainView() as this =
             chat.BeginHistoryPrependAnchor()
             pageLoading <- true
             // 分页没有骨架屏（会重置滚动）：一条 transient toast 给加载反馈。
-            toast "正在加载更早消息…" Neutral
+            toast "正在加载更早消息…" Info
             send (
                 HistoryRequest
                     {| conversationId = convId
@@ -1375,6 +1400,8 @@ type MainView() as this =
                 Cursor = new Cursor(StandardCursorType.SizeWestEast),
                 IsVisible = not initialNavigation.sidebarCollapsed)
         Avalonia.Automation.AutomationProperties.SetName(sidebarSplitter, "调整侧边栏宽度")
+        // splitter 悬停/聚焦底色反馈并入共享表面过渡（减弱动效瞬时到位；拖动行为不变）。
+        sidebarSplitter.Transitions <- Ui.surfaceTransitions ()
         sidebarSplitter.PointerEntered.Add(fun _ -> sidebarSplitter.Background <- Tokens.hover)
         sidebarSplitter.PointerExited.Add(fun _ ->
             sidebarSplitter.Background <-
@@ -1393,6 +1420,8 @@ type MainView() as this =
         shellGrid.Children.Add sidebarSplitter
         shellGrid.Children.Add chatColumn
         mainLayout <- MainLayoutController(shellGrid, sidebar, sidebarSplitter, chatColumn, composer, chat, fun () -> prefs.sidebarWidth)
+        // 抽屉遮罩与 Escape / 侧栏行同一归宿：SetCompactNavigation 的收起分支（D3/D4）。
+        mainLayout.OnScrimPressed <- Some (fun () -> this.SetCompactNavigation false)
         mainLayout.Apply initialNavigation
         workspace.Children.Add shellGrid
 
@@ -1454,7 +1483,7 @@ type MainView() as this =
         this.Render()
         this.ApplyResponsiveLayout this.Bounds.Width
         this.WatchHostViewport()
-        let deliveryTimer = DispatcherTimer(Interval = TimeSpan.FromSeconds 1.0)
+        let deliveryTimer = DispatcherTimer(Interval = MotionLedger.outboxDeliveryCheckTick)
         deliveryTimer.Tick.Add(fun _ ->
             if outbox.Expire(DateTimeOffset.UtcNow, TimeSpan.FromSeconds 30.0) then this.Render())
         this.AttachedToVisualTree.Add(fun _ ->

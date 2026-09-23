@@ -30,7 +30,7 @@ type ComposerActions = {
 /// - 无会话时整块禁用并说明原因，而不是留一个点了没反应的输入框；
 /// - 生成中把发送键换成停止键，同一位置同一手势；
 /// - 附件以可删除的小卡呈现，而不是一行状态文字；
-/// - 模型选择就放在输入框里，换模型不必开设置。
+/// - 模型选择就在输入框里，换模型不必开设置。
 type Composer(actions: ComposerActions) as this =
     inherit Border()
 
@@ -103,29 +103,50 @@ type Composer(actions: ComposerActions) as this =
             Padding = Thickness(ControlMetrics.compactChipPaddingX, ControlMetrics.compactChipPaddingY),
             Cursor = new Cursor(StandardCursorType.Hand),
             Focusable = true,
-            VerticalAlignment = VerticalAlignment.Center)
+            // V29: 常态保留最轻发丝轮廓（不是全透明），焦点/悬停只切色；
+            // 轮廓与底色补间走 Ui.surfaceBorderedTransitions，边框粗细恒定不位移。
+            BorderBrush = Tokens.hairline,
+            BorderThickness = Thickness ControlMetrics.borderWidth,
+            VerticalAlignment = VerticalAlignment.Center,
+            Transitions = Ui.surfaceBorderedTransitions ())
     let hintText =
         TextBlock(
             Text = "",
-            FontSize = Tokens.fontMicro,
+            // 键位提示是重要 affordance：升到 caption 档 + textMuted，不再与角标混同的 micro/faint。
+            FontSize = Tokens.fontCaption,
             Padding = Thickness(0.0, ControlMetrics.compactChipPaddingY),
-            Foreground = Tokens.textFaint,
+            Foreground = Tokens.textMuted,
             TextTrimming = TextTrimming.CharacterEllipsis,
             TextAlignment = TextAlignment.Right,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center)
+
+    // 拖放入口的可发现性：AllowDrop 与 dropHintBanner 只服务「已经在拖」的用户，
+    // 静态界面此前没有任何线索。这里在 footer caption 行补一条常驻弱提示：复用
+    // Ui.caption（fontCaption + textMuted）同一档位，不加新行高、不碰拖放逻辑。
+    let dropAttachHint =
+        let hint = Ui.caption "可将文件拖入此处添加附件"
+        // footer 是单行 caption 行：覆盖 Ui.caption 的换行为不换行，窄窗口省略而非折行；
+        // 左空与模型芯片分开，剩余宽度仍由 fill 的 hintText 承接。
+        hint.TextWrapping <- TextWrapping.NoWrap
+        hint.TextTrimming <- TextTrimming.CharacterEllipsis
+        hint.Margin <- Thickness(Tokens.space2, 0.0, 0.0, 0.0)
+        hint.VerticalAlignment <- VerticalAlignment.Center
+        // 纯文本控件补 Name 供读屏读取，与 SetPendingMessages 的 pendingNotice 同一惯例。
+        Avalonia.Automation.AutomationProperties.SetName(hint, hint.Text)
+        hint
     let shell =
         Border(
             Background = Tokens.surface,
-            BorderBrush = Tokens.borderSoft,
-            BorderThickness = Thickness 1.0,
+            BorderBrush = Tokens.hairline,
+            BorderThickness = Thickness ControlMetrics.borderWidth,
             CornerRadius = CornerRadius Tokens.radiusLg)
 
     let dropHintBanner =
         Border(
             Background = Tokens.accentFaint,
             BorderBrush = Tokens.accentSoft,
-            BorderThickness = Thickness 1.0,
+            BorderThickness = Thickness ControlMetrics.borderWidth,
             CornerRadius = CornerRadius Tokens.radiusLg,
             IsHitTestVisible = false,
             IsVisible = false)
@@ -146,19 +167,25 @@ type Composer(actions: ComposerActions) as this =
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
             LineHeight = ReadingRhythm.captionLineHeight)
+    // V31: 禁用提示独立高亮（不随 shell 变灰）：不透明 +强一档的描边。
     let disabledNotice =
         Border(
-            Background = Tokens.surfaceRaised,
-            BorderBrush = Tokens.borderSoft,
-            BorderThickness = Thickness 1.0,
+            // 禁用说明不随 shell 变灰：surfaceContainer 暖纸中间层 + hairlineStrong 描边，
+            // 与变灰的输入壳形成清晰但不刺眼的分层。
+            Background = Tokens.surfaceContainer,
+            BorderBrush = Tokens.hairlineStrong,
+            BorderThickness = Thickness ControlMetrics.borderWidth,
             CornerRadius = CornerRadius Tokens.radiusMd,
             Padding = Thickness(Tokens.space3, Tokens.space2),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Child = disabledNoticeText,
-            Opacity = 0.9,
+            Opacity = 1.0,
             IsVisible = false)
 
     let mutable enterSends = true
+    // 当前 compact 档：宽度驱动的留白刷新只在非 compact 路径生效，
+    // 与 SetCompactMode 协作而非争抢同一份 Padding 写权。
+    let mutable compactMode = false
     let mutable generating = false
     let mutable canStop = true
     let mutable enabled = false
@@ -190,33 +217,36 @@ type Composer(actions: ComposerActions) as this =
         if Dispatcher.UIThread.CheckAccess() then act ()
         else Dispatcher.UIThread.Post(fun () -> act ())
 
+    // V30/V31: 边框与占位符各走独立路径。边框先按拖拽/焦点算，再由禁用状态一统压回底色；占位符单独计算（禁用理由优先于拖拽提示），有正文时占位符本就不可见，绝不碰 input.Text。
     let updateShellVisual () =
-        if isDraggingOver then
+        if isDraggingOver && enabled then
             shell.Background <- Tokens.surface
             shell.BorderBrush <- Tokens.accent
             shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
             dropHintBanner.IsVisible <- true
-            input.PlaceholderText <- "释放文件以添加到当前会话附件"
         elif input.IsFocused then
             shell.Background <- Tokens.surface
             shell.BorderBrush <- Tokens.accent
             shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
             dropHintBanner.IsVisible <- false
-            input.PlaceholderText <-
-                if not enabled && not (String.IsNullOrWhiteSpace disabledReason) then
-                    disabledReason
-                else
-                    "输入消息…"
         else
             shell.Background <- Tokens.surface
-            shell.BorderBrush <- Tokens.borderSoft
-            shell.BoxShadow <- Tokens.shadowSoft ()
+            shell.BorderBrush <- Tokens.hairline
+            // 常驻 chrome 不投软阴影（软阴影只留给拖拽提示这类瞬时浮层）；
+            // 与消息区的分层由 surface + hairline 承担，焦点态仍是无位移外环。
+            shell.BoxShadow <- BoxShadows()
             dropHintBanner.IsVisible <- false
-            input.PlaceholderText <-
-                if not enabled && not (String.IsNullOrWhiteSpace disabledReason) then
-                    disabledReason
-                else
-                    "输入消息…"
+        // V31: 禁用时边框回最轻档，焦点也不提亮，避免“不可发送却像可输入”。
+        if not enabled then
+            shell.BorderBrush <- Tokens.hairline
+            shell.BoxShadow <- BoxShadows()
+        input.PlaceholderText <-
+            if not enabled && not (String.IsNullOrWhiteSpace disabledReason) then
+                disabledReason
+            elif isDraggingOver && enabled then
+                "释放文件以添加到当前会话附件"
+            else
+                "输入消息…"
 
     let refreshSendState () =
         let text = input.Text
@@ -290,7 +320,17 @@ type Composer(actions: ComposerActions) as this =
             row.Children.Add chevron
             row
         modelChip.PointerEntered.Add(fun _ -> modelChip.Background <- Tokens.hover)
-        modelChip.PointerExited.Add(fun _ -> modelChip.Background <- Brushes.Transparent)
+        modelChip.PointerExited.Add(fun _ ->
+            if not modelChip.IsFocused then
+                modelChip.Background <- Brushes.Transparent
+                modelChip.BorderBrush <- Tokens.hairline)
+        // V29: 键盘焦点补描边（ActionBorder 自带外环阴影；这里补一条描边色，与悬停底色正交）。
+        modelChip.GotFocus.Add(fun _ ->
+            modelChip.Background <- Tokens.hover
+            modelChip.BorderBrush <- Tokens.accent)
+        modelChip.LostFocus.Add(fun _ ->
+            modelChip.Background <- Brushes.Transparent
+            modelChip.BorderBrush <- Tokens.hairline)
         Ui.onClick modelChip (fun () -> actions.openModelPicker(modelChip :> Control))
         ToolTip.SetTip(modelChip, "切换本会话使用的模型")
         Avalonia.Automation.AutomationProperties.SetName(modelChip, "切换本会话使用的模型")
@@ -393,6 +433,21 @@ type Composer(actions: ComposerActions) as this =
                                 e.Handled <- true),
             RoutingStrategies.Tunnel)
 
+    /// chip 的 Opacity 补间：入场/退场共用 MotionPolicy 时长 + DoubleTransition(Visual.OpacityProperty)，
+    /// 与 MessageCard 操作条、复制键同一机制；减弱动效经 MotionPolicy.isReduced 门控降为瞬时。
+    /// 只补间 Opacity：几何、焦点、移除流程与读屏播报均不经过这里。
+    let attachmentChipTransitions () =
+        let transitions = Avalonia.Animation.Transitions()
+        let opacityTransition = Avalonia.Animation.DoubleTransition()
+        opacityTransition.Property <- Visual.OpacityProperty
+        opacityTransition.Duration <-
+            if MotionPolicy.isReduced () then
+                TimeSpan.Zero
+            else
+                MotionPolicy.duration MotionLedger.controlRowFade.TotalMilliseconds
+        transitions.Add opacityTransition
+        transitions
+
     member private this.Submit() =
         let uploading = attachments |> List.exists (fun a -> not a.ready)
         if enabled && not uploading then
@@ -426,6 +481,18 @@ type Composer(actions: ComposerActions) as this =
             | _ -> ()
 
     member private this.RenderAttachments() =
+        // 现有 chip 的 Tag 记着各自 attachmentId：兄弟附件上传状态翻转会全量重建整条，
+        // 只有“真正新加入”的 chip 才播入场补间，旧 chip 重建不重放。
+        let renderedBefore =
+            attachmentStrip.Children
+            |> Seq.choose (fun child ->
+                match child with
+                | :? Border as existing ->
+                    match existing.Tag with
+                    | :? Guid as id -> Some id
+                    | _ -> None
+                | _ -> None)
+            |> Set.ofSeq
         attachmentStrip.Children.Clear()
         removeButtons.Clear()
         for attachment in attachments do
@@ -517,17 +584,35 @@ type Composer(actions: ComposerActions) as this =
                 if attachment.failed then
                     sprintf "附件上传失败：%s（%s），可移除或重新添加" attachment.fileName (AttachmentRef.formatSize attachment.size)
                 else
-                    sprintf "附件：%s (%s)" attachment.fileName (AttachmentRef.formatSize attachment.size)
+                    // V34: 全角括号，与同文案“上传失败：%s（%s）”统一，不中英半角混排。
+                    sprintf "附件：%s（%s）" attachment.fileName (AttachmentRef.formatSize attachment.size)
+            // 附件 chip 与其它输入壳内次级面同一几何：走 Ui.groupingCard
+            // （surfaceContainer + 最轻发丝边 + chip 密度），不再手抄一份边框三重奏。
             let chip =
-                Border(
-                    Background = Tokens.surfaceRaised,
-                    BorderBrush = Tokens.border,
-                    BorderThickness = Thickness 1.0,
-                    CornerRadius = CornerRadius Tokens.radiusSm,
-                    Padding = Thickness(ControlMetrics.compactChipPaddingX, ControlMetrics.compactChipPaddingY),
-                    Child = row)
+                Ui.groupingCard
+                    (Thickness(ControlMetrics.compactChipPaddingX, ControlMetrics.compactChipPaddingY))
+                    row
+                    Tokens.radiusSm
+            // 失败档是「不同描边档」的既有意图：hairlineStrong 比分组卡默认 hairline 高一档，
+            // 与 danger 字形配合突出失败态；圆角/内边距/底色仍走共享工厂。
+            if attachment.failed then chip.BorderBrush <- Tokens.hairlineStrong
+            // 只补间 Opacity：几何、焦点、移除流程（onClick 的 pendingFocusAttachmentId）与
+            // 上传中读屏播报（SetLiveSetting）都不经过这里。
+            chip.Transitions <- attachmentChipTransitions ()
+            chip.Tag <- attachment.attachmentId
+            if not (Set.contains attachment.attachmentId renderedBefore) then
+                if MotionPolicy.isReduced () then
+                    // 减弱动效：瞬时到位，连 0 起步都不发生。
+                    chip.Opacity <- 1.0
+                else
+                    chip.Opacity <- 0.0
+                    // 附件条已在可视化树中，挂载后写回 1.0 由上面的 Opacity 补间接管。
+                    chip.AttachedToVisualTree.Add(fun _ -> chip.Opacity <- 1.0)
             ToolTip.SetTip(chip, chipLabel)
             Avalonia.Automation.AutomationProperties.SetName(chip, chipLabel)
+            // V33: 上传中（size 行显“上传中”）向读屏直播；就绪/失败有静态名，不打扰。
+            if not attachment.ready && not attachment.failed then
+                Avalonia.Automation.AutomationProperties.SetLiveSetting(chip, Avalonia.Automation.AutomationLiveSetting.Polite)
             attachmentStrip.Children.Add chip
         attachmentScroller.IsVisible <- not (List.isEmpty attachments)
         // 滚动窗按“整行”取高：布局完成后用实测 chip 高度对默认上限取整，避免半行露出。
@@ -590,8 +675,10 @@ type Composer(actions: ComposerActions) as this =
                                                           FontSize = Tokens.fontSmall, Foreground = Tokens.text)))
                 if not (List.isEmpty item.attachments) then
                     body.Children.Add(Ui.caption (item.attachments |> List.map _.fileName |> String.concat "、"))
+                // V34: 禅期/状态文案统一中文标点，纯文本控件补 Name 供读屏读取。
                 let status = TextBlock(Text = PendingMessage.status item, TextWrapping = TextWrapping.Wrap,
                                        FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted)
+                Avalonia.Automation.AutomationProperties.SetName(status, PendingMessage.status item)
                 let row = DockPanel(LastChildFill = true)
                 if PendingMessage.canRetry item then
                     let button = Ui.button Ui.Secondary "重试" (fun () -> retry (PendingMessage.invocationId item))
@@ -600,13 +687,18 @@ type Composer(actions: ComposerActions) as this =
                     row.Children.Add button
                 row.Children.Add status
                 body.Children.Add row
-                pendingPanel.Children.Add(Ui.card body)
+                // 未确认消息是同级的次级表面：走 Ui.groupingCard 分组卡
+                // （surfaceContainer + 发丝边，比常规 surface+border 卡片轻一档），不抢输入壳层级。
+                pendingPanel.Children.Add(
+                    Ui.groupingCard (Thickness(Tokens.space3, Tokens.space2)) body Tokens.radiusMd)
             // 首条消息创建会话失败时尚无侧栏条目，切走后仍要有找回入口。
             for conversationId, pending in elsewhere |> List.groupBy _.conversationId do
                 let label = sprintf "查看另一个会话的未确认消息（%d 条）" pending.Length
                 pendingPanel.Children.Add(Ui.button Ui.Secondary label (fun () -> openConversation conversationId))
             if not (List.isEmpty items) then
-                pendingPanel.Children.Add(Ui.caption "未确认内容只保留在当前窗口，关闭或刷新前请先确认保存。")
+                let pendingNotice = Ui.caption "未确认内容只保留在当前窗口，关闭或刷新前请先确认保存。"
+                Avalonia.Automation.AutomationProperties.SetName(pendingNotice, pendingNotice.Text)
+                pendingPanel.Children.Add(pendingNotice)
             pendingScroller.IsVisible <- not (List.isEmpty items)
             pendingContainer.IsVisible <- not (List.isEmpty items)
 
@@ -644,14 +736,26 @@ type Composer(actions: ComposerActions) as this =
 
     member _.SetEnterSends(value: bool) =
         enterSends <- value
-        hintText.Text <- if value then "Enter 发送 · Shift+Enter 换行" else "Ctrl+Enter 发送 · Enter 换行"
+        // V35: 分隔符对齐 ChatView/快捷键帮助的“/”惯例（Dialogs 中“Ctrl / ⌘ + N”、关闭提示“Esc / Enter”），不用“·”另造分隔。
+        hintText.Text <- if value then "Enter 发送 / Shift+Enter 换行" else "Ctrl+Enter 发送 / Enter 换行"
         refreshSendState ()
+
+    /// 非 compact 路径的水平留白：按 Composer 自身宽度（父级 chatColumn 给出）经
+    /// LayoutPolicy.horizontalInset 取档。Padding 只裁剪内容、不影响 Composer 自身
+    /// Bounds，写入不触发 Bounds 变化——无布局反馈环。compact 档由 SetCompactMode
+    /// 写固定收紧边距，两条路径由 compactMode 分派、不同时生效。
+    member private this.ApplyComposerPadding() =
+        let inset = LayoutPolicy.horizontalInset this.Bounds.Width
+        this.Padding <- Thickness(inset, Tokens.space4, inset, Tokens.space3)
 
     /// 窄屏只收紧已有控件，不增加第二套输入逻辑：隐藏键盘提示、压缩边距与模型标签。
     member this.SetCompactMode(value: bool) =
         // compact 下提示行直接折叠；footer 高度由 modelChip.MinHeight 兜底，不塌陷。
+        // 拖放提示与键位提示同级，一并折叠：不引入第二套显隐逻辑。
         hintText.IsVisible <- not value
         hintText.IsHitTestVisible <- not value
+        dropAttachHint.IsVisible <- not value
+        dropAttachHint.IsHitTestVisible <- not value
         modelCaption.MaxWidth <-
             if value then ControlMetrics.composerModelCompactMaxWidth else ControlMetrics.composerModelMaxWidth
         let actionSize = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
@@ -659,9 +763,15 @@ type Composer(actions: ComposerActions) as this =
         Ui.setSquareTarget sendButton actionSize
         Ui.setSquareTarget queueButton actionSize
         modelChip.MinHeight <- if value then LayoutPolicy.compactActionTarget else 0.0
+        compactMode <- value
         this.Padding <-
-            if value then Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space2)
-            else Thickness(Tokens.shellInset, Tokens.space4, Tokens.shellInset, Tokens.space3)
+            if value then
+                // compact 档：固定收紧边距，不随宽度浮动（窄屏省地优先于呼吸感）。
+                Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space2)
+            else
+                // 非 compact 档：水平留白随实际宽度取档（桌面 32/48 的呼吸感）。
+                let inset = LayoutPolicy.horizontalInset this.Bounds.Width
+                Thickness(inset, Tokens.space4, inset, Tokens.space3)
 
     member _.Focus() = tryFocusInput ()
 
@@ -677,9 +787,19 @@ type Composer(actions: ComposerActions) as this =
         this.Background <- Brushes.Transparent
         // 顶部留白是**确定**的间距：滚动区能留多少取决于 Extent 与 ScrollToEnd 的行为，
         // 而这里的 padding 一定在，末条消息的脚注行不会贴到输入卡上。
-        this.Padding <- Thickness(Tokens.shellInset, Tokens.space4, Tokens.shellInset, Tokens.space3)
+        // 水平留白按当前宽度取档：未挂树时 Bounds=0 落最窄档（= 旧 shellInset 值）。
+        this.ApplyComposerPadding()
+        // 宽度跨断点时刷新非 compact 留白；compact 档保留收紧边距、不参与。
+        this.PropertyChanged.Add(fun args ->
+            if args.Property = Visual.BoundsProperty && not compactMode then
+                this.ApplyComposerPadding())
 
-        let actionRow = Ui.hstack Tokens.space1 [ attachButton :> Control; queueButton :> Control; sendButton :> Control ]
+        // 次级图标操作（附件/排队）与所有 Ui.iconButton 一致：不带一次性描边，30px ghost
+        // 目标靠透明底 + hover 底区分，发送键保持 accent 实心。曾单给这两个补 hairline 轮廓，
+        // 是「只有它们有」的全局歧异，按 Chat+Overlays 收敛要求移除。
+
+        // attach/queue/send 三个 30px 目标间距 space1→space2：减少误触，呼吸感对齐 footer。
+        let actionRow = Ui.hstack Tokens.space2 [ attachButton :> Control; queueButton :> Control; sendButton :> Control ]
         actionRow.VerticalAlignment <- VerticalAlignment.Bottom
 
         let inputRow = DockPanel(LastChildFill = true)
@@ -689,14 +809,19 @@ type Composer(actions: ComposerActions) as this =
 
         let footerRow = DockPanel(LastChildFill = true)
         DockPanel.SetDock(modelChip, Dock.Left)
+        // 拖放提示与模型芯片同 dock 在左侧（芯片之后、fill 的键位提示之前）：
+        // 窄窗口下先省略两条提示文本，模型芯片不与任何文本重叠争位。
+        DockPanel.SetDock(dropAttachHint, Dock.Left)
         // hint 不 dock、作为 fill 占剩余宽度并右对齐：长模型名或窄窗口下只省略提示文本，绝不与模型芯片重叠争位。
         footerRow.Children.Add modelChip
+        footerRow.Children.Add dropAttachHint
         footerRow.Children.Add hintText
 
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
         column.Children.Add attachmentScroller
         column.Children.Add inputRow
-        column.Children.Add(Ui.hairline ())
+        // 输入壳内的上下分层：最轻档 hairline（Ui.hairline 取 borderSoft，是更上一档的标准分隔）。
+        column.Children.Add(Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control)
         column.Children.Add footerRow
 
         let dropOverlayContent =
@@ -717,10 +842,13 @@ type Composer(actions: ComposerActions) as this =
             Thickness(
                 ControlMetrics.composerShellPaddingX,
                 ControlMetrics.composerShellPaddingY,
-                Tokens.space2,
+                ControlMetrics.composerShellPaddingX,
                 ControlMetrics.composerShellPaddingY)
         shell.Child <- shellGrid
-        shell.BoxShadow <- Tokens.shadowSoft ()
+        // 输入壳是常驻 chrome：不带软阴影；表面分层与焦点外环已足够，
+        // 描边/底色补间走共享 transitions（reduced-motion 自动降级为瞬时）。
+        shell.Transitions <- Ui.surfaceBorderedTransitions ()
+        shell.BoxShadow <- BoxShadows()
 
         input.GotFocus.Add(fun _ ->
             wasActiveBeforeDisabled <- true
@@ -741,19 +869,20 @@ type Composer(actions: ComposerActions) as this =
                 else false
             with _ -> false
 
+        // V32: 分支显式挂在 hasFiles 上（先排除无文件）：有文件时每帧只置 Copy，无文件时每帧置 None，状态翻转才刷视觉，不再闪断。
         let handleDragOver (e: DragEventArgs) =
             let hasFiles =
                 e.DataTransfer <> null &&
                 (e.DataTransfer.Contains(DataFormat.File) || e.DataTransfer.TryGetFiles() <> null)
-            if hasFiles then
-                e.DragEffects <- DragDropEffects.Copy
-                if not isDraggingOver then
-                    isDraggingOver <- true
-                    updateShellVisual ()
-            else
+            if not hasFiles then
                 e.DragEffects <- DragDropEffects.None
                 if isDraggingOver then
                     isDraggingOver <- false
+                    updateShellVisual ()
+            else
+                e.DragEffects <- DragDropEffects.Copy
+                if not isDraggingOver then
+                    isDraggingOver <- true
                     updateShellVisual ()
 
         let handleDragLeave (e: DragEventArgs) =

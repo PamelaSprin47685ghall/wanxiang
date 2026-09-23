@@ -88,7 +88,7 @@ module Dialogs =
         box.Text <- initial
         let validation = Ui.fieldValidationMessage box
         let helper = Ui.caption "请输入非空内容"
-        helper.Margin <- Thickness(2.0, Tokens.space1, 0.0, 0.0)
+        helper.Margin <- Thickness(ControlMetrics.fieldInsetX, Tokens.space1, 0.0, 0.0)
         helper.IsVisible <- false
         let mutable active = true
         let mutable pending = false
@@ -227,7 +227,7 @@ module Dialogs =
 
     /// 长文本编辑（编辑消息并分叉）。
     let editText (overlay: OverlayHost) (title: string) (initial: string) (confirmLabel: string) (onConfirm: string -> unit) =
-        let shell, box = Ui.textArea "消息内容" 160.0
+        let shell, box = Ui.textArea "消息内容" ControlMetrics.textAreaLongMinHeight
         box.Text <- initial
         let submit () =
             let value = if isNull box.Text then "" else box.Text
@@ -235,6 +235,7 @@ module Dialogs =
             onConfirm value
         let buttons, confirmButton =
             actionRow overlay confirmLabel Ui.Primary submit
+        AutomationProperties.SetHelpText(confirmButton, sprintf "确认“%s”(Ctrl+Enter)" confirmLabel)
         ToolTip.SetTip(confirmButton, sprintf "确认“%s”(Ctrl+Enter)" confirmLabel)
         box.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
@@ -271,12 +272,15 @@ module Dialogs =
         codeBox.TextAlignment <- TextAlignment.Center
         codeBox.LetterSpacing <- 8.0
         codeBox.FontFamily <- Tokens.monoFontFamily
-        let codeSection =
+        let codeSectionInner =
             Ui.vstack
                 Tokens.space2
                 [ Ui.fieldLabel "配对码" :> Control
                   codeShell :> Control
                   Ui.caption "配对码会打印在服务端终端（stderr），5 分钟内有效。" :> Control ]
+                // 配对码区是对话框内的分组表面：surfaceContainer + 最轻发丝边，与主字段区分层。
+        let codeSection =
+            Ui.groupingCard (Thickness(Tokens.space3, Tokens.space2)) codeSectionInner Tokens.radiusMd
         codeSection.IsVisible <- false
 
         let status =
@@ -362,7 +366,7 @@ module Dialogs =
                   urlField
                   tokenField
                   status :> Control
-                  Ui.hairline () :> Control
+                  Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control
                   pairingToggle :> Control
                   codeSection :> Control
                   codeButton :> Control
@@ -401,8 +405,22 @@ module Dialogs =
         setModelText <- setText
         modelButton.HorizontalAlignment <- HorizontalAlignment.Stretch
 
-        let instructionsShell, instructionsBox = Ui.textArea "留空则使用服务端默认指令" 96.0
+        let instructionsShell, instructionsBox = Ui.textArea "留空则使用服务端默认指令" ControlMetrics.textAreaMinHeight
         instructionsBox.Text <- current.instructions |> Option.defaultValue ""
+
+        // 表单错误摘要：与 SettingsGeneral / SettingsTools 同款的可聚焦 live region，
+        // 多错时由 Ui.applyValidationFeedback 汇总呈现，单错时收起。
+        let errorSummary =
+            TextBlock(
+                Text = "",
+                FontSize = Tokens.fontCaption,
+                Foreground = Tokens.danger,
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = ReadingRhythm.captionLineHeight,
+                IsVisible = false,
+                Focusable = true)
+        AutomationProperties.SetName(errorSummary, "表单错误摘要")
+        AutomationProperties.SetLiveSetting(errorSummary, AutomationLiveSetting.Assertive)
 
         let _, temperatureBox = Ui.textField "0–2，留空跟随默认"
         temperatureBox.Text <-
@@ -449,10 +467,12 @@ module Dialogs =
 
         let save () =
             for box in [ temperatureBox; topPBox; maxTokensBox; thinkingBudgetBox ] do Ui.clearFieldError box
-            let mutable firstInvalid: TextBox option = None
+            errorSummary.IsVisible <- false
+            errorSummary.Text <- ""
+            let errors = ResizeArray<TextBox * string>()
             let invalid (box: TextBox) message =
                 Ui.setFieldError box message
-                if firstInvalid.IsNone then firstInvalid <- Some box
+                errors.Add(box, message)
             let parseFloat (box: TextBox) (valid: float -> bool) message =
                 let raw = if isNull box.Text then "" else box.Text.Trim()
                 if String.IsNullOrWhiteSpace raw then None
@@ -478,15 +498,7 @@ module Dialogs =
             let instructions =
                 let text = if isNull instructionsBox.Text then "" else instructionsBox.Text.Trim()
                 if String.IsNullOrWhiteSpace text then None else Some text
-            match firstInvalid with
-            | Some box ->
-                box.BringIntoView()
-                box.Focus(NavigationMethod.Directional) |> ignore
-                Dispatcher.UIThread.Post(fun () ->
-                    if box.IsEffectivelyVisible && box.IsEnabled then
-                        box.BringIntoView()
-                        box.Focus(NavigationMethod.Directional) |> ignore)
-            | None ->
+            if List.isEmpty (List.ofSeq errors) then
                 if not pending then
                     setPending true
                     onSave
@@ -502,13 +514,16 @@ module Dialogs =
                         (fun ok ->
                             if dialogActive then
                                 setPending false
-                                if ok then overlay.CloseDialog())
+                                if ok then overlay.CloseDialog()
+                                else overlay.Toast("保存失败，请重试。", Failure))
+            else
+                Ui.applyValidationFeedback (List.ofSeq errors) (Some errorSummary) (fun message -> overlay.Toast(message, Warning))
 
         let temperatureColumn = Ui.inputFieldGroup "Temperature" "0–2，留空跟随服务端默认" temperatureBox
         let topPColumn = Ui.inputFieldGroup "Top P" "0–1，留空跟随服务端默认" topPBox
         let maxTokensColumn = Ui.inputFieldGroup "最大输出 token" "限制单次回复，留空不限制" maxTokensBox
         let thinkingBudgetColumn = Ui.inputFieldGroup "思维链预算（token）" "0 关闭思维链，留空跟随默认" thinkingBudgetBox
-        let paramGrid, applyParamLayout = Ui.twoColumnForm Tokens.space3 Tokens.space3 4 [ temperatureColumn; topPColumn; maxTokensColumn; thinkingBudgetColumn ]
+        let paramGrid, applyParamLayout = Ui.twoColumnForm Tokens.space4 Tokens.space3 4 [ temperatureColumn; topPColumn; maxTokensColumn; thinkingBudgetColumn ]
 
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
         AutomationProperties.SetName(cancelButton, "取消")
@@ -544,12 +559,17 @@ module Dialogs =
             Ui.vstack
                 Tokens.space4
                 [ Ui.vstack Tokens.space1 [ Ui.title "会话设置" :> Control; Ui.caption "只影响当前会话，不改服务端默认值。" :> Control ] :> Control
+                  errorSummary :> Control
                   Ui.controlFieldGroup "模型" "" (modelButton :> Control)
                   Ui.controlFieldGroup "系统指令" "" (instructionsShell :> Control)
                   paramGrid :> Control
-                  Ui.hairline () :> Control
-                  Ui.vstack Tokens.space2 [ Ui.sectionLabel "可用工具" :> Control; toolsPanel :> Control ] :> Control
-                  Ui.hairline () :> Control
+                  Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control
+                  Ui.groupingCard
+                      (Thickness(Tokens.space3, Tokens.space2))
+                      (Ui.vstack Tokens.space2 [ Ui.sectionLabel "可用工具" :> Control; toolsPanel :> Control ])
+                      Tokens.radiusMd
+                  :> Control
+                  Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control
                   footer :> Control ]
         content.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
@@ -575,10 +595,11 @@ module Dialogs =
               [ "Ctrl / ⌘ + N", "新建会话"
                 "Ctrl / ⌘ + B", "切换侧边栏展开 / 折叠"
                 "Ctrl / ⌘ + K", "快速聚焦搜索栏"
-                "Ctrl / ⌘ + 1 ~ 9", "快速跳转至对应会话"
+                "Ctrl / ⌘ + 1 ~ 9", "按侧栏当前可见顺序快速跳转至对应会话"
                 "Ctrl / ⌘ + ,", "打开全局设置"
-                "Ctrl / ⌘ + Shift + S", "切换深色 / 浅色主题"
-                "Ctrl / ⌘ + /", "显示快捷键帮助" ]
+                "Ctrl / ⌘ + Shift + S", "切换主题（跟随系统 → 浅色 → 深色轮转）"
+                "Ctrl / ⌘ + /", "显示快捷键帮助"
+                "F1", "显示快捷键帮助" ]
               "输入与会话",
               [ "Enter", "发送消息（或换行，按偏好）"
                 "Shift + Enter", "换行输入"
@@ -588,23 +609,25 @@ module Dialogs =
         let contentPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space3)
         for (category, items) in sections do
             contentPanel.Children.Add(Ui.sectionLabel category :> Control)
-            let groupRows = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
+            // 键位行间距 space1→space2：快捷键是扫读内容，行距放宽减少视觉粘连。
+            let groupRows = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
             for (keys, description) in items do
+                // 键位 chip 与其它次级面同一几何：走 Ui.groupingCard；
+                // 纵向密度取 compactRowPaddingY（此前是裸 2.0），不再各写一份。
                 let key =
-                    Border(
-                        Background = Tokens.surface,
-                        BorderBrush = Tokens.border,
-                        BorderThickness = Thickness 1.0,
-                        CornerRadius = CornerRadius Tokens.radiusSm,
-                        Padding = Thickness(Tokens.space2, 2.0),
-                        MinWidth = 136.0,
-                        Child =
-                            TextBlock(
+                    let keyCap =
+                        Ui.groupingCard
+                            (Thickness(Tokens.space2, Tokens.compactRowPaddingY))
+                            (TextBlock(
                                 Text = keys,
                                 FontSize = Tokens.fontMicro,
+                                FontWeight = FontWeight.Medium,
                                 FontFamily = Tokens.monoFontFamily,
                                 Foreground = Tokens.textMuted,
                                 HorizontalAlignment = HorizontalAlignment.Center))
+                            Tokens.radiusSm
+                    keyCap.MinWidth <- 136.0
+                    keyCap
                 let caption =
                     TextBlock(
                         Text = description,

@@ -71,12 +71,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         ActionBorder(
             Background = Brushes.Transparent,
             BorderBrush = Brushes.Transparent,
-            BorderThickness = Thickness 1.0,
+            BorderThickness = Thickness ControlMetrics.borderWidth,
             CornerRadius = CornerRadius Tokens.radiusSm,
             Height = Tokens.iconButton,
             MinHeight = Tokens.iconButton,
             MaxHeight = Tokens.iconButton,
-            MinWidth = 120.0,
+            MinWidth = ControlMetrics.emptyStateTitleMinWidth,
             VerticalAlignment = VerticalAlignment.Center,
             Padding = Thickness(Tokens.space3, 0.0),
             Focusable = false,
@@ -86,7 +86,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         Border(
             Background = Tokens.accentFaint,
             CornerRadius = CornerRadius Tokens.radiusPill,
-            Padding = Thickness(Tokens.space3, Tokens.space1),
+            Padding = Thickness(ControlMetrics.chipPaddingX, ControlMetrics.chipPaddingY),
             VerticalAlignment = VerticalAlignment.Center,
             IsVisible = true,
             Opacity = 0.0,
@@ -118,7 +118,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            // 末条消息与输入区之间的留白统一由 messagePanel.Margin 承担，底部 Padding 设为 0 避免叠加
+            // 末条消息与输入区之间的留白统一由 messagePanel.Margin 承担，底部 Padding 设为 0 避免叠加。
+            // 水平留白先落最窄档（shellInset=16，同 horizontalInset 0.0 的取值），
+            // 挂树后由 applyHorizontalInsets 按 ChatView 自身宽度实时取档（见 Build）。
             Padding = Thickness(Tokens.shellInset, Tokens.space5, Tokens.shellInset, 0.0))
     let emptyPanel =
         StackPanel(
@@ -130,48 +132,18 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Margin = Thickness(Tokens.space4, 0.0, Tokens.space4, Tokens.space8),
             MaxWidth = ContentMetrics.emptyStateMaxWidth,
             IsVisible = false)
-    let emptyTitle =
-        TextBlock(
-            Text = "",
-            FontSize = Tokens.fontHeading,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = Tokens.text,
-            TextAlignment = TextAlignment.Center,
-            LineHeight = ReadingRhythm.headingLineHeight,
-            LetterSpacing = 0.4,
-            Margin = Thickness(0.0, Tokens.space4, 0.0, 0.0))
-    let emptyHint =
-        TextBlock(
-            Text = "",
-            FontSize = Tokens.fontBody,
-            Foreground = Tokens.textMuted,
-            TextAlignment = TextAlignment.Center,
-            TextWrapping = TextWrapping.Wrap,
-            LineHeight = ReadingRhythm.emptyStateLineHeight,
-            MaxWidth = ContentMetrics.emptyStateMaxWidth,
-            Margin = Thickness(0.0, Tokens.space3, 0.0, 0.0))
     let mutable currentPrimaryAction: unit -> unit = ignore
     let emptyActionButton =
         let btn = Ui.button Ui.Primary "" (fun () -> currentPrimaryAction ())
         btn.HorizontalAlignment <- HorizontalAlignment.Center
         btn.VerticalAlignment <- VerticalAlignment.Center
-        btn.MinWidth <- 136.0
-        btn.Height <- 38.0
+        btn.MinWidth <- ControlMetrics.emptyStateActionMinWidth
+        btn.Height <- ControlMetrics.emptyStateActionHeight
         btn.CornerRadius <- CornerRadius Tokens.radiusMd
         btn.Padding <- Thickness(Tokens.space4, 0.0)
         btn.Focusable <- true
         btn.IsVisible <- false
         btn
-    let emptyActions =
-        let panel =
-            StackPanel(
-                Orientation = Orientation.Vertical,
-                Spacing = Tokens.space2,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = Thickness(0.0, Tokens.space4, 0.0, 0.0),
-                IsVisible = false)
-        panel.Children.Add emptyActionButton
-        panel
     let mutable lastEmptyState: (ChatEmptyState * string option) option = None
     let skeletonPanel =
         StackPanel(
@@ -218,6 +190,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable compactMode = false
     let mutable hasConversationChrome = false
     let mutable isGenerating = false
+    /// 停止按钮当前是否可点（生成中且已认证且存在生成 Id 时为 true）。
+    /// 禁用态只在槽位可见时施加：隐藏帧上写 opacityDisabled 会让「不可见」重新显形。
+    let mutable canStop = false
     let mutable titleEditable = false
     let mutable editingTitle = false
 
@@ -227,8 +202,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             // 不再额外跑第二个 spinner 与正文竞争注意力 / UI thread。
             let stateDot =
                 Border(
-                    Width = ControlMetrics.sidebarRunningDotSize,
-                    Height = ControlMetrics.sidebarRunningDotSize,
+                    Width = ControlMetrics.chipDotSize,
+                    Height = ControlMetrics.chipDotSize,
                     CornerRadius = CornerRadius Tokens.radiusPill,
                     Background = Tokens.accent,
                     VerticalAlignment = VerticalAlignment.Center)
@@ -237,12 +212,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleEditShell.Height <- Tokens.iconButton
         titleEditShell.MinHeight <- Tokens.iconButton
         titleEditShell.MaxHeight <- Tokens.iconButton
-        titleEditShell.MinWidth <- 120.0
+        titleEditShell.MinWidth <- ControlMetrics.emptyStateTitleMinWidth
         titleEditShell.Padding <- Thickness(Tokens.space3, 0.0)
         titleEditShell.CornerRadius <- CornerRadius Tokens.radiusSm
         titleEditShell.Background <- Tokens.surface
         titleEditShell.BorderBrush <- Tokens.border
-        titleEditShell.BorderThickness <- Thickness 1.0
+        titleEditShell.BorderThickness <- Thickness ControlMetrics.borderWidth
         titleEditShell.VerticalAlignment <- VerticalAlignment.Center
         titleEditBox.FontSize <- Tokens.fontTitle
         titleEditBox.FontWeight <- FontWeight.Medium
@@ -317,6 +292,17 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     do ensureTitleEditGeometry ()
 
+    /// 顶栏与滚动区共用同一档位、同一宽度来源：一次读取 ChatView 自身 Bounds
+    ///（即父级 chatColumn 的布局槽宽）经 LayoutPolicy.horizontalInset 取档，
+    /// 同步写 headerBar 与 scroller 两处水平留白——窗口宽度跨断档时同进同退，
+    /// 任何宽度下标题左缘与消息列左缘对齐，不会各取各的档。
+    /// 两处 Padding 都只裁剪各自内容、不改变任何控件自身 Bounds：写 Padding 不
+    /// 引起 Bounds 变化，故无布局反馈环。宽度跨断档时值才真正改变。
+    member private this.ApplyHorizontalInsets() =
+        let inset = LayoutPolicy.horizontalInset this.Bounds.Width
+        headerBar.Padding <- Thickness(inset, 0.0, inset, 0.0)
+        scroller.Padding <- Thickness(inset, Tokens.space5, inset, 0.0)
+
     member private this.CommitTitle(restoreFocus: bool) =
         if editingTitle || titleEditShell.IsVisible then
             editingTitle <- false
@@ -378,13 +364,41 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleAction.Cursor <- if editable then new Cursor(StandardCursorType.Hand) else null
         syncTitleChrome text
 
+    /// 顶栏生成中 chip 的显隐：SetGenerating 与 SetCompactMode 两条路径的唯一收口。
+    ///
+    /// 桌面（非 compact）保留常驻槽位防跳动：走 setReservedActionVisible，
+    /// IsVisible 恒为 true，只切 Opacity 与可操作性，生成开始/结束时顶栏不跳。
+    /// compact 下 chip 整体不占布局：那个原语会把 IsVisible 写死为 true，
+    /// 在紧凑顶栏里会白吃一块标题宽度，所以直接收起并把 Opacity 归零。
+    member private this.SyncGeneratingChipVisibility() =
+        if compactMode then
+            generatingChip.IsVisible <- false
+            generatingChip.Opacity <- 0.0
+        else
+            Ui.setReservedActionVisible generatingChip isGenerating
+
+    /// 停止按钮的常驻槽位：SetGenerating / SetCompactMode / 初始化三条路径的唯一收口。
+    ///
+    /// 与顶栏 chip 同一原语（Ui.setReservedActionVisible）：IsVisible 恒为 true，
+    /// 只切 Opacity / 命中 / 聚焦 / 无障碍视图。停止按钮位于右侧 Dock.Right 组，
+    /// 用 IsVisible 直接开关会让组宽、标题可用宽度与按钮位置在生成开始/结束时位移。
+    /// 禁用态只在槽位可见（生成中）时施加：隐藏后再写 Opacity 会让隐藏按钮显形。
+    member private this.SyncStopSlot() =
+        Ui.setReservedActionVisible stopButton isGenerating
+        if isGenerating then Ui.setEnabled stopButton canStop
+
     member this.SetGenerating(generating: bool, statusText: string) =
         isGenerating <- generating
-        Ui.setReservedActionVisible generatingChip (generating && not compactMode)
+        this.SyncGeneratingChipVisibility()
         generatingCaption.Text <- if String.IsNullOrWhiteSpace statusText then "生成中" else statusText
-        stopButton.IsVisible <- generating
+        this.SyncStopSlot()
 
-    member _.SetCanStop(value: bool) = Ui.setEnabled stopButton value
+    member this.SetCanStop(value: bool) =
+        canStop <- value
+        // 非生成态时停止按钮处于保留隐藏槽位，此时施加禁用视觉（setEnabled 会写
+        // Opacity）会让隐藏的按钮重新显形。AppShell 的真实顺序是 SetGenerating
+        // 之后跟一次 SetCanStop，隐藏帧上跳过即可保持「看不见」。
+        if isGenerating then Ui.setEnabled stopButton value
 
     /// 会话状态变化时同步顶栏功能按钮的可用性。
     member this.SetConversationChrome(hasConversation: bool) =
@@ -393,15 +407,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         sessionSettingsButton.IsVisible <- hasConversation
         if not (isNull (box headerBar)) then headerBar.IsVisible <- true
 
+
     member this.SetCompactMode(value: bool) =
         compactMode <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         for button in [ sidebarToggleButton; stopButton; forkButton; sessionSettingsButton; scrollToBottomButton ] do
             Ui.setSquareTarget button size
-        stopButton.IsVisible <- isGenerating
+        this.SyncStopSlot()
         sessionSettingsButton.IsVisible <- hasConversationChrome
         this.UpdateScrollToBottomAppearance()
-        Ui.setReservedActionVisible generatingChip (isGenerating && not value)
+        this.SyncGeneratingChipVisibility()
         forkButton.IsVisible <- hasConversationChrome && not value
 
     member this.ShowEmpty(state: ChatEmptyState, onPrimary: (string * (unit -> unit)) option) =
@@ -418,8 +433,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 | NoProvider -> "还没有可用的模型", "添加一个服务商并填入密钥，就可以开始对话了。"
                 | NoConversation -> "开始一次新对话", "左侧新建会话，或从历史里挑一个继续。"
                 | EmptyConversation -> "说点什么吧", "这个会话还是空的。你的第一句话会决定它的标题。"
-            emptyTitle.Text <- title
-            emptyHint.Text <- hint
             match onPrimary with
             | Some(label, _) ->
                 Ui.setButtonText emptyActionButton label
@@ -427,10 +440,15 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 Avalonia.Automation.AutomationProperties.SetName(emptyActionButton, label)
                 Avalonia.Automation.AutomationProperties.SetHelpText(emptyActionButton, label)
                 emptyActionButton.IsVisible <- true
-                emptyActions.IsVisible <- true
-            | None ->
-                emptyActionButton.IsVisible <- false
-                emptyActions.IsVisible <- false
+            | None -> emptyActionButton.IsVisible <- false
+            match emptyActionButton.Parent with
+            | :? Panel as panel -> panel.Children.Remove emptyActionButton |> ignore
+            | _ -> ()
+            let logo = brandLogo Tokens.logoEmpty
+            logo.HorizontalAlignment <- HorizontalAlignment.Center
+            emptyPanel.Children.Clear()
+            emptyPanel.Children.Add(
+                Ui.emptyStateWith true logo (Some title) hint None (Some emptyActionButton))
         emptyPanel.IsVisible <- true
         scroller.IsVisible <- false
         this.HideSkeletonLoading()
@@ -440,7 +458,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         lastEmptyState <- None
         currentPrimaryAction <- ignore
         emptyActionButton.IsVisible <- false
-        emptyActions.IsVisible <- false
         this.ResetScrollState()
         emptyPanel.IsVisible <- false
         scroller.IsVisible <- true
@@ -458,20 +475,20 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member private this.StopSkeletonBreathing() =
         skeletonTimer |> Option.iter (fun t -> t.Stop())
         skeletonTimer <- None
-        skeletonPanel.Opacity <- if skeletonPanel.IsVisible && MotionPolicy.isReduced () then 0.85 else 1.0
+        skeletonPanel.Opacity <- if skeletonPanel.IsVisible && MotionPolicy.isReduced () then Tokens.skeletonOpacityReduced else 1.0
 
     /// 启动骨架呼吸动画（低频平滑透明度呼吸）。
     member private this.StartSkeletonBreathing() =
         skeletonTimer |> Option.iter (fun t -> t.Stop())
         skeletonTimer <- None
         if MotionPolicy.isReduced () then
-            skeletonPanel.Opacity <- 0.85
+            skeletonPanel.Opacity <- Tokens.skeletonOpacityReduced
         elif not attached then
             // 尚未挂载到视觉树时不启动计时器；挂载时若骨架仍可见会触发
-            skeletonPanel.Opacity <- 0.85
+            skeletonPanel.Opacity <- Tokens.skeletonOpacityReduced
         else
             skeletonOpacityPhase <- 0.0
-            let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 50.0)
+            let timer = new DispatcherTimer(Interval = MotionLedger.skeletonBreathFrame)
             timer.Tick.Add(fun _ ->
                 skeletonOpacityPhase <- skeletonOpacityPhase + 0.12
                 // 0.55 ~ 0.95 之间的平滑呼吸
@@ -484,7 +501,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         if skeletonPanel.IsVisible then
             if MotionPolicy.isReduced () then
                 this.StopSkeletonBreathing()
-                skeletonPanel.Opacity <- 0.85
+                skeletonPanel.Opacity <- Tokens.skeletonOpacityReduced
             elif attached then
                 this.StartSkeletonBreathing()
 
@@ -499,7 +516,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                         Height = height,
                         CornerRadius = CornerRadius Tokens.radiusSm,
                         Background = Tokens.borderSoft,
-                        Opacity = 0.65,
+                        Opacity = Tokens.skeletonOpacityBase,
                         HorizontalAlignment = HorizontalAlignment.Stretch)
                 let colStar = widthFraction
                 let colRest = max 0.01 (1.0 - widthFraction)
@@ -513,13 +530,13 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let makeAssistantSkeleton (lineFractions: (float * float) list) =
                 let avatar =
                     Border(
-                        Width = 28.0,
-                        Height = 28.0,
+                        Width = ControlMetrics.skeletonAvatarSize,
+                        Height = ControlMetrics.skeletonAvatarSize,
                         CornerRadius = CornerRadius Tokens.radiusPill,
                         Background = Tokens.borderSoft,
                         VerticalAlignment = VerticalAlignment.Top,
                         Margin = Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space3, 0.0),
-                        Opacity = 0.85)
+                        Opacity = Tokens.skeletonOpacityReduced)
                 let lines = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Stretch)
                 for (h, w) in lineFractions do
                     lines.Children.Add(makeTextBar h w)
@@ -533,21 +550,25 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let makeUserSkeleton () =
                 let bubble =
                     Border(
+                        // 与真实用户气泡同一 chrome：hairlineStrong 细描边，
+                        // 骨架换成真卡时轮廓不变，不产生跳变。
                         Background = Tokens.borderSoft,
+                        BorderBrush = Tokens.hairlineStrong,
+                        BorderThickness = Thickness ControlMetrics.borderWidth,
                         CornerRadius = CornerRadius(Tokens.radiusLg, Tokens.radiusLg, Tokens.radiusSm, Tokens.radiusLg),
                         Width = 260.0,
                         Height = 40.0,
-                        Opacity = 0.55,
+                        Opacity = Tokens.skeletonOpacityBreathMin,
                         HorizontalAlignment = HorizontalAlignment.Right)
                 let avatar =
                     Border(
-                        Width = 28.0,
-                        Height = 28.0,
+                        Width = ControlMetrics.skeletonAvatarSize,
+                        Height = ControlMetrics.skeletonAvatarSize,
                         CornerRadius = CornerRadius Tokens.radiusPill,
                         Background = Tokens.borderSoft,
                         VerticalAlignment = VerticalAlignment.Top,
                         Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0),
-                        Opacity = 0.55)
+                        Opacity = Tokens.skeletonOpacityBreathMin)
                 let stack = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3, HorizontalAlignment = HorizontalAlignment.Right)
                 stack.Children.Add bubble
                 stack.Children.Add avatar
@@ -641,7 +662,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             desired.Add(None, fun () -> MessageCard.render streaming (ctxFor -1 true) actions.message None)
         | _ -> ()
         match error with
-        | Some(err, retry) -> desired.Add(None, fun () -> MessageCard.errorCard err retry)
+        | Some(err, retry) -> desired.Add(None, fun () -> MessageCard.errorCard err retry None)
         | None -> ()
 
         // 只动前缀之后的部分。追加一条消息或刷新流式卡时，前面几十上百张卡不动。
@@ -725,7 +746,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 else
                     let height = Tokens.iconButton
                     scrollToBottomButton.Width <- Double.NaN
-                    scrollToBottomButton.MinWidth <- 96.0
+                    scrollToBottomButton.MinWidth <- ControlMetrics.scrollToBottomMinWidth
                     scrollToBottomButton.Height <- height
                     scrollToBottomButton.MinHeight <- height
                     scrollToBottomButton.Padding <- Thickness(Tokens.space3, 0.0, Tokens.space4, 0.0)
@@ -776,8 +797,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 this.UpdateScrollToBottomAppearance()
             else
                 let startTime = DateTime.UtcNow
-                let durationMs = 180.0
-                let timer = new DispatcherTimer(Interval = TimeSpan.FromMilliseconds 16.0)
+                let durationMs = MotionLedger.smoothScrollDuration.TotalMilliseconds
+                let timer = new DispatcherTimer(Interval = MotionLedger.smoothScrollFrame)
                 timer.Tick.Add(fun _ ->
                     let elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds
                     let currentExtent = scroller.Extent.Height
@@ -792,8 +813,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                         this.UpdateScrollToBottomAppearance()
                     else
                         let progress = min 1.0 (elapsed / durationMs)
-                        // Ease-out cubic: 1 - (1 - t)^3
-                        let eased = 1.0 - Math.Pow(1.0 - progress, 3.0)
+                        // 统一缓动：改走 MotionPolicy.easeOutCubic（与全应用状态补间同一条
+                        // 曲线），替换本地手写 cubic，兑现 smoothScrollDuration 的 ease-out 注释。
+                        let eased = MotionPolicy.easeOutCubic.Ease progress
                         let newY = startOffset + (target - startOffset) * eased
                         scroller.Offset <- Vector(scroller.Offset.X, newY))
                 smoothScrollTimer <- Some timer
@@ -829,7 +851,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 e.Handled <- true
                 this.BeginTitleEdit())
         titleAction.PointerEntered.Add(fun _ -> updateTitleActionVisual ())
-        titleAction.PointerExited.Add(fun _ -> updateTitleActionVisual ())
+        // 按压反馈与 Ui.attachSurfaceFeedback 同一节奏：瞬时 Opacity 脉冲（不进过渡集合），焦点/几何不变。
+        titleAction.PointerPressed.Add(fun _ -> titleAction.Opacity <- Tokens.opacityPressed)
+        titleAction.PointerReleased.Add(fun _ -> titleAction.Opacity <- 1.0)
+        titleAction.PointerExited.Add(fun _ ->
+            titleAction.Opacity <- 1.0
+            updateTitleActionVisual ())
         titleAction.GotFocus.Add(fun _ -> updateTitleActionVisual ())
         titleAction.LostFocus.Add(fun _ -> updateTitleActionVisual ())
         titleEditBox.KeyDown.Add(fun e ->
@@ -859,7 +886,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         Ui.onClick forkButton (fun () -> actions.forkFromHere ())
         Ui.onClick sessionSettingsButton (fun () -> actions.openSessionSettings ())
         Ui.onClick sidebarToggleButton (fun () -> actions.toggleSidebar ())
-        stopButton.IsVisible <- false
+        Ui.setReservedActionVisible stopButton false
         forkButton.IsVisible <- false
         sessionSettingsButton.IsVisible <- false
 
@@ -890,25 +917,25 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         headerBar <-
             Border(
                 Height = Tokens.barHeight,
+                // 初始为最窄档（= horizontalInset 0.0 的取值），挂树后由
+                // applyHorizontalInsets 与 scroller 同源取档，不再双写口径。
                 Padding = Thickness(Tokens.shellInset, 0.0, Tokens.shellInset, 0.0),
-                BorderBrush = Tokens.borderSoft,
-                BorderThickness = Thickness(0.0, 0.0, 0.0, 1.0),
+                BorderBrush = Tokens.hairline,
+                BorderThickness = Thickness(0.0, 0.0, 0.0, ControlMetrics.borderWidth),
                 IsVisible = false,
                 Child = headerDock)
         let header = headerBar
 
-        emptyPanel.Children.Add(
-            let logo = brandLogo Tokens.logoEmpty
-            logo.HorizontalAlignment <- HorizontalAlignment.Center
-            logo)
-        emptyPanel.Children.Add emptyTitle
-        emptyPanel.Children.Add emptyHint
-        emptyPanel.Children.Add emptyActions
 
         // 让 Avalonia 的 ContentPresenter 完成 reading column 的收缩/拉伸；
         // `MaxWidth + Stretch` 取代手工监听 Viewport 后写 Width，避免 resize/scale 时
         // 维护第二套宽度同步逻辑。
         scroller.Content <- messagePanel
+        // 水平留白按实时宽度取档：首调对齐当前档位，之后仅宽度跨断档时重写。
+        // 订阅 ChatView 自身 Bounds（headerBar 已在前文赋值），一次刷新顶栏与滚动区。
+        this.ApplyHorizontalInsets()
+        this.PropertyChanged.Add(fun args ->
+            if args.Property = Visual.BoundsProperty then this.ApplyHorizontalInsets())
         scroller.ScrollChanged.Add(fun e ->
             let extent = scroller.Extent.Height
             let viewport = scroller.Viewport.Height
@@ -967,7 +994,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             attached <- false
             this.StopSkeletonBreathing()
             if skeletonPanel.IsVisible then
-                skeletonPanel.Opacity <- 0.85
+                skeletonPanel.Opacity <- Tokens.skeletonOpacityReduced
             smoothScrollTimer |> Option.iter (fun t -> t.Stop())
             smoothScrollTimer <- None
             motionSubscription |> Option.iter (fun s -> s.Dispose())

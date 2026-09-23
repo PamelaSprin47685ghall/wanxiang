@@ -117,17 +117,11 @@ module MessageCard =
             LineHeight = ReadingRhythm.technicalLineHeight size,
             SelectionBrush = Tokens.accentSoft)
 
-    let private copyPayloadToClipboard (visual: Visual) (text: string) (onCopied: unit -> unit) =
-        try
-            match TopLevel.GetTopLevel visual with
-            | null -> ()
-            | top ->
-                match top.Clipboard with
-                | null -> ()
-                | clip ->
-                    clip.SetTextAsync text |> ignore
-                    onCopied ()
-        with _ -> ()
+    /// 剪贴板唯一入口的运行时绑定：每次 render 由 AppShell 注入的
+    /// MessageActions.copyText 写入（同一函数引用，不是第二真源）。供 ChatView 直接调用、
+    /// 尚未显式传入 copyText 的 errorCard 使用；无渲染先例时退化为无操作——
+    /// 绝不 fire-and-forget 直写后再假装“已复制”。
+    let mutable private copyTextSink: (string -> unit) option = None
 
     /// 图标字形与脚注文本基线对齐：只下沉 iconBaselineNudge，不改按钮外尺寸。
     let private applyIconBaselineNudge (button: Border) =
@@ -137,7 +131,7 @@ module MessageCard =
             glyph.VerticalAlignment <- VerticalAlignment.Center
             glyph.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
 
-    let private createCopyButton (tipText: string) (accessibleName: string) (getText: unit -> string) : Border =
+    let private createCopyButton (copyText: string -> unit) (tipText: string) (accessibleName: string) (getText: unit -> string) : Border =
         let button = Ui.iconButton Icons.copy tipText
         button.Focusable <- true
         button.Margin <- Thickness 0.0
@@ -150,37 +144,71 @@ module MessageCard =
         Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
         Avalonia.Automation.AutomationProperties.SetLiveSetting(button, AutomationLiveSetting.Polite)
         let mutable copyTimer: DispatcherTimer option = None
+        let mutable fadeTimer: DispatcherTimer option = None
+        let stopFade () =
+            match fadeTimer with
+            | Some t ->
+                t.Stop()
+                fadeTimer <- None
+            | None -> ()
         let stopTimer () =
             match copyTimer with
             | Some t ->
                 t.Stop()
                 copyTimer <- None
             | None -> ()
+            stopFade ()
+        // 复制确认反馈：opacity 淡到 opacityCopyConfirmFade 再回 1.0，只改透明度、
+        // 不改尺寸（节奏 MotionLedger.copyConfirmationFade）；减弱动效时不做这段淡出。
+        let pulseCopyConfirmation () =
+            if not (MotionPolicy.isReduced ()) then
+                stopFade ()
+                button.Opacity <- Tokens.opacityCopyConfirmFade
+                let fade = new DispatcherTimer(Interval = MotionLedger.copyConfirmationFade)
+                fade.Tick.Add(fun _ ->
+                    fade.Stop()
+                    if fadeTimer = Some fade then fadeTimer <- None
+                    button.Opacity <- 1.0)
+                fadeTimer <- Some fade
+                fade.Start()
         let restoreDefaultState () =
             stopTimer ()
+            button.Opacity <- 1.0
             Ui.setIcon button Icons.copy Tokens.textMuted
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             applyIconBaselineNudge button
             ToolTip.SetTip(button, tipText)
             Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
             Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
+        // 复制一律走注入的 actions.copyText（剪贴板唯一入口；异步化与失败提示由 AppShell 侧负责）。
+        // 保持既有确认形态：图标变 check、MotionLedger.copyConfirmationHold 后复位。
         let doCopy () =
             let payload = getText ()
             if not (String.IsNullOrEmpty payload) then
-                copyPayloadToClipboard button payload (fun () ->
-                    stopTimer ()
-                    Ui.setIcon button Icons.check Tokens.success
-                    Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-                    applyIconBaselineNudge button
-                    ToolTip.SetTip(button, "已复制")
-                    Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
-                    Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制到剪贴板")
-                    let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
-                    timer.Tick.Add(fun _ ->
-                        if copyTimer = Some timer then
-                            restoreDefaultState ())
-                    copyTimer <- Some timer
-                    timer.Start())
+                copyText payload
+                stopTimer ()
+                pulseCopyConfirmation ()
+                Ui.setIcon button Icons.check Tokens.success
+                Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+                applyIconBaselineNudge button
+                ToolTip.SetTip(button, "已复制")
+                Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
+                Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制到剪贴板")
+                let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
+                timer.Tick.Add(fun _ ->
+                    if copyTimer = Some timer then
+                        restoreDefaultState ())
+                copyTimer <- Some timer
+                timer.Start()
+        // 确认淡出与基控件同一机制：往既有过渡集合追加 opacity 补间，不改几何。
+        let fadeTransition = Avalonia.Animation.DoubleTransition()
+        fadeTransition.Property <- Visual.OpacityProperty
+        fadeTransition.Duration <-
+            (if MotionPolicy.isReduced () then TimeSpan.Zero else MotionLedger.copyConfirmationFade)
+        // 统一缓动：复制确认淡出与全应用状态过渡同曲线（easeOutCubic）。
+        fadeTransition.Easing <- MotionPolicy.easeOutCubic
+        if isNull button.Transitions then button.Transitions <- Avalonia.Animation.Transitions()
+        button.Transitions.Add fadeTransition
         Ui.onClick button doCopy
         button.DetachedFromVisualTree.Add(fun _ -> restoreDefaultState ())
         button
@@ -213,7 +241,8 @@ module MessageCard =
         let chevronTransitions = Avalonia.Animation.Transitions()
         let rotateTransition = Avalonia.Animation.DoubleTransition()
         rotateTransition.Property <- RotateTransform.AngleProperty
-        rotateTransition.Duration <- MotionPolicy.duration 150
+        rotateTransition.Duration <- MotionPolicy.duration MotionLedger.disclosureChevronRotate.TotalMilliseconds
+        rotateTransition.Easing <- MotionPolicy.easeOutCubic
         chevronTransitions.Add rotateTransition
         rotateTransform.Transitions <- chevronTransitions
         let chevronGlyph = Icons.chevronRight Tokens.textMuted
@@ -258,30 +287,21 @@ module MessageCard =
         headerRow.Cursor <- handCursor
         headerRow.Children.Add chevronHost
         headerRow.Children.Add caption
-        let headerTransitions = Avalonia.Animation.Transitions()
-        let opacityTransition = Avalonia.Animation.DoubleTransition()
-        opacityTransition.Property <- Visual.OpacityProperty
-        opacityTransition.Duration <- MotionPolicy.duration 120
-        headerTransitions.Add opacityTransition
-        let bgTransition = Avalonia.Animation.BrushTransition()
-        bgTransition.Property <- Border.BackgroundProperty
-        bgTransition.Duration <- MotionPolicy.duration 120
-        headerTransitions.Add bgTransition
-        let borderTransition = Avalonia.Animation.BrushTransition()
-        borderTransition.Property <- Border.BorderBrushProperty
-        borderTransition.Duration <- MotionPolicy.duration 120
-        headerTransitions.Add borderTransition
+        // 三个折叠披露头（思考过程 / 工具调用 / 错误技术细节）共用同一个共享机制
+        // Ui.surfaceBorderedTransitions：底色与描边补间、同一时长（MotionLedger，
+        // 减弱动效自动降级为瞬时）。Opacity 不补间——与基控件纪律一致：
+        // 无显示测试制度下原生过渡不推进，Opacity 写值必须瞬时可见。
         let header =
             ActionBorder(
                 CornerRadius = CornerRadius Tokens.radiusSm,
-                Padding = Thickness(Tokens.space1, Tokens.space1),
+                Padding = Thickness(Tokens.space1, Tokens.fieldRowPaddingY),
                 Margin = Thickness 0.0,
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
-                BorderThickness = Thickness 1.0,
+                BorderThickness = Thickness ControlMetrics.borderWidth,
                 Cursor = handCursor,
                 Focusable = true,
-                Transitions = headerTransitions,
+                Transitions = Ui.surfaceBorderedTransitions (),
                 Child = headerRow)
         let syncHeaderName () =
             let actionName = if bodyVisible then "收起思考过程" else "展开思考过程"
@@ -306,7 +326,7 @@ module MessageCard =
             elif header.IsPointerOver then
                 header.BorderBrush <- Tokens.line
                 header.Background <- Tokens.hover
-                header.Opacity <- 0.9
+                header.Opacity <- Tokens.opacityHoverDim
             else
                 header.BorderBrush <- Brushes.Transparent
                 header.Background <- Brushes.Transparent
@@ -321,15 +341,20 @@ module MessageCard =
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         stack.Children.Add header
         stack.Children.Add body
-        Border(
-            Background = Tokens.surfaceSoft,
-            BorderBrush = Tokens.borderSoft,
-            BorderThickness = Thickness(2.0, 0.0, 0.0, 0.0),
-            CornerRadius = CornerRadius(0.0, Tokens.radiusSm, Tokens.radiusSm, 0.0),
-            Padding = Thickness(Tokens.space3, Tokens.space2, Tokens.space3, Tokens.space2),
-            Margin = Thickness(0.0, 0.0, 0.0, Tokens.space3),
-            Child = stack)
-        :> Control
+        // 思考过程卡与消息内其它次级卡并到同一半径档 radiusMd；外框走 Ui.groupingCard。
+        // 左缘强调条（accentEdgeWidth）是「思考过程」的既有 affordance，保留在内层 Border。
+        let card =
+            Ui.groupingCard
+                (Thickness(Tokens.space1, Tokens.space1, Tokens.space2, Tokens.space1))
+                (Border(
+                    BorderBrush = Tokens.hairlineStrong,
+                    BorderThickness = Thickness(ControlMetrics.accentEdgeWidth, 0.0, 0.0, 0.0),
+                    Padding = Thickness(Tokens.space2, 0.0, 0.0, 0.0),
+                    Child = stack))
+                Tokens.radiusMd
+        card.ClipToBounds <- true
+        card.Margin <- Thickness(0.0, 0.0, 0.0, Tokens.space3)
+        card :> Control
 
     /// 工具调用卡片：名称 + 状态 + 参数摘要，展开后看完整参数与结果。
     ///
@@ -428,7 +453,7 @@ module MessageCard =
             else None
         | _ -> None
 
-    let private toolCallCard (ctx: MessageContext) (call: ToolCallView) : Control =
+    let private toolCallCard (ctx: MessageContext) (actions: MessageActions) (call: ToolCallView) : Control =
         let running = call.result.IsNone
         // 与 tryExtractToolError 同意：只要能摘出错误摘要就按失败呈现。
         // plain-text 失败（error: 前缀、traceback、Command failed）从此也不再
@@ -465,12 +490,12 @@ module MessageCard =
             elif hasError then "执行失败"
             else "已完成"
         let icon: Control =
-            if running then Ui.spinner 14.0
+            if running then Ui.spinner ControlMetrics.spinnerSize
             elif hasError then Icons.alert statusBrush
             else Icons.wrench statusBrush
         icon.VerticalAlignment <- VerticalAlignment.Center
         let statusGlyph: Control =
-            if running then Ui.spinner 11.0
+            if running then Ui.spinner ControlMetrics.spinnerCompactSize
             elif hasError then Icons.alert statusBrush
             else Icons.check statusBrush
         statusGlyph.VerticalAlignment <- VerticalAlignment.Center
@@ -494,9 +519,9 @@ module MessageCard =
             Border(
                 Background = statusBg,
                 BorderBrush = Tokens.borderSoft,
-                BorderThickness = Thickness 1.0,
+                BorderThickness = Thickness ControlMetrics.borderWidth,
                 CornerRadius = CornerRadius Tokens.radiusPill,
-                Padding = Thickness(Tokens.space2, Tokens.space1),
+                Padding = Thickness(Tokens.space2, Tokens.compactRowPaddingY),
                 Margin = Thickness 0.0,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = statusPillContent)
@@ -527,8 +552,8 @@ module MessageCard =
             let bannerContent = Ui.hstack Tokens.space1 [ errGlyph; errText :> Control ]
             Border(
                 Background = Tokens.dangerSoft,
-                BorderBrush = Tokens.borderSoft,
-                BorderThickness = Thickness 1.0,
+                BorderBrush = Tokens.hairline,
+                BorderThickness = Thickness ControlMetrics.borderWidth,
                 CornerRadius = CornerRadius Tokens.radiusSm,
                 Padding = Thickness(Tokens.space2, Tokens.space1),
                 Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
@@ -551,7 +576,7 @@ module MessageCard =
                     FontWeight = FontWeight.Medium,
                     Foreground = (if isError then Tokens.danger else Tokens.textMuted),
                     VerticalAlignment = VerticalAlignment.Center)
-            let copyBtn = createCopyButton (sprintf "复制%s" label) (sprintf "复制工具%s" label) (fun () -> payload)
+            let copyBtn = createCopyButton actions.copyText (sprintf "复制%s" label) (sprintf "复制工具%s" label) (fun () -> payload)
             DockPanel.SetDock(sectionTitle, Dock.Left)
             DockPanel.SetDock(copyBtn, Dock.Right)
             header.Children.Add sectionTitle
@@ -561,8 +586,8 @@ module MessageCard =
             let codeBox =
                 Border(
                     Background = Tokens.codeBlockBackground,
-                    BorderBrush = Tokens.borderSoft,
-                    BorderThickness = Thickness 1.0,
+                    BorderBrush = Tokens.codeBorder,
+                    BorderThickness = Thickness ControlMetrics.borderWidth,
                     CornerRadius = CornerRadius Tokens.radiusSm,
                     Padding = Thickness(Tokens.space3, Tokens.space2),
                     Child = contentText)
@@ -587,7 +612,7 @@ module MessageCard =
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center)
         let toolCopyButton =
-            createCopyButton "复制工具参数与结果" (sprintf "复制工具 %s 参数与结果" call.name) rawPayloadText
+            createCopyButton actions.copyText "复制工具参数与结果" (sprintf "复制工具 %s 参数与结果" call.name) rawPayloadText
         toolCopyButton.Margin <- Thickness(0.0, 0.0, Tokens.space1, 0.0)
         toolCopyButton.VerticalAlignment <- VerticalAlignment.Center
         let headerActions = Ui.hstack Tokens.space1 [ toolCopyButton :> Control; chevronHost :> Control ]
@@ -602,35 +627,41 @@ module MessageCard =
         headerContent.Children.Add headerDock
         headerContent.Children.Add summary
         if hasError then headerContent.Children.Add errorBanner
+        // 与思考过程 / 错误详情同一机制：Ui.surfaceBorderedTransitions
+        // + 同一套悬停（hover 底 + line 描边）/ 焦点（accent 描边）视觉；只动颜色，不改几何。
         let headerRow =
             ActionBorder(
                 CornerRadius = CornerRadius Tokens.radiusSm,
                 Margin = Thickness 0.0,
                 Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
+                BorderThickness = Thickness ControlMetrics.borderWidth,
                 Cursor = handCursor,
                 Focusable = true,
+                Transitions = Ui.surfaceBorderedTransitions (),
                 Child = headerContent)
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         stack.Children.Add headerRow
         stack.Children.Add detail
+        // 工具卡与思考过程/错误详情同一半径档 radiusMd；外框走 Ui.groupingCard。
         let host =
-            ActionBorder(
-                Background = Tokens.surface,
-                BorderBrush = Tokens.border,
-                BorderThickness = Thickness 1.0,
-                CornerRadius = CornerRadius Tokens.radiusMd,
-                Padding = Thickness(Tokens.space3, Tokens.space3),
-                Margin = Thickness(0.0, 0.0, 0.0, Tokens.space3),
-                Child = stack)
+            let card =
+                Ui.groupingCard
+                    (Thickness(Tokens.space3, Tokens.space3))
+                    stack
+                    Tokens.radiusMd
+            card.Margin <- Thickness(0.0, 0.0, 0.0, Tokens.space3)
+            card
         let mutable detailVisible = false
         let toolRotate = RotateTransform(if detailVisible then 90.0 else 0.0)
         let toolChevronTransitions = Avalonia.Animation.Transitions()
         let toolRotateTransition = Avalonia.Animation.DoubleTransition()
         toolRotateTransition.Property <- RotateTransform.AngleProperty
-        toolRotateTransition.Duration <- MotionPolicy.duration 150
+        toolRotateTransition.Duration <- MotionPolicy.duration MotionLedger.disclosureChevronRotate.TotalMilliseconds
+        toolRotateTransition.Easing <- MotionPolicy.easeOutCubic
         toolChevronTransitions.Add toolRotateTransition
         toolRotate.Transitions <- toolChevronTransitions
-        let toolChevronGlyph = Icons.chevronRight Tokens.textFaint
+        let toolChevronGlyph = Icons.chevronRight Tokens.textMuted
         toolChevronGlyph.HorizontalAlignment <- HorizontalAlignment.Center
         toolChevronGlyph.VerticalAlignment <- VerticalAlignment.Center
         toolChevronGlyph.RenderTransform <- toolRotate
@@ -672,16 +703,32 @@ module MessageCard =
             if not e.Handled && headerRow.IsFocused && headerRow.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
                 e.Handled <- true
                 toggle ())
-        headerRow.PointerEntered.Add(fun _ ->
-            headerRow.Background <- Tokens.hover)
-        headerRow.PointerExited.Add(fun _ ->
-            headerRow.Background <- Brushes.Transparent)
+        // 悬停/焦点视觉与思考过程、错误详情逐行一致：focus = accent 描边 + hover 底，
+        // hover = line 描边 + hover 底，idle = 全透明；Opacity 只切 1.0/0.9，不补间。
+        let updateToolHeaderVisual () =
+            if headerRow.IsFocused then
+                headerRow.BorderBrush <- Tokens.accent
+                headerRow.Background <- Tokens.hover
+                headerRow.Opacity <- 1.0
+            elif headerRow.IsPointerOver then
+                headerRow.BorderBrush <- Tokens.line
+                headerRow.Background <- Tokens.hover
+                headerRow.Opacity <- Tokens.opacityHoverDim
+            else
+                headerRow.BorderBrush <- Brushes.Transparent
+                headerRow.Background <- Brushes.Transparent
+                headerRow.Opacity <- 1.0
+        headerRow.PointerEntered.Add(fun _ -> updateToolHeaderVisual ())
+        headerRow.PointerExited.Add(fun _ -> updateToolHeaderVisual ())
+        headerRow.GotFocus.Add(fun _ -> updateToolHeaderVisual ())
+        headerRow.LostFocus.Add(fun _ -> updateToolHeaderVisual ())
         Avalonia.Automation.AutomationProperties.SetName(host, sprintf "工具调用 %s" call.name)
         syncChevron ()
         syncToolName ()
         host :> Control
 
-    /// 附件：图片给缩略入口，其余给文件条。
+    /// 附件：统一渲染文件条（图片用 image 图标区分），点击下载；
+    /// 内容已丢失的附件退化为不可点的静态条。
     let private attachmentRow (ctx: MessageContext) (actions: MessageActions) (attachment: AttachmentRef) : Control =
         let missing = ctx.missingAttachments.Contains attachment.sha256
         let icon = if AttachmentRef.isImage attachment then Icons.image else Icons.file
@@ -714,7 +761,7 @@ module MessageCard =
                 Border(
                     Background = Tokens.surface,
                     BorderBrush = Tokens.border,
-                    BorderThickness = Thickness 1.0,
+                    BorderThickness = Thickness ControlMetrics.borderWidth,
                     CornerRadius = CornerRadius Tokens.radiusMd,
                     Padding = Thickness(Tokens.space3, ControlMetrics.attachmentRowPaddingY),
                     Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
@@ -724,7 +771,7 @@ module MessageCard =
                 ActionBorder(
                     Background = Tokens.surface,
                     BorderBrush = Tokens.border,
-                    BorderThickness = Thickness 1.0,
+                    BorderThickness = Thickness ControlMetrics.borderWidth,
                     CornerRadius = CornerRadius Tokens.radiusMd,
                     Padding = Thickness(Tokens.space3, ControlMetrics.attachmentRowPaddingY),
                     Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
@@ -740,7 +787,8 @@ module MessageCard =
             Ui.onClick host (fun () -> actions.downloadAttachment attachment.sha256)
         host :> Control
 
-    /// 悬停操作条。绝对不占文档流，否则每次悬停都会推动整段排版。
+    /// 悬停操作条。按钮本体就在脚注行里随文档流排布（见 actionButtons），
+    /// hover 只切 Opacity、不动几何，所以悬停本身永远不会推动整段排版。
     /// 操作按钮常驻低透明度。
     ///
     /// 只在 hover 时出现等于在触屏上不存在、在键盘上摸不到；
@@ -749,12 +797,15 @@ module MessageCard =
     let idleActionOpacity = Tokens.opacitySubtle
 
     /// 消息操作按钮。放在脚注行里随文档流排布——
-    /// 早先做成浮在消息上方的悬浮条，常驻显示后就会压住头像和气泡边角。
+    /// 早先做成浮在消息上方的悬浮条（脱离文档流、绝对定位），常驻显示后
+    /// 就会压住头像和气泡边角，那条路已废弃。
+    /// 按钮行恒定占位：流式期间按钮全部撤下也不缩高，完成时按钮落入同一
+    /// 槽位，脚注行上下不跳（见下方 row.MinHeight）。
     let private actionButtons (message: MessageView) (ctx: MessageContext) (actions: MessageActions) (index: int option) : StackPanel =
         let rowTransitions = Avalonia.Animation.Transitions()
         let opacityTransition = Avalonia.Animation.DoubleTransition()
         opacityTransition.Property <- Visual.OpacityProperty
-        opacityTransition.Duration <- MotionPolicy.duration 150
+        opacityTransition.Duration <- MotionPolicy.duration MotionLedger.controlRowFade.TotalMilliseconds
         rowTransitions.Add opacityTransition
         let row =
             StackPanel(
@@ -764,6 +815,13 @@ module MessageCard =
                 Opacity = idleActionOpacity,
                 Transitions = rowTransitions,
                 VerticalAlignment = VerticalAlignment.Center)
+        // 按钮行恒定占位 inlineActionTarget：流式期间 copy / 编辑 / 重生成 / 删除
+        // 全部被门控撤下，行若随内容缩成 0，完成瞬间会长回一整行、把消息下方整体
+        // 推走。撤按钮只清空槽位内容、不缩槽位本身；完成态自然高度同样由
+        // setSquareTarget 钉在 inlineActionTarget，两态逐像素相等（applyIconBaselineNudge
+        // 只下沉按钮内部字形，不改按钮外尺寸）。
+        // 不用绝对定位悬浮条：那会压住头像与气泡边角（见上方注释的历史结论）。
+        row.MinHeight <- LayoutPolicy.inlineActionTarget
         let addButton (icon: IBrush -> Control) (tip: string) (actionName: string) (help: string) (action: unit -> unit) =
             let button = Ui.iconButton icon tip
             button.Focusable <- true
@@ -796,14 +854,36 @@ module MessageCard =
             Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
             Avalonia.Automation.AutomationProperties.SetLiveSetting(button, AutomationLiveSetting.Polite)
             let mutable copyTimer: DispatcherTimer option = None
+            let mutable fadeTimer: DispatcherTimer option = None
+            let stopFade () =
+                match fadeTimer with
+                | Some t ->
+                    t.Stop()
+                    fadeTimer <- None
+                | None -> ()
             let stopTimer () =
                 match copyTimer with
                 | Some t ->
                     t.Stop()
                     copyTimer <- None
                 | None -> ()
+                stopFade ()
+            // 复制确认反馈：opacity 淡到 opacityCopyConfirmFade 再回 1.0，只改透明度、
+            // 不改尺寸（节奏 MotionLedger.copyConfirmationFade）；减弱动效时不做这段淡出。
+            let pulseCopyConfirmation () =
+                if not (MotionPolicy.isReduced ()) then
+                    stopFade ()
+                    button.Opacity <- Tokens.opacityCopyConfirmFade
+                    let fade = new DispatcherTimer(Interval = MotionLedger.copyConfirmationFade)
+                    fade.Tick.Add(fun _ ->
+                        fade.Stop()
+                        if fadeTimer = Some fade then fadeTimer <- None
+                        button.Opacity <- 1.0)
+                    fadeTimer <- Some fade
+                    fade.Start()
             let restoreDefaultState () =
                 stopTimer ()
+                button.Opacity <- 1.0
                 Ui.setIcon button Icons.copy Tokens.textMuted
                 Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                 applyIconBaselineNudge button
@@ -813,6 +893,7 @@ module MessageCard =
             let doCopy () =
                 actions.copyText text
                 stopTimer ()
+                pulseCopyConfirmation ()
                 Ui.setIcon button Icons.check Tokens.success
                 Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                 applyIconBaselineNudge button
@@ -825,6 +906,15 @@ module MessageCard =
                         restoreDefaultState ())
                 copyTimer <- Some timer
                 timer.Start()
+            // 确认淡出与基控件同一机制：往既有过渡集合追加 opacity 补间，不改几何。
+            let fadeTransition = Avalonia.Animation.DoubleTransition()
+            fadeTransition.Property <- Visual.OpacityProperty
+            fadeTransition.Duration <-
+                (if MotionPolicy.isReduced () then TimeSpan.Zero else MotionLedger.copyConfirmationFade)
+            // 统一缓动：复制确认淡出与全应用状态过渡同曲线（easeOutCubic）。
+            fadeTransition.Easing <- MotionPolicy.easeOutCubic
+            if isNull button.Transitions then button.Transitions <- Avalonia.Animation.Transitions()
+            button.Transitions.Add fadeTransition
             Ui.onClick button doCopy
             button.DetachedFromVisualTree.Add(fun _ -> restoreDefaultState ())
             row.Children.Add button
@@ -855,7 +945,7 @@ module MessageCard =
         else m
 
     /// 生成失败卡片：发生了什么 → 用户能做什么 → 是否可重试 → 技术细节按需。
-    let errorCard (error: GenerationError) (onRetry: unit -> unit) : Control =
+    let errorCard (error: GenerationError) (onRetry: unit -> unit) (copyText: (string -> unit) option) : Control =
         let icon = Icons.alert Tokens.danger
         icon.VerticalAlignment <- VerticalAlignment.Top
         icon.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
@@ -873,7 +963,7 @@ module MessageCard =
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = ReadingRhythm.helperLineHeight)
-        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = 3.0)
+        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.fieldRowPaddingY)
         column.Children.Add title
         column.Children.Add hint
         let topRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)
@@ -899,7 +989,7 @@ module MessageCard =
         if error.retryable then
             let retryButton = Ui.button Ui.Secondary "重试" onRetry
             retryButton.Focusable <- true
-            retryButton.MinWidth <- 80.0
+            retryButton.MinWidth <- ControlMetrics.retryButtonMinWidth
             retryButton.Margin <- Thickness 0.0
             retryButton.Padding <- Thickness(Tokens.space4, ControlMetrics.textButtonPaddingY)
             retryButton.Cursor <- handCursor
@@ -909,24 +999,26 @@ module MessageCard =
         match error.detail with
         | Some detail ->
             let detailText = technicalText detail Tokens.fontMicro Tokens.codeMuted
+            // 「技术细节」这名由下方披露切换钮独担（此前展开正文又有一份同名字标，字号还不同）；
+            // 展开正文只保留复制入口，不再重复同名校签。
+            // ChatView 直接调用 errorCard：copyText 由调用方显式注入；未注入时退回
+            // render 写入的同一 AppShell 入口，仍不另造直写剪贴板路径。
+            let copyDetail =
+                match copyText with
+                | Some f -> f
+                | None ->
+                    match copyTextSink with
+                    | Some f -> f
+                    | None -> fun _ -> ()
+            let copyDetailBtn = createCopyButton copyDetail "复制错误细节" "复制错误技术细节" (fun () -> detail)
             let detailHeader = DockPanel(LastChildFill = false)
-            let detailTitle =
-                TextBlock(
-                    Text = "技术细节",
-                    FontSize = Tokens.fontMicro,
-                    FontWeight = FontWeight.Medium,
-                    Foreground = Tokens.textMuted,
-                    VerticalAlignment = VerticalAlignment.Center)
-            let copyDetailBtn = createCopyButton "复制错误细节" "复制错误技术细节" (fun () -> detail)
-            DockPanel.SetDock(detailTitle, Dock.Left)
             DockPanel.SetDock(copyDetailBtn, Dock.Right)
-            detailHeader.Children.Add detailTitle
             detailHeader.Children.Add copyDetailBtn
             let codeBox =
                 Border(
                     Background = Tokens.codeBlockBackground,
-                    BorderBrush = Tokens.borderSoft,
-                    BorderThickness = Thickness 1.0,
+                    BorderBrush = Tokens.codeBorder,
+                    BorderThickness = Thickness ControlMetrics.borderWidth,
                     CornerRadius = CornerRadius Tokens.radiusSm,
                     Padding = Thickness(Tokens.space3, Tokens.space2),
                     Child = detailText)
@@ -951,7 +1043,8 @@ module MessageCard =
             let detailChevronTransitions = Avalonia.Animation.Transitions()
             let detailRotateTransition = Avalonia.Animation.DoubleTransition()
             detailRotateTransition.Property <- RotateTransform.AngleProperty
-            detailRotateTransition.Duration <- MotionPolicy.duration 150
+            detailRotateTransition.Duration <- MotionPolicy.duration MotionLedger.disclosureChevronRotate.TotalMilliseconds
+            detailRotateTransition.Easing <- MotionPolicy.easeOutCubic
             detailChevronTransitions.Add detailRotateTransition
             detailRotate.Transitions <- detailChevronTransitions
             let detailChevronGlyph = Icons.chevronRight Tokens.textMuted
@@ -970,16 +1063,18 @@ module MessageCard =
             let detailHeaderRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
             detailHeaderRow.Children.Add detailChevronHost
             detailHeaderRow.Children.Add detailCaption
+            // 与思考过程 / 工具调用同一共享过渡机制（见 reasoningBlock 头部注释）。
             let detailToggle =
                 ActionBorder(
                     CornerRadius = CornerRadius Tokens.radiusSm,
-                    Padding = Thickness(Tokens.space1, Tokens.space1),
+                    Padding = Thickness(Tokens.space1, Tokens.fieldRowPaddingY),
                     Margin = Thickness 0.0,
                     Background = Brushes.Transparent,
                     BorderBrush = Brushes.Transparent,
-                    BorderThickness = Thickness 1.0,
+                    BorderThickness = Thickness ControlMetrics.borderWidth,
                     Cursor = handCursor,
                     Focusable = true,
+                    Transitions = Ui.surfaceBorderedTransitions (),
                     Child = detailHeaderRow)
             let syncDetailButton () =
                 detailRotate.Angle <- if visible then 90.0 else 0.0
@@ -996,7 +1091,7 @@ module MessageCard =
                 elif detailToggle.IsPointerOver then
                     detailToggle.BorderBrush <- Tokens.line
                     detailToggle.Background <- Tokens.hover
-                    detailToggle.Opacity <- 0.9
+                    detailToggle.Opacity <- Tokens.opacityHoverDim
                 else
                     detailToggle.BorderBrush <- Brushes.Transparent
                     detailToggle.Background <- Brushes.Transparent
@@ -1019,17 +1114,16 @@ module MessageCard =
         if actionRow.Children.Count > 0 then cardLayout.Children.Add actionRow
         if detailContainer.Children.Count > 0 then cardLayout.Children.Add detailContainer
         // danger 只做状态点与提示条（见 Palette 约束）：整卡 dangerSoft 是重红色块；
-        // 与工具卡同级，用 surface 卡 + 常规边框，错误语义由标题旁的 danger 图标承担。
-        Border(
-            Background = Tokens.surface,
-            BorderBrush = Tokens.border,
-            BorderThickness = Thickness 1.0,
-            CornerRadius = CornerRadius Tokens.radiusLg,
-            Padding = Thickness(Tokens.space4, Tokens.space3),
-            Margin = Thickness(0.0, Tokens.space2, 0.0, 0.0),
-            MaxWidth = Tokens.readingWidth,
-            Child = cardLayout)
-        :> Control
+        // 与工具卡同级，用 surfaceContainer 分组卡 + hairline 分隔，错误语义由标题旁的 danger 图标承担。
+        // 错误卡并到消息内次级卡半径档 radiusMd（此前是 radiusLg）；外框走 Ui.groupingCard。
+        let card =
+            Ui.groupingCard
+                (Thickness(Tokens.space4, Tokens.space3))
+                cardLayout
+                Tokens.radiusMd
+        card.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
+        card.MaxWidth <- Tokens.readingWidth
+        card :> Control
 
     /// 消息时间的展示形式：今天只给时刻，昨天加前缀，更早给日期。
     /// 聊天里绝大多数消息是今天的，堆完整日期只是噪音。
@@ -1175,8 +1269,74 @@ module MessageCard =
             panel.Children.Add uCtrl
             Some(panel :> Control)
 
+    /// 流式光标呼吸时钟。
+    ///
+    /// 呼吸相位不再由单个 Border 自己累加：ChatView 每个流式 delta 都整张重建流式卡
+    /// （desired 列表里流式卡键为 None，不进 cardCache，见 ChatView.RenderMessages），
+    /// 旧 Border detach、新 Border attach。相位若挂在 Border 上，每个 delta 都会从峰值
+    /// 重启，呼吸节奏随 delta 密度碎裂。这里把「一段呼吸运行的原点」放在模块级持久状态中：
+    /// 所有流式光标（含每个 delta 新建出来的）都从同一原点、按全局单调时钟的流逝时间
+    /// 取相位，重建因此不再重启节奏。原点只在尚无运行中的段落时开启（进程内第一枚
+    /// 流式光标仍从峰值起步）；beginBreathRun 供新会话或测试显式开启一段新运行。
+    let mutable private breathOriginTicks = 0L
+    let mutable private breathRunLive = false
+
+    /// 开启一段新的呼吸运行（以峰值相位 π/2 为起点）。
+    let beginBreathRun () =
+        breathOriginTicks <- System.Diagnostics.Stopwatch.GetTimestamp()
+        breathRunLive <- true
+
+    /// 自运行原点逝去的时间（单调时钟，不受墙上时钟调整影响）。
+    /// 没有运行中的段落时为零，等价于峰值起点。
+    let breathElapsed () =
+        if breathRunLive then
+            let delta = System.Diagnostics.Stopwatch.GetTimestamp() - breathOriginTicks
+            TimeSpan.FromTicks(delta * TimeSpan.TicksPerSecond / System.Diagnostics.Stopwatch.Frequency)
+        else
+            TimeSpan.Zero
+
+    // ---- 测试接缝（仅测试使用；产品路径只经由 beginBreathRun）----
+    // 无头测试不能 sleep 来推进「真实流逝时间」，否则呼吸连续性测试就只能依赖
+    // 墙上时钟、在冷/孤机跑上反复漂移。这两个入口让测试可以把运行原点钉到
+    // 任意已流逝时间，从而确定性地把呼吸相位放到周期内的指定位置。
+    // 它们不承载任何产品逻辑：写入的状态与 beginBreathRun 完全相同，
+    // breathElapsed / caretBreathOpacity / startBreath 对它们一视同仁。
+
+    /// 测试接缝：开启一段「仿佛已经流逝 byMs 毫秒」的呼吸运行（把原点回拨 byMs），
+    /// 此后的 breathElapsed() 与 caretBreathOpacity 立即落在周期内的确定位置。
+    let beginBreathRunAtElapsedMs (byMs: float) =
+        let offsetTicks = int64 (byMs * float System.Diagnostics.Stopwatch.Frequency / 1000.0)
+        breathOriginTicks <- System.Diagnostics.Stopwatch.GetTimestamp() - offsetTicks
+        breathRunLive <- true
+
+    /// 测试接缝：读出当前运行原点（Stopwatch ticks），
+    /// 供测试断言「渲染过程没有重启/改写这段运行」。
+    let breathRunOriginTicks () = breathOriginTicks
+
+    /// 呼吸相位：纯函数，只取决于「自运行原点逝去的时间」。
+    /// 一周期 = 2 × MotionLedger.caretBreathPhase（峰值→下限→峰值）；t=0 落在峰值 π/2。
+    let caretBreathPhase (elapsed: TimeSpan) =
+        Math.PI / 2.0
+        + 2.0 * Math.PI * elapsed.TotalMilliseconds
+          / (2.0 * MotionLedger.caretBreathPhase.TotalMilliseconds)
+
+    /// 呼吸波：0..1，1 = 峰值。纯函数，供无头测试直接断定性。
+    let caretBreathWave (elapsed: TimeSpan) =
+        (1.0 + Math.Sin(caretBreathPhase elapsed)) / 2.0
+
+    /// 呼吸不透明度：把波映射进 Tokens.opacityCaretBreathMin~Max 闭区间；
+    /// 末端裁剪保证即使输入异常（负流逝等）也不越出区间不变式。
+    let caretBreathOpacity (elapsed: TimeSpan) =
+        let raw =
+            Tokens.opacityCaretBreathMin
+            + (Tokens.opacityCaretBreathMax - Tokens.opacityCaretBreathMin) * caretBreathWave elapsed
+        min Tokens.opacityCaretBreathMax (max Tokens.opacityCaretBreathMin raw)
+
     /// 渲染一条消息。返回可直接塞进消息列表的控件。
     let render (message: MessageView) (ctx: MessageContext) (actions: MessageActions) (index: int option) : Control =
+        // 剪贴板入口的运行时绑定（ChatView 直接调用的 errorCard 未显式注入 copyText）：
+        // 这里写入的仍是 AppShell 持有的同一函数，不是第二真源。
+        copyTextSink <- Some actions.copyText
         let renderer = MarkdownRenderer(ctx.fontSize, actions.copyText, actions.openLink, not ctx.streaming)
         let body = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
 
@@ -1185,7 +1345,7 @@ module MessageCard =
             body.Children.Add(reasoningBlock ctx message.reasoning duration)
 
         for call in message.toolCalls do
-            body.Children.Add(toolCallCard ctx call)
+            body.Children.Add(toolCallCard ctx actions call)
 
         if not (String.IsNullOrWhiteSpace message.text) then
             if MessageView.isUser message then
@@ -1204,15 +1364,43 @@ module MessageCard =
             body.Children.Add(attachmentRow ctx actions attachment)
 
         if ctx.streaming then
+            // 流式光标只做透明度呼吸：区间 Tokens.opacityCaretBreathMin~Max，尺寸与几何一概不动；
+            // 节奏由 MotionLedger.caretBreathPhase 推出的一周期正弦驱动，帧间隔用 MotionLedger.caretBreathFrame，
+            // 减弱动效时静态全显、不起计时器。
             let caret =
                 Border(
-                    Width = 7.0,
-                    Height = 15.0,
+                    Width = ControlMetrics.caretWidth,
+                    Height = ControlMetrics.caretHeight,
                     Background = Tokens.accent,
-                    CornerRadius = CornerRadius Tokens.radiusXs,
+                    CornerRadius = CornerRadius ControlMetrics.caretRadius,
                     HorizontalAlignment = HorizontalAlignment.Left,
                     Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0),
-                    Opacity = Tokens.opacityStreamingCaret)
+                    Opacity = Tokens.opacityCaretBreathMax)
+            let mutable breathTimer: DispatcherTimer option = None
+            let stopBreath () =
+                match breathTimer with
+                | Some t ->
+                    t.Stop()
+                    breathTimer <- None
+                | None -> ()
+            let startBreath () =
+                stopBreath ()
+                if MotionPolicy.isReduced () then
+                    caret.Opacity <- Tokens.opacityCaretBreathMax
+                else
+                    // 相位取自模块级运行原点 + 全局单调时钟：流式卡每个 delta 重建
+                    // （新 Border attach）也接得上同一段呼吸，而不是每次从峰值重启。
+                    // 尚无运行中的段落时才开启新运行，进程内第一枚光标因此仍从峰值起步。
+                    if not breathRunLive then beginBreathRun ()
+                    caret.Opacity <- caretBreathOpacity (breathElapsed ())
+                    // 帧 tick 只负责按帧重算：相位仍是流逝时间的纯函数，
+                    // 掉帧或延迟会被下一次计算自然吸收，不累积漂移、不跨帧互相干扰。
+                    let timer = new DispatcherTimer(Interval = MotionLedger.caretBreathFrame)
+                    timer.Tick.Add(fun _ -> caret.Opacity <- caretBreathOpacity (breathElapsed ()))
+                    timer.Start()
+                    breathTimer <- Some timer
+            caret.AttachedToVisualTree.Add(fun _ -> startBreath ())
+            caret.DetachedFromVisualTree.Add(fun _ -> stopBreath ())
             body.Children.Add caret
 
         let bubble =
@@ -1220,7 +1408,12 @@ module MessageCard =
                 // 用户气泡可聚焦：键盘焦点环只用 focusRingSpread 外阴影，不加边框粗细，不抖动排版。
                 let host =
                     Border(
+                        // 深色气泡在纸面上靠一道 hairlineStrong 细描边定形：两套主题的
+                        // userBubble 都是深底，细边既不抢深色的阅读对比，又给出清晰边缘；
+                        // 半径、内边距与几何一律不动，焦点环仍只走 focusRingSpread 外阴影。
                         Background = Tokens.userBubble,
+                        BorderBrush = Tokens.hairlineStrong,
+                        BorderThickness = Thickness 1.0,
                         CornerRadius = CornerRadius(Tokens.radiusLg, Tokens.radiusLg, Tokens.radiusSm, Tokens.radiusLg),
                         Padding = Thickness(Tokens.space4, Tokens.space3),
                         MaxWidth = LayoutPolicy.userMessageMaxWidth,
