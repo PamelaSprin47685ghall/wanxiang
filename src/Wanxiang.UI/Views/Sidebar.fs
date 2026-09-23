@@ -9,6 +9,7 @@ open Avalonia.Controls.Templates
 open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Controls.Documents
 open Avalonia.Threading
 open Avalonia.VisualTree
 
@@ -59,6 +60,87 @@ type private EmptyVariant =
     | ListLoading
     | NoConversations
 
+/// 搜索命中切分：把一行文本按查询词切成「命中 / 非命中」交替片段，供标题与预览
+/// 上色高亮。分段是纯函数——测试直接断言，不需要起窗口。
+///
+/// 为什么不是 TextBlock.Text 高亮：Avalonia 的 TextBlock.Text 是纯字符串，
+/// 要局部上色只能靠 Inlines 里的 Run。这里只负责「切成哪几段、哪段着色」，
+/// 视觉决策（颜色、字号、加粗）留给调用方。
+///
+/// 分段口径与 ConversationSummary.matches 完全一致（空格分词、忽略大小写、
+/// 每个词都必须参与匹配）：搜索能返回这行，这里就一定会标出使它返回的那些词。
+/// 两者的口径一旦漂移，就会出现「行被搜出来了却看不见哪里匹配」。
+module SidebarText =
+
+    /// 一个文本片段：Text 为内容，IsMatch 表示该片段应被视为查询命中。
+    type Segment = { text: string; isMatch: bool }
+
+    /// 与 ConversationSummary.matches 同一套分词规则，返回参与匹配的非空词表。
+    let terms (query: string) : string list =
+        if String.IsNullOrWhiteSpace query then []
+        else
+            query.Trim().Split([| ' '; '\t' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.distinct
+            |> List.ofArray
+
+    /// 把 text 按 terms 切成有序片段。
+    ///
+    /// 规则：
+    /// - 空查询或空文本返回单段非命中（调用方就该当普通文本渲染）。
+    /// - 命中片段按出现次序从左到右取；多个词命中同一区域时不重叠重复取，
+    ///   全部命中片段先合并排序再去重，保证 text 被完整覆盖一次。
+    /// - 大小写不敏感比较，但保留原文片段（不是查询词本身），长文本不被改写。
+    let segments (query: string) (text: string) : Segment list =
+        let words = terms query
+        if List.isEmpty words || String.IsNullOrEmpty text then
+            let safeText = if isNull text then "" else text
+            [ { text = safeText; isMatch = false } ]
+        else
+            // 每个词单独扫一遍，收集命中的 [start, end) 区间。
+            let raw =
+                [ for word in words do
+                    if String.IsNullOrEmpty word then ()
+                    else
+                        let mutable start = 0
+                        let mutable keep = true
+                        while keep do
+                            let index = text.IndexOf(word, start, StringComparison.OrdinalIgnoreCase)
+                            if index < 0 then keep <- false
+                            else
+                                yield (index, index + word.Length)
+                                start <- index + word.Length
+                                if start >= text.Length then keep <- false ]
+            if List.isEmpty raw then
+                [ { text = text; isMatch = false } ]
+            else
+                // 排序后合并重叠/相邻区间：相邻合并让「两个词挨着」也连成一段高亮，
+                // 视觉上是一整块而不是两段中间被底色切碎。fold 一路保持列表有序，
+                // 累加时按「最后一段」比较，新区间只接到末尾——不引用中间段。
+                let sorted = raw |> List.sortBy fst
+                let merged =
+                    (sorted, [])
+                    ||> List.fold (fun acc (s, e) ->
+                        match acc with
+                        | [] -> [ (s, e) ]
+                        | prev ->
+                            let ps, pe = List.last prev
+                            if s <= pe then
+                                // 与末段重叠或紧邻：把末段延长（max 保证完全包含不被砍短）。
+                                (List.truncate (List.length prev - 1) prev) @ [ (ps, max pe e) ]
+                            else
+                                prev @ [ (s, e) ])
+                // 从合并后的区间还原完整文本，空隙补非命中段。
+                let spans =
+                    [ let mutable cursor = 0
+                      for (s, e) in merged do
+                          if s > cursor then yield { text = text.Substring(cursor, s - cursor); isMatch = false }
+                          yield { text = text.Substring(s, e - s); isMatch = true }
+                          cursor <- e
+                      if cursor < text.Length then
+                          yield { text = text.Substring(cursor); isMatch = false } ]
+                spans
+
+
 /// 会话侧栏。
 ///
 /// 旧版是一个平铺 ListBox：没有分组、没有置顶、没有空态、右键只有两项。
@@ -68,6 +150,22 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     inherit Border()
 
     let handCursor = new Cursor(StandardCursorType.Hand)
+
+    /// 按查询词给一段文本上高亮：填入 TextBlock.Inlines，命中词着 accent 色。
+    /// 查询词由调用方显式传入（RenderRow 取渲染快照、RefreshRowHost 取新快照），
+    /// 所以它不读控件状态、可在任意调用点重放；查询为空时等价于纯文本渲染。
+    /// 高亮只改前景色：命中段之外的 run 不设 Foreground，块自身的
+    /// Foreground 继续统治非命中文本，选中/悬停/紧凑态切色不必顾及这里。
+    let segmentText (block: TextBlock) (query: string) (text: string) =
+        // 必须先丢掉 Text：Avalonia 的 TextBlock.Text 就是 Inlines 的一个隐式 run，
+        // 留着它再 Add 会让同一段文本渲染两遍（一条不着色 + 一条着色，视觉上叠影）。
+        block.Text <- null
+        block.Inlines.Clear()
+        for span in SidebarText.segments query text do
+            let run = Run(span.text)
+            if span.isMatch then
+                run.Foreground <- Tokens.accent
+            block.Inlines.Add run
 
     let searchShell, searchBox = Ui.textField "搜索会话"
     let clearSearchButton = Ui.iconButton Icons.close "清空搜索"
@@ -164,6 +262,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             TextTrimming = TextTrimming.CharacterEllipsis)
 
     let mutable summaries: ConversationSummary list = []
+    /// 当前搜索词（Rebuild 时从搜索框快照）：行渲染与回收复用都据此上高亮。
+    /// 只有 Rebuild 会写它，行渲染只是读者，所以防抖/立即两种时机不会互相打脸。
+    let mutable searchQuery = ""
     let mutable activeId: Guid option = None
     let mutable showArchived = false
     let mutable connected = false
@@ -603,6 +704,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         DockPanel.SetDock(moreButton, Dock.Right)
         titleRow.Children.Add moreButton
         titleRow.Children.Add title
+        // 搜索命中高亮放在组装之后：此时 title/preview 的 Text 已定，
+        // 填 Inlines 不会干扰随后的结构判断（结构判断按索引不按文本）。
+        segmentText title searchQuery summary.title
+        segmentText preview searchQuery (this.PreviewTextFor summary)
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = ControlMetrics.sidebarRowContentSpacing, VerticalAlignment = VerticalAlignment.Center)
         column.Children.Add titleRow
         column.Children.Add preview
@@ -776,6 +881,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                         | :? Border as stateSlot ->
                             titleBlock.Text <- summary.title
                             previewBlock.Text <- this.PreviewTextFor summary
+                            // 赋 Text 会整块替换 Inlines，高亮必须在赋值之后重放：
+                            // 只在新行渲染时上色，回收复用的行就会丢高亮，
+                            // 表现为「搜索框里敲了字，列表一刷新高亮就消失」。
+                            segmentText titleBlock searchQuery summary.title
+                            segmentText previewBlock searchQuery (this.PreviewTextFor summary)
                             this.SetStateSlot(stateSlot, summary)
                             this.ApplyRowState(summary, host)
                             Avalonia.Automation.AutomationProperties.SetName(host, summary.title)
@@ -841,6 +951,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         for s in summaries do
             summaryById[s.id] <- s
         let query = if isNull searchBox.Text then "" else searchBox.Text
+        searchQuery <- query
         let visible =
             summaries
             |> List.filter (fun s -> showArchived || not s.archived)

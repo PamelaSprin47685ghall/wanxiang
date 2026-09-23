@@ -1247,10 +1247,22 @@ let ``sidebar running pin and idle states keep the same title origin`` () =
             Dispatcher.UIThread.RunJobs()
             let list = byAutomationName sidebar "会话列表" :?> ListBox
             let host = realizedByAutomationName list "Stable title"
+            // 标题文本现在住在 Inlines 里（搜索命中高亮按 run 上色），.Text 已空。
+            // 取标题块改用结构定位：dock[0] 状态槽 / dock[1] 更多按钮 / dock[2] 标题，
+            // 与 RefreshRowHost 取标题块的口径一致，比按文本内容找更稳。
             let title =
-                visualControls host
-                |> Seq.choose (function :? TextBlock as text when text.Text = "Stable title" -> Some text | _ -> None)
-                |> Seq.head
+                match host with
+                | :? Border as rowHost ->
+                    match rowHost.Child with
+                    | :? StackPanel as column when column.Children.Count >= 2 ->
+                        match column.Children.[0] with
+                        | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
+                            match titleRow.Children.[2] with
+                            | :? TextBlock as text -> text
+                            | _ -> failwith "row title block not found"
+                        | _ -> failwith "row title row not found"
+                    | _ -> failwith "row column not found"
+                | _ -> failwith "row host not found"
             title.TranslatePoint(Point(0.0, 0.0), host).Value.X, host.Bounds.Height
         let idleX, idleH = titleOrigin false false
         let pinX, pinH = titleOrigin true false
