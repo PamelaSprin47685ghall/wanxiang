@@ -564,6 +564,8 @@ type ShortcutAction =
     | ShowShortcuts
     /// 打开当前会话的模型选择器（输入框内可直接换模型，不必先点芯片）。
     | OpenModelPicker
+    /// 聚焦消息输入框：滚回长会话历史后想继续打字，不必先拿鼠标点一下输入框。
+    | FocusComposer
     /// 跳到上一条 / 下一条用户提问：长会话里找上一个提问不必拖滚轮。
     | JumpExchange of int
     | NoShortcut
@@ -578,6 +580,7 @@ module ShortcutRouter =
         elif ctrl && e.Key = Key.N then NewConversation
         elif ctrl && e.Key = Key.K then FocusSearch
         elif ctrl && e.Key = Key.OemComma then OpenSettings
+        elif ctrl && e.Key = Key.L then FocusComposer
         elif ctrl && not shift && e.Key = Key.M then OpenModelPicker
         // 与顶栏两个跳转按钮完全同一动作；输入框里也能直接翻，不必先移开焦点。
         elif ctrl && not shift && e.Key = Key.Up then JumpExchange -1

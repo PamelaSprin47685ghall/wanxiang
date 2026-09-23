@@ -912,6 +912,10 @@ type MainView() as this =
         | JumpExchange direction ->
             e.Handled <- true
             chat.JumpExchange direction
+        | FocusComposer ->
+            e.Handled <- true
+            // 与重新生成/重试后「焦点回家」同一个入口（Composer.Focus 自带线程与可见性守卫）。
+            composer.Focus()
         | ToggleTheme ->
             e.Handled <- true
             // 主题三态轮转：跟随系统 → 浅色 → 深色 → 回到跟随系统。

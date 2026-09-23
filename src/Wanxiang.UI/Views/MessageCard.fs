@@ -1348,6 +1348,61 @@ module MessageCard =
             + (Tokens.opacityCaretBreathMax - Tokens.opacityCaretBreathMin) * caretBreathWave elapsed
         min Tokens.opacityCaretBreathMax (max Tokens.opacityCaretBreathMin raw)
 
+    /// 消息动作清单：脚注行 hover 按钮与右键菜单唯一的共源。
+    ///
+    /// hover 看得见的项，菜单里也点得到；反过来一样。两条入口共用同一组执行体，
+    /// 门控条件写在这里一次，加动作不会漏掉其中一个入口。
+    let private messageMenuEntries (message: MessageView) (ctx: MessageContext) (actions: MessageActions) : MenuEntry list =
+        // 门控与脚注行 hover 按钮逐项同源（见 actionButtons 的同一批 if）：hover 看得见的，
+        // 菜单里也点得到；反过来一样。不新增任何后端能力，只是换个入口。
+        // 生成期间没有可提交的东西：暂停回复、取消一条不存在回复都是假入口，整体不出现。
+        if ctx.streaming then []
+        else
+            [ if not (String.IsNullOrWhiteSpace message.text) then
+                MenuEntry.create "复制消息" (fun () -> actions.copyText message.text)
+                |> MenuEntry.withIcon Icons.copy
+              if MessageView.isUser message then
+                MenuEntry.create "编辑并分叉" (fun () -> actions.editAndFork message)
+                |> MenuEntry.withIcon Icons.pencil
+              if not (MessageView.isUser message) && ctx.isLastAssistant then
+                MenuEntry.create "重新生成" (fun () -> actions.regenerate ())
+                |> MenuEntry.withIcon Icons.refresh
+              match message.commitId with
+              | Some commitId ->
+                MenuEntry.create "删除这条消息" (fun () -> actions.deleteMessage commitId)
+                |> MenuEntry.withIcon Icons.trash
+                |> MenuEntry.asDanger
+              | None -> () ]
+
+    /// 右键 / 键盘（Apps、Shift+F10）菜单，挂在卡自身：桌面端「对某条消息发动作」的
+    /// 原生入口。hover 操作条在触屏上不存在、键盘也要 Tab 半天；右键一次抵达。
+    ///
+    /// 用平台 ContextMenu 而不是 OverlayHost 浮层菜单：我们对外暴露的菜单约定
+    /// 仍然是 Menu/OverlayHost（侧栏行菜单），这里是宿主对右键的原生响应，
+    /// 不引入第二套「我们自己画」的浮层实现，也不需要把 OverlayHost 一路注入到
+    /// 每张消息卡（那会为一件只在右键时才做的事，拖着一个真实 Grid 走遍所有测试夹具）。
+    let private buildMessageContextMenu
+        (message: MessageView)
+        (ctx: MessageContext)
+        (actions: MessageActions)
+        : ContextMenu =
+        let menu = ContextMenu()
+        let entries = messageMenuEntries message ctx actions
+        if List.isEmpty entries then
+            // 没有任何可用动作：挂空集合。宿主对空菜单不显示，客户端无需再判一次。
+            menu.ItemsSource <- ResizeArray<obj>() :> System.Collections.IEnumerable
+        else
+            let items =
+                entries
+                |> List.map (fun e ->
+                    let item = MenuItem(Header = e.label)
+                    if e.danger then item.Foreground <- Tokens.danger
+                    item.Click.Add(fun _ -> e.action ())
+                    item :> obj)
+                |> ResizeArray<obj>
+            menu.ItemsSource <- items :> System.Collections.IEnumerable
+        menu
+
     /// 渲染一条消息。返回可直接塞进消息列表的控件。
     let render (message: MessageView) (ctx: MessageContext) (actions: MessageActions) (index: int option) : Control =
         // 剪贴板入口的运行时绑定（ChatView 直接调用的 errorCard 未显式注入 copyText）：
@@ -1543,6 +1598,18 @@ module MessageCard =
             Dispatcher.UIThread.Post(fun () -> syncVisual ())
         host.PointerEntered.Add(fun _ -> highlight ())
         host.PointerExited.Add(fun _ -> dim ())
+        // 右键菜单：桌面端「对某条消息发动作」的原生入口。hover 操作条在触屏上不存在、
+        // 键盘也要 Tab 半天，右键一次抵达。菜单项与脚注行 hover 按钮逐项同源
+        // （messageMenuEntries），换入口不加能力。
+        host.ContextMenu <- buildMessageContextMenu message ctx actions
+        host.PointerPressed.Add(fun e ->
+            match e.GetCurrentPoint(host).Properties with
+            | p when p.IsRightButtonPressed ->
+                host.Focus(NavigationMethod.Pointer) |> ignore
+            | _ -> ())
+        // 不为卡片本身加 Shift+F10 / Apps 键盘入口：那要求 host 可聚焦，而每张消息卡
+        // 都变成一个 Tab 停靠点等于把整段会话变成 Tab 迷宫。消息动作的键盘路径本来就
+        // 有——Tab 到脚注行按钮（它们各自可聚焦且带焦点环）。右键只做指针入口。
         host.GotFocus.Add(fun _ -> syncVisual ())
         host.LostFocus.Add(fun _ -> dim ())
         buttons.GotFocus.Add(fun _ -> highlight ())

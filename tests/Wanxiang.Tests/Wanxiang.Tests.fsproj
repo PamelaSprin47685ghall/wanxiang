@@ -24,6 +24,7 @@
     <Compile Include="MathRenderTests.fs" />
     <Compile Include="NativeTransportTests.fs" />
     <Compile Include="ScrollLayoutTests.fs" />
+    <Compile Include="OperabilityTests.fs" />
     <Compile Include="ExchangeNavTests.fs" />
     <Compile Include="MathBaselineTests.fs" />
     <Compile Include="RenderCostTests.fs" />

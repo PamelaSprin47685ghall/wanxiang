@@ -607,6 +607,7 @@ module Dialogs =
                 "Ctrl / ⌘ + Enter", "强制发送消息"
                 "Ctrl / ⌘ + Shift + E", "导出当前会话为 Markdown"
                 "Ctrl / ⌘ + 上 / 下", "跳到上一条 / 下一条提问（顶栏同款按钮）"
+                "Ctrl / ⌘ + L", "聚焦消息输入框"
                 "Esc", "关闭弹层 / 取消编辑 / 停止生成" ] ]
         let contentPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space3)
         for (category, items) in sections do
