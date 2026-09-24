@@ -635,7 +635,14 @@ type MainView() as this =
                            editedMessageJson = editedMessage |}
                 sendCommandWithFeedback command None (fun () ->
                     this.SelectConversation(Some newId)
-                    send (ObserveConversation {| conversationId = newId |})))
+                    send (ObserveConversation {| conversationId = newId |}))
+                // 分叉落定与新建/打开会话同一归宿：焦点回家到输入区（D3/D4）。
+                // 漏这一句时，分叉后焦点悬在已关闭的编辑弹窗原位（对话框关掉时
+                // 焦点宿主一并消失），键盘用户得摸鼠标点回输入区；NewConversation
+                // 与 OpenConversation 两条兄弟路径都带着这条无条件的一行。
+                // 同步而非 Post：editText 的 submit 先 CloseDialog() 再 onConfirm，
+                // 还原焦点发生在内、发生在前，这一行随后落地不为空转（实测验证）。
+                composer.Focus())
         | _ -> toast "当前没有可分叉的会话。" Warning
 
     member private _.CurrentFocusControl() : Control option =

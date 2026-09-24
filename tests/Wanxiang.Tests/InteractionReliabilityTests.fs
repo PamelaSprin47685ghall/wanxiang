@@ -3,8 +3,10 @@ module Wanxiang.Tests.InteractionReliabilityTests
 open System
 open System.Reflection
 open System.Text.Json.Nodes
+open Avalonia
 open Avalonia.Automation
 open Avalonia.Automation.Peers
+open Avalonia.Input
 open Avalonia.Automation.Provider
 open Avalonia.Controls
 open Avalonia.Threading
@@ -12,6 +14,7 @@ open Xunit
 open Wanxiang.Core
 open Wanxiang.Protocol
 open Wanxiang.UI
+open Avalonia.VisualTree
 
 let private flags = BindingFlags.Instance ||| BindingFlags.Public ||| BindingFlags.NonPublic
 let private field (target: obj) name = target.GetType().GetField(name, flags)
@@ -323,3 +326,150 @@ let ``selecting an unloaded conversation does not display the previous conversat
     Assert.DoesNotContain("只属于会话 A 的正文", visibleText)
     let runs = (field view "runs").GetValue view :?> ConversationRuns
     Assert.Equal("只属于会话 A 的正文", (runs.Get(Some a)).message.Value.text)
+
+[<Fact>]
+let ``generation ending hands keyboard focus back to the composer`` () =
+    Headless.ensure ()
+    let composer =
+        Composer
+            { submit = fun _ -> true
+              stopGeneration = ignore; pickAttachment = ignore; removeAttachment = ignore; openModelPicker = ignore
+              dropFiles = ignore; pasteFromClipboard = fun () -> false }
+    composer.Build()
+    let window = Window(Content = composer, Width = 600.0, Height = 400.0)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        composer.SetEnabled(true, "")
+        composer.SetGenerating true
+        Dispatcher.UIThread.RunJobs()
+        let sendButton = controls composer |> Seq.find (fun c -> AutomationProperties.GetName c = "停止生成")
+        Assert.True(sendButton.Focusable, "前置条件：生成态停止键可获得焦点")
+        sendButton.Focus() |> ignore
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(sendButton.IsFocused, "前置条件：焦点在停止键上")
+        composer.SetGenerating false
+        Dispatcher.UIThread.RunJobs()
+        let input = controls composer |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
+        Assert.True(input.IsFocused,
+            "生成结束后焦点必须回家到输入框：停止键/排队键是两个常驻占位槽，失去生成态时"
+            + "被复位成 Focusable=false（布局占位不变、只断键盘与命中），而 Avalonia 不会替"
+            + "宿主失资格的控件自动迁焦——焦点悬停在那个 Opacity=0 的 Border 上，之后敲的字"
+            + "没有任何承接。kelivo chat_input_bar.dart:1010 在生成结束一律回 focusNode。")
+    finally
+        window.Close()
+
+[<Fact>]
+let ``top bar stop button hands keyboard focus back to the composer when a run finishes`` () =
+    Headless.ensure ()
+    // 直接驱动 ChatView：AppShell 下发生成态的连线已有 stopVisible 用例覆盖
+    // （composer 那一侧），这里只钉「焦点从顶栏槽位回家」这一行为本身。
+    let chat =
+        ChatView(
+            { renameTitle = ignore
+              openSessionSettings = ignore
+              forkFromHere = ignore
+              stopGeneration = ignore
+              requestOlderHistory = ignore
+              retryLast = ignore
+              toggleSidebar = ignore
+              message =
+                { copyText = ignore
+                  regenerate = ignore
+                  editAndFork = ignore
+                  deleteMessage = ignore
+                  downloadAttachment = ignore
+                  openLink = ignore } },
+            Brand.logo)
+    chat.Build()
+    let host = Grid()
+    host.Children.Add chat
+    let window = Window(Content = host, Width = 900.0, Height = 700.0)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        // 与 AppShell 的真实顺序一致：先有会话 chrome（顶栏才可见），再置生成态，
+        // 最后 SetCanStop 让停止键从禁用态转为可聚焦。
+        chat.SetConversationChrome true
+        let mutable homed = false
+        chat.SetGenerating(true, "生成中", (fun () -> homed <- true))
+        chat.SetCanStop true
+        Dispatcher.UIThread.RunJobs()
+        // 首帧 layout 尚未落地前 Focus 不可能成功：Bounds 全 0、effVis 假。
+        // 二次 RunJobs 让窗口完成 measure/arrange 再落焦点；headless 下窗口的
+        // 首帧 layout 不随 window.Show() 同步落地，得手动推一轮 layout pass。
+        window.GetLayoutManager().ExecuteLayoutPass()
+        Dispatcher.UIThread.RunJobs()
+        let chatStop =
+            controls chat |> Seq.find (fun c -> AutomationProperties.GetName c = "停止生成")
+        Assert.True(chatStop.Focusable, "前置条件：生成态顶栏停止键可获得焦点")
+        let ok = chatStop.Focus()
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(ok && chatStop.IsFocused, "前置条件：键盘焦点落在顶栏停止键上")
+        chat.SetGenerating(false, "", (fun () -> homed <- true))
+        Dispatcher.UIThread.RunJobs()
+        Assert.False(chatStop.Focusable, "生成结束后槽位复位为不可聚焦（占位保留、不断布局）")
+        // ChatView 只负责委托：AppShell 侧收到 focusHome 后把焦点搬去输入区
+        // （同 composer.SetGenerating 那条路径，另有一测钉住 input.IsFocused）。
+        // 这里的契约就是「委托确实发出」——不发出，真实链路里焦点就悬在
+        // Opacity=0 的 Border 上，之后敲的字全部丢失。
+        Assert.True(homed, "顶栏槽位失资格时焦点必须委托给 AppShell；"
+            + "没有这条委托，Avalonia 不会替失资格宿主迁焦，键盘用户之后敲的字全部丢失。")
+        // kelivo chat_input_bar.dart:1010 生成结束一律 requestFocus 回输入框，
+        // 与 kelivo 桌面端同向；主动点「停止」已由 AppShell.StopGeneration 收口，
+        // 这里接自然完成与排队条目过期。
+    finally
+        window.Close()
+
+/// 分叉落定后焦点必须回家：三条会话切换路径（新建 / 打开 / 分叉）共用同一归宿，
+/// 唯独 ForkFrom 漏了 composer.Focus()。兄弟路径（NewConversation:513 /
+/// OpenConversation:520）都在 send 之后无条件把焦点送回输入区（D3/D4），
+/// ForkFrom 此前不在其中：键盘用户在编辑弹窗确认后焦点悬在已关闭的对话框原位
+/// （对话框关掉时其焦点宿主一并消失），得摸鼠标点回输入区。
+[<Fact>]
+let ``forking from a message hands keyboard focus back to the composer`` () =
+    Headless.ensure ()
+    let view = MainView()
+    view.Build()
+    let window = Window(Content = view, Width = 900.0, Height = 700.0)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        let id = Guid.NewGuid()
+        handle view (snapshot id)
+        (field view "activeConvId").SetValue(view, box (Some id))
+        invoke view "ForkFrom" [| box None; box "测试分叉内容" |] |> ignore
+        Dispatcher.UIThread.RunJobs()
+        // 对话框挂在 OverlayHost 的 root Grid 上（层序：scrim / dialogCard /
+        // popupCatcher / popupCard / toastStack）；dialogCard 是第 4 个子。
+        let rootChildren = unbox<Grid>(view.Content).Children |> Seq.cast<Control> |> List.ofSeq
+        let dialogCard = rootChildren[3]
+        Assert.True(dialogCard.IsVisible, "ForkFrom 应打开编辑并分叉对话框")
+        let cardTexts =
+            dialogCard.GetVisualDescendants()
+            |> Seq.choose (function
+                | :? TextBlock as tb when not (isNull tb.Text) -> Some tb.Text
+                | _ -> None) |> List.ofSeq
+        Assert.True(cardTexts |> List.exists (fun t -> t.Contains "编辑并分叉"),
+            sprintf "ForkFrom 应打开编辑对话框，实际文本：%A" cardTexts)
+        // 提交 → onConfirm 切换会话、发出 fork 命令；焦点回家一行在其后无条件执行
+        // （与 New/OpenConversation 同构，不依赖服务端确认回调）。Ui.onClick 造的
+        // ActionBorder 同时实现 IInvokeProvider（Primitives.fs:183-186），Invoke 与
+        // 真人点击同一条 action，比合成指针事件更稳（合成事件对 dialog 层不可靠）。
+        let confirm =
+            dialogCard.GetVisualDescendants()
+            |> Seq.choose (function :? Control as c -> Some c | _ -> None)
+            |> Seq.find (fun c -> AutomationProperties.GetName c = "创建分叉")
+        let peer = Avalonia.Automation.Peers.ControlAutomationPeer.CreatePeerForElement confirm
+        let invoke = Assert.IsAssignableFrom<Avalonia.Automation.Provider.IInvokeProvider>(peer)
+        invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        let composer = (field view "composer").GetValue view :?> Composer
+        let input =
+            composer.GetVisualDescendants()
+            |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
+        Assert.True(input.IsFocused,
+            "分叉确认后焦点必须回家到输入框——编辑弹窗关闭时其焦点宿主随之消失，"
+            + "不显式移交焦点，键盘用户接下来敲的字没有任何承接（D3/D4）。")
+    finally
+        window.Close()

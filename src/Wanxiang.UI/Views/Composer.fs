@@ -714,6 +714,18 @@ type Composer(actions: ComposerActions) as this =
             pendingContainer.IsVisible <- not (List.isEmpty items)
 
     member this.SetGenerating(value: bool) =
+        // 焦点归属必须在进入 refreshSendState 之前抓：那里面 Ui.setEnabled sendButton
+        // 在空草稿、无附件的瞬间把 IsEnabled 置假，Avalonia 当场摘走焦点，之后再读
+        // IsFocused / GetFocusedElement 都是 null，就无法判断该不该把焦点送回家。
+        let homeFocus =
+            not value
+            && (match TopLevel.GetTopLevel(this) with
+                | null -> false
+                | top ->
+                    let focused = top.FocusManager.GetFocusedElement()
+                    not (isNull focused)
+                    && (Object.ReferenceEquals(focused, sendButton)
+                        || Object.ReferenceEquals(focused, queueButton)))
         generating <- value
         if value then
             Ui.setIcon sendButton Icons.stop Tokens.textOnAccent
@@ -721,6 +733,12 @@ type Composer(actions: ComposerActions) as this =
             Ui.setIcon sendButton Icons.send Tokens.textOnAccent
         // 发送/停止只换字形：按钮外尺寸与圆角在构造时已固定，切换时不动几何，避免 1px 抖动。
         refreshSendState ()
+        // 生成收尾后把焦点送回输入框（见 homeFocus 处说明）。发送键与排队键是常驻占位槽，
+        // 非生成态被复位成 IsEnabled=false / Focusable=false，Avalonia 不会替失资格宿主
+        // 迁焦——焦点悬停在 Opacity=0 的 Border 上，之后敲的字没有任何承接。
+        // kelivo chat_input_bar.dart:1010 生成结束一律 requestFocus 回输入框；
+        // 主动点「停止」已由 AppShell.StopGeneration 收口，这里接自然完成与排队条目过期。
+        if homeFocus then tryFocusInput ()
 
     member _.IsGenerating = generating
 

@@ -488,11 +488,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         Ui.setReservedActionVisible stopButton isGenerating
         if isGenerating then Ui.setEnabled stopButton canStop
 
-    member this.SetGenerating(generating: bool, statusText: string) =
+    /// `focusHome` 在生成态收尾、焦点停在停止键上时托管回家（AppShell 传输入区）。
+    /// 顶栏停止键也是保留槽位：Focusable 复位为 false 时 Avalonia 不自动迁焦，
+    /// 焦点会悬在 Opacity=0 的宿主上，键盘用户之后敲的字没有任何承接。
+    member this.SetGenerating(generating: bool, statusText: string, ?focusHome: unit -> unit) =
+        let focusHome = focusHome |> Option.defaultValue ignore
         isGenerating <- generating
         this.SyncGeneratingChipVisibility()
         generatingCaption.Text <- if String.IsNullOrWhiteSpace statusText then "生成中" else statusText
         this.SyncStopSlot()
+        if not generating && stopButton.IsFocused then focusHome ()
 
     member this.SetCanStop(value: bool) =
         canStop <- value
