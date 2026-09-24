@@ -793,11 +793,23 @@ module MessageCard =
                     Focusable = true,
                     Child = row)
         if not missing then
-            ToolTip.SetTip(host, "下载附件")
-            Avalonia.Automation.AutomationProperties.SetName(host, sprintf "下载附件 %s" attachment.fileName)
+            // 图片附件的动作意图是「查看或下载」，与普通文件的「下载」分开说：
+            // 同写「下载附件」会让用户以为图片只能当文件存，看不到就是存。
+            let attachmentTip =
+                if AttachmentRef.isImage attachment then "查看或下载图片" else "下载附件"
+            ToolTip.SetTip(host, attachmentTip)
+            Avalonia.Automation.AutomationProperties.SetName(
+                host,
+                sprintf "%s %s" attachmentTip attachment.fileName)
             host.PointerEntered.Add(fun _ -> host.Background <- Tokens.surfaceRaised)
             host.PointerExited.Add(fun _ -> host.Background <- Tokens.surface)
             Ui.onClick host (fun () -> actions.downloadAttachment attachment.sha256)
+        else
+            // 正常附件有悬停提示与读屏名称；丢失态退化为静态条后两者都没有，
+            // 读屏只念得出文件名，用户不知道它已经打不开了。补齐同一份自描述。
+            let lostTip = sprintf "附件「%s」内容已丢失" attachment.fileName
+            ToolTip.SetTip(host, lostTip)
+            Avalonia.Automation.AutomationProperties.SetName(host, lostTip)
         host :> Control
 
     /// 悬停操作条。按钮本体就在脚注行里随文档流排布（见 actionButtons），
@@ -1272,6 +1284,12 @@ module MessageCard =
                     HorizontalAlignment =
                         (if MessageView.isUser message then HorizontalAlignment.Right else HorizontalAlignment.Left),
                     VerticalAlignment = VerticalAlignment.Center)
+            // 简短时刻不给精确时间：悬停补完整时间戳（含秒与年月日），
+            // 读屏取同一份完整文本，不再把「14:20」读成一片空白。
+            let full = message.committedAt |> Option.map (fun at -> at.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))
+            full |> Option.iter (fun f ->
+                ToolTip.SetTip(text, f)
+                AutomationProperties.SetName(text, f))
             Some(text :> Control)
         | None, Some uCtrl ->
             Some uCtrl
@@ -1283,6 +1301,12 @@ module MessageCard =
                     VerticalAlignment = VerticalAlignment.Center)
             let timeTb =
                 TextBlock(Text = time, FontSize = Tokens.fontMicro, Foreground = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
+            // 同上：紧凑时刻旁悬停给完整时间戳。
+            message.committedAt
+            |> Option.iter (fun at ->
+                let full = at.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                ToolTip.SetTip(timeTb, full)
+                AutomationProperties.SetName(timeTb, full))
             let sepTb =
                 TextBlock(Text = " · ", FontSize = Tokens.fontMicro, Foreground = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
             panel.Children.Add timeTb

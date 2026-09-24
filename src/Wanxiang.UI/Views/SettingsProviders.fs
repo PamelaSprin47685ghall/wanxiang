@@ -231,7 +231,11 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
               |> List.map (fun preset ->
                   MenuEntry.create preset.label (fun () ->
                       setPresetText preset.label
-                      applyPreset preset)) ]
+                      applyPreset preset)
+                  // 下拉里要能看出当前是哪一项预设：按钮标题只显示一个是哪一项，
+                  // 展开列表时所有条目平铺，选中态缺失等于让用户靠试。与外观主题
+                  // 下拉同一 contract（MenuEntry.markSelected）。
+                  |> MenuEntry.markSelected (currentPreset = Some preset)) ]
         let presetButton, setText =
             Menu.selectButton
                 overlay

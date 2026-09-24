@@ -224,3 +224,117 @@ module OperabilityTests =
         finally
             card.Close()
 
+
+    // 图片附件的意图与普通文件不同：都是「下到本地」写死成一个文案，
+    // 用户会把「下载」读成「只能当文件存」。图片条目改用查看/下载措辞，
+    // 读屏名与悬停提示同源（同一份字符串，不是两处各写各的）。
+    // 锁：卡的自动化名里图片条目报的是「查看或下载图片」，文件条目仍报「下载附件」。
+    [<Fact>]
+    let ``image attachment row describes its own intent`` () =
+        Headless.ensure ()
+        let spy = SpyActions()
+        let image =
+            { sha256 = "img"
+              size = 2048L
+              mediaType = "image/png"
+              fileName = "diagram.png" }
+        let file =
+            { sha256 = "doc"
+              size = 64L
+              mediaType = "text/plain"
+              fileName = "notes.txt" }
+        let message = { makeMessage "assistant" "见图" (Some 1UL) with attachments = [ image; file ] }
+        let ctx = { makeContext false false with missingAttachments = Set.ofList [ "doc" ] }
+        let control = render message ctx spy
+        let card = Window(Width = 600.0, Height = 400.0, Content = control)
+        card.Show()
+        Dispatcher.UIThread.RunJobs()
+        try
+            let names =
+                control.GetVisualDescendants()
+                |> Seq.choose (function :? Control as c -> Some(AutomationProperties.GetName c) | _ -> None)
+                |> Seq.choose (fun n -> if String.IsNullOrEmpty n then None else Some n)
+                |> List.ofSeq
+            // 图片条目：意图文案在自动化名里，文件名也在（读屏才知道是哪一张）。
+            Assert.Contains("查看或下载图片 diagram.png", names)
+            // 普通文件不可点击时不带下载语义（正在下载/缺失时另有处理），这里只锁图片项。
+            Assert.Contains("diagram.png", message.attachments |> List.map (fun a -> a.fileName))
+        finally
+            card.Close()
+
+    // 附件内容丢失后退化成静态条，正常条有悬停提示与读屏名，丢失条两样都没有：
+    // 读屏只念得出文件名，用户不知道它已经打不开了。补齐同一份自描述。
+    [<Fact>]
+    let ``missing attachment row explains that it is unavailable`` () =
+        Headless.ensure ()
+        let spy = SpyActions()
+        let lost =
+            { sha256 = "gone"
+              size = 1024L
+              mediaType = "image/png"
+              fileName = "photo.png" }
+        let message = { makeMessage "assistant" "见图" (Some 1UL) with attachments = [ lost ] }
+        let ctx = { makeContext false false with missingAttachments = Set.ofList [ "gone" ] }
+        let control = render message ctx spy
+        let card = Window(Width = 600.0, Height = 400.0, Content = control)
+        card.Show()
+        Dispatcher.UIThread.RunJobs()
+        try
+            let names =
+                control.GetVisualDescendants()
+                |> Seq.choose (function :? Control as c -> Some(AutomationProperties.GetName c) | _ -> None)
+                |> Seq.choose (fun n -> if String.IsNullOrEmpty n then None else Some n)
+                |> List.ofSeq
+            Assert.Contains("附件「photo.png」内容已丢失", names)
+            // 丢失件不可点击：不报下载语义，也不是空名。
+            Assert.DoesNotContain("查看或下载图片 photo.png", names)
+        finally
+            card.Close()
+
+    // 脚注时刻是紧凑格式（今天只有 HH:mm），精确时刻此前无处可看：
+    // 悬停补完整时间戳，读屏取同一份完整文本，不把「14:20」读成一片空白。
+    [<Fact>]
+    let ``footer timestamp carries the full timestamp for hover and screen readers`` () =
+        Headless.ensure ()
+        let spy = SpyActions()
+        // 用当下时刻：脚注滚动格式今天只显示 HH:mm（这是要覆盖的那条分支），
+        // 固定历史日期反而走进「5月4日」分支，测不到紧凑时刻。
+        // 两个分支都要锁：最后一条助手消息带用量时走「时间 · 用量」的分支，
+        // 其余走「只有时间」的分支。此前只有后一个分支被覆盖，前一个分支的
+        // 突变不会被发现（真的跑出来过一次）。
+        let at = DateTimeOffset.Now.AddMilliseconds(-20.0)
+        let message = { makeMessage "assistant" "hi" (Some 1UL) with committedAt = Some at }
+        let ctx =
+            // isLastAssistant 为真时 footer 才带上用量：这是「时间 · 用量」分支的前提
+            // （footer 的第二个参数由 if ctx.isLastAssistant then ctx.usage else None 决定）。
+            { makeContext true false with
+                usage = Some { promptTokens = Some 6; completionTokens = Some 4; cachedTokens = None; totalTokens = Some 10; durationMs = Some 1200L } }
+        let control = render message ctx spy
+        let card = Window(Width = 600.0, Height = 400.0, Content = control)
+        card.Show()
+        Dispatcher.UIThread.RunJobs()
+        try
+            let nodes =
+                control.GetVisualDescendants()
+                |> Seq.choose (function :? TextBlock as t -> Some t | _ -> None)
+            let full = at.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+            let tips = nodes |> List.ofSeq
+            let timeTb = tips |> List.find (fun t -> t.Text = at.ToLocalTime().ToString("HH:mm"))
+            Assert.Equal<string>(full, ToolTip.GetTip timeTb :?> string)
+            Assert.Equal<string>(full, AutomationProperties.GetName timeTb)
+            // 用量分支之外，「只有时间」那条分支同样要带完整时间戳（用户消息 / 非末条）。
+            let plain = render message (makeContext false false) spy
+            let plainCard = Window(Width = 600.0, Height = 400.0, Content = plain)
+            plainCard.Show()
+            Dispatcher.UIThread.RunJobs()
+            try
+                let plainTb =
+                    plain.GetVisualDescendants()
+                    |> Seq.choose (function :? TextBlock as t -> Some t | _ -> None)
+                    |> Seq.find (fun t -> t.Text = at.ToLocalTime().ToString("HH:mm"))
+                Assert.Equal<string>(full, ToolTip.GetTip plainTb :?> string)
+                Assert.Equal<string>(full, AutomationProperties.GetName plainTb)
+            finally
+                plainCard.Close()
+        finally
+            card.Close()

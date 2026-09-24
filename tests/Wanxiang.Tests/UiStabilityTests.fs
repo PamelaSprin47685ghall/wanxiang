@@ -2077,6 +2077,8 @@ let ``provider editor stays pending until authoritative config result`` () =
     let view = providers.Build()
     root.Children.Insert(0, view)
     let window = show root 760.0 700.0
+    // 新建服务商带默认预设：按钮当前值就是首个预设名。
+    let currentPresetLabel = (ProviderPresets.all |> List.head).label
     try
         let addProvider = byAutomationName view "添加服务商"
         ControlAutomationPeer.CreatePeerForElement addProvider
@@ -2324,3 +2326,90 @@ let ``composer inset adapts to width outside compact and stays tight inside comp
             Assert.Equal(expected, composer.Padding.Left, 3)
         finally
             window.Close()
+
+// 预设下拉此前展开后所有条目平铺，看不出当前是哪一项：按钮标题只显示一项，
+// 列表里第二眼就得靠试。与外观主题下拉同一 contract（MenuEntry.markSelected
+// 在选中项右侧画勾）。锁：新建服务商（当前预设 None）展开时恰好零个勾；
+// 选中一个预设后重新展开，恰好一个勾。
+[<Fact>]
+let ``preset dropdown marks exactly the current preset`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    overlay.WireDismiss()
+    let settingsActions =
+        { upsertProvider = fun _ completed -> completed true
+          deleteProvider = ignore
+          probeProvider = ignore
+          upsertMcp = fun _ completed -> completed true
+          deleteMcp = ignore
+          updateGeneration = fun _ completed -> completed true
+          savePrefs = ignore
+          toast = fun _ _ -> () }
+    let providers = SettingsProviders(overlay, settingsActions)
+    let view = providers.Build()
+    root.Children.Insert(0, view)
+    let window = show root 760.0 700.0
+    // 新建服务商带默认预设：按钮当前值就是首个预设名。
+    let currentPresetLabel = (ProviderPresets.all |> List.head).label
+    // 数勾：菜单选中态由右侧一个 check 图标承担（Icons.check 是 Path 几何）。
+    // 勾的数量就是用户看得见的东西，按几何匹配。
+    let checkCount (scope: Control) =
+        visualControls scope
+        |> Seq.choose (function
+            | :? Avalonia.Controls.Shapes.Path as p when not (isNull p.Data) -> Some(p.Data.ToString())
+            | _ -> None)
+        |> Seq.filter (fun d -> d.Contains("3.4") && d.Contains("12.8"))
+        |> Seq.length
+    // Down / Up 都能展开（Menu.selectButton 的既有约定）。
+    // 对话框内容挂在 OverlayHost 上，所以这里在整个 root 里找。
+    let expandPreset (expectedLabel: string) =
+        // selectButton 不设无障碍名，只把当前值写进 ToolTip（caption 会被省略号截断）；
+        // 选中预设后提示文本随之更新，所以调用方传入当期期望值。
+        let presetButton =
+            descendants root
+            |> Seq.find (fun c -> (ToolTip.GetTip c :?> string) = expectedLabel)
+        presetButton.RaiseEvent(
+            KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down, KeyModifiers = KeyModifiers.None))
+        Dispatcher.UIThread.RunJobs()
+        ()
+    try
+        let addProvider = byAutomationName view "添加服务商"
+        ControlAutomationPeer.CreatePeerForElement addProvider
+        |> Assert.IsAssignableFrom<IInvokeProvider>
+        |> fun invoke -> invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        expandPreset currentPresetLabel
+        Assert.True(overlay.IsPopupOpen, "预设下拉应已展开")
+        // 新建服务商带默认预设：这一项旁边应已有勾（此前一个都没有）。
+        // 只看展开的菜单项：菜单项的无障碍名就是预设名，选中态是该项里的勾。
+        let markedPresets () =
+            visualControls root
+            |> Seq.choose (function
+                | :? Avalonia.Controls.Border as b when not (isNull (AutomationProperties.GetName b)) && AutomationProperties.GetControlTypeOverride(b).HasValue && AutomationProperties.GetControlTypeOverride(b).Value = Avalonia.Automation.Peers.AutomationControlType.MenuItem ->
+                    let checks =
+                        visualControls b
+                        |> Seq.choose (function :? Avalonia.Controls.Shapes.Path -> Some () | _ -> None)
+                        |> Seq.length
+                    if checks > 0 then Some(AutomationProperties.GetName b) else None
+                | _ -> None)
+            |> List.ofSeq
+        Assert.Equal<string list>([ currentPresetLabel ], markedPresets ())
+        // 切到第二个预设：菜单项经由服务商编辑器自己的选择逻辑（与用户点击等价）。
+        let nextPreset = ProviderPresets.all.[1]
+        let target =
+            descendants root
+            |> Seq.find (fun c ->
+                AutomationProperties.GetName c = nextPreset.label
+                && AutomationProperties.GetControlTypeOverride(c).HasValue)
+        ControlAutomationPeer.CreatePeerForElement target
+        |> Assert.IsAssignableFrom<IInvokeProvider>
+        |> fun invoke -> invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        Assert.False(overlay.IsPopupOpen, "选中后下拉应关闭")
+        expandPreset nextPreset.label
+        Assert.True(overlay.IsPopupOpen, "预设下拉应重新展开")
+        // 勾跟随当前预设走：仍是恰好一项，且是新的那一项。
+        Assert.Equal<string list>([ nextPreset.label ], markedPresets ())
+    finally
+        window.Close()

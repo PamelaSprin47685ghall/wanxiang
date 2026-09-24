@@ -167,6 +167,29 @@ let ``generation form consumes shared column spacing and text metrics`` () =
         |> Seq.length
     Assert.True(switchRows >= 1, "生成表单至少有一个开关行走共享行最小高")
 
+// 生成设置是设置区唯一不认 Ctrl+Enter 的表单：本地其余表单（服务商 / MCP / 会话参数）
+// 全部「Ctrl/⌘+Enter 保存」。补上同样的行级 KeyDown，并把键位写进按钮的无障碍说明，
+// 用户不必先到处试键。锁：Ctrl+Enter 真触发保存，裸 Enter 不触发（归 Ui.onClick）。
+// 生成设置此前是设置区唯一不认 Ctrl+Enter 的表单：本地其余表单（服务商 / MCP / 会话参数）
+// 全部「Ctrl/⌘+Enter 保存」。按钮的无障碍说明现在把键位写清楚，不必靠试。
+// 键盘路由本身的验证不在此处：合成按键在无头窗口里不会从焦点控件冒泡到祖先
+// （同一原因，SettingsProviders / SettingsTools 的行级 KeyDown 也没有单测），
+// 这里只锁用户可观察的那一半——按钮自描述里的键位。
+[<Fact>]
+let ``generation save button advertises the ctrl enter shortcut`` () =
+    Headless.ensure ()
+    let toasts = ResizeArray<string * ToastTone>()
+    let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
+    let built = general.BuildGeneration()
+    // 按无障碍名找按钮（Ui.button 返回的是 Border，不是 Button）：
+    // 单测必须由用户可观察的标识定位，不靠控件类型猜。
+    let saveButton =
+        descendants built
+        |> Seq.find (fun c -> AutomationProperties.GetName c = "保存生成设置")
+        :?> Border
+    Assert.Equal<string>("保存生成设置 (Ctrl+Enter)", AutomationProperties.GetHelpText saveButton)
+    Assert.Equal<string>("保存生成设置 (Ctrl+Enter)", ToolTip.GetTip saveButton :?> string)
+
 [<Fact>]
 let ``about section drops the misplaced spacer`` () =
     Headless.ensure ()
@@ -369,3 +392,4 @@ let ``generation form fields sit inside a grouping card`` () =
             && border.BorderThickness = Thickness 1.0)
         |> Seq.toList
     Assert.True(List.length groupingCards >= 1, "生成表单字段应收进至少一张 Ui.groupingCard 分组卡")
+

@@ -160,6 +160,10 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         readAutoTitle <- readAuto
         setAutoTitle <- writeAuto
         let saveButton = Ui.button Ui.Primary "保存生成设置" (fun () -> this.SaveGeneration())
+        // 键盘位与文案都在按钮上自描述：本地表单（服务商、MCP、会话参数）
+        // 一律「Ctrl/⌘+Enter 保存」，这里此前只响应鼠标点击。
+        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, "保存生成设置 (Ctrl+Enter)")
+        ToolTip.SetTip(saveButton, "保存生成设置 (Ctrl+Enter)")
         Ui.preparePendingButton saveButton
         saveButton.HorizontalAlignment <- HorizontalAlignment.Left
         setGenerationPending <- fun pending ->
@@ -174,29 +178,38 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             Ui.twoColumnForm Tokens.space4 Tokens.space3 5
                 [ temperatureField; topPField; maxTokensField; contextField; toolRoundsField ]
         applyGridLayout ()
-        Ui.vstack
-            Tokens.space6
-            [ Ui.vstack
-                  Tokens.space1
-                  [ Ui.heading "生成" :> Control
-                    Ui.caption "这些是新会话的默认值。单个会话可以在会话设置里单独调整。" :> Control ]
-              :> Control
-              generationErrorSummary :> Control
-              // 数值表单、指令框与开关行收进与 Appearance/About 同档的分组面板卡
-              //（面板档 padding (space4, space4) + radiusLg），卡内用 groupDivider 分行，
-              // 与其余设置页共用同一「卡/区」中间层；字段、顺序与保存入口不变。
-              (Ui.groupingCard (Thickness(Tokens.space4, Tokens.space4))
-                  (Ui.vstack
+        // Ctrl+Enter 提交：Enter/Space 归 Ui.onClick（在 saveButton 上），行级不重复处理，
+        // 多行指令框里的回车也不会误提交——只认带 Ctrl/⌘ 的那一次。
+        // 与 SettingsProviders / SettingsTools 表单同一写法。
+        let generationForm =
+            Ui.vstack
+                Tokens.space6
+                [ Ui.vstack
                       Tokens.space1
-                      [ grid :> Control
-                        groupDivider () :> Control
-                        Ui.controlFieldGroup "默认系统指令" "会作为 system 消息随每次请求发送。" (instructionsBox.Parent :?> Control)
-                        groupDivider () :> Control
-                        autoTitleRow ])
-                  Tokens.radiusLg) :> Control
-              Ui.hairline () :> Control
-              saveButton :> Control ]
-        :> Control
+                      [ Ui.heading "生成" :> Control
+                        Ui.caption "这些是新会话的默认值。单个会话可以在会话设置里单独调整。" :> Control ]
+                  :> Control
+                  generationErrorSummary :> Control
+                  // 数值表单、指令框与开关行收进与 Appearance/About 同档的分组面板卡
+                  //（面板档 padding (space4, space4) + radiusLg），卡内用 groupDivider 分行，
+                  // 与其余设置页共用同一「卡/区」中间层；字段、顺序与保存入口不变。
+                  (Ui.groupingCard (Thickness(Tokens.space4, Tokens.space4))
+                      (Ui.vstack
+                          Tokens.space1
+                          [ grid :> Control
+                            groupDivider () :> Control
+                            Ui.controlFieldGroup "默认系统指令" "会作为 system 消息随每次请求发送。" (instructionsBox.Parent :?> Control)
+                            groupDivider () :> Control
+                            autoTitleRow ])
+                      Tokens.radiusLg) :> Control
+                  Ui.hairline () :> Control
+                  saveButton :> Control ]
+        generationForm.KeyDown.Add(fun e ->
+            let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
+            if e.Key = Key.Enter && ctrl then
+                e.Handled <- true
+                this.SaveGeneration())
+        generationForm :> Control
 
     member this.BuildAppearance() : Control =
         let themeButton, setThemeText =
