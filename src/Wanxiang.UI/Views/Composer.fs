@@ -341,7 +341,13 @@ type Composer(actions: ComposerActions) as this =
         ScrollViewer.SetVerticalScrollBarVisibility(input, ScrollBarVisibility.Auto)
 
         Ui.onClick sendButton (fun () ->
-            if generating then actions.stopGeneration () else this.Submit())
+            if generating then
+                // 停止后焦点回家到输入区：按钮此刻切换成「发送」，
+                // 焦点留在按钮上会让用户接下来打的字全喂给按钮（回车重复触发）。
+                // kelivo chat_input_bar.dart:1010：send/stop 之后 requestFocus 回 focusNode。
+                actions.stopGeneration ()
+                tryFocusInput ()
+            else this.Submit())
         Ui.onClick queueButton (fun () -> this.Submit())
 
         input.TextChanged.Add(fun _ -> refreshSendState ())

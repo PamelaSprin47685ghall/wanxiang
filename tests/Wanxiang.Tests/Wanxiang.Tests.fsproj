@@ -49,6 +49,7 @@
     <Compile Include="ConversationPresentationTests.fs" />
     <Compile Include="OverlayMenuTests.fs" />
     <Compile Include="KeyConvergenceTests.fs" />
+    <Compile Include="InteractabilityConvergenceTests.fs" />
     <Compile Include="DismissFocusTests.fs" />
   </ItemGroup>
 

@@ -187,6 +187,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         panel.Children.Add scrollToBottomLabel
         panel
     let mutable unreadSinceScrolledUp: int = 0
+    /// 上一帧是否挂着流式卡。流式卡转正（streamingMessage 从 Some 变 None，
+    /// 已提交消息进列表）时 desired 条数不变，delta 计未读那条路看不见这次新增：
+    /// 用户划上去等生成，回复落定那一刻计数仍是 0，「回到最新」不带任何提示。
+    /// kelivo 在 scroll_controller.dart:520 用 stickToBottomAfterGeneration 记同一件事。
+    let mutable wasStreaming = false
     let mutable previousRenderedMessageCount: int = 0
     let mutable smoothScrollTimer: DispatcherTimer option = None
 
@@ -707,6 +712,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         ) =
         this.HideSkeletonLoading()
         let wasAtBottom = atBottom
+        // 流式收尾：卡数没变（流式卡原位换成已提交卡），delta 路抓不到，
+        // 但只要用户不在底部，这就是一条刚落地的新消息。kelivo scroll_controller.dart:520
+        // 的 stickToBottomAfterGeneration 记同一件事。
+        let streamingJustEnded = wasStreaming && streamingMessage.IsNone
+        wasStreaming <- streamingMessage.IsSome
         let merged = MessageView.mergeToolResults messages
         let lastAssistantIndex =
             merged
@@ -810,13 +820,20 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             // 因此这次渲染内它正好是 Some。不再另建一个 isLoadingHistory 字段。
             // 借 kelivo message_list_view.dart 的 layout 定位请求：内容从上方增长
             // 与尾部新增由两条不同通路处理，从不相混。
+            // 流式子卡不进 delta 记账：它是占位，正文还没落定。用户划上去时
+            // 看到进度不该记「新消息」——落定那次才记一次（见下方 streamingJustEnded）。
+            let countDelta = if streamingMessage.IsSome then 0 else delta
             if pendingHistoryAnchor.IsNone then
                 // 流式 delta 替换同一张卡（delta = 0）时绝不记未读：
                 // 用户正看着的那条卡在原地刷新，不是“新消息”。
-                if delta > 0 && previousRenderedMessageCount > 0 then
-                    unreadSinceScrolledUp <- unreadSinceScrolledUp + delta
-                elif unreadSinceScrolledUp = 0 && not wasAtBottom && delta > 0 then
-                    unreadSinceScrolledUp <- max 1 delta
+                if countDelta > 0 && previousRenderedMessageCount > 0 then
+                    unreadSinceScrolledUp <- unreadSinceScrolledUp + countDelta
+                elif unreadSinceScrolledUp = 0 && not wasAtBottom && countDelta > 0 then
+                    unreadSinceScrolledUp <- max 1 countDelta
+            // 上面两条只数「条数变化」，流式收尾是条数不变的一次新增，
+            // 单独在分页判据之外补记：同一次渲染既有分页又有流式收尾不可能同时成立。
+            if streamingJustEnded && not wasAtBottom && pendingHistoryAnchor.IsNone then
+                unreadSinceScrolledUp <- max 1 (unreadSinceScrolledUp + 1)
             // 分页这一帧也要刷新按钮外观：未读计数不动，但按钮可见性/文案
             // 与「是否在底部」相关，同一处刷新不能漏掉这条路。
             this.UpdateScrollToBottomAppearance()

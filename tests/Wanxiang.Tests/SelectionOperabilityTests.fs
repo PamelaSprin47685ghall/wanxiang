@@ -74,6 +74,31 @@ let private rowByName (sidebar: Sidebar) (title: string) =
                | _ -> false
            | _ -> false)
 
+/// 可选版：过滤后行可能不在已实现容器里（`rowByName` 的 pick/find 会抛），
+/// 这里要的正是「取不到」这个信号。
+let private rowByNameOpt (sidebar: Sidebar) (title: string) : Control option =
+    let rec visualControls (visual: Visual) =
+        seq {
+            match visual with
+            | :? Control as control -> yield control
+            | _ -> ()
+            for child in visual.GetVisualChildren() do
+                yield! visualControls child
+        }
+    match descendants sidebar |> Seq.tryPick (function :? ListBox as lb -> Some lb | _ -> None) with
+    | None -> None
+    | Some list ->
+        list.GetRealizedContainers()
+        |> Seq.collect visualControls
+        |> Seq.tryFind (fun c ->
+            AutomationProperties.GetName(c) = title
+            && match c with
+               | :? Border as border ->
+                   match border.Tag with
+                   | :? ConversationSummary -> true
+                   | _ -> false
+               | _ -> false)
+
 let private show (content: Control) width height =
     Headless.ensure ()
     let window = Window(Width = width, Height = height, Content = content)
@@ -578,10 +603,20 @@ let ``batch delete with an empty selection never reaches the batch action`` () =
                 typeof<Sidebar>.GetField("searchDebounce", Reflection.BindingFlags.NonPublic ||| Reflection.BindingFlags.Instance)
             field.GetValue(sidebar) :?> DispatcherTimer
         timer.Interval <- TimeSpan.FromMilliseconds(1.0)
-        Dispatcher.UIThread.RunJobs()
-        Thread.Sleep 20
-        Dispatcher.UIThread.RunJobs()
-        Assert.Empty(sidebar.SelectedIds())
+        // 睡固定 20ms 在并行负载下会踩空：timer 到期回调排在别的淡入后面。
+        // 改成「观察到过滤效果再往下走」，最多 1s 兜底。
+        let mutable waited = 0
+        let hasOnlyBeta () =
+            sidebar.SelectedIds().Length = 0
+            && (rowByNameOpt sidebar "Alpha").IsNone
+            && (rowByNameOpt sidebar "Beta").IsSome
+        while (not (hasOnlyBeta ())) && waited < 40 do
+            timer.Interval <- TimeSpan.FromMilliseconds(1.0)
+            Dispatcher.UIThread.RunJobs()
+            Thread.Sleep 25
+            Dispatcher.UIThread.RunJobs()
+            waited <- waited + 1
+        Assert.True(hasOnlyBeta (), sprintf "搜索过滤没落地：selected=%A" (sidebar.SelectedIds()))
         row.RaiseEvent(
             KeyEventArgs(
                 RoutedEvent = InputElement.KeyDownEvent,

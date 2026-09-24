@@ -1425,6 +1425,13 @@ module MessageCard =
                 entries
                 |> List.map (fun e ->
                     let item = MenuItem(Header = e.label)
+                    // 图标与悬停操作条、侧栏浮层菜单同源同色（Menu.fs 的 iconSlot 画法）：
+                    // hover 看得见图、右键菜单是纯文字，两处同一组动作却长得不像一家人。
+                    match e.icon with
+                    | Some icon ->
+                        let glyph = icon (if e.danger then Tokens.danger else Tokens.textMuted)
+                        item.Icon <- glyph
+                    | None -> ()
                     if e.danger then item.Foreground <- Tokens.danger
                     item.Click.Add(fun _ -> e.action ())
                     item :> obj)

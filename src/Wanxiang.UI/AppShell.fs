@@ -40,6 +40,11 @@ type MainView() as this =
         MarkdownRenderer.DefaultCodeWrap <- prefs.codeWrap
         MotionPolicy.setReduced prefs.reduceMotion
     let mutable catalog = Catalog.empty
+    /// 还没有会话时用户在输入区芯片上挑的模型：草稿模型的暂存位。
+    /// 没有它，「空态里点芯片选模型」只能弹「先选择一个会话」，
+    /// 而输入区此刻是可用且显示着模型名的（AppShell.Render：NoConversation 分支）。
+    /// 选了之后仍走原有创建路径，只是把 defaultSelection 换成这个暂存值。
+    let mutable draftModelSelection: (string * string) option = None
     let mutable authenticated = false
     let mutable instanceId = ""
 
@@ -272,7 +277,7 @@ type MainView() as this =
                 // 不必先点一次「新建」。空态里的按钮只是另一条同样有效的路径。
                 chat.ShowEmpty(ChatEmptyState.NoConversation, Some("新建会话", fun () -> this.CreateConversation() |> ignore))
                 composer.SetEnabled(true, "")
-                match Catalog.defaultSelection catalog with
+                match draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog) with
                 | Some(providerId, model) -> composer.SetModelLabel(Catalog.describeModel providerId model catalog)
                 | None -> composer.SetModelLabel "未选择模型"
         | Some convId, None ->
@@ -291,7 +296,10 @@ type MainView() as this =
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
             if List.isEmpty messages && streaming.IsNone && run.error.IsNone then
                 chat.HideSkeletonLoading()
-                chat.ShowEmpty(EmptyConversation, None)
+                // 空会话与另外三个空态（未连接/无服务商/无会话）对齐：都有主行动键。
+                // 这个会话下输入区本来就能打字，缺的只是「从空态把注意力交付出
+                // 去」的入口；键盘用户走到这里原来是无路可走的死头。
+                chat.ShowEmpty(EmptyConversation, Some("开始输入", fun () -> composer.Focus()))
             else
                 chat.HideSkeletonLoading()
                 chat.HideEmpty()
@@ -455,7 +463,9 @@ type MainView() as this =
         if navBefore.compactMode && navBefore.compactNavigationOpen then composer.Focus()
 
     member private _.MakeConversationCommand(conversationId: Guid) =
-        let provider, model = Catalog.defaultSelection catalog |> Option.defaultValue ("", "")
+        let provider, model =
+            // 草稿里显式挑过的模型优先：没有会话时的选择不该被「默认」抹掉。
+            draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog) |> Option.defaultValue ("", "")
         let config =
             { SessionConfig.empty with
                 provider = provider; model = model
@@ -476,6 +486,9 @@ type MainView() as this =
             None
         else
             let conversationId = Guid.CreateVersion7()
+            // 草稿选择已在新会话的 config 里落地，暂存位清掉，
+            // 否则下一个新会话会接着用上一个的残留（会话已有自己的 config）。
+            draftModelSelection <- None
             this.SelectConversation(Some conversationId)
             sendCommandWithCompletion
                 (this.MakeConversationCommand conversationId)
@@ -679,7 +692,23 @@ type MainView() as this =
                 toast "还没有可用的模型。" Warning
             else
                 Menu.showGrouped overlay anchor false groups
-        | _ -> toast "先选择一个会话。" Warning
+        | _ ->
+            // 没有会话也要能挑模型：这一刻输入区是启用的（Render 的空态分支），
+            // 芯片上正亮着默认模型名，点了却弹「先选择一个会话」是把可用面拔掉。
+            // kelivo model_select_sheet.dart:216：模型选择不依赖已有会话。
+            // 选择只落草稿暂存位，建会话时作为 config 的 provider/model 起手。
+            let groups =
+                [ for provider in Catalog.usableProviders catalog ->
+                      provider.label,
+                      [ for model in provider.models ->
+                            MenuEntry.create model (fun () ->
+                                draftModelSelection <- Some(provider.id, model)
+                                composer.SetModelLabel(Catalog.describeModel provider.id model catalog)
+                                toast (sprintf "已选择 %s · %s" provider.label model) Info) ] ]
+            if List.isEmpty groups then
+                toast "还没有可用的模型。" Warning
+            else
+                Menu.showGrouped overlay anchor false groups
 
     // ---- 附件 ----
 
