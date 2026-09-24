@@ -241,13 +241,19 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     /// 把某张用户卡平滑带到视口顶部：目标卡片尽量完整可见，不被输入区挡住。
     let smoothScrollToCard (child: Control) =
+        // 与 SmoothScrollToEnd 同一条曲线、同一帧节拍；只换目标点。
+        // 计时器登记到 smoothScrollTimer：连按「上一条 / 下一条」或动画途中滚轮，
+        // 旧动画必须先停，否则两个动画都在写 Offset.Y，画面跟着两个目标打架。
+        let stopSmoothScroll () =
+            smoothScrollTimer |> Option.iter (fun t -> t.Stop())
+            smoothScrollTimer <- None
         let target = max 0.0 (child.Bounds.Y - Tokens.space5)
         if abs (scroller.Offset.Y - target) < 5.0 then
             scroller.Offset <- Vector(scroller.Offset.X, target)
         elif MotionPolicy.isReduced () then
             scroller.Offset <- Vector(scroller.Offset.X, target)
         else
-            // 与 SmoothScrollToEnd 同一条曲线、同一帧节拍；只换目标点。
+            stopSmoothScroll ()
             let startOffset = scroller.Offset.Y
             let startTime = DateTime.UtcNow
             let durationMs = MotionLedger.smoothScrollDuration.TotalMilliseconds
@@ -255,13 +261,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             timer.Tick.Add(fun _ ->
                 let elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds
                 if elapsed >= durationMs then
-                    timer.Stop()
+                    stopSmoothScroll ()
                     scroller.Offset <- Vector(scroller.Offset.X, target)
                 else
                     let progress = min 1.0 (elapsed / durationMs)
                     let eased = MotionPolicy.easeOutCubic.Ease progress
                     let newY = startOffset + (target - startOffset) * eased
                     scroller.Offset <- Vector(scroller.Offset.X, newY))
+            smoothScrollTimer <- Some timer
             timer.Start()
 
 
@@ -1191,8 +1198,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             // 骨架可见时不预取更早历史：会话切换中的 extent 抖动会误触发，
             // 等真实内容挂载后再按正常阈值取。
             if offset <= 0.5 && extent > viewport && not skeletonPanel.IsVisible then actions.requestOlderHistory ())
+        // 滚轮不论方向都是「用户此刻要动」：向上滚原本会打断平滑滚动，向下滚同理
+        // （Avalonia 向下滚 Delta.Y 为负）。只截一半会让「上滚动画途中改主意往下滚」
+        // 变成两个动画争抢 Offset——手势输了。
         scroller.PointerWheelChanged.Add(fun e ->
-            if e.Delta.Y > 0.0 then
+            if abs e.Delta.Y > 0.0 then
                 smoothScrollTimer |> Option.iter (fun t -> t.Stop())
                 smoothScrollTimer <- None)
 

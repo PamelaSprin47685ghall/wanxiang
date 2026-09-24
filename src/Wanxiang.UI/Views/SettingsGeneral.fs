@@ -209,6 +209,15 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             if e.Key = Key.Enter && ctrl then
                 e.Handled <- true
                 this.SaveGeneration())
+        // 五个数值单行框 Enter 即保存：与连接对话框、服务商/工具编辑页同一约定。
+        // 系统指令是多行 textArea，那里的回车是换行，不接。
+        let ctrl (e: KeyEventArgs) =
+            e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
+        for box in [ temperatureBox; topPBox; maxTokensBox; contextBox; toolRoundsBox ] do
+            box.KeyDown.Add(fun e ->
+                if e.Key = Key.Enter && not (ctrl e) then
+                    e.Handled <- true
+                    this.SaveGeneration())
         generationForm :> Control
 
     member this.BuildAppearance() : Control =

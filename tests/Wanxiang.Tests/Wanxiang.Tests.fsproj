@@ -50,6 +50,7 @@
     <Compile Include="OverlayMenuTests.fs" />
     <Compile Include="KeyConvergenceTests.fs" />
     <Compile Include="InteractabilityConvergenceTests.fs" />
+    <Compile Include="InteractabilityPolishTests.fs" />
     <Compile Include="DismissFocusTests.fs" />
   </ItemGroup>
 

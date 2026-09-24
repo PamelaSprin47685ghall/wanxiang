@@ -205,6 +205,17 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let save () =
             if savePending then () else saveCore ()
 
+        // 单行字段 Enter 即提交：与连接对话框（Dialogs.fs:337-343）同一约定。
+        // 多行参数框不接——那里的回车是换行，属于输入自己的语义。
+        let submitOnEnter () =
+            let ctrl (e: KeyEventArgs) =
+                e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
+            for box in [ idBox; labelBox; commandBox; urlBox; timeoutBox ] do
+                box.KeyDown.Add(fun e ->
+                    if e.Key = Key.Enter && not (ctrl e) then
+                        e.Handled <- true
+                        save ())
+
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
         cancelButton.Margin <- Thickness 0.0
         cancelButton.Focusable <- true
@@ -230,6 +241,16 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             // Enter/Space 归 Ui.onClick：行级再处理会导致保存被触发两次，
             // 多行参数框里的回车也会误提交。Escape 不再本地处理，
             // 统一走 OverlayHost.HandleEscape（pending 保存中被 canDismiss 守卫拦截）。
+            // 页脚左右键导航：与 Dialogs.fs / SettingsProviders 同款节律。
+            cancelButton.KeyDown.Add(fun e ->
+                if e.Key = Key.Right && saveButton.IsEnabled then
+                    e.Handled <- true
+                    saveButton.Focus(NavigationMethod.Directional) |> ignore)
+            saveButton.KeyDown.Add(fun e ->
+                if e.Key = Key.Left && cancelButton.IsEnabled then
+                    e.Handled <- true
+                    cancelButton.Focus(NavigationMethod.Directional) |> ignore)
+            submitOnEnter ()
             row
 
         let form =

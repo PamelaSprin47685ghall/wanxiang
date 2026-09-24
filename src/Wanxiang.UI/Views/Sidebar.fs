@@ -273,6 +273,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     /// 或连接状态翻转（SetConnection）——同一事实单一写入链，无第二处 reconciliation。
     let mutable listLoading = false
     let rowHosts = System.Collections.Generic.Dictionary<Guid, Border>()
+    /// 每行的「更多操作」按钮：多选模式切换时要整批下线，
+    /// 只靠 hover/focus 事件刷不到（数据变化不会补刷）。
+    let moreButtons = System.Collections.Generic.Dictionary<Guid, Border>()
     let summaryById = System.Collections.Generic.Dictionary<Guid, ConversationSummary>()
     let mutable visibleRowIds: Guid array = [||]
     let flatIndexByConversation = System.Collections.Generic.Dictionary<Guid, int>()
@@ -656,13 +659,24 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     /// compact/touch 用 LayoutPolicy.compactActionTarget（触控下限），
     /// 桌面用 Tokens.iconButton——常驻可点不等于抬高行高，扫视密度优先。
     member private _.ApplyRowActionVisibility(moreButton: Border) (visible: bool) =
-        moreButton.IsVisible <- true
-        moreButton.Opacity <- if visible then 1.0 else Tokens.opacitySubtle
-        moreButton.IsHitTestVisible <- true
-        moreButton.Focusable <- true
-        Avalonia.Automation.AutomationProperties.SetAccessibilityView(
-            moreButton,
-            Avalonia.Automation.AccessibilityView.Default)
+        // 多选模式下整行都可勾选，行内「更多操作」单条菜单被 openMenu 拒绝，
+        // 留着可见只会诱导用户去点一个必然空转的按钮：同批下线可见性/命中/焦点/读屏。
+        // kelivo 同款：side_drawer.dart:4414-4435 选择模式下前导区换成勾选框、无单条菜单按钮。
+        if selectionMode then
+            moreButton.IsVisible <- false
+            moreButton.IsHitTestVisible <- false
+            moreButton.Focusable <- false
+            Avalonia.Automation.AutomationProperties.SetAccessibilityView(
+                moreButton,
+                Avalonia.Automation.AccessibilityView.Raw)
+        else
+            moreButton.IsVisible <- true
+            moreButton.Opacity <- if visible then 1.0 else Tokens.opacitySubtle
+            moreButton.IsHitTestVisible <- true
+            moreButton.Focusable <- true
+            Avalonia.Automation.AutomationProperties.SetAccessibilityView(
+                moreButton,
+                Avalonia.Automation.AccessibilityView.Default)
 
     /// 一行会话。选中态用强调色浅底 + 左缘，生成中是一个静态圆点（无动画，避免列表常驻动效）。
     member private this.RenderRow(summary: ConversationSummary) : Control =
@@ -732,15 +746,23 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         host.Transitions <- Ui.surfaceBorderedTransitions ()
         this.ApplyRowState(summary, host)
         rowHosts[summary.id] <- host
+        moreButtons[summary.id] <- moreButton
         host.DetachedFromVisualTree.Add(fun _ ->
             match rowHosts.TryGetValue summary.id with
-            | true, current when obj.ReferenceEquals(current, host) -> rowHosts.Remove summary.id |> ignore
+            | true, current when obj.ReferenceEquals(current, host) ->
+                rowHosts.Remove summary.id |> ignore
+                moreButtons.Remove summary.id |> ignore
             | _ -> ())
         Avalonia.Automation.AutomationProperties.SetName(host, summary.title)
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
             Nullable Avalonia.Automation.Peers.AutomationControlType.ListItem)
         let openMenu (target: Control) (alignRight: bool) =
+            // 多选模式下行右键 / 更多按钮不再开单条菜单：里面的重命名、删除都是单条语义，
+            // 与底部批量操作条并列只会让用户误判作用范围。kelivo 同款约定：
+            // side_drawer.dart:261 `if (_selectionMode) return;`
+            // 与 :4373-4375 `if (_isDesktop && !widget.selectionMode)`。
+            if selectionMode then () else
             // 菜单打开瞬间按 id 取最新快照：行渲染时的 summary 可能已被覆盖（如置顶切换后），
             // 标签与动作绝不用渲染期闭包里的旧值。
             let live =
@@ -1281,6 +1303,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 已渲染的行必须立刻重绘：选中/取消选中如果只改集合不改行视觉，
         // 用户点了行却看不出任何变化（ hover / 焦点事件不会为纯数据变化补刷）。
         for row in rowHosts do this.ApplyRowState(row.Key, row.Value)
+        // 行内「更多操作」同样跟着模式翻面：多选模式下整批下线（可见/命中/焦点/读屏）。
+        for button in moreButtons.Values do this.ApplyRowActionVisibility button false
         // 选择模式只留「取消 / 全选 / 计数」与底部批量条：品牌行与页脚让位，
         // 侧栏本来只有 232–420pt 宽，再叠两条常驻条会把列表压成几条。
         brandHeader.IsVisible <- not selectionMode
@@ -1351,6 +1375,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 e.Handled <- true
                 if not (String.IsNullOrEmpty searchBox.Text) then
                     this.ResetSearch true
+                elif selectionMode then
+                    // 从列表首行按 Up 会落进搜索框，此时 Esc 只清搜索是断的：
+                    // 多选模式下先退出多选，与行内 Esc（Sidebar.fs:838）同语义。
+                    this.ExitSelection()
                 else
                     this.FocusActiveConversation())
         searchDebounce.Tick.Add(fun _ ->
