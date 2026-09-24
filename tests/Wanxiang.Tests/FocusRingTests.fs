@@ -46,6 +46,47 @@ let ``鼠标点出来的焦点不画环`` () =
         Assert.Equal(0, button.BoxShadow.Count))
 
 [<Fact>]
+let ``程序化 / 初始焦点同样画焦点环`` () =
+    // 对话框打开时的初始焦点一律走裸 Focus()——拿到的是 Unspecified：
+    // OverlayHost.focusFirst（404 行 dialogCard 首可聚焦项）与
+    // Dialogs.shortcuts 的首按钮都是这条路径。此前焦点环只认 Tab/Directional，
+    // 结果焦点明明在按钮上（Enter 能激活）却没有环，键盘用户看不见焦点在哪。
+    // 与上一条互为对偶：Pointer 不画（点击已有按压反馈），Unspecified 画。
+    withButton (fun button ->
+        button.Focus NavigationMethod.Unspecified |> ignore
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(button.BoxShadow.Count > 0, "程序化焦点也要有焦点环"))
+
+[<Fact>]
+let ``对话框初始焦点（裸 Focus）带焦点环`` () =
+    // 走真实对话框路径：OverlayHost.ShowDialog → focusFirst post 裸 Focus()。
+    // 断言落点即 ShowDialog 默认首焦（内容树第一个可聚焦项）。
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let box = TextBox()
+    let close = Ui.button Ui.Secondary "关闭" (fun () -> ())
+    let panel = StackPanel(Orientation = Orientation.Vertical)
+    panel.Children.Add box
+    panel.Children.Add close
+    overlay.ShowDialog(panel, 360.0)
+    let window = Window(Width = 420.0, Height = 340.0, Content = root)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        Dispatcher.UIThread.RunJobs()
+        let focused = window.FocusManager.GetFocusedElement()
+        Assert.True(obj.ReferenceEquals(focused, box), "前置条件：ShowDialog 初始焦点落在内容树首项")
+        Assert.True(box.IsFocused, "前置条件：确由 dialogCard 拿到焦点")
+        // 关键断言：把焦点再交给 close 按钮（裸 Focus() = Unspecified）后必须有环。
+        close.Focus() |> ignore
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(obj.ReferenceEquals(window.FocusManager.GetFocusedElement(), close), "前置条件：close 拿到焦点")
+        Assert.True(close.BoxShadow.Count > 0, "对话框首按钮（Unspecified 焦点）必须带焦点环")
+    finally
+        window.Close()
+
+[<Fact>]
 let ``失去焦点后焦点环消失`` () =
     withButton (fun button ->
         button.Focus NavigationMethod.Tab |> ignore

@@ -225,17 +225,19 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         |> Array.choose id
         |> Array.toList
 
-    /// 当前所在的那一轮问答 = 最后一张「开头已经在视口内」的用户卡。
-    /// 不用 slack：贴底时倒数第二轮的回答可能还压在视口里，把它当成当前轮会让
-    /// 「下一条」在已经最后一条时仍然可点。开场流式（没有已提交用户卡）时退回首张。
+    /// 当前所在的那一轮问答 = 第一张「结尾已经越过视口顶端」的用户卡。
+    /// 取视口顶端的第一张：用户在屏幕上方读第 1 轮时「下一条」就该送第 2 轮，
+    /// 而不是拿视口底端那张当当前轮——后者会让大屏一次跳两三轮，方向感断掉。
+    /// 判据与 kelivo _firstVisibleMessageBelowTopOverlay 同向：卡片底边越过视口顶端
+    /// 才算它（scroll_controller.dart:805-817）。开场流式（没有已提交用户卡）时退回首张。
     let currentExchangeIndex () : int =
-        let viewportBottom = scroller.Offset.Y + scroller.Viewport.Height
+        let viewportTop = scroller.Offset.Y
         let cards = exchangeIndices ()
         cards
         |> List.filter (fun index ->
             index < messagePanel.Children.Count
-            && messagePanel.Children.[index].Bounds.Y <= viewportBottom)
-        |> List.tryLast
+            && messagePanel.Children.[index].Bounds.Y + messagePanel.Children.[index].Bounds.Height > viewportTop + 0.5)
+        |> List.tryHead
         |> Option.orElseWith (fun () -> List.tryHead cards)
         |> Option.defaultValue 0
 
@@ -282,6 +284,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             | None -> currentExchangeIndex ()
         let hasPrev = cards |> List.exists (fun index -> index < anchorIndex)
         let hasNext = cards |> List.exists (fun index -> index > anchorIndex)
+        // 贴底时没有「下一条」可去：锚点改取视口顶端第一张后，锚点本身可能
+        // 不是最后一张（大屏一次露出数轮），端点禁用必须显式叠这条，否则贴底
+        // 「下一条」仍可点，按下去只是原地跳一格再被自动跟随拽回底部。
+        // 与 kelivo 的 hasNext 端点规则同向：target 越界即不可跳。
+        let hasNext = hasNext && not atBottom
         Ui.setEnabled prevExchangeButton hasPrev
         Ui.setEnabled nextExchangeButton hasNext
         // 提示随手性走：禁用写原因，重新可用时还原成动作名，不留下一条过时的

@@ -10,6 +10,7 @@ open Avalonia.Automation
 open Avalonia.Automation.Peers
 open Avalonia.Automation.Provider
 open Avalonia.Controls
+open Avalonia.Input
 open Avalonia.Threading
 open Avalonia.VisualTree
 open Xunit
@@ -278,6 +279,76 @@ let ``export filenames stay a bounded filename including long emoji titles`` () 
     Assert.True(Encoding.UTF8.GetByteCount emoji <= 223)
     let baseName = emoji.Substring(0, emoji.Length - 3)
     Assert.Equal(baseName, String.replicate (Globalization.StringInfo.ParseCombiningCharacters(baseName).Length) "👩🏽‍💻")
+
+[<Theory>]
+[<InlineData(390.0)>]
+[<InlineData(900.0)>]
+let ``export footer arrows move focus between the three buttons`` width =
+    // 导出对话框的页脚三按钮此前没有左右方向键接线，而其余对话框页脚
+    // （Dialogs.fs:48-57、SettingsProviders/Tools）都有。桌面端键盘用户按方向键
+    // 无响应，交互节拍与系统其余对话框割裂。
+    Headless.ensure ()
+    let proj, id = fixture 250
+    let root = Grid()
+    let overlay = OverlayHost root
+    let window = Window(Content = root, Width = width, Height = 600.0)
+    let requested = ResizeArray<ConversationExportQuery>()
+    let dialog = ConversationExportDialog(overlay, id, "完整导出", (fun query -> requested.Add query; Task.FromResult true), fun () -> window :> TopLevel)
+    window.Show()
+    try
+        dialog.Show()
+        Dispatcher.UIThread.RunJobs()
+        let find name =
+            root.GetVisualDescendants()
+            |> Seq.choose (function :? Control as c -> Some c | _ -> None)
+            |> Seq.find (fun c -> AutomationProperties.GetName c = name)
+        let close = find "取消导出"
+        let retry = find "重新导出"
+        let save = find "保存 Markdown"
+        let key (target: Control) k =
+            let args = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = k, KeyModifiers = KeyModifiers.None, Source = target)
+            target.RaiseEvent args
+            args
+        // 读取中只有取消可用：右方向键不得把焦点交给禁用的重新导出/保存。
+        close.Focus() |> ignore
+        Dispatcher.UIThread.RunJobs()
+        let blocked = key close Key.Right
+        Dispatcher.UIThread.RunJobs()
+        Assert.False(blocked.Handled, "邻键禁用时方向键不冒领")
+        Assert.True(close.IsFocused, "焦点应留在取消导出")
+        // 读完最后一页：方向键在排之间走动。完成判据取可见性——重新导出只在
+        // 终态（完成/失败/取消）显示，中间态它被整键藏掉。用 requested 末条
+        // 反复喂同一页直到终态：控制器对重复页的容错由既有用例覆盖，
+        // 这里只关心终态下的方向键接线。轮次上限防挂死。
+        // 方向键接线与导出进度无关，只与页脚三键的终态可见性有关：
+        // 用 dialog.Fail 直接推到失败终态（重新导出在失败态同样可见），
+        // 避免把状态机跑完——那是既有 export 用例的职责。
+        Assert.True(requested.Count > 0, "前置条件：Show 已发出首页请求")
+        dialog.Fail(requested.[0].exportId, "测试直接推到失败终态")
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(retry.IsEffectivelyVisible, "前置条件：读取完成后重新导出可见")
+        Assert.True(retry.IsEnabled, "前置条件：重新导出可用")
+
+        close.Focus() |> ignore
+        Dispatcher.UIThread.RunJobs()
+        let forward = key close Key.Right
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(forward.Handled, "取消按右应移交焦点")
+        Assert.True(retry.IsFocused, "焦点应落到重新导出")
+        // 失败态保存键仍藏著（只有终态完成时才出现）：方向键不得把焦点
+        // 交给不可见按钮——这正是本轮新加的可见性判据要防的断链。
+        Assert.False(save.IsEffectivelyVisible, "前置条件：失败态保存键不可见")
+        let blockedRight = key retry Key.Right
+        Dispatcher.UIThread.RunJobs()
+        Assert.False(blockedRight.Handled, "保存不可见时重新导出按右不冒领")
+        Assert.True(retry.IsFocused, "焦点应留在重新导出")
+        // 反向闭合：重新导出按左回取消。
+        let back = key retry Key.Left
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(back.Handled, "重新导出按左应回到取消")
+        Assert.True(close.IsFocused, "焦点应回到取消导出")
+    finally
+        window.Close()
 
 [<Theory>]
 [<InlineData(390.0)>]

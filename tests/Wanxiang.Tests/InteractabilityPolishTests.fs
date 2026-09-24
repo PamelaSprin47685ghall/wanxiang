@@ -211,6 +211,10 @@ let ``wheel moving either way stops an in-flight smooth scroll`` () =
         Dispatcher.UIThread.RunJobs()
         Assert.False(running (), "下滚必须打断平滑滚动，动画不能与手势争抢 Offset")
         // 再补一次上滚：换「上一条」重新起一段动画，两侧都不得让动画死灰复燃。
+        // 回顶部再按：锚点已是第 2 轮，目标第 1 轮离当前视口足够远，必走平滑路径
+        // （近距离分支 abs(offset-target)<5 会立即落位，那不是动画被停，是没起播）。
+        scroller.Offset <- Vector(0.0, scroller.Extent.Height - scroller.Viewport.Height)
+        Dispatcher.UIThread.RunJobs()
         let prev = namedControl chat "上一条提问"
         Assert.True(prev.IsEnabled, "前置条件：锚点已前移，上一条可用")
         privateKey prev Key.Enter |> ignore

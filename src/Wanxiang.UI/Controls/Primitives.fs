@@ -45,8 +45,13 @@ type internal ActionBorder() as this =
         // 输入壳 Ui.textField 是唯一用 accentSoft 的例外——它已有一层实色描边，理由见其注释。
         this.GotFocus.Add(fun e ->
             match e.NavigationMethod with
+            // Unspecified 也要画环：对话框初始焦点（OverlayHost.focusFirst、Dialogs 首按钮）
+            // 一律走裸 Focus()——拿到的是 Unspecified。此前它落在 `| _ -> ()`，
+            // 焦点明明在按钮上（Enter 能激活）却没有焦点环，键盘用户看不见焦点在哪。
+            // Pointer 不画：指针点击已有按压/悬停反馈，再画环是视觉噪声。
             | NavigationMethod.Tab
-            | NavigationMethod.Directional ->
+            | NavigationMethod.Directional
+            | NavigationMethod.Unspecified ->
                 savedShadow <- this.BoxShadow
                 keyboardFocusRing <- true
                 this.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
@@ -85,8 +90,10 @@ type internal ToggleBorder() as this =
     do
         this.GotFocus.Add(fun e ->
             match e.NavigationMethod with
+            // 与 ActionBorder 同一约定：Unspecified（程序化/初始焦点）也要画焦点环。
             | NavigationMethod.Tab
-            | NavigationMethod.Directional ->
+            | NavigationMethod.Directional
+            | NavigationMethod.Unspecified ->
                 savedShadow <- this.BoxShadow
                 keyboardFocusRing <- true
                 this.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))

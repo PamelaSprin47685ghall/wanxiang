@@ -5,6 +5,7 @@ open System.Text
 open System.Threading.Tasks
 open Avalonia.Automation
 open Avalonia.Controls
+open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Platform.Storage
@@ -144,6 +145,23 @@ type ConversationExportDialog(
 
     member this.Show() =
         let buttons = Ui.hstack Tokens.space2 [ closeButton :> Control; retryButton :> Control; saveButton :> Control ]
+        // 三按钮行补左右键导航：其余对话框（Dialogs.fs:48-57、SettingsProviders/Tools 页脚）都有，
+        // 导出对话框此前只有 Tab 一条路，桌面端键盘用户按方向键无响应，交互节拍割裂。
+        let wireArrows (leftBtn: Control) (rightBtn: Control) =
+            leftBtn.KeyDown.Add(fun e ->
+                // 落点必须同时可见：重新导出 / 保存在中间态被整键藏掉
+                // （Refresh 只切 IsVisible，IsEnabled 仍是默认 true）。只看 IsEnabled
+                // 会把焦点交给一个不可见的按钮——焦点连同可见性一起消失，键盘用户
+                // 下一步按键无的放矢，比不接线更糟。
+                if e.Key = Key.Right && rightBtn.IsEnabled && rightBtn.IsEffectivelyVisible then
+                    e.Handled <- true
+                    rightBtn.Focus(NavigationMethod.Directional) |> ignore)
+            rightBtn.KeyDown.Add(fun e ->
+                if e.Key = Key.Left && leftBtn.IsEnabled && leftBtn.IsEffectivelyVisible then
+                    e.Handled <- true
+                    leftBtn.Focus(NavigationMethod.Directional) |> ignore)
+        wireArrows closeButton retryButton
+        wireArrows retryButton saveButton
         buttons.HorizontalAlignment <- HorizontalAlignment.Right
         let content = Ui.vstack Tokens.space3
                           [ Ui.title "导出会话" :> Control; Ui.caption initialTitle :> Control

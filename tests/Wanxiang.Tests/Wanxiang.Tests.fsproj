@@ -51,6 +51,7 @@
     <Compile Include="KeyConvergenceTests.fs" />
     <Compile Include="InteractabilityConvergenceTests.fs" />
     <Compile Include="InteractabilityPolishTests.fs" />
+    <Compile Include="InteractabilityPolish8Tests.fs" />
     <Compile Include="DismissFocusTests.fs" />
   </ItemGroup>
 

@@ -1357,6 +1357,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     // 零结果也先落到已归档开关，键盘不断线。
                     e.Handled <- true
                     this.FocusArchivedToggle()
+                elif emptyStateHost.IsVisible && emptyActionButton.IsEffectivelyVisible && emptyActionButton.IsEnabled then
+                    // 列表真空且非搜索过滤（搜索零命中有自己的提示行）：焦点落进空态主按钮，
+                    // 否则 Down 全部落空，键盘用户被困在搜索框里。
+                    e.Handled <- true
+                    emptyActionButton.Focus NavigationMethod.Directional |> ignore
                 elif searchEmptyHint.IsVisible then
                     e.Handled <- true
                     searchEmptyHint.Focus NavigationMethod.Directional |> ignore
@@ -1524,6 +1529,19 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     actions.setArchivedMany ids true)
             let deleteButton =
                 Ui.button Ui.Danger "删除" (fun () -> this.DeleteSelected())
+            // 横向工具条的桌面端键盘导航：与 Dialogs.fs:48-57 的 wireArrowNavigation 同一约定
+            // （此前只有 Tab 一条路，左右键按了没反应）。Disabled 的邻键不接焦点。
+            let wireArrows (leftBtn: Control) (rightBtn: Control) =
+                leftBtn.KeyDown.Add(fun e ->
+                    if e.Key = Key.Right && rightBtn.IsEnabled && rightBtn.IsEffectivelyVisible then
+                        e.Handled <- true
+                        rightBtn.Focus(NavigationMethod.Directional) |> ignore)
+                rightBtn.KeyDown.Add(fun e ->
+                    if e.Key = Key.Left && leftBtn.IsEnabled && leftBtn.IsEffectivelyVisible then
+                        e.Handled <- true
+                        leftBtn.Focus(NavigationMethod.Directional) |> ignore)
+            wireArrows pinButton archiveButton
+            wireArrows archiveButton deleteButton
             Ui.hstack
                 Tokens.space2
                 [ pinButton :> Control; archiveButton :> Control; deleteButton :> Control ]
