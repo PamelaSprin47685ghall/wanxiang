@@ -293,6 +293,10 @@ type OverlayHost(root: Grid) =
         // 底层滚动时浮层锚点会脱节：滚轮不经过 popupCatcher 的点击捕获，
         // 因此层外滚轮像层外点击一样直接关闭，避免浮层悬在错误位置；
         // 落在 popupCard 内的滚轮放行给内部 ScrollViewer，长菜单可在浮层内滚动。
+        // 关闭的同时必须消费事件：层外滚轮与层外点击是同一类「取消浮层」手势，
+        // 置 Handled 才不会让同一次滚动脉冲继续穿透到底层消息区/侧栏
+        // （那种先收起菜单、正文又猛地一滚的双重反应，就是漏了这一行）。
+        // 借 kelivo desktop_context_menu 的全屏模态遮罩：命中遮罩即取消即消费。
         root.PointerWheelChanged.Add(fun e ->
             if popupCard.IsVisible then
                 let inside =
@@ -300,6 +304,7 @@ type OverlayHost(root: Grid) =
                         popupCard.Bounds.Contains(e.GetPosition root)
                     with _ -> false
                 if not inside then
+                    e.Handled <- true
                     popupCatcher.IsVisible <- false
                     popupCard.IsVisible <- false
                     popupCard.Child <- null
@@ -361,7 +366,7 @@ type OverlayHost(root: Grid) =
             restoreDialogFocus ()
             callback ()
 
-    member this.ShowDialog(content: Control, width: float, ?onClosed: unit -> unit, ?canDismiss: unit -> bool) =
+    member this.ShowDialog(content: Control, width: float, ?onClosed: unit -> unit, ?canDismiss: unit -> bool, ?initialFocus: Control) =
         if dialogCard.IsVisible then
             // 嵌套打开：保留当前子内容 + onClosed + 守卫，关闭时原样恢复。
             dialogStack.Add((dialogCard.Child, dialogPreferredWidth, onDialogClosed, dialogGuard))
@@ -381,7 +386,12 @@ type OverlayHost(root: Grid) =
         scrim.IsHitTestVisible <- true
         scrim.Opacity <- 1.0
         hosted.KeyDown.Add(fun e -> this.TrapTab(hosted, e))
-        focusFirst content
+        // initialFocus：调用方指定首焦（如「第一个还缺内容的字段」）。
+        // 不给时保持既有行为——聚焦树中第一个可聚焦项。走同一条 Post 队列，
+        // 因此不存在与调用方自己的焦点写入互相覆盖的问题。
+        match initialFocus with
+        | Some target -> Dispatcher.UIThread.Post(fun () -> target.Focus() |> ignore)
+        | None -> focusFirst content
 
     member _.IsDialogOpen = dialogCard.IsVisible
 

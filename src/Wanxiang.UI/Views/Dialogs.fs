@@ -372,8 +372,17 @@ module Dialogs =
                   codeButton :> Control
                   footerRow :> Control ]
         // Escape 统一走 OverlayHost.HandleEscape，这里不设局部处理。
-        overlay.ShowDialog(content :> Control, 460.0)
-        Dispatcher.UIThread.Post(fun () -> urlBox.Focus() |> ignore)
+        // 首焦落在第一个还缺内容的字段上：地址已记住（defaultUrl 非空）时
+        // 再聚焦地址框只是让用户多按一次 Tab，真正要填的是令牌。
+        // 借 kelivo 对话框 autofocus 落在「最需要补齐的那一项」的做法，
+        // 但只在两个字段间选：不猜配对码区（要显式切换才出现）。
+        //
+        // 经 ShowDialog 的 initialFocus 指定，而不是自己再 Post 一次：
+        // 自己 Post 会与 focusFirst 的出队顺序打架（真机复现过：环落在
+        // 「没有令牌？改用配对码」上，而不是目标字段）。
+        let target =
+            if String.IsNullOrWhiteSpace (if isNull urlBox.Text then "" else urlBox.Text) then urlBox else tokenBox
+        overlay.ShowDialog(content :> Control, 460.0, initialFocus = target)
         announce
 
 
