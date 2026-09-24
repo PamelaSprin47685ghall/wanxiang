@@ -379,6 +379,8 @@ type Composer(actions: ComposerActions) as this =
                                 | null -> ()
                                 | fm -> fm.Focus(null, NavigationMethod.Unspecified, KeyModifiers.None) |> ignore
                 // 组合中回车归输入法（候选确认），不提交。
+                // Key.Return 与 Key.Enter 在 Avalonia 12 同为 6（探针证实），
+                // 无需分别匹配；kelivo 的 enter/numpadEnter 分支在这里天然合并。
                 elif e.Key = Key.Enter && not (isImeComposing ()) then
                     let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
                     let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta

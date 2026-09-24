@@ -1719,3 +1719,29 @@ let ``huge code block expand button reports its expanded state`` () =
         KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
     Assert.Equal("展开全部", ((expandButton.Child :?> TextBlock).Text))
     Assert.Equal<string>("已折叠", expandedState expandButton)
+
+// kelivo markdown_with_highlight.dart:5877-5950 的任务勾号是 Flutter 原生
+// Checkbox，读屏直接播报勾选态；我们自绘 Border 只有视觉，补 CheckBox 语义
+// 与勾选名（视觉不变）。
+[<Fact>]
+let ``MarkdownRenderer task boxes expose checkbox automation state`` () =
+    Headless.ensure ()
+    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
+    let doc = "- [x] 已完成的一步\n- [ ] 还没做的一步"
+    let control = renderer.RenderText doc
+    let names =
+        descendants control
+        |> Seq.choose (fun c ->
+            let name = Avalonia.Automation.AutomationProperties.GetName c
+            if String.IsNullOrEmpty name then None else Some name)
+        |> Seq.toList
+    Assert.Contains("已完成任务", names)
+    Assert.Contains("未完成任务", names)
+    // 勾选框本身要声明为 CheckBox，否则读屏只会念正文。
+    let overrides =
+        descendants control
+        |> Seq.choose (fun c ->
+            let o = Avalonia.Automation.AutomationProperties.GetControlTypeOverride c
+            if o.HasValue then Some o.Value else None)
+        |> Seq.toList
+    Assert.Contains(Avalonia.Automation.Peers.AutomationControlType.CheckBox, overrides)

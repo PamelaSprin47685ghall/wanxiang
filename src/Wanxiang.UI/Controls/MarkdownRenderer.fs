@@ -702,6 +702,12 @@ type MarkdownRenderer(
                         Background = (if isChecked then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush),
                         Margin = Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space2, 0.0),
                         VerticalAlignment = VerticalAlignment.Top)
+                // 读屏用户扫到这个自绘方框时只能读到正文，无法感知任务是否完成。
+                // 补 CheckBox 语义与状态名（textColor 取 textMuted 与正文同源，
+                // 视觉不变），对齐 kelivo Flutter 原生 Checkbox 的语义播报。
+                Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
+                    box, Nullable<_> Avalonia.Automation.Peers.AutomationControlType.CheckBox)
+                Avalonia.Automation.AutomationProperties.SetName(box, if isChecked then "已完成任务" else "未完成任务")
                 if isChecked then
                     let mark = Icons.check Tokens.textOnAccent
                     mark.Width <- ControlMetrics.taskCheckGlyphSize
