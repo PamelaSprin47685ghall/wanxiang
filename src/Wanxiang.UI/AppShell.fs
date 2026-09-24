@@ -589,11 +589,23 @@ type MainView() as this =
         match activeConvId with
         | None -> ()
         | Some convId ->
-            runs.ClearError convId
-            sendCommand (RegenerateResponse {| invocationId = newInvocation (); conversationId = convId |})
-            this.Render()
-            // 错误卡片随重试卸载：焦点无处可去会掉到页顶，先交还给输入区。
-            composer.Focus()
+            // 重新生成不可恢复：服务端会删掉尾部整段回复链
+            // （CommandEngine.fs:220-232 连续 assistant/tool 消息全删）再重新生成。
+            // 本项目每一个不可恢复操作——删会话、批量删、删消息、删服务商、删
+            // MCP——全部有确认框，此前唯独重新生成没有；误点一次，上一轮回复
+            // 连内容带引用全部消失。kelivo 同样确认（chat_message_widget.dart:1346-1375
+            // _confirmRegeneration，默认开启）。
+            Dialogs.confirm
+                overlay
+                "重新生成"
+                "将丢弃当前这条回复并重新生成。此操作无法撤销。"
+                "重新生成"
+                (fun () ->
+                    runs.ClearError convId
+                    sendCommand (RegenerateResponse {| invocationId = newInvocation (); conversationId = convId |})
+                    this.Render()
+                    // 错误卡片随重试卸载：焦点无处可去会掉到页顶，先交还给输入区。
+                    composer.Focus())
 
     member private this.StopGeneration() =
         match activeConvId, (runs.Get activeConvId).generationId with

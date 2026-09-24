@@ -528,3 +528,50 @@ let ``batch delete reports what it did instead of staying silent`` () =
         |> Seq.filter (fun s -> s.Contains "删除")
         |> List.ofSeq
     Assert.True(toasts |> List.exists (fun s -> s.Contains "已删除 2 个会话"), sprintf "批量删除必须给一条汇总反馈，实际 %A" toasts)
+
+// 重新生成服务端语义 = 删掉尾部整段回复链再重来
+// （CommandEngine.fs:220-232 连续 assistant/tool 消息全删）。本项目其余每一个
+// 不可恢复操作（删会话、批量删、删消息、删服务商、删 MCP）都有确认框，
+// 唯独重新生成没有——误点一次，上一轮回复连内容带引用全部消失。
+// kelivo_chat_message_widget.dart:1346-1375 _confirmRegeneration 同一约定。
+[<Fact>]
+let ``regenerate asks before discarding the last reply`` () =
+    Headless.ensure ()
+    let view = shell ()
+    let root = (field view "root").GetValue view :?> Control
+    let overlay = (field view "overlay").GetValue view :?> OverlayHost
+    let composer = (field view "composer").GetValue view :?> Composer
+    let a = Guid.NewGuid ()
+    select view a
+    handle view (snapshot a)
+    // 焦点先在别处：确认通过后 composer.Focus() 是「命令已发出」的可观察代理
+    // （shell 在 Regenerate 的确认回调里唯一做的用户可见动作）。
+    (controls root |> Seq.tryFind (fun c -> AutomationProperties.GetName c = "新建会话"))
+        |> Option.iter (fun b -> b.Focus() |> ignore)
+    Dispatcher.UIThread.RunJobs()
+    invoke view "Regenerate" [||] |> ignore
+    Dispatcher.UIThread.RunJobs()
+    // 确认框接管：直接输入区交出焦点、命令未发（焦点没回 composer）。
+    Assert.True(overlay.IsDialogOpen, "重新生成前必须先确认")
+    Assert.False(composer.IsFocused, "未确认不得驱动命令路径（composer.Focus 不执行）")
+    let texts =
+        controls overlay.Root
+        |> Seq.choose (function :? TextBlock as tb -> Some tb.Text | _ -> None)
+        |> List.ofSeq
+    Assert.True(texts |> List.exists (fun s -> s.Contains "无法撤销"), "确认框须说明不可恢复")
+    // 确认按钮在场：危险语气的确认动作（Dialogs.confirm 的 Danger 档）。
+    let ok =
+        controls overlay.Root
+        |> Seq.filter (fun c -> AutomationProperties.GetName c = "重新生成" && c.IsVisible)
+        |> Seq.tryLast
+        |> Option.defaultWith (fun () -> failwith "确认框缺少重新生成按钮")
+    Assert.True(ok.IsEnabled, "确认动作可用")
+    // 取消：确认框关，命令路径仍未执行。
+    let cancel =
+        controls overlay.Root |> Seq.tryFind (fun c -> AutomationProperties.GetName c = "取消")
+        |> Option.defaultWith (fun () -> failwith "确认框缺少取消按钮")
+    (cancel :?> Border).RaiseEvent(
+        KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
+    Dispatcher.UIThread.RunJobs()
+    Assert.False(overlay.IsDialogOpen, "取消后确认框应关闭")
+    Assert.False(composer.IsFocused, "取消不得发出命令")

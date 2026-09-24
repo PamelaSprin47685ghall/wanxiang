@@ -257,7 +257,19 @@ type ConversationExportDialog(
             else
                 try
                     // 文件选择器在点击回调内立即调用，不在网络／异步操作之后补开。
-                    let picking = top.StorageProvider.SaveFilePickerAsync(FilePickerSaveOptions(SuggestedFileName = Export.safeFileName document.title))
+                    // kelivo 保存选择器带 dialogTitle + allowedExtensions
+                    // （message_export_sheet.dart:707-711）：用户手改文件名去掉
+                    // .md 时，操作系统不会自动补回扩展名，再点保存就得到一个
+                    // 没有扩展名的文件，之后只能猜它是 Markdown。补上 Title 与
+                    // DefaultExtension/FileTypeChoices，让系统对话框自己兜底。
+                    let picking =
+                        top.StorageProvider.SaveFilePickerAsync(
+                            FilePickerSaveOptions(
+                                Title = "导出会话",
+                                SuggestedFileName = Export.safeFileName document.title,
+                                DefaultExtension = "md",
+                                FileTypeChoices =
+                                    [ FilePickerFileType("Markdown 文档", Patterns = [| "*.md" |]) ]))
                     saving <- true
                     saveError <- None
                     this.Refresh()
