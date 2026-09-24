@@ -1258,9 +1258,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 之后看到的仍是旧文案，再点会得到与预期相反的动作。
         Ui.setButtonText selectAllButton
             (if visibleRowIds.Length > 0 && visibleRowIds |> Array.forall selectedIds.ContainsKey then "取消全选" else "全选")
+        // 只按「已选项是否全部置顶」判定：选中项非空且全置顶即报「取消置顶」。
+        // 此前混入 `Array.forall selectedIds.ContainsKey`（必须全选可见行才肯换文案），
+        // 于是只挑两个会话点时文案停在「置顶」，点下去发出的却是取消置顶——文案与动作相反。
         Ui.setButtonText pinButton
-            (if visibleRowIds.Length > 0 && visibleRowIds |> Array.forall selectedIds.ContainsKey && visibleRowIds.Length > 0
-               && actions.selectionAllPinned(this.SelectedIds()) then "取消置顶" else "置顶")
+            (if actions.selectionAllPinned(this.SelectedIds()) then "取消置顶" else "置顶")
         // 读屏与悬停提示跟着同一份状态走：文案换了，自动化名还是旧的话等于报错。
         Avalonia.Automation.AutomationProperties.SetHelpText(
             selectAllButton,

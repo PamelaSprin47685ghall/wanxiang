@@ -445,6 +445,11 @@ module Dialogs =
         maxTokensBox.Text <- (match current.maxTokens with Some m -> string m | None -> "")
         let _, thinkingBudgetBox = Ui.textField "留空跟随默认；0 关闭思维链"
         thinkingBudgetBox.Text <- (match current.thinkingBudget with Some b -> string b | None -> "")
+        // 用户动手修正任一字段即收起摘要：与字段行内「一改即清」同一时机，
+        // 不再让 assertive live region 播报已经修正的旧错误。
+        Ui.bindValidationSummaryReset
+            (Some errorSummary)
+            [ temperatureBox; topPBox; maxTokensBox; thinkingBudgetBox ]
 
         // Escape 统一走 OverlayHost.HandleEscape（提交 pending 中会被守卫拦截），
         // 这里不再为输入框设隧道 Esc 处理。

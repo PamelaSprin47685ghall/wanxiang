@@ -701,6 +701,25 @@ module Ui =
         | _ -> ()
         Avalonia.Automation.AutomationProperties.SetHelpText(box, "")
 
+    /// 把表单级错误摘要（live region）绑到一组输入框上：用户一旦动手修正任一字段，
+    /// 摘要立刻收起并清空。此前摘要只在下次「保存」时才重置，字段行内错误已经
+    /// 一改即清，顶部的 assertive 区域却还在播报旧错误——视觉与读屏都指控着
+    /// 已经合法的表单。借 kelivo model_edit_dialog.dart:483-488 / search_services_pane.dart:988-991
+    /// 「onChanged 即清错」的同一时机，但只收摘要：仍不合法就由下一次提交重新给出。
+    let bindValidationSummaryReset (summary: TextBlock option) (boxes: TextBox seq) =
+        match summary with
+        | None -> ()
+        | Some region ->
+            for box in boxes do
+                box.GetObservable(TextBox.TextProperty)
+                    .Subscribe(fun _ ->
+                        if region.IsVisible then
+                            region.IsVisible <- false
+                            region.Text <- ""
+                            AutomationProperties.SetName(region, "")
+                        ())
+                    |> ignore
+
     /// 带标签的输入行。
     let labeledField (labelText: string) (placeholder: string) : Control * TextBox =
         let shell, box = textField placeholder

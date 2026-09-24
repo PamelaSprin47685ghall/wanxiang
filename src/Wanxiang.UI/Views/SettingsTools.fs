@@ -110,6 +110,9 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         Avalonia.Automation.AutomationProperties.SetLiveSetting(
             errorSummary,
             Avalonia.Automation.AutomationLiveSetting.Assertive)
+        // 用户动手修正任一字段即收起摘要：与字段行内「一改即清」同一时机，
+        // 不再让 assertive live region 播报已经修正的旧错误。
+        Ui.bindValidationSummaryReset (Some errorSummary) allBoxes
         match existing with
         | Some server ->
             idBox.Text <- server.id

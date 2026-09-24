@@ -2413,3 +2413,67 @@ let ``preset dropdown marks exactly the current preset`` () =
         Assert.Equal<string list>([ nextPreset.label ], markedPresets ())
     finally
         window.Close()
+
+// 表单错误摘要（assistive live region）此前只在下次「保存」时才重置：字段行内错误
+// 一改即清，顶部的 assertive 摘要却继续指控已经填好的表单——视觉误导 + 读屏播报旧错。
+// 借 kelivo model_edit_dialog.dart:483-488「onChanged 即清错」的同一时机：
+// 用户动手修正任一字段，摘要立刻收起。
+[<Fact>]
+let ``form error summary clears as soon as the user starts fixing a field`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    overlay.WireDismiss()
+    let settingsActions =
+        { upsertProvider = fun _ completed -> completed true
+          deleteProvider = ignore
+          probeProvider = ignore
+          upsertMcp = fun _ completed -> completed true
+          deleteMcp = ignore
+          updateGeneration = fun _ completed -> completed true
+          savePrefs = ignore
+          toast = fun _ _ -> () }
+    let providers = SettingsProviders(overlay, settingsActions)
+    let view = providers.Build()
+    root.Children.Insert(0, view)
+    let window = show root 760.0 700.0
+    try
+        let addProvider = byAutomationName view "添加服务商"
+        ControlAutomationPeer.CreatePeerForElement addProvider
+        |> Assert.IsAssignableFrom<IInvokeProvider>
+        |> fun invoke -> invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(overlay.IsDialogOpen, "新增服务商对话框应已打开")
+        // 对话框内容挂在 OverlayHost 的次级层上：visualControls 走可视树，
+        // 才够得到弹出层里的输入框与摘要（descendants 只走逻辑子级）。
+        let summary =
+            visualControls root
+            |> Seq.pick (function
+                | :? TextBlock as block when AutomationProperties.GetName(block) = "表单错误摘要" -> Some block
+                | _ -> None)
+        let boxByPlaceholder (placeholder: string) =
+            visualControls root
+            |> Seq.choose (function
+                | :? TextBox as box when box.PlaceholderText = placeholder -> Some box
+                | _ -> None)
+            |> Seq.head
+        // 预填预设反而填满大半表单：把端点与模型列表清空，制造两处错误。
+        (boxByPlaceholder "https://api.openai.com/v1").Text <- ""
+        (boxByPlaceholder "每行一个模型名").Text <- ""
+        // 提交：端点地址与模型列表都缺 → 多错摘要出现（assistive live region）。
+        let confirm =
+            visualControls root
+            |> Seq.find (fun c -> AutomationProperties.GetName(c) = "添加")
+        ControlAutomationPeer.CreatePeerForElement confirm
+        |> Assert.IsAssignableFrom<IInvokeProvider>
+        |> fun invoke -> invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(summary.IsVisible, "多处错误应展开表单错误摘要")
+        Assert.Contains("端点地址", summary.Text)
+        // 用户开始修正其中一处：摘要立刻收起，不再指控已被部分修正的表单。
+        (boxByPlaceholder "https://api.openai.com/v1").Text <- "https://api.example.com/v1"
+        Dispatcher.UIThread.RunJobs()
+        Assert.False(summary.IsVisible, "用户一动手修正，摘要就应收起")
+        Assert.Equal("", summary.Text)
+    finally
+        window.Close()

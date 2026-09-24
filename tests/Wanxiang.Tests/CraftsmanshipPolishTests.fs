@@ -1675,3 +1675,40 @@ let ``ChatView header title tooltip reflects full title and preserves character 
         Assert.Equal(fullTitle, ToolTip.GetTip(titleAction) :?> string)
     finally
         window.Close()
+
+// 超长代码块（>120 行）折叠后底部有「展开全部 / 收起」按钮：文案之外，
+// 展开态还应对无障碍树报成 expander 状态（SetExpanded），读屏据此播音
+// 「已展开 / 已折叠」，不靠按钮名猜。此前只改了名称，读屏听到的仍是错的状态。
+[<Fact>]
+let ``huge code block expand button reports its expanded state`` () =
+    Headless.ensure ()
+    // 本项目的 expander 语义经 AutomationProperties.SetExpanded 落到 ItemStatus。
+    let expandedState (control: Control) =
+        Avalonia.Automation.AutomationProperties.GetItemStatus control
+    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
+    let hugeDoc =
+        let lines =
+            [ for i in 1 .. 130 -> sprintf "let value%d = %d" i i ]
+            |> String.concat "\n"
+        sprintf "```fsharp\n%s\n```" lines
+    let control = renderer.RenderText hugeDoc
+    let expandButton =
+        descendants control
+        |> Seq.choose (function
+            | :? Border as border ->
+                match border.Child with
+                | :? TextBlock as text when text.Text = "展开全部" -> Some border
+                | _ -> None
+            | _ -> None)
+        |> Seq.head
+    // 初始折叠：expander 状态为 false。
+    Assert.Equal<string>("已折叠", expandedState expandButton)
+    expandButton.RaiseEvent(
+        KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
+    // 展开：名称与 expander 状态一起跟着翻。
+    Assert.Equal("收起", ((expandButton.Child :?> TextBlock).Text))
+    Assert.Equal<string>("已展开", expandedState expandButton)
+    expandButton.RaiseEvent(
+        KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
+    Assert.Equal("展开全部", ((expandButton.Child :?> TextBlock).Text))
+    Assert.Equal<string>("已折叠", expandedState expandButton)

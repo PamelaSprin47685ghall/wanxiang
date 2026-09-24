@@ -440,11 +440,15 @@ type MarkdownRenderer(
             codeExpand.Cursor <- handCursor
             codeExpand.Focusable <- true
             Avalonia.Automation.AutomationProperties.SetName(codeExpand, "展开全部")
+            // 展开态报成标准 expander 语义：读屏据此播音「已折叠 / 已展开」，
+            // 不靠名称文案猜。与思考链、错误卡详情的 SetExpanded 同一写法。
+            Avalonia.Automation.AutomationProperties.SetExpanded(codeExpand, false)
             toggleCodeFull <- fun () ->
                 codeFull <- not codeFull
                 scroll.MaxHeight <- if codeFull then Double.PositiveInfinity else LayoutPolicy.expandedDetailMaxHeight
                 Ui.setButtonText codeExpand (if codeFull then "收起" else "展开全部")
                 Avalonia.Automation.AutomationProperties.SetName(codeExpand, if codeFull then "收起" else "展开全部")
+                Avalonia.Automation.AutomationProperties.SetExpanded(codeExpand, codeFull)
             stack.Children.Add codeExpand
 
         let root =

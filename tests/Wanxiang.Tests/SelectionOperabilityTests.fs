@@ -487,3 +487,61 @@ let ``setting the active conversation scrolls it into view`` () =
         | None -> Assert.Fail("找不到会话列表的滚动容器")
     finally
         window.Close()
+
+// 置顶键的文案只按「已选项是否全部置顶」判定。此前混入「必须全选可见行」的前提，
+// 于是只挑两个已置顶的会话时键面仍说「置顶」，点下去发出的却是取消置顶——
+// 文案与动作相反，用户要么不敢点，要么点错。
+[<Fact>]
+let ``pin key follows the selected items' pinned state alone`` () =
+    // Ui / Sidebar 模块顶层建有 Cursor：先确保无头平台就绪，否则触碰成员即炸。
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    let pinnedMany = ResizeArray<Guid list * bool>()
+    // 夹具上报：传入的任何选择都算「全部已置顶」——模拟两个已置顶会话被挑中的情形。
+    let actions: SidebarActions =
+        { newConversation = ignore
+          openConversation = ignore
+          renameConversation = ignore
+          deleteConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          selectionAllPinned = fun _ -> true
+          setPinnedMany = fun ids pin -> pinnedMany.Add(ids, pin)
+          setArchivedMany = fun _ _ -> ()
+          deleteMany = fun _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    root.Children.Add sidebar
+    let a = Guid.NewGuid()
+    let b = Guid.NewGuid()
+    let c = Guid.NewGuid()
+    let window = show root 320.0 520.0
+    try
+        sidebar.SetConversations [ summary a "A" true; summary b "B" true; summary c "C" true ]
+        Dispatcher.UIThread.RunJobs()
+        let pinKey =
+            descendants root |> Seq.find (fun control -> AutomationProperties.GetName(control) = "置顶")
+        // 只挑两项（第三项不在选择里）：仍是「取消置顶」——判定只看已选项。
+        sidebar.EnterSelection a
+        sidebar.ToggleSelected b
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal("取消置顶", textOf pinKey)
+        // 动作与文案一致：发出去的就是取消置顶。
+        let invoke (control: Control) =
+            control.RaiseEvent(
+                KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
+        invoke pinKey
+        Dispatcher.UIThread.RunJobs()
+        // 载荷只按已选两项算，顺序随可见行走：比对集合而非序列。
+        let sentIds = pinnedMany |> Seq.map fst |> Seq.head |> List.ofSeq |> List.sort
+        Assert.Equal<Guid list>([ a; b ] |> List.sort, sentIds)
+        Assert.False(pinnedMany |> Seq.map snd |> Seq.head)
+    finally
+        window.Close()
