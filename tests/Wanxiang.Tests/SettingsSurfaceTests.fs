@@ -175,6 +175,57 @@ let ``generation form consumes shared column spacing and text metrics`` () =
 // 键盘路由本身的验证不在此处：合成按键在无头窗口里不会从焦点控件冒泡到祖先
 // （同一原因，SettingsProviders / SettingsTools 的行级 KeyDown 也没有单测），
 // 这里只锁用户可观察的那一半——按钮自描述里的键位。
+// 生成参数此前的提交时机只有 Enter / Ctrl+Enter / 保存按钮三条：改完数值直接点去
+// 别处（切分区、点窗口其它区域），那次编辑既不入库也不提示，切回来被 SetCatalog
+// 的旧值覆盖——静默回滚。kelivo display_settings_page.dart:1736-1755 的 FocusNode
+// listener 失焦即落库。锁：数值框失焦真的触发 updateGeneration。
+[<Fact>]
+let ``editing a generation number and moving away commits it`` () =
+    Headless.ensure ()
+    let toasts = ResizeArray<string * ToastTone>()
+    let saved = ResizeArray<JsonObject>()
+    let general =
+        SettingsGeneral(overlay (), stubActions toasts (fun payload completed ->
+            saved.Add payload
+            completed true), ignore)
+    let built = general.BuildGeneration()
+    let window = Window(Width = 760.0, Height = 900.0, Content = built)
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+    try
+        // 按占位文案锁定「上下文消息上限」框：五个数值框里只有它的占位是 "200"。
+        let contextBox =
+            descendants built
+            |> Seq.choose (function :? TextBox as box -> Some box | _ -> None)
+            |> Seq.find (fun box -> box.PlaceholderText = "200")
+        Assert.Equal(0, saved.Count)
+        // 表单未接 SetCatalog：五个框都是空文本，必需框（上下文/工具轮数）空即校验失败。
+        // 先把整表填成合法默认值，再单独改要测的那一格。
+        for box in
+            descendants built
+            |> Seq.choose (function :? TextBox as box -> Some box | _ -> None) do
+            if isNull box.PlaceholderText || not (box.AcceptsReturn) then
+                match box.PlaceholderText with
+                | "200" -> box.Text <- "200"
+                | "12" -> box.Text <- "12"
+                | _ -> box.Text <- ""
+        contextBox.Focus() |> ignore
+        Assert.True(contextBox.IsFocused, "前置条件：焦点已在上下文框")
+        contextBox.Text <- "321"
+        // 把焦点移到另一个数值框：LostFocus 在这一次转移上触发。
+        let temperatureBox =
+            descendants built
+            |> Seq.choose (function :? TextBox as box -> Some box | _ -> None)
+            |> Seq.find (fun box -> not (obj.ReferenceEquals(box, contextBox)))
+        temperatureBox.Focus() |> ignore
+        Assert.False(contextBox.IsFocused, "前置条件：焦点已离开上下文框")
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(saved.Count > 0, "失焦即提交：改完上下文上限点去别处必须落库")
+        let payload = saved.[saved.Count - 1]
+        Assert.Equal(321, int (payload.["maxContextMessages"].GetValue<int>()))
+    finally
+        window.Close()
+
 [<Fact>]
 let ``generation save button advertises the ctrl enter shortcut`` () =
     Headless.ensure ()

@@ -446,6 +446,20 @@ type MainView() as this =
 
     // ---- 会话操作 ----
 
+    /// 批量删除后的主视图归宿：删的集合里含当前会话时，从侧栏可见顺序排除待删集合
+    /// 取第一个存活会话（整列全删则 None → 欢迎页）。不含当前会话时 None = 不动主视图。
+    /// 与单条删除的 NeighborAfterDelete 同一意图，只是口径从「单个 id」扩到「一批 id」。
+    member private this.NeighborExcluding(removedIds: Guid list) : Guid option =
+        match activeConvId with
+        | Some currentId when List.contains currentId removedIds ->
+            let removed = Set.ofList removedIds
+            sidebar.GetVisibleOrder()
+            |> List.tryPick (fun id ->
+                match Guid.TryParse id with
+                | true, g when not (removed.Contains g) -> Some g
+                | _ -> None)
+        | _ -> None
+
     member private this.SelectConversation(id: Guid option) =
         if activeConvId <> id then
             (drafts.Get(instanceId, activeConvId)).text <- composer.Text
@@ -1337,12 +1351,25 @@ type MainView() as this =
                             (sprintf "选中的 %d 个会话及其消息将不再出现在列表里。此操作无法撤销。" count)
                             "删除"
                             (fun () ->
+                                // 批量删除若包含正在看的会话，主视图不能挂在已删会话上：
+                                // 发送消息/停止生成都会撞上服务端「会话不存在」。单条删除
+                                // 早已落在邻位（FocusAfterDelete + SelectConversation neighbor），
+                                // 批量这条路此前直接漏掉了。邻位口径与单条同源：从可见顺序里
+                                // 排除掉待删集合后取当前位置的下一行；整列全删则退回欢迎页。
+                                // kelivo side_drawer.dart:744-762 批量删除同样先判定
+                                // deletingCurrent 再 _handlePostDeleteNavigation 落到邻位。
+                                let neighbor = this.NeighborExcluding ids
                                 for id in ids do
                                     let command =
                                         DeleteConversation
                                             {| invocationId = newInvocation (); conversationId = id |}
                                     sendCommand command
-                                sidebar.ExitSelection())
+                                sidebar.ExitSelection()
+                                let deletedCurrent = Option.exists (fun id -> List.contains id ids) activeConvId
+                                if deletedCurrent then
+                                    this.SelectConversation neighbor
+                                    sidebar.SetActive None
+                                    this.Render())
               duplicateAsFork =
                 fun summary ->
                     this.OpenConversation summary.id

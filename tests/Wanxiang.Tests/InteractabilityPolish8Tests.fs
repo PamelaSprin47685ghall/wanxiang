@@ -1,6 +1,7 @@
 module Wanxiang.Tests.InteractabilityPolish8Tests
 
 open System
+open System.Reflection
 open Avalonia
 open Avalonia.Automation
 open Avalonia.Controls
@@ -270,5 +271,60 @@ let ``next question anchors on the topmost visible card`` () =
         Assert.True(
             second.Bounds.Y > third.Bounds.Y || third.Bounds.Y > scroller.Offset.Y,
             sprintf "第 2 轮不得晚于第 3 轮（second=%f third=%f）" second.Bounds.Y third.Bounds.Y)
+    finally
+        window.Close()
+
+// 批量删除含当前会话时，主视图不能挂在已删会话上：单条删除早已落在邻位，
+// 批量这条路此前直接漏掉，删完主屏仍留着已删会话的内容，此刻发消息/停止
+// 都撞服务端「会话不存在」。锁三条：含当前→邻位；不含当前→不动；
+// 整列全删→欢迎页（None）。
+[<Fact>]
+let ``batch delete of the active conversation lands on a surviving neighbor`` () =
+    ensureHeadless ()
+    let shell = MainView()
+    shell.Build()
+    let window = Window(Width = 900.0, Height = 700.0, Content = shell)
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+    let flags = BindingFlags.Instance ||| BindingFlags.NonPublic
+    try
+        let activeField = typeof<MainView>.GetField("activeConvId", flags)
+        Assert.True(not (isNull activeField), "activeConvId 字段应可反射到")
+        let sideField = typeof<MainView>.GetField("sidebar", flags)
+        Assert.True(not (isNull sideField), "sidebar 字段应可反射到")
+        let sidebar = unbox<Sidebar>(sideField.GetValue shell)
+        let kept = Guid.NewGuid()
+        let doomed = Guid.NewGuid()
+        let doomed2 = Guid.NewGuid()
+        let now = DateTimeOffset.Now
+        let summary id =
+            { id = id
+              title = string id
+              preview = ""
+              running = false
+              pinned = false
+              archived = false
+              createdAt = now
+              updatedAt = now
+              messageCount = 1
+              isFork = false
+              providerId = "p"
+              model = "m"
+              lastCommitId = 1UL }
+        sidebar.SetConversations [ summary kept; summary doomed; summary doomed2 ]
+        Dispatcher.UIThread.RunJobs()
+        // 邻位判定只读 activeConvId 与侧栏可见顺序，先设当前会话为 doomed。
+        activeField.SetValue(shell, box (Some doomed))
+        let m = typeof<MainView>.GetMethod("NeighborExcluding", flags)
+        Assert.True(not (isNull m), "NeighborExcluding 应可反射到")
+        let neighbor = unbox<Guid option>(m.Invoke(shell, [| box [ doomed ] |]))
+        Assert.Equal(Some kept, neighbor)
+        let withOther =
+            unbox<Guid option>(m.Invoke(shell, [| box [ doomed2 ] |]))
+        Assert.True(withOther.IsNone, "批量删除不含当前会话：主视图不搬家")
+        // 整列全删：退回欢迎页（None 由调用方翻译成 SelectConversation None）。
+        let noneLeft =
+            unbox<Guid option>(m.Invoke(shell, [| box [ kept; doomed; doomed2 ] |]))
+        Assert.True(noneLeft.IsNone, "删掉整列时退回欢迎页")
     finally
         window.Close()

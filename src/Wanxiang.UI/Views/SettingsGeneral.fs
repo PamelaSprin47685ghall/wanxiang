@@ -218,6 +218,19 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                 if e.Key = Key.Enter && not (ctrl e) then
                     e.Handled <- true
                     this.SaveGeneration())
+        // 失焦即提交：与 Enter 同一条 SaveGeneration 路径（generationSaving 重入 guard
+        // 兜底），补上「改完数值直接点去别处」这条最常见的提交时机——此前只有
+        // Enter / Ctrl+Enter / 保存按钮三条路，鼠标用户改完温度顺手点左侧导航切分区，
+        // 那次编辑既不入库也不提示，切回来时被 SetCatalog 的旧值覆盖，静默回滚。
+        // kelivo display_settings_page.dart:1736-1755（_NumberFieldRow 的 FocusNode
+        // listener）与 auto_retry_page.dart:53-65 都是失焦即落库，语义同理。
+        // 与「保存生成设置」按钮不双重提交：点按钮时焦点先离开输入框，这次提前的
+        // SaveGeneration 会把存中标记先立起来，按钮回调紧随其后被 guard 挡掉。
+        let saveField (box: TextBox) =
+            box.LostFocus.Add(fun _ ->
+                if not generationSaving then this.SaveGeneration())
+        for box in [ temperatureBox; topPBox; maxTokensBox; contextBox; toolRoundsBox ] do
+            saveField box
         generationForm :> Control
 
     member this.BuildAppearance() : Control =
