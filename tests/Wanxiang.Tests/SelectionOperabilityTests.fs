@@ -1,6 +1,9 @@
 module Wanxiang.Tests.SelectionOperabilityTests
 
 open System
+open System.Diagnostics
+open System.Reflection
+open System.Threading
 open Avalonia
 open Avalonia.Automation
 open Avalonia.Controls
@@ -543,5 +546,49 @@ let ``pin key follows the selected items' pinned state alone`` () =
         let sentIds = pinnedMany |> Seq.map fst |> Seq.head |> List.ofSeq |> List.sort
         Assert.Equal<Guid list>([ a; b ] |> List.sort, sentIds)
         Assert.False(pinnedMany |> Seq.map snd |> Seq.head)
+    finally
+        window.Close()
+
+// 空选择不进删除流：SelectedIds 只报可见行里的已选项，搜索把选中行滤掉后
+// 选择计数非 0 而批量载荷为空——行上按 Delete 仍会调 deleteMany，确认框弹出
+// 「选中的 0 个会话」。kelivo 侧栏以 selectedCount > 0 为启用条件
+// （sidebar_selection_bars.dart:186），同一约定。
+[<Fact>]
+let ``batch delete with an empty selection never reaches the batch action`` () =
+    let root, sidebar, _, _, _, deleted = buildSidebar ()
+    let a = Guid.NewGuid()
+    let b = Guid.NewGuid()
+    let window = show root 320.0 520.0
+    try
+        sidebar.SetConversations [ summary a "Alpha" false; summary b "Beta" false ]
+        Dispatcher.UIThread.RunJobs()
+        let row = rowByName sidebar "Alpha"
+        sidebar.EnterSelection a
+        Dispatcher.UIThread.RunJobs()
+        // 搜索框过滤到只剩 Beta：选中项 Alpha 不可见了。
+        let search =
+            descendants root
+            |> Seq.choose (function :? TextBox as tb when tb.PlaceholderText = "搜索会话" -> Some tb | _ -> None)
+            |> Seq.head
+        search.Text <- "Beta"
+        // 搜索有 160ms 防抖（MotionLedger.searchInputDebounce）：测试线程就是
+        // UI 线程，睡着等不到 tick，直接把手里的 timer 到期推进。
+        let timer =
+            let field =
+                typeof<Sidebar>.GetField("searchDebounce", Reflection.BindingFlags.NonPublic ||| Reflection.BindingFlags.Instance)
+            field.GetValue(sidebar) :?> DispatcherTimer
+        timer.Interval <- TimeSpan.FromMilliseconds(1.0)
+        Dispatcher.UIThread.RunJobs()
+        Thread.Sleep 20
+        Dispatcher.UIThread.RunJobs()
+        Assert.Empty(sidebar.SelectedIds())
+        row.RaiseEvent(
+            KeyEventArgs(
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = Key.Delete,
+                KeyModifiers = KeyModifiers.None,
+                Source = row))
+        Dispatcher.UIThread.RunJobs()
+        Assert.Equal(0, deleted.Count)
     finally
         window.Close()

@@ -2,6 +2,7 @@ module Wanxiang.Tests.MathBaselineTests
 
 open System
 open System.IO
+open System.Threading
 open System.Runtime.InteropServices
 open Avalonia
 open Avalonia.Controls
@@ -101,3 +102,34 @@ type Baseline(output: ITestOutputHelper) =
         Assert.True(textBottom > 0, "没量到正文墨迹")
         Assert.True(mathBottom > 0, "没量到公式墨迹")
         Assert.True(abs delta <= 1.0, $"基线落差 {delta:F2}pt，应当在 1pt 以内")
+
+// 公式渲染出来的是自绘图形：读屏看到的是一块空白。原式进自动化名与 ToolTip，
+// 听得到、悬停看得见。Kelivo 把 TeX 原文暴露给文本朗读，同一意图的更彻底版本。
+[<Fact>]
+let ``rendered inline math exposes its tex source`` () =
+    Headless.ensure ()
+    let dir = Path.GetDirectoryName(typeof<FixtureBackend>.Assembly.Location)
+    let html = File.ReadAllText(Path.Combine(dir, "fixtures", "inline-emc2.html"))
+    RichBackend.install(FixtureBackend html)
+    let size = Tokens.fontReading
+    let lineHeight = size * 1.65
+    // 排版由无头 WebView 异步交付：挂窗并轮询到出盒。
+    let host = Border()
+    let window = Window(Width = 400.0, Height = 120.0, Content = host)
+    window.Show()
+    try
+        let mutable ready = None
+        for _ in 1 .. 100 do
+            if ready.IsNone then
+                match MathRender.tryInline size lineHeight "(fixture)" with
+                | Some visual -> ready <- Some visual
+                | None ->
+                    Dispatcher.UIThread.RunJobs()
+                    Thread.Sleep 20
+        match ready with
+        | Some visual ->
+            Assert.Equal<string>("公式：(fixture)", Avalonia.Automation.AutomationProperties.GetName(visual))
+            Assert.Equal<string>("(fixture)", ToolTip.GetTip(visual) :?> string)
+        | None -> failwith "公式排不出来"
+    finally
+        window.Close()

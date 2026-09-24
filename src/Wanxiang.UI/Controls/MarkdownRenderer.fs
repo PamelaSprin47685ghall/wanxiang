@@ -108,7 +108,12 @@ type MarkdownRenderer(
                 let run = Run(sprintf "[图片未加载：%s · %s]" label source)
                 run.Foreground <- Tokens.textFaint
                 block.Inlines.Add run
-                ToolTip.SetTip(block, sprintf "为保护隐私，默认不加载远程图片。来源：%s" url)
+                // 占位段的文字只在正文里可见；读屏把整块 TextBlock 当纯文本读时，
+                //  ToolTip 与文字其实一致，但自动化树需要一个明确名称，否则
+                // 跳过整块。名称取「占位说明 + 来源」，与 ToolTip 同文。
+                let notice = sprintf "为保护隐私，默认不加载远程图片。来源：%s" url
+                ToolTip.SetTip(block, notice)
+                Avalonia.Automation.AutomationProperties.SetName(block, notice)
             | MdBreak -> block.Inlines.Add(LineBreak())
         block :> Control
 
@@ -212,7 +217,14 @@ type MarkdownRenderer(
                         Focusable = focusable,
                         VerticalAlignment = VerticalAlignment.Center,
                         Child = linkText)
-                if focusable then Avalonia.Automation.AutomationProperties.SetName(link, fullText)
+                if focusable then
+                    Avalonia.Automation.AutomationProperties.SetName(link, fullText)
+                else
+                    // 非首段切片从读屏树摘除：Focusable=false 只挡键盘，
+                    // 读屏仍会抓到无名的次要片段，把一个链接念成碎句。
+                    Avalonia.Automation.AutomationProperties.SetAccessibilityView(
+                        link,
+                        Avalonia.Automation.AccessibilityView.Raw)
                 Avalonia.Automation.AutomationProperties.SetHelpText(link, url)
                 Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
                     link,

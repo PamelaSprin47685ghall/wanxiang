@@ -2449,7 +2449,7 @@ let ``form error summary clears as soon as the user starts fixing a field`` () =
         let summary =
             visualControls root
             |> Seq.pick (function
-                | :? TextBlock as block when AutomationProperties.GetName(block) = "表单错误摘要" -> Some block
+                | :? TextBlock as block when Avalonia.Automation.AutomationProperties.GetName(block) = "表单错误摘要" -> Some block
                 | _ -> None)
         let boxByPlaceholder (placeholder: string) =
             visualControls root
@@ -2477,3 +2477,59 @@ let ``form error summary clears as soon as the user starts fixing a field`` () =
         Assert.Equal("", summary.Text)
     finally
         window.Close()
+
+// 远程图片占位：隐私策略下不加载外链图片，正文给出占位段 + ToolTip。
+// 读屏此前跳过整块：自动化树上没有名称。名称与 ToolTip 同文（占位说明 + 来源）。
+[<Fact>]
+let ``unloaded remote image placeholder has an automation name`` () =
+    Headless.ensure ()
+    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
+    let control = renderer.RenderText("![架构图](https://cdn.example.com/diagram.png)")
+    let window = show control 420.0 200.0
+    try
+        let block =
+            descendants control
+            |> Seq.choose (function
+                | :? SelectableTextBlock as text ->
+                    let hasPlaceholder =
+                        text.Inlines
+                        |> Seq.cast<Inline>
+                        |> Seq.choose (function :? Run as run -> Some run.Text | _ -> None)
+                        |> Seq.exists (fun s -> s.Contains "图片未加载")
+                    if hasPlaceholder then Some text else None
+                | _ -> None)
+            |> Seq.head
+        let expected = "为保护隐私，默认不加载远程图片。来源：https://cdn.example.com/diagram.png"
+        Assert.Equal<string>(expected, Avalonia.Automation.AutomationProperties.GetName(block))
+        Assert.Equal<string>(expected, ToolTip.GetTip(block) :?> string)
+    finally
+        window.Close()
+
+// 长链接切片成多个同 URL 的热区：首段才是一个 Tab stop（可聚焦、有名称）。
+// 后续片段从读屏树摘除（AccessibilityView.Raw）——只挡键盘不够，
+// 读屏仍会抓到无名片段，把一个链接念成碎句。kelivo 用零宽软断行避免同题。
+[<Fact>]
+let ``secondary link chunks stay out of the screen-reader tree`` () =
+    Headless.ensure ()
+    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
+    let longLabel = String.replicate 12 "very-long-link-segment-"
+    let control = renderer.RenderText(sprintf "[%s](https://example.com/path)" longLabel)
+    let window = show control 420.0 200.0
+    try
+        let hyperlinkStops =
+            descendants control
+            |> Seq.filter (fun c ->
+                c.Focusable
+                && Avalonia.Automation.AutomationProperties.GetControlTypeOverride(c) = Nullable<Avalonia.Automation.Peers.AutomationControlType>(Avalonia.Automation.Peers.AutomationControlType.Hyperlink))
+            |> Seq.filter (fun c -> Avalonia.Automation.AutomationProperties.GetAccessibilityView(c) <> Avalonia.Automation.AccessibilityView.Raw)
+            |> Seq.length
+        Assert.Equal(1, hyperlinkStops)
+        let rawChunks =
+            descendants control
+            |> Seq.filter (fun c ->
+                Avalonia.Automation.AutomationProperties.GetAccessibilityView(c) = Avalonia.Automation.AccessibilityView.Raw)
+            |> Seq.length
+        Assert.True(rawChunks > 0, "非首段切片应从读屏树摘除")
+    finally
+        window.Close()
+

@@ -97,7 +97,13 @@ module MathRender =
     /// 行内公式。字号与行高都跟随所在段落——行高影响基线对齐。
     let tryInline (fontSize: float) (lineHeight: float) (tex: string) : Control option =
         let visual = MathVisual(tex, false, fontSize, lineHeight)
-        if visual.HasLayout then Some(visual :> Control) else None
+        if visual.HasLayout then
+            // 自绘公式对读屏只是一块空白：报出原式并给悬停提示，读者听得到、看得见源。
+            Avalonia.Automation.AutomationProperties.SetName(visual, sprintf "公式：%s" tex)
+            ToolTip.SetTip(visual, tex)
+            Some(visual :> Control)
+        else
+            None
 
     /// 行内公式的内联容器。对齐方式必须显式指定：
     /// 默认值随主题模板变化，而基线对齐是可见的正确性问题。
@@ -111,6 +117,10 @@ module MathRender =
         let visual = MathVisual(tex, true, fontSize, 0.0)
         if not visual.HasLayout then None
         else
+            // 同 tryInline：展示式公式同样报原式（宿主 Border 首个子可聚焦，
+            // 名称落在 visual 上由自动化层冒泡）。
+            Avalonia.Automation.AutomationProperties.SetName(visual, sprintf "公式：%s" tex)
+            ToolTip.SetTip(visual, tex)
             visual.HorizontalAlignment <- Layout.HorizontalAlignment.Center
             let host =
                 Border(

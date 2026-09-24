@@ -828,6 +828,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 match summaryById.TryGetValue summary.id with
                 | true, live -> actions.setPinned live (not live.pinned)
                 | _ -> actions.setPinned summary (not summary.pinned)
+            elif selectionMode && e.Key = Key.A && (e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta) then
+                // 多选模式下 Ctrl+A / ⌘+A 即全选：此前键盘用户必须 Tab 走到顶部
+                // 操作条才能全选，行内键位链（F2/P/Delete/Esc）到这里就断了。
+                // 语义与顶栏「全选 / 取消全选」键同一入口（ToggleSelectAllVisible），
+                // 也是桌面端列表的标准按键。kelivo 同款：side_drawer.dart:727-735。
+                e.Handled <- true
+                this.ToggleSelectAllVisible()
             elif selectionMode && e.Key = Key.Escape then
                 // 搜索框为空时 Escape 退出批量模式：焦点留在当前行，选择立刻清零。
                 if String.IsNullOrEmpty searchBox.Text then
@@ -1280,7 +1287,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         sidebarFooter.IsVisible <- not selectionMode
 
     /// 批量删除：AppShell 负责逐个发命令与确认；这里只把选择交出去。
-    member private this.DeleteSelected() = actions.deleteMany(this.SelectedIds())
+    member private this.DeleteSelected() =
+        let ids = this.SelectedIds()
+        // 空选择不进删除流：行上按 Delete 时若选择已被外部清空（"清空最后一项即
+        // 退出模式"的竞态），仍会把空表交给确认框与命令发送。守卫与 kelivo 的
+        // _confirmDeleteConversations `if (ids.isEmpty) return;` 同一约定：
+        // sidebar_selection_bars.dart:186（selectedCount > 0 才启用删除键）。
+        if not (List.isEmpty ids) then actions.deleteMany ids
 
     member this.Build() =
         this.Background <- Tokens.rail
