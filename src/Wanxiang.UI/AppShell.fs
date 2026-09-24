@@ -928,6 +928,8 @@ type MainView() as this =
             if state.compactNavigationOpen then sidebar.FocusSearch()
             else composer.Focus()
         else
+            // 桌面态折叠的焦点归宿由 MainLayout.Apply 收口（侧栏隐藏的必然副作用），
+            // 与 compact 收起分支同一归宿——焦点回输入区。
             prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
             UiPrefs.save prefs
 

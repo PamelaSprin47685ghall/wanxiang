@@ -1,7 +1,9 @@
 namespace Wanxiang.UI
 
 open System
+open Avalonia
 open Avalonia.Controls
+open Avalonia.VisualTree
 
 /// 主工作区唯一的空间投影器。
 /// NavigationController 决定“当前是什么状态”，这里决定“这个状态在 Grid 上怎么成立”。
@@ -77,9 +79,23 @@ type MainLayoutController(
             Grid.SetColumn(sidebar, 0)
             Grid.SetColumn(sidebarSplitter, 1)
             Grid.SetColumn(chatColumn, 2)
+            // 折叠让侧栏 IsVisible=false：焦点若停在侧栏行/搜索/归档开关上会被
+            // Avalonia 直接清成 null，键盘用户按完 Ctrl+B 就失焦。必须在置隐藏
+            // 之前读出旧焦点（隐藏后已无从判断它原来在哪），必要时收起后补回输入区。
+            let focusWasInSidebar =
+                match Avalonia.Controls.TopLevel.GetTopLevel(sidebar) with
+                | null -> false
+                | top ->
+                    match top.FocusManager with
+                    | null -> false
+                    | manager ->
+                        match manager.GetFocusedElement() with
+                        | :? Control as focused -> (sidebar :> Visual).IsVisualAncestorOf focused
+                        | _ -> false
             sidebar.IsVisible <- not state.sidebarCollapsed
             sidebarSplitter.IsVisible <- not state.sidebarCollapsed
             sidebar.ZIndex <- 0
+            if state.sidebarCollapsed && focusWasInSidebar then composer.Focus()
             // 非 compact 布局不挂遮罩：离开 compact 时收起遗留层并复位不透明度。
             scrim.IsVisible <- false
             scrim.Opacity <- 0.0

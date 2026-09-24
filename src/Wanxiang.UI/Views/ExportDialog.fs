@@ -94,9 +94,24 @@ type ConversationExportDialog(
             | ExportIdle -> status.Text <- "正在准备导出…"; status.Foreground <- Tokens.text; false, false, false, false
         progress.IsVisible <- reading
         retryButton.IsVisible <- failed
-        saveButton.IsVisible <- ready && not saved
-        Ui.setEnabled saveButton (ready && not saving && not isEmpty)
+        let saveShown = ready && not saved
+        saveButton.IsVisible <- saveShown
+        let saveUsable = ready && not saving && not isEmpty
+        Ui.setEnabled saveButton saveUsable
         Ui.setButtonText closeButton (if reading then "取消导出" else "关闭")
+        // 焦点宿主被禁用/藏掉时焦点直接掉 null（实测：Avalonia 不会自动迁到相邻键），
+        // 键盘用户随后 Tab/Esc 无处可去。与方向键「落点必须同时可用」同一纪律
+        // （见 Show 内 rowButtons 注释）：宿主不可用且全局焦点已空，补到始终可用的关闭。
+        if not (saveShown && saveUsable) then
+            match topLevel () with
+            | :? TopLevel as top when not (isNull top.FocusManager) ->
+                match top.FocusManager.GetFocusedElement() with
+                | null ->
+                    if closeButton.IsEnabled && closeButton.IsEffectivelyVisible then
+                        closeButton.Focus() |> ignore
+                | _ -> ()
+            | _ -> ()
+
 
     // 进度刷新入口。
     // forceImmediate 是急件通道：阶段切换、完成、失败、取消、到期与保存反馈都不受节流拖延。

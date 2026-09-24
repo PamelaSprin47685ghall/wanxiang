@@ -191,7 +191,7 @@ let ``chat reading column relies on avalonia stretch and max width across viewpo
         finally
             window.Close()
 
-[<Fact>]
+// probe: collapse focus destination[<Fact>]
 let ``navigation controller owns compact and collapsed state transitions`` () =
     let navigation = NavigationController(true)
     let applyWide, wide = navigation.ApplyViewport(1200.0, false)
@@ -2530,6 +2530,99 @@ let ``secondary link chunks stay out of the screen-reader tree`` () =
                 Avalonia.Automation.AutomationProperties.GetAccessibilityView(c) = Avalonia.Automation.AccessibilityView.Raw)
             |> Seq.length
         Assert.True(rawChunks > 0, "非首段切片应从读屏树摘除")
+    finally
+        window.Close()
+
+
+// probe: collapse focus destination
+// 桌面态折叠（Ctrl+B / 顶栏按钮）必须把焦点迁出侧栏：折叠令侧栏 IsVisible=false，
+// Avalonia 不会自动迁到相邻键，焦点若停在侧栏行/搜索/归档开关上直接被清 null
+// （对照组：不折叠时再 Apply 同一宽态，焦点寸步不移——见 Assert 前的 reapply），
+// 键盘用户按完快捷键就失焦。归宿与 compact 收起分支同一目标——输入区。
+[<Fact>]
+let ``collapsing the desktop sidebar returns focus to the composer`` () =
+    Headless.ensure ()
+    let sidebarActions =
+        { newConversation = ignore
+          openConversation = ignore
+          renameConversation = ignore
+          deleteConversation = ignore
+          setPinned = fun _ _ -> ()
+          setArchived = fun _ _ -> ()
+          selectionAllPinned = fun _ -> false
+          setPinnedMany = fun _ _ -> ()
+          setArchivedMany = fun _ _ -> ()
+          deleteMany = fun _ -> ()
+          duplicateAsFork = ignore
+          exportConversation = ignore
+          openSettings = ignore
+          reconnect = ignore
+          toggleArchivedVisibility = ignore
+          closeNavigation = ignore }
+    let messageActions =
+        { copyText = ignore
+          regenerate = ignore
+          editAndFork = ignore
+          deleteMessage = ignore
+          downloadAttachment = ignore
+          openLink = ignore }
+    let chatActions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message = messageActions }
+    let sidebar = Sidebar(OverlayHost(Grid()), sidebarActions, fun _ -> Border() :> Control)
+    sidebar.Build()
+    let chat = ChatView(chatActions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
+    chat.Build()
+    let composer =
+        Composer(
+            { submit = fun _ -> true
+              stopGeneration = ignore
+              pickAttachment = ignore
+              removeAttachment = ignore
+              openModelPicker = ignore
+              dropFiles = ignore
+              pasteFromClipboard = fun () -> false })
+    composer.Build()
+    let chatColumn = DockPanel()
+    DockPanel.SetDock(composer, Dock.Bottom)
+    chatColumn.Children.Add composer
+    chatColumn.Children.Add chat
+    let splitter = GridSplitter()
+    let shell = Grid()
+    shell.ColumnDefinitions.Add(ColumnDefinition(MaxWidth = Tokens.sidebarMaxWidth))
+    shell.ColumnDefinitions.Add(ColumnDefinition())
+    shell.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+    shell.Children.Add sidebar
+    shell.Children.Add splitter
+    shell.Children.Add chatColumn
+    let window = show shell 1000.0 640.0
+    try
+        let mutable savedWidth = Tokens.sidebarWidth
+        let controller = MainLayoutController(shell, sidebar, splitter, chatColumn, composer, chat, fun () -> savedWidth)
+        let wide = NavigationController(false).ApplyViewport(1200.0, false) |> snd
+        controller.Apply wide
+        // 焦点放进侧栏：ListBox 本体可聚焦（进入侧栏的 Tab 停靠点）。
+        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        list.Focus() |> ignore
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(list.IsFocused, "precondition: focus in sidebar")
+        // 对照组：不折叠地重新 Apply 同一宽态，焦点必须留在侧栏 ListBox 上，
+        // 证明下面的迁移不是 Avalonia 自带回退或夹具副作用。
+        controller.Apply wide
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(list.IsFocused, "对照组：不折叠时焦点必须留在侧栏")
+        // 折叠：焦点必须迁到输入区（Composer 内部输入框）。
+        controller.Apply { wide with sidebarCollapsed = true }
+        Dispatcher.UIThread.RunJobs()
+        match window.FocusManager.GetFocusedElement() with
+        | :? Control as focused -> Assert.True((composer :> Avalonia.Visual).IsVisualAncestorOf focused, "折叠后焦点必须落在输入区内")
+        | _ -> Assert.True(false, "折叠后焦点不得为 null")
     finally
         window.Close()
 

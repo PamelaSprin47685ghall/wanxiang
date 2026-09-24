@@ -1,6 +1,7 @@
 module Wanxiang.Tests.KeyConvergenceTests
 
 open System
+open System.Threading
 open Avalonia
 open Avalonia.Automation
 open Avalonia.Controls
@@ -273,3 +274,60 @@ let ``focus initial lands on a settings section nav button`` () =
         Assert.True(isNavFocused (focusedControl window), "\u6253\u5f00\u8bbe\u7f6e\u540e\u7126\u70b9\u5e94\u843d\u5728\u5206\u533a\u5bfc\u822a\u6309\u94ae\u4e0a")
     finally
         window.Close()
+
+// PageUp/PageDown 在侧栏行里与 Home/End 同义。行是定制 Border（容器 ListBoxItem
+// 一律 Focusable=false），ListBox 自带的翻页导航对定制行不生效：未接线时按键从
+// 默认路径穿过——探针实测 puHandled=true 而焦点原地不动（已消费，无位移），
+// 键盘用户在侧栏里按翻页键毫无反应。Menu.fs:136-139 早已把 PageUp/PageDown 与
+// Home/End 视作同义，侧栏补齐同口径。
+// 落点断言走「ScrollIntoView 把目标行拉进虚拟化窗口」这条同步可见线索
+// （UiStabilityTests 同手法）：一个 20k 会话的列表里，焦点在末行时按 Home/PageUp
+// 必须把首行实现出来；未接线时行永远是末行附近那一窗。
+[<Fact>]
+let ``page up on a sidebar row scrolls the list to the first item`` () =
+    let root, sidebar, _ = buildSidebar ()
+    let window = show root 360.0 700.0
+    try
+        let count = 400
+        let items =
+            [ for index in 1 .. count ->
+                summary (Guid.NewGuid()) (sprintf "会话 %05d" index) DateTimeOffset.Now false
+                |> fun s -> { s with lastCommitId = uint64 index } ]
+        sidebar.SetConversations items
+        Dispatcher.UIThread.RunJobs()
+        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let realized () =
+            list.GetRealizedContainers()
+            |> Seq.collect (fun c -> c.GetVisualDescendants())
+            |> Seq.choose (function :? Control as x -> Some x | _ -> None)
+            |> Seq.map (fun x -> AutomationProperties.GetName x)
+            |> Set.ofSeq
+        let rec awaitRealized remaining name =
+            Dispatcher.UIThread.RunJobs()
+            let n = list.GetRealizedContainers() |> Seq.length
+            if Set.contains name (realized ()) then name
+            elif remaining > 0 then Thread.Sleep 10; awaitRealized (remaining - 1) name
+            else failwithf "%s was not realized; realizedContainers=%d itemCount=%d names=%s"
+                    name n list.ItemCount (String.Join("|", realized () |> Seq.truncate 5))
+        // 先等首屏容器实现（UiStabilityTests 同手法），再滚到底：未挂载的
+        // ItemsControl 上 ScrollIntoView 是空操作。
+        awaitRealized 20 (sprintf "会话 %05d" count) |> ignore
+        list.ScrollIntoView(list.ItemCount - 1)
+        let bottomName = sprintf "会话 %05d" 1
+        awaitRealized 20 bottomName |> ignore
+        let lastRow =
+            list.GetRealizedContainers()
+            |> Seq.collect (fun c -> c.GetVisualDescendants())
+            |> Seq.choose (function :? Control as x -> Some x | _ -> None)
+            |> Seq.find (fun x -> AutomationProperties.GetName x = bottomName)
+        Assert.True(Set.contains bottomName (realized ()), "前置条件：末行已在虚拟化窗口内")
+        // PageUp：与 Home 同分支，必须把首行拉进虚拟化窗口（ScrollIntoView 0）。
+        let pu = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.PageUp, KeyModifiers = KeyModifiers.None, Source = lastRow)
+        lastRow.RaiseEvent pu
+        Assert.True(pu.Handled, "PageUp 必须与 Home 同口径被行内消费")
+        awaitRealized 20 (sprintf "会话 %05d" count) |> ignore
+        // 变异不变量：未接线时按键从默认路径穿过（Handled=true 但无位移），
+        // 首行永远实现不出来。
+    finally
+        window.Close()
+

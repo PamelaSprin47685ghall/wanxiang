@@ -507,3 +507,45 @@ let ``cancel stays in the dialog and offers the retry entry`` () =
     finally
         overlay.CloseDialog()
         window.Close()
+
+// 保存键被禁用/藏掉时，Avalonia 把焦点直接清成 null（不自动迁到相邻键，
+// 探针实测 focused=<null>）：键盘用户刚按完保存就失焦，随后 Tab/Esc 无处可去。
+// 与方向键「落点必须同时可用」同一条纪律（Show 内 rowButtons 注释）：宿主不可用
+// 时把焦点交回始终可用的关闭键。
+[<Fact>]
+let ``export dialog returns focus to close when the save slot becomes unusable`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost root
+    let window = Window(Content = root, Width = 480.0, Height = 600.0)
+    let requested = ResizeArray<ConversationExportQuery>()
+    let proj, id = fixture 5
+    let dialog =
+        ConversationExportDialog(overlay, id, "禁用态焦点", (fun query -> requested.Add query; Task.FromResult true), fun () -> window :> TopLevel)
+    window.Show()
+    try
+        dialog.Show()
+        Dispatcher.UIThread.RunJobs()
+        let mutable pages = 0
+        while requested.Count > pages && pages < 64 do
+            dialog.Handle(page proj requested[pages])
+            pages <- pages + 1
+            Dispatcher.UIThread.RunJobs()
+        let find name =
+            root.GetVisualDescendants()
+            |> Seq.choose (function :? Control as c -> Some c | _ -> None)
+            |> Seq.find (fun c -> AutomationProperties.GetName c = name)
+        let close = find "关闭"
+        let save = find "保存 Markdown"
+        save.Focus() |> ignore
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(save.IsFocused, "前置条件：焦点在保存键上")
+        // 进入保存中：保存键随之禁用，焦点须交还关闭。
+        typeof<ConversationExportDialog>.GetField("saving", flags).SetValue(dialog, true)
+        typeof<ConversationExportDialog>.GetMethod("Refresh", flags).Invoke(dialog, [| box (Some true) |]) |> ignore
+        Dispatcher.UIThread.RunJobs()
+        Assert.False(save.IsEnabled, "前置条件：保存中保存键禁用")
+        Assert.True(close.IsFocused, "保存键不可用时焦点必须回到始终可用的关闭键")
+    finally
+        overlay.CloseDialog()
+        window.Close()

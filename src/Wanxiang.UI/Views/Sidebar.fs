@@ -588,11 +588,12 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             elif e.Key = Key.Down then
                 // 已经是列表最后一项：吞掉，避免 ListBox 默认导航把焦点吸走。
                 e.Handled <- true
-            elif e.Key = Key.Home then
+            elif e.Key = Key.Home || e.Key = Key.PageUp then
+                // 与行内同口径：PageUp/PageDown = Home/End（见 RenderRow 内同款注释）。
                 e.Handled <- true
                 if visibleRowIds.Length > 0 then this.FocusRowAt 0
                 else this.FocusSearch(selectAll = false)
-            elif e.Key = Key.End then
+            elif e.Key = Key.End || e.Key = Key.PageDown then
                 e.Handled <- true
             elif e.Key = Key.Escape then
                 if not (String.IsNullOrEmpty searchBox.Text) then
@@ -881,10 +882,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 if not (String.IsNullOrEmpty searchBox.Text) then
                     e.Handled <- true
                     this.ResetSearch true
-            elif e.Key = Key.Home then
+            elif e.Key = Key.Home || e.Key = Key.PageUp then
+                // PageUp/PageDown 与 Home/End 同义：行级容器里 ListBox 自己的翻页导航
+                // 对 Focusable=false 的定制行不生效，键会被默认路径吞掉（Handled=true 但焦点不动），
+                // 键盘用户在行里按翻页键毫无反应。同 Menu.fs:136-139 的既有口径。
                 e.Handled <- true
                 this.FocusRowAt 0
-            elif e.Key = Key.End then
+            elif e.Key = Key.End || e.Key = Key.PageDown then
                 e.Handled <- true
                 // End 落到列表最后一项：已归档开关在时就是它。
                 if hasArchivedToggle then this.FocusArchivedToggle()
