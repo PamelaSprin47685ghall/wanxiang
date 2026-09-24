@@ -44,6 +44,7 @@ type Incremental(output: ITestOutputHelper) =
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = noopMessageActions }
 
     /// 建一个挂在窗口里的 ChatView，并返回「取当前已挂载卡片」的函数。

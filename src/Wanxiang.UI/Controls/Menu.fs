@@ -238,6 +238,17 @@ module Menu =
                 openMenu ())
         // 当前值被 CharacterEllipsis 截断时补原生 tooltip；显示文本切换时同步刷新。
         ToolTip.SetTip(host, initialText)
+        // 上一次由本按钮写入的显示文本：调用方若后来另起了名，就与它不同，
+        // 此后不再覆盖（见下方回调里的比较）。
+        let mutable lastText = initialText
+        // 读屏可达：ComboBox 没有一个可播报的名字，盲用户 Tab 到这个下拉只会听到
+        // 空的控件名。名字随显示文本同步刷新（Kelivo custom_dropdown.dart:45-52 同位语义）。
+        // 区分「自己写的」与「调用方命名过的」：后者优先且此后不再被刷新（模型卡片
+        // 的按钮名是「切换本会话使用的模型」这种动作名，不是当前文件名）。
+        Avalonia.Automation.AutomationProperties.SetName(host, initialText)
         host, (fun text ->
             caption.Text <- text
-            ToolTip.SetTip(host, text))
+            ToolTip.SetTip(host, text)
+            if Avalonia.Automation.AutomationProperties.GetName host = lastText then
+                Avalonia.Automation.AutomationProperties.SetName(host, text)
+            lastText <- text)

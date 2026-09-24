@@ -23,7 +23,9 @@ open Wanxiang.UI
 /// - 端点位移会让「上一条 / 下一条」重新按新视口起算（不能接着半途的锚点跳）。
 module EndpointScrollTests =
 
+    let private homeFocus = ref 0
     let private buildChat (messages: MessageView list) =
+        homeFocus := 0
         Headless.ensure ()
         // 只锁落位，不锁动画曲线；动效路径由既有 smoothScroll 用例覆盖。
         MotionPolicy.setReduced true
@@ -35,6 +37,7 @@ module EndpointScrollTests =
               requestOlderHistory = ignore
               retryLast = ignore
               toggleSidebar = ignore
+              focusHome = fun () -> incr homeFocus
               message =
                 { copyText = ignore
                   regenerate = ignore
@@ -123,6 +126,37 @@ module EndpointScrollTests =
     let private settle (chat: ChatView) =
         Dispatcher.UIThread.RunJobs()
         Dispatcher.UIThread.RunJobs()
+
+    // 键盘激活「回到最新」后焦点不得掉 null：按钮随 atBottom 隐藏，Avalonia 隐藏
+    // 控件会直接清焦点（探针实测 after=<null>），键盘用户接着按 Tab 会从窗口根
+    // 部重走。归宿走 AppShell 注入的 focusHome（输入区），与停止键/生成收尾同一条路。
+    [<Fact>]
+    let ``keyboard activated scroll to bottom hands focus home`` () =
+        let chat, window = buildChat (exchanges 8)
+        try
+            let scroller, _ = scrollerOf chat
+            // 远离底部：ScrollChanged 让按钮自己出现（用户向上滚的自然路径）。
+            scroller.Offset <- Vector(0.0, scroller.Extent.Height * 0.5)
+            settle chat
+            let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
+            let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
+            let btn = Assert.IsAssignableFrom<Border>(body.Children.[2])
+            Assert.True(btn.IsVisible, "反证前提：离开底部后按钮必须出现")
+            btn.Focus() |> ignore
+            settle chat
+            let before = window.FocusManager.GetFocusedElement()
+            Assert.True(System.Object.ReferenceEquals(before, btn), "反证前提：焦点必须在按钮上")
+            btn.RaiseEvent(
+                KeyEventArgs(
+                    RoutedEvent = InputElement.KeyDownEvent,
+                    Key = Key.Enter,
+                    KeyModifiers = KeyModifiers.None,
+                    Source = btn))
+            settle chat
+            Assert.False(btn.IsVisible, "激活后按钮按既有约定隐藏")
+            Assert.True(!homeFocus = 1, sprintf "键盘激活必须把焦点交还给输入区，实际 %d" !homeFocus)
+        finally
+            window.Close()
 
     // ---------- 快捷键解析 ----------
 

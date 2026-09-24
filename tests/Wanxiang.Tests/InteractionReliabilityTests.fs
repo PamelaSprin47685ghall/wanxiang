@@ -373,6 +373,7 @@ let ``top bar stop button hands keyboard focus back to the composer when a run f
               requestOlderHistory = ignore
               retryLast = ignore
               toggleSidebar = ignore
+              focusHome = ignore
               message =
                 { copyText = ignore
                   regenerate = ignore

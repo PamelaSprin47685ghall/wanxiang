@@ -322,6 +322,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     /// 文案即状态，Build 时算一次会在勾选变化后说谎。提升为字段供 RefreshSelectionChrome 写。
     let mutable selectAllButton: Border = Unchecked.defaultof<Border>
     let mutable pinButton: Border = Unchecked.defaultof<Border>
+    let mutable archiveButton: Border = Unchecked.defaultof<Border>
+    let mutable deleteButton: Border = Unchecked.defaultof<Border>
 
     do
         Ui.setReservedActionVisible clearSearchButton false
@@ -866,10 +868,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 e.Handled <- true
                 this.ToggleSelectAllVisible()
             elif selectionMode && e.Key = Key.Escape then
-                // 搜索框为空时 Escape 退出批量模式：焦点留在当前行，选择立刻清零。
-                if String.IsNullOrEmpty searchBox.Text then
-                    e.Handled <- true
-                    this.ExitSelection()
+                // 批量模式里 Escape 只做退出：焦点留在当前行，选择立刻清零。
+                // 不分搜索框有没有词——在搜索结果中进入多选的用户，Esc 的意图是
+                // 离开批量态，而不是被清掉筛选用词。清词是普通态的第 2 顺位动作。
+                e.Handled <- true
+                this.ExitSelection()
             elif e.Key = Key.Down then
                 e.Handled <- true
                 this.MoveRowFocus(summary.id, 1)
@@ -1124,6 +1127,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         summaries <- items
         listLoading <- false
         this.Rebuild()
+        // 多选期间列表内容可能整体换掉（换筛选 / 搜索结果 / 外部刷新）：已选项
+        // 未必还在新列表里，批量操作条的按键启用态必须跟着重算，否则计数与按键
+        // 状态会停留在旧列表上（计数说「已选 N 项」，按键按下去静默无反应）。
+        if selectionMode then this.RefreshSelectionChrome()
 
     member this.SetActive(id: Guid option) =
         if activeId <> id then
@@ -1303,6 +1310,16 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 于是只挑两个会话点时文案停在「置顶」，点下去发出的却是取消置顶——文案与动作相反。
         Ui.setButtonText pinButton
             (if actions.selectionAllPinned(this.SelectedIds()) then "取消置顶" else "置顶")
+        // 批量条三个动作键随选中数翻面：0 项时禁用（不可点、不可聚焦、Tab 跳过、
+        // 读屏播报不可用），语义上就不是空选可执行的动作。既有守卫只挡住点击，
+        // 键盘用户仍能 Tab 上去按 Enter 得到静默无反应——按钮的启用态才是承诺。
+        // 判定用「可见的」已选项（SelectedIds）而不是 selectedIds 原始计数：多选期间
+        // 换筛选/搜索会让已选项整批离开列表，计数仍在但批量载荷为空。
+        let usableCount = this.SelectedIds().Length
+        Ui.setEnabled selectAllButton (visibleRowIds.Length > 0)
+        Ui.setEnabled pinButton (usableCount > 0)
+        Ui.setEnabled archiveButton (usableCount > 0)
+        Ui.setEnabled deleteButton (usableCount > 0)
         // 读屏与悬停提示跟着同一份状态走：文案换了，自动化名还是旧的话等于报错。
         Avalonia.Automation.AutomationProperties.SetHelpText(
             selectAllButton,
@@ -1534,11 +1551,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                         let ids = this.SelectedIds()
                         let pin = not (actions.selectionAllPinned ids)
                         actions.setPinnedMany ids pin)
-            let archiveButton =
+            archiveButton <-
                 Ui.button Ui.Secondary "归档" (fun () ->
                     let ids = this.SelectedIds()
                     actions.setArchivedMany ids true)
-            let deleteButton =
+            deleteButton <-
                 Ui.button Ui.Danger "删除" (fun () -> this.DeleteSelected())
             // 横向工具条的桌面端键盘导航：与 Dialogs.fs:48-57 的 wireArrowNavigation 同一约定
             // （此前只有 Tab 一条路，左右键按了没反应）。Disabled 的邻键不接焦点。

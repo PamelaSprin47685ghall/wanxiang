@@ -20,6 +20,9 @@ type ChatActions = {
     requestOlderHistory: unit -> unit
     retryLast: unit -> unit
     toggleSidebar: unit -> unit
+    /// 焦点归宿：瞬态控件（回到最新 / 停止键 / 生成收尾）隐藏后键盘用户的落点，
+    /// 由 AppShell 注入输入区。Avalonia 隐藏控件会直接清焦点成 null，不会自动迁移。
+    focusHome: unit -> unit
     message: MessageActions
 }
 
@@ -1226,10 +1229,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         scrollToBottomButton.VerticalAlignment <- VerticalAlignment.Bottom
         scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Tokens.space5, Tokens.space4)
         let doScrollToBottom () =
+            // 键盘激活这条路径：按钮随即因 atBottom 隐藏，而 Avalonia 不会自动
+            // 迁走焦点——停在按钮上的焦点直接被清成 null（探针实测），用户接着
+            // 按 Tab 会从窗口根部重新走。归宿取消息面板：用户刚才是在读消息，
+            // 视线要落回内容而不是被拽到输入区（与停止键 focusHome 分场景）。
+            let focusWasOnButton = scrollToBottomButton.IsFocused
             atBottom <- true
             unreadSinceScrolledUp <- 0
             this.UpdateScrollToBottomAppearance()
             this.SmoothScrollToEnd()
+            if focusWasOnButton then actions.focusHome ()
         Ui.onClick scrollToBottomButton doScrollToBottom
 
         let body = Grid()

@@ -1450,6 +1450,7 @@ type MainView() as this =
               requestOlderHistory = fun () -> this.RequestOlderHistory()
               retryLast = fun () -> this.Regenerate()
               toggleSidebar = fun () -> this.ToggleSidebar()
+              focusHome = fun () -> composer.Focus()
               message = messageActions }
         chat <- ChatView(chatActions, Brand.logo)
         chat.Build()

@@ -148,6 +148,7 @@ let private buildChat (messages: MessageView list) =
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message =
             { copyText = ignore
               regenerate = ignore

@@ -58,6 +58,7 @@ let private chatActions : ChatActions =
       requestOlderHistory = ignore
       retryLast = ignore
       toggleSidebar = ignore
+      focusHome = ignore
       message = messageActions }
 
 /// 渲染一张流式卡并取出其中的呼吸光标 Border。

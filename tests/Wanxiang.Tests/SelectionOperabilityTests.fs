@@ -303,6 +303,83 @@ let ``batch pin and archive issue one command per selected conversation`` () =
     finally
         window.Close()
 
+// 批量模式里 Escape 只做退出：在搜索结果中进入多选的用户，Esc 的意图是离开
+// 批量态，而不是被清掉筛选用词。此前有词的守卫让退出失效，Esc 落到普通态的
+// 清词分支——用户丢失筛选条件还没退出多选。
+[<Fact>]
+let ``escape in selection mode exits the mode even with a search query`` () =
+    let root, sidebar, _, _, _, _ = buildSidebar ()
+    let a, b = Guid.NewGuid(), Guid.NewGuid()
+    let window = show root 320.0 420.0
+    try
+        sidebar.SetConversations [ summary a "甲" false; summary b "乙" false ]
+        Dispatcher.UIThread.RunJobs()
+        // 先键入搜索词：行 handler 据此把 Escape 让给「清空搜索」分支。
+        let searchBox =
+            descendants sidebar
+            |> Seq.find (fun c -> c :? TextBox) :?> TextBox
+        searchBox.Text <- "甲"
+        Dispatcher.UIThread.RunJobs()
+        sidebar.EnterSelection a
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(sidebar.IsSelectionMode)
+        let row = rowByName sidebar "甲"
+        row.RaiseEvent(
+            KeyEventArgs(
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = Key.Escape,
+                KeyModifiers = KeyModifiers.None,
+                Source = row))
+        Dispatcher.UIThread.RunJobs()
+        Assert.False(sidebar.IsSelectionMode, "有搜索词时行上的 Escape 也必须退出多选")
+        Assert.True(searchBox.Text = "甲", sprintf "退出多选不得顺手清掉搜索词，实际 %s" searchBox.Text)
+    finally
+        window.Close()
+
+// 批量条三个动作键随选中数翻面：0 项时禁用。既有守卫只挡住点击，键盘用户仍能
+// Tab 上去按 Enter 得到静默无反应——按钮的启用态本身就是可操作性的承诺。
+[<Fact>]
+let ``selection action buttons disable themselves while nothing is selected`` () =
+    let root, sidebar, _, _, _, _ = buildSidebar ()
+    let a = Guid.NewGuid()
+    let window = show root 320.0 420.0
+    try
+        sidebar.SetConversations [ summary a "甲" false ]
+        Dispatcher.UIThread.RunJobs()
+        sidebar.EnterSelection a
+        Dispatcher.UIThread.RunJobs()
+        // 只认可见按钮：批量条在进入模式后才上屏。
+        let buttonByText (label: string) =
+            descendants sidebar
+            |> Seq.tryFind (fun c ->
+                match c with
+                | :? Border as border when border.IsEffectivelyVisible ->
+                    match border.Child with
+                    | :? TextBlock as text -> text.Text = label
+                    | _ -> false
+                | _ -> false)
+        let pinButton = buttonByText "置顶"
+        let archiveButton = buttonByText "归档"
+        let deleteButton = buttonByText "删除"
+        Assert.True(pinButton.IsSome && archiveButton.IsSome && deleteButton.IsSome, "批量条应齐备")
+        Assert.True(pinButton.Value.IsEnabled && archiveButton.Value.IsEnabled && deleteButton.Value.IsEnabled, "有选中项时三个动作键都必须可用")
+        // 0 个可见选中：多选期间列表被换成不含已选项的内容（换筛选/搜索结果/
+        // 外部刷新）。selectedIds 仍留着旧 id，可见行为空——计数说谎，按键按
+        // 下去静默无反应。这正是按键启用态翻面的可达路径。
+        let a2 = Guid.NewGuid()
+        sidebar.EnterSelection a2
+        Dispatcher.UIThread.RunJobs()
+        sidebar.SetConversations [ summary (Guid.NewGuid()) "丙" false ]
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(sidebar.IsSelectionMode, "选中项不可见时模式仍开着")
+        Assert.True(sidebar.SelectedIds() |> List.isEmpty, "反证前提：没有可见的选中项")
+        Assert.False(pinButton.Value.IsEnabled, "置顶键在没有可见选中项时必须禁用")
+        Assert.False(archiveButton.Value.IsEnabled, "归档键在没有可见选中项时必须禁用")
+        Assert.False(deleteButton.Value.IsEnabled, "删除键在没有可见选中项时必须禁用")
+        Assert.False(pinButton.Value.Focusable, "禁用同时必须退出 Tab 序")
+    finally
+        window.Close()
+
 // Ctrl+M 解析为打开模型选择器：不必先找到左下角芯片，键盘可直接换模型。
 // 选择模式只留「取消 / 全选 / 计数」与底部批量条：品牌行与页脚让位。
 // 侧栏只有 232–420pt 宽，四条常驻条会把列表压成几条——这条不变量锁住空间纪律。

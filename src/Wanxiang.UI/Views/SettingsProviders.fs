@@ -486,6 +486,13 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         overlay.ShowDialog(
             scroller :> Control,
             520.0,
+            // 首焦落在主输入框（新建 → ID；编辑 → 名称，ID 已禁用），而不是
+            // 预设下拉：键盘用户打开编辑器的意图就是填字段（Kelivo
+            // model_edit_dialog.dart:88 autofocus 首位可编辑字段）。
+            initialFocus =
+                (match existing with
+                 | Some _ -> labelBox
+                 | None -> idBox),
             onClosed = (fun () -> editorActive <- false; activeProbe <- None),
             canDismiss = (fun () -> not savePending))
 

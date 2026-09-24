@@ -283,6 +283,12 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         overlay.ShowDialog(
             scroller :> Control,
             520.0,
+            // 首焦落在主输入框（新建 → ID；编辑 → 名称，ID 取只读），而不是
+            // 被禁用的标识字段——与服务商编辑器同一 contract。
+            initialFocus =
+                (match existing with
+                 | Some _ -> labelBox
+                 | None -> idBox),
             onClosed = (fun () -> editorActive <- false),
             canDismiss = (fun () -> not savePending))
 

@@ -158,6 +158,7 @@ let ``chat reading column relies on avalonia stretch and max width across viewpo
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = messageActions }
     for width in [ 1000.0; 500.0 ] do
         let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
@@ -247,6 +248,7 @@ let ``main layout controller is the only column projector and survives every mat
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = messageActions }
     let sidebar = Sidebar(OverlayHost(Grid()), sidebarActions, fun _ -> Border() :> Control)
     sidebar.Build()
@@ -964,6 +966,7 @@ let ``history prepend preserves the reader viewport anchor`` () =
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = messageActions }
     let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
     chat.Build()
@@ -1015,6 +1018,7 @@ let ``repeated streaming updates preserve committed card instances`` () =
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = messageActions }
     let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
     chat.Build()
@@ -1421,6 +1425,7 @@ let ``accelerated craft soak covers the long-session action ledger without visua
               requestOlderHistory = ignore
               retryLast = ignore
               toggleSidebar = ignore
+              focusHome = ignore
               message =
                 { copyText = ignore
                   regenerate = ignore
@@ -1516,6 +1521,7 @@ let ``long chat title never pushes header actions outside narrow viewport`` () =
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = messageActions }
     let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
     chat.Build()
@@ -1560,6 +1566,7 @@ let ``stop affordance keeps a constant header slot across generation`` () =
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = messageActions }
     let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
     chat.Build()
@@ -1646,6 +1653,7 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = messageActions }
     let composerActions =
         { submit = fun _ -> true
@@ -2057,6 +2065,55 @@ let ``settings caps content width and centers it while exposing selected navigat
     finally
         window.Close()
 
+// 服务商编辑器首焦必须落在主输入框：表单首个可聚焦元素是预设下拉（历史行为），
+// 键盘用户打开编辑器的意图就是填字段。Kelivo model_edit_dialog.dart:88 同语义。
+// 断言走自动化名而非对象身份——焦点实现只能落在控件树上，名字即用户所见。
+[<Fact>]
+let ``provider editor opens focus on the primary text field`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost(root)
+    overlay.WireDismiss()
+    let settingsActions =
+        { upsertProvider = fun _ completed -> completed true
+          deleteProvider = ignore
+          probeProvider = ignore
+          upsertMcp = fun _ completed -> completed true
+          deleteMcp = ignore
+          updateGeneration = fun _ completed -> completed true
+          savePrefs = ignore
+          toast = fun _ _ -> () }
+    let providers = SettingsProviders(overlay, settingsActions)
+    let view = providers.Build()
+    root.Children.Insert(0, view)
+    let window = show root 760.0 700.0
+    let editableIds () =
+        overlay.Focusables root
+        |> Array.choose (fun c ->
+            match c with
+            | :? TextBox ->
+                let name = AutomationProperties.GetName c
+                if String.IsNullOrWhiteSpace name then None else Some name
+            | _ -> None)
+    try
+        let addProvider = byAutomationName view "添加服务商"
+        ControlAutomationPeer.CreatePeerForElement addProvider
+        |> Assert.IsAssignableFrom<IInvokeProvider>
+        |> fun invoke -> invoke.Invoke()
+        Dispatcher.UIThread.RunJobs()
+        Assert.True overlay.IsDialogOpen
+        // 新建：焦点落在主输入框（稳定标识），而不是表单首个可聚焦元素——预设下拉。
+        // Ui.inputFieldGroup 只给 label 起名，这里用「首个可聚焦控件必须是预设下拉」
+        // 做反证前提，再证明焦点没落在它上面。
+        let firstFocusable = overlay.Focusables root |> Array.head
+        Assert.False(firstFocusable :? TextBox, "反证前提：表单首个可聚焦项必须是预设下拉")
+        match window.FocusManager.GetFocusedElement() with
+        | :? TextBox -> ()
+        | :? Control as focused -> Assert.True(false, sprintf "焦点落到了非输入框控件 %s" (AutomationProperties.GetName focused))
+        | _ -> Assert.True(false, "新建服务商后焦点不得为 null")
+    finally
+        window.Close()
+
 [<Fact>]
 let ``provider editor stays pending until authoritative config result`` () =
     Headless.ensure ()
@@ -2210,6 +2267,7 @@ let ``chat header and scroller share one horizontal inset tier`` () =
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = messageActions }
     for width, expected in [ (500.0, Tokens.space6); (800.0, Tokens.space8); (1280.0, Tokens.space12) ] do
         let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
@@ -2255,6 +2313,7 @@ let ``compact chat header drops the generating chip slot while desktop keeps it 
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = messageActions }
     let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
     chat.Build()
@@ -2574,6 +2633,7 @@ let ``collapsing the desktop sidebar returns focus to the composer`` () =
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = ignore
+          focusHome = ignore
           message = messageActions }
     let sidebar = Sidebar(OverlayHost(Grid()), sidebarActions, fun _ -> Border() :> Control)
     sidebar.Build()

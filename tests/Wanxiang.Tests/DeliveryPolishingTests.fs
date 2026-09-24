@@ -415,6 +415,7 @@ let ``chat view renders a focused empty state without extra actions`` () =
           requestOlderHistory = ignore
           retryLast = ignore
           toggleSidebar = fun () -> sidebarToggled <- true
+          focusHome = ignore
           message =
             { copyText = ignore
               regenerate = ignore

@@ -56,6 +56,22 @@ let select_button_vertical_padding_is_anchored_to_ControlMetrics () =
     Assert.Equal(Tokens.space3, host.Padding.Right, 3)
     setText "已切换"
 
+// 下拉钮必须有可播报的自动化名：ComboBox 语义没有名字时读屏用户 Tab 过去只听到
+// 空控件名，分不清这是什么设置。名字随显示文本同步刷新——调用方（如模型 chip）
+// 已命名过的按钮不被覆盖。
+[<Fact>]
+let select_button_carries_an_automation_name_that_tracks_the_text () =
+    Headless.ensure ()
+    let host, setText = Menu.selectButton (OverlayHost(Grid())) "跟随系统" (fun () -> [])
+    Assert.Equal("跟随系统", AutomationProperties.GetName host)
+    setText "浅色"
+    Assert.Equal("浅色", AutomationProperties.GetName host)
+    // 调用方显式命名（模型卡片「切换本会话使用的模型」等）优先，不被下拉文本覆盖。
+    let named, _ = Menu.selectButton (OverlayHost(Grid())) "gpt-4o" (fun () -> [])
+    AutomationProperties.SetName(named, "切换模型")
+    setText "无所谓" |> ignore
+    Assert.Equal("切换模型", AutomationProperties.GetName named)
+
 // 按压反馈只写不透明度、不改几何契约：非按压态整层不透明度满值，MinHeight 仍由 ControlMetrics 供给。
 // 注：本无头套件不注入原始指针事件，「按下→0.78 / 松开→1.0」的迁移不在此自动化覆盖，交真机/DevOps 判定。
 [<Fact>]
