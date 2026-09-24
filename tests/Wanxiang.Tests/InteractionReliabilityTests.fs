@@ -474,3 +474,57 @@ let ``forking from a message hands keyboard focus back to the composer`` () =
             + "不显式移交焦点，键盘用户接下来敲的字没有任何承接（D3/D4）。")
     finally
         window.Close()
+
+// 单条删除有成功 toast（「会话「x」已删除」），批量删除此前一条命令都没挂
+// Track、也没有任何提示：删完 N 个会话界面无反馈，命令被拒时同样无声
+// （CommandRejected 对未 Track 的 id 是空操作），用户以为删掉了，行还在列表里。
+// kelivo side_drawer.dart:752-756 删完即给汇总 snackbar，同一约定。
+[<Fact>]
+let ``batch delete reports what it did instead of staying silent`` () =
+    Headless.ensure ()
+    let view = shell ()
+    let root = (field view "root").GetValue view :?> Control
+    let overlay = (field view "overlay").GetValue view :?> OverlayHost
+    let a = Guid.NewGuid()
+    let b = Guid.NewGuid()
+    let listItem (id: Guid) (title: string) =
+        let o = JsonObject()
+        o.Add("conversationId", JsonValue.Create(id.ToString()))
+        o.Add("title", JsonValue.Create(title))
+        o.Add("runtimeState", JsonValue.Create("idle"))
+        o :> JsonNode
+    let items = JsonArray()
+    items.Add(listItem a "甲")
+    items.Add(listItem b "乙")
+    handle view (ConversationListSnapshot {| items = items; lastCommitId = 0UL |})
+    // 进入多选并勾上两行。
+    let sidebar = (field view "sidebar").GetValue view
+    invoke sidebar "EnterSelection" [| box a |] |> ignore
+    invoke sidebar "ToggleSelected" [| box b |] |> ignore
+    Dispatcher.UIThread.RunJobs()
+    // 批量删除经侧栏确认框：与行上 Delete 同一条 DeleteSelected 路径。
+    invoke sidebar "DeleteSelected" [| |] |> ignore
+    Dispatcher.UIThread.RunJobs()
+    Assert.True(overlay.IsDialogOpen, "前置条件：删除前应有确认框")
+    let confirm =
+        controls root
+        |> Seq.tryFind (fun c -> AutomationProperties.GetName c = "删除")
+        |> Option.defaultWith (fun () -> failwith "确认框缺少「删除」按钮")
+    (confirm :?> Border).RaiseEvent(
+        KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
+    Dispatcher.UIThread.RunJobs()
+    // 命令上轨之后提交：批量拖 silences 的话到这一步什么都看不到。
+    // 提交事件需要 invocationId——从 tracker 的键里取（不写死任何 id 生成方式）。
+    let tracker = (field view "commandFeedback").GetValue view
+    let pendingField = tracker.GetType().GetField("pending", flags)
+    let pending = pendingField.GetValue tracker :?> System.Collections.IDictionary
+    Assert.Equal(2, pending.Count)
+    for key in pending.Keys do
+        handle view (CommandCommitted {| invocationId = unbox<Guid> key; commandId = "0"; commitId = 1UL |})
+    Dispatcher.UIThread.RunJobs()
+    let toasts =
+        controls root
+        |> Seq.choose (function :? TextBlock as tb -> Some tb.Text | _ -> None)
+        |> Seq.filter (fun s -> s.Contains "删除")
+        |> List.ofSeq
+    Assert.True(toasts |> List.exists (fun s -> s.Contains "已删除 2 个会话"), sprintf "批量删除必须给一条汇总反馈，实际 %A" toasts)

@@ -1368,11 +1368,32 @@ type MainView() as this =
                                 // kelivo side_drawer.dart:744-762 批量删除同样先判定
                                 // deletingCurrent 再 _handlePostDeleteNavigation 落到邻位。
                                 let neighbor = this.NeighborExcluding ids
+                                // 与单条删除（会话「x」已删除）对称：批量也走
+                                // commandFeedback 的同一张挂号单，否则删除全程无声——
+                                // 成功没有汇总，被拒时 CommandRejected 又只对挂号过的
+                                // id 有效，用户以为删掉了，行还在列表里。
+                                // 汇总只挂第一条：命令在同一连接上按序提交，
+                                // 第一条受理即代表整批进入落库流程；其余条静默挂号，
+                                // 失败时共用一个 onCompleted 兜底提示。
+                                // kelivo side_drawer.dart:752-756 删完即给汇总 snackbar，
+                                // 同一约定。
+                                let mutable reported = false
                                 for id in ids do
                                     let command =
                                         DeleteConversation
                                             {| invocationId = newInvocation (); conversationId = id |}
-                                    sendCommand command
+                                    let message =
+                                        if reported then None
+                                        else
+                                            reported <- true
+                                            Some(sprintf "已删除 %d 个会话" count)
+                                    commandFeedback.TrackWithCompletion(
+                                        command,
+                                        message,
+                                        ignore,
+                                        (fun ok ->
+                                            if not ok then
+                                                toast "删除被拒绝，请重试。" Warning))
                                 sidebar.ExitSelection()
                                 let deletedCurrent = Option.exists (fun id -> List.contains id ids) activeConvId
                                 if deletedCurrent then
