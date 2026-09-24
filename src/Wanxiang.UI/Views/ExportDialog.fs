@@ -147,21 +147,35 @@ type ConversationExportDialog(
         let buttons = Ui.hstack Tokens.space2 [ closeButton :> Control; retryButton :> Control; saveButton :> Control ]
         // 三按钮行补左右键导航：其余对话框（Dialogs.fs:48-57、SettingsProviders/Tools 页脚）都有，
         // 导出对话框此前只有 Tab 一条路，桌面端键盘用户按方向键无响应，交互节拍割裂。
-        let wireArrows (leftBtn: Control) (rightBtn: Control) =
-            leftBtn.KeyDown.Add(fun e ->
-                // 落点必须同时可见：重新导出 / 保存在中间态被整键藏掉
-                // （Refresh 只切 IsVisible，IsEnabled 仍是默认 true）。只看 IsEnabled
-                // 会把焦点交给一个不可见的按钮——焦点连同可见性一起消失，键盘用户
-                // 下一步按键无的放矢，比不接线更糟。
-                if e.Key = Key.Right && rightBtn.IsEnabled && rightBtn.IsEffectivelyVisible then
+        // 连线不按布局顺序写死相邻对，而是「沿行内下一个可见可用键」：重新导出 / 保存
+        // 在中间态各自被整键藏掉（Refresh 只切 IsVisible，IsEnabled 仍是默认 true），
+        // 就绪态键盘上真实排布是 [关闭, 保存]，失败态是 [关闭, 重新导出]，固定接线
+        // close→retry→save 会把中间那个隐藏键当成必经之路，RIGHT/LEFT 直接断链。
+        // 只看 IsEnabled 会把焦点交给一个不可见的按钮——焦点连同可见性一起消失，
+        // 键盘用户下一步按键无的放矢，比不接线更糟，所以落点必须可见且可用。
+        let rowButtons = [ closeButton; retryButton; saveButton ]
+        let step (from: Control) (dir: int) =
+            match rowButtons |> List.tryFindIndex (fun b -> Object.ReferenceEquals(b, from)) with
+            | None -> None
+            | Some idx ->
+                let ordered =
+                    if dir > 0 then [ idx + 1 .. rowButtons.Length - 1 ]
+                    else [ idx - 1 .. -1 .. 0 ]
+                ordered
+                |> List.tryPick (fun i ->
+                    let b = rowButtons[i]
+                    if b.IsEnabled && b.IsEffectivelyVisible then Some b else None)
+        for button in rowButtons do
+            button.KeyDown.Add(fun e ->
+                let target =
+                    if e.Key = Key.Right then step button 1
+                    elif e.Key = Key.Left then step button -1
+                    else None
+                match target with
+                | Some next ->
                     e.Handled <- true
-                    rightBtn.Focus(NavigationMethod.Directional) |> ignore)
-            rightBtn.KeyDown.Add(fun e ->
-                if e.Key = Key.Left && leftBtn.IsEnabled && leftBtn.IsEffectivelyVisible then
-                    e.Handled <- true
-                    leftBtn.Focus(NavigationMethod.Directional) |> ignore)
-        wireArrows closeButton retryButton
-        wireArrows retryButton saveButton
+                    next.Focus(NavigationMethod.Directional) |> ignore
+                | None -> ())
         buttons.HorizontalAlignment <- HorizontalAlignment.Right
         let content = Ui.vstack Tokens.space3
                           [ Ui.title "导出会话" :> Control; Ui.caption initialTitle :> Control

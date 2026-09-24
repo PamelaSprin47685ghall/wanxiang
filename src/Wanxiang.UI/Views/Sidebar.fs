@@ -597,7 +597,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             elif e.Key = Key.Escape then
                 if not (String.IsNullOrEmpty searchBox.Text) then
                     e.Handled <- true
-                    this.ResetSearch true)
+                    this.ResetSearch true
+                elif selectionMode then
+                    // 多选期内 Esc 一律先退多选，不因焦点落在归档开关上而失效：
+                    // 会话行（Sidebar.fs:860）与搜索框（Sidebar.fs:1383）都这么办。
+                    // kelivo interactive_drawer.dart:399-407 同序——抽屉级返回先问
+                    // 「是不是在多选」，是就只退多选、不连带关闭抽屉。
+                    e.Handled <- true
+                    this.ExitSelection())
         host :> Control
 
     member private _.PreviewTextFor(summary: ConversationSummary) =

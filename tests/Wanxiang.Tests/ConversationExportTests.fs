@@ -350,6 +350,57 @@ let ``export footer arrows move focus between the three buttons`` width =
     finally
         window.Close()
 
+[<Fact>]
+let ``export ready state skips the hidden retry slot for arrow navigation`` () =
+    Headless.ensure ()
+    let root = Grid()
+    let overlay = OverlayHost root
+    let window = Window(Content = root, Width = 480.0, Height = 600.0)
+    let requested = ResizeArray<ConversationExportQuery>()
+    let proj, id = fixture 5
+    let dialog =
+        ConversationExportDialog(overlay, id, "就绪态方向键", (fun query -> requested.Add query; Task.FromResult true), fun () -> window :> TopLevel)
+    window.Show()
+    try
+        dialog.Show()
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(requested.Count > 0, "前置条件：Show 已发出首页请求")
+        // 喂到终态完成：读取完最后一页才进就绪态（保存键可见、重新导出隐藏）。
+        let mutable pages = 0
+        while requested.Count > pages && pages < 64 do
+            dialog.Handle(page proj requested[pages])
+            pages <- pages + 1
+            Dispatcher.UIThread.RunJobs()
+        let find name =
+            root.GetVisualDescendants()
+            |> Seq.choose (function :? Control as c -> Some c | _ -> None)
+            |> Seq.find (fun c -> AutomationProperties.GetName c = name)
+        let close = find "关闭"
+        let retry = find "重新导出"
+        let save = find "保存 Markdown"
+        let key (target: Control) k =
+            let args = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = k, KeyModifiers = KeyModifiers.None, Source = target)
+            target.RaiseEvent args
+            args
+        Assert.True(save.IsEffectivelyVisible, "前置条件：就绪态保存键可见")
+        Assert.False(retry.IsEffectivelyVisible, "前置条件：就绪态重新导出整键藏掉")
+        // 就绪态键盘上的真实排布是 [关闭, 保存]，中间那个隐藏的重试槽位不得
+        // 阻断方向键：固定接线 close→retry→save 会把隐藏键当成必经之路。
+        close.Focus() |> ignore
+        Dispatcher.UIThread.RunJobs()
+        let forward = key close Key.Right
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(forward.Handled, "就绪态关闭按右必须移交焦点")
+        Assert.True(save.IsFocused, "焦点必须越过隐藏的重新导出落到保存")
+        // 反向同样闭合：保存按左越过隐藏槽位回关闭。
+        let back = key save Key.Left
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(back.Handled, "就绪态保存按左必须移交焦点")
+        Assert.True(close.IsFocused, "焦点必须回到关闭")
+    finally
+        overlay.CloseDialog()
+        window.Close()
+
 [<Theory>]
 [<InlineData(390.0)>]
 [<InlineData(900.0)>]

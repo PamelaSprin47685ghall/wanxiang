@@ -206,6 +206,48 @@ let ``deselecting the last item exits selection mode`` () =
     finally
         window.Close()
 
+// 多选期内 Esc 一律先退多选，不因焦点落在列表底部已归档开关上而失灵：
+// 归档开关行也是列表内的 Tab 停靠点（up/down/home 四处键位都通得到），
+// 会话行（Sidebar.fs:860）与搜索框（Sidebar.fs:1383）上的 Esc 都已退多选，
+// 唯独这里漏了——用户 End 滚到底再按 Esc 毫无反应，被困在批量态。
+// kelivo interactive_drawer.dart:399-407 同序：抽屉级返回先问「是不是在多选」。
+[<Fact>]
+let ``escape exits selection mode from the archived toggle row`` () =
+    let root, sidebar, _, _, _, _ = buildSidebar ()
+    let live = Guid.NewGuid()
+    let archived = Guid.NewGuid()
+    let window = show root 320.0 420.0
+    try
+        sidebar.SetConversations
+            [ summary live "活跃会话" false
+              { summary archived "归档会话" false with archived = true } ]
+        Dispatcher.UIThread.RunJobs()
+        sidebar.EnterSelection live
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(sidebar.IsSelectionMode, "前置条件：处于多选态")
+        // 已归档开关：列表底部与行同高的弱操作行，纵向键位链的最后一站。
+        let toggle =
+            root.GetVisualDescendants()
+            |> Seq.choose (function :? Control as c -> Some c | _ -> None)
+            |> Seq.find (fun c -> AutomationProperties.GetName c = "已归档会话 (1)，点击展开")
+        Assert.True(toggle.Focusable, "前置条件：已归档开关可聚焦")
+        toggle.Focus(NavigationMethod.Directional) |> ignore
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(toggle.IsFocused, "前置条件：焦点落在已归档开关上")
+        let escape =
+            KeyEventArgs(
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = Key.Escape,
+                KeyModifiers = KeyModifiers.None,
+                Source = toggle)
+        toggle.RaiseEvent escape
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(escape.Handled, "已归档开关上的 Escape 必须被本行消费")
+        Assert.False(sidebar.IsSelectionMode, "多选态下焦点在已归档开关按 Escape 应退出多选")
+        Assert.Empty(sidebar.SelectedIds())
+    finally
+        window.Close()
+
 // 批量置顶/归档按当前选择逐个发命令，Payload 逐条独立可确认。
 [<Fact>]
 let ``batch pin and archive issue one command per selected conversation`` () =
