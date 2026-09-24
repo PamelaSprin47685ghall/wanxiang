@@ -621,7 +621,15 @@ module Dialogs =
                 "Ctrl / ⌘ + Home", "滚到会话开头（最早的提问）"
                 "Ctrl / ⌘ + End", "滚到会话结尾（最新消息）"
                 "Ctrl / ⌘ + L", "聚焦消息输入框"
-                "Esc", "关闭弹层 / 取消编辑 / 停止生成" ] ]
+                "Esc", "关闭弹层 / 取消编辑 / 停止生成" ]
+            // 行级快捷键此前只在右键菜单里，键盘用户无从得知：列在这里说明
+            // 这些键位真实可用（Sidebar 行 / ChatView 标题的处理与此一一对应），
+            // 不新增任何行为，只消除信息差。
+              "会话行",
+              [ "Enter", "打开当前会话（或提交重命名）"
+                "P", "置顶 / 取消置顶当前会话"
+                "F2", "重命名当前会话"
+                "Delete", "删除当前会话（多选模式下批量删除）" ] ]
         let contentPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space3)
         for (category, items) in sections do
             contentPanel.Children.Add(Ui.sectionLabel category :> Control)

@@ -600,6 +600,89 @@ let ``ChatView tracks unread messages when scrolled away from bottom`` () =
     finally
         window.Close()
 
+// 划上去翻更早的历史，不是来了新消息：分页装载的那批旧消息不许计入未读。
+// 判据是同一个 pendingHistoryAnchor：AppShell 派发 HistoryRequest 前置位、
+// HistoryPage 渲染之后清位，因此分页那次渲染里它正好是 Some。
+// kelivo 把内容从上方增长与尾部新增分成两条定位/准入通路，从不相混。
+[<Fact>]
+let ``paging older history does not count as unread messages`` () =
+    Headless.ensure ()
+    let chatActions =
+        { renameTitle = ignore
+          openSessionSettings = ignore
+          forkFromHere = ignore
+          stopGeneration = ignore
+          requestOlderHistory = ignore
+          retryLast = ignore
+          toggleSidebar = ignore
+          message =
+            { copyText = ignore
+              regenerate = ignore
+              editAndFork = ignore
+              deleteMessage = ignore
+              downloadAttachment = ignore
+              openLink = ignore } }
+
+    let chat = ChatView(chatActions, Brand.logo)
+    chat.Build()
+
+    let window = Window(Width = 760.0, Height = 520.0, Content = chat)
+    window.Show()
+    try
+        Dispatcher.UIThread.RunJobs()
+        let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
+        let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
+        let scroller = Assert.IsAssignableFrom<ScrollViewer>(body.Children.[0])
+        let scrollToBottomBtn = Assert.IsAssignableFrom<Border>(body.Children.[2])
+        let btnContent = Assert.IsAssignableFrom<StackPanel>(scrollToBottomBtn.Child)
+        let btnLabel = Assert.IsAssignableFrom<TextBlock>(btnContent.Children.[1])
+
+        // 先给一屏历史并划离底部：未读计数这条路才启用。
+        let initial =
+            [ for i in 10UL .. 40UL ->
+                { MessageView.empty with
+                    role = "assistant"
+                    text = sprintf "旧消息 %d: %s" i (String.replicate 10 "填充滚动高度。")
+                    commitId = Some i } ]
+        chat.RenderMessages(initial, None, None, Tokens.fontReading, true, None, Set.empty)
+        Dispatcher.UIThread.RunJobs()
+        scroller.Offset <- Vector(0.0, 0.0)
+        Dispatcher.UIThread.RunJobs()
+        Assert.True(scrollToBottomBtn.IsVisible)
+        Assert.Equal("回到最新", btnLabel.Text)
+
+        // 分页装载更早消息（AppShell 同一顺序：置 anchor → 渲染 → 清 anchor）。
+        chat.BeginHistoryPrependAnchor()
+        let paged =
+            [ for i in 1UL .. 9UL ->
+                { MessageView.empty with
+                    role = "assistant"
+                    text = sprintf "更早消息 %d" i
+                    commitId = Some i } ] @ initial
+        chat.RenderMessages(paged, None, None, Tokens.fontReading, true, None, Set.empty)
+        Dispatcher.UIThread.RunJobs()
+
+        // 按钮仍在（仍在底部之外），但计数必须保持空：没有 9 条新消息。
+        Assert.True(scrollToBottomBtn.IsVisible, "分页后仍在底部之外，按钮应保持可见")
+        Assert.Equal("回到最新", btnLabel.Text)
+        Assert.DoesNotContain("新消息", btnLabel.Text)
+
+        // anchor 清掉之后，尾部新增照旧计数：两条通路互不影响。
+        chat.RestoreHistoryPrependAnchorDeferred()
+        Dispatcher.UIThread.RunJobs()
+        let appended =
+            [ for i in 41UL .. 43UL ->
+                { MessageView.empty with
+                    role = "assistant"
+                    text = sprintf "新消息 %d" i
+                    commitId = Some i } ] @ paged
+        chat.RenderMessages(appended, None, None, Tokens.fontReading, true, None, Set.empty)
+        Dispatcher.UIThread.RunJobs()
+        Assert.Contains("3", btnLabel.Text)
+        Assert.Contains("新消息", btnLabel.Text)
+    finally
+        window.Close()
+
 [<Fact>]
 let ``SettingsView preserves and restores scroll offset across sections`` () =
     Headless.ensure ()

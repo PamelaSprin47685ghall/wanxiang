@@ -803,12 +803,22 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         else
             let newCount = desired.Count
             let delta = newCount - previousRenderedMessageCount
-            // 流式 delta 替换同一张卡（delta = 0）时绝不记未读：
-            // 用户正看着的那条卡在原地刷新，不是“新消息”。
-            if delta > 0 && previousRenderedMessageCount > 0 then
-                unreadSinceScrolledUp <- unreadSinceScrolledUp + delta
-            elif unreadSinceScrolledUp = 0 && not wasAtBottom && delta > 0 then
-                unreadSinceScrolledUp <- max 1 delta
+            // 分页加载更早历史也是正的 delta，但那批消息在历史上就已经读过了，
+            // 不是「新来的」：划上去翻旧账时冒出「N 条新消息」纯属误导。
+            // 判据用已有信号 pendingHistoryAnchor：BeginHistoryPrependAnchor 在派发
+            // 分页前置位，RestoreHistoryPrependAnchorDeferred 在本次渲染之后清位，
+            // 因此这次渲染内它正好是 Some。不再另建一个 isLoadingHistory 字段。
+            // 借 kelivo message_list_view.dart 的 layout 定位请求：内容从上方增长
+            // 与尾部新增由两条不同通路处理，从不相混。
+            if pendingHistoryAnchor.IsNone then
+                // 流式 delta 替换同一张卡（delta = 0）时绝不记未读：
+                // 用户正看着的那条卡在原地刷新，不是“新消息”。
+                if delta > 0 && previousRenderedMessageCount > 0 then
+                    unreadSinceScrolledUp <- unreadSinceScrolledUp + delta
+                elif unreadSinceScrolledUp = 0 && not wasAtBottom && delta > 0 then
+                    unreadSinceScrolledUp <- max 1 delta
+            // 分页这一帧也要刷新按钮外观：未读计数不动，但按钮可见性/文案
+            // 与「是否在底部」相关，同一处刷新不能漏掉这条路。
             this.UpdateScrollToBottomAppearance()
         previousRenderedMessageCount <- desired.Count
 
