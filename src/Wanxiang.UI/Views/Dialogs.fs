@@ -615,7 +615,7 @@ module Dialogs =
               "输入与会话",
               [ "Enter", "发送消息（或换行，按偏好）"
                 "Shift + Enter", "换行输入"
-                "Ctrl / ⌘ + Enter", "强制发送消息"
+                "Ctrl / ⌘ + Enter", "发送 / 换行（与 Enter 互补，按当前偏好）"
                 "Ctrl / ⌘ + Shift + E", "导出当前会话为 Markdown"
                 "Ctrl / ⌘ + 上 / 下", "跳到上一条 / 下一条提问（顶栏同款按钮）"
                 "Ctrl / ⌘ + Home", "滚到会话开头（最早的提问）"

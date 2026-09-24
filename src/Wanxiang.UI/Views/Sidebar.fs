@@ -315,6 +315,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     /// 品牌行与页脚在 Build 时构造；选择模式要把它们收起让位，故提升为字段。
     let mutable brandHeader: Border = Unchecked.defaultof<Border>
     let mutable sidebarFooter: Border = Unchecked.defaultof<Border>
+    /// 两个批量键同样要按选择状态刷新文案（全选 / 取消全选、置顶 / 取消置顶）：
+    /// 文案即状态，Build 时算一次会在勾选变化后说谎。提升为字段供 RefreshSelectionChrome 写。
+    let mutable selectAllButton: Border = Unchecked.defaultof<Border>
+    let mutable pinButton: Border = Unchecked.defaultof<Border>
 
     do
         Ui.setReservedActionVisible clearSearchButton false
@@ -1094,6 +1098,16 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 | None -> ()
             refresh previous
             refresh id
+            // 从外部切换当前会话（Ctrl+1..9 / 搜索结果 / 新建）后，选中行若在视口外，
+            // 侧栏上看不到正在进行的会话在哪里。这里补一次滚动，只滚屏不抢焦点：
+            // 焦点归属照旧由调用方决定（Ctrl+数字进聊天区，搜索结果本就在列表里）。
+            // 借 kelivo side_drawer 的 keep-selected-item-visible：选中项永远在视口内。
+            match id with
+            | Some targetId ->
+                match flatIndexByConversation.TryGetValue targetId with
+                | true, flatIndex -> conversationList.ScrollIntoView flatIndex
+                | _ -> ()
+            | None -> ()
 
     member this.SetShowArchived(value: bool) =
         if showArchived <> value then
@@ -1239,6 +1253,20 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     member private this.RefreshSelectionChrome() =
         let count = selectedIds.Count
         selectionCountText.Text <- sprintf "已选 %d 项" count
+        // 两个键的文案是当前选择的状态，不是固定标签：全选后同一键变成「取消全选」、
+        // 全已置顶后变成「取消置顶」。此前两者只在 Build 时算一次，用户勾选/反选
+        // 之后看到的仍是旧文案，再点会得到与预期相反的动作。
+        Ui.setButtonText selectAllButton
+            (if visibleRowIds.Length > 0 && visibleRowIds |> Array.forall selectedIds.ContainsKey then "取消全选" else "全选")
+        Ui.setButtonText pinButton
+            (if visibleRowIds.Length > 0 && visibleRowIds |> Array.forall selectedIds.ContainsKey && visibleRowIds.Length > 0
+               && actions.selectionAllPinned(this.SelectedIds()) then "取消置顶" else "置顶")
+        // 读屏与悬停提示跟着同一份状态走：文案换了，自动化名还是旧的话等于报错。
+        Avalonia.Automation.AutomationProperties.SetHelpText(
+            selectAllButton,
+            if visibleRowIds.Length > 0 && visibleRowIds |> Array.forall selectedIds.ContainsKey then
+                "取消全选（保留多选状态）"
+            else "全选当前可见会话")
         selectionHeader.IsVisible <- selectionMode
         selectionActionBar.IsVisible <- selectionMode
         // 已渲染的行必须立刻重绘：选中/取消选中如果只改集合不改行视觉，
@@ -1427,7 +1455,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             let cancelButton = Ui.iconButton Icons.close "退出多选（Esc）"
             Ui.onClick cancelButton (fun () -> this.ExitSelection())
-            let selectAllButton =
+            // 文案是状态：全选后同一键变成「取消全选」，与底部置顶键同语义。
+            // 否则用户全选后看到还是「全选」，不知道再点是取消（此前就是取消）。
+            selectAllButton <-
                 Ui.button Ui.Ghost "全选" (fun () -> this.ToggleSelectAllVisible())
             selectAllButton.Margin <- Thickness 0.0
             selectAllButton.Padding <- Thickness(Tokens.space3, ControlMetrics.selectButtonPaddingY)
@@ -1439,10 +1469,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             dock
         selectionActionBar.Child <-
             // 置顶键的文案随当前选择实时判定：全已置顶 → 取消置顶，与单行菜单同语义。
-            let pinButton =
-                Ui.button
-                    Ui.Secondary
-                    (if actions.selectionAllPinned(this.SelectedIds()) then "取消置顶" else "置顶")
+            pinButton <-
+                Ui.button Ui.Secondary "置顶"
                     (fun () ->
                         let ids = this.SelectedIds()
                         let pin = not (actions.selectionAllPinned ids)

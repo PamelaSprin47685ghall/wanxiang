@@ -377,7 +377,12 @@ type Composer(actions: ComposerActions) as this =
                     let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
                     let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
                     if shift then ()
-                    elif enterSends || ctrl then
+                    // 发送键与换行键严格互补，不交叉：Enter 发送模式下 Ctrl+Enter 归换行，
+                    // Ctrl+Enter 发送模式下裸 Enter 归换行。
+                    // 借 kelivo chat_input_bar.dart:1293-1310 的两分支互斥写法；与帮助对话框
+                    // 对 Ctrl+Enter 的描述一致——此前裸 Enter 发送模式会把
+                    // Ctrl+Enter 也发出去，用户改行只能按 Shift+Enter 一条路。
+                    elif (enterSends && not ctrl) || (not enterSends && ctrl) then
                         e.Handled <- true
                         this.Submit()
                 elif e.Key = Key.V then

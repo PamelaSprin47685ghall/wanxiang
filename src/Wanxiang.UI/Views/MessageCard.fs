@@ -223,7 +223,7 @@ module MessageCard =
 
     /// 思考过程：左缘竖线 + 可折叠。流式期间默认展开，让人看到模型在动。
     /// 支持无障碍、平滑悬浮反馈与键盘 Enter/Space 激活。
-    let private reasoningBlock (ctx: MessageContext) (reasoning: string) (durationMs: int64 option) : Control =
+    let private reasoningBlock (ctx: MessageContext) (actions: MessageActions) (reasoning: string) (durationMs: int64 option) : Control =
         let collapsed = not ctx.streaming && ctx.autoCollapseReasoning
         let bodyText =
             SelectableTextBlock(
@@ -295,6 +295,11 @@ module MessageCard =
         headerRow.Cursor <- handCursor
         headerRow.Children.Add chevronHost
         headerRow.Children.Add caption
+        // 思考过程与工具调用 / 错误详情同档：头部带独立复制入口。
+        // 底部复制只取正文 message.text，思维链此前只能展开后手动拖选。
+        // createCopyButton 自带 check 确认脉冲，无需另建反馈通路。
+        headerRow.Children.Add(
+            createCopyButton actions.copyText "复制思考过程" "复制完整思考过程" (fun () -> reasoning))
         // 三个折叠披露头（思考过程 / 工具调用 / 错误技术细节）共用同一个共享机制
         // Ui.surfaceBorderedTransitions：底色与描边补间、同一时长（MotionLedger，
         // 减弱动效自动降级为瞬时）。Opacity 不补间——与基控件纪律一致：
@@ -1413,7 +1418,7 @@ module MessageCard =
 
         if not (String.IsNullOrWhiteSpace message.reasoning) then
             let duration = ctx.usage |> Option.bind (fun u -> u.durationMs)
-            body.Children.Add(reasoningBlock ctx message.reasoning duration)
+            body.Children.Add(reasoningBlock ctx actions message.reasoning duration)
 
         for call in message.toolCalls do
             body.Children.Add(toolCallCard ctx actions call)

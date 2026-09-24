@@ -192,3 +192,35 @@ module OperabilityTests =
                 |> set
             for name in hoverNames do
                 Assert.Contains(name, menuSet)
+
+    // 思考过程与工具调用 / 错误详情同档：头部带独立复制入口。底部复制只取正文，
+    // 思维链此前只能展开后手动拖选——几百字没法精确全选。锁：按下那个按钮，
+    // 注入的 copyText 真的被调用，且载荷是整段 reasoning。
+    [<Fact>]
+    let ``reasoning header copies the whole chain of thought`` () =
+        Headless.ensure ()
+        let spy = SpyActions()
+        let message =
+            { makeMessage "assistant" "结论" (Some 4UL) with reasoning = "先观察\n再推演\n最后收口" }
+        let control = render message (makeContext true false) spy
+        let card = Window(Width = 600.0, Height = 400.0, Content = control)
+        card.Show()
+        Dispatcher.UIThread.RunJobs()
+        try
+            let rec walk (c: Control) = seq {
+                yield c
+                match c with
+                | :? Panel as p -> for ch in p.Children do yield! walk ch
+                | :? Decorator as d when not (isNull d.Child) -> yield! walk d.Child
+                | :? ContentControl as h -> match h.Content with | :? Control as cc -> yield! walk cc | _ -> ()
+                | _ -> () }
+            // 自动化名取 accessibleName 参数（「复制完整思考过程」），不是悬停提示「复制思考过程」。
+            let copy = Seq.find (fun c -> AutomationProperties.GetName(c) = "复制完整思考过程") (walk control)
+            let peer = Avalonia.Automation.Peers.ControlAutomationPeer.CreatePeerForElement copy
+            let invoke = Assert.IsAssignableFrom<Avalonia.Automation.Provider.IInvokeProvider>(peer)
+            invoke.Invoke()
+            Dispatcher.UIThread.RunJobs()
+            Assert.Equal<string list>([ "copy" ], spy.Log)
+        finally
+            card.Close()
+

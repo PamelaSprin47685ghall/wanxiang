@@ -34,6 +34,17 @@ let private byAutomationName (root: Control) (name: string) =
     descendants root
     |> Seq.find (fun control -> AutomationProperties.GetName(control) = name)
 
+/// 按钮上的文字。Ui.button 的壳是 Border，里面挂一个 TextBlock；
+/// 无头测试不到绘制，但文本是纯数据，可直接读。
+let private textOf (button: Control) =
+    match button with
+    | :? Border as border ->
+        match border.Child with
+        | :? TextBlock as tb -> tb.Text
+        | _ -> ""
+    | :? TextBlock as tb -> tb.Text
+    | _ -> ""
+
 /// 侧栏行由虚拟化 ListBox 托管，不在 root 的视觉树里：经已实现容器取。
 let private rowByName (sidebar: Sidebar) (title: string) =
     let rec visualControls (visual: Visual) =
@@ -360,3 +371,119 @@ let ``long user messages get a clipped viewport with an expand entry`` () =
         Assert.True(userViewport.Value.Extent.Height > userViewport.Value.Viewport.Height)
     finally
         longWindow.Close()
+
+// 批量键的文案是当前选择的状态，不是固定标签：全选后同一键变成「取消全选」、
+// 全已置顶后变成「取消置顶」。此前两者只在 Build 时算一次，勾选变化后只说旧话，
+// 用户再点会得到与预期相反的动作。锁按钮文本随勾选变化翻转。
+[<Fact>]
+let ``selection buttons rename themselves as the selection changes`` () =
+    let root, sidebar, _, _, _, _ = buildSidebar ()
+    let a = Guid.NewGuid()
+    let b = Guid.NewGuid()
+    let mutable ids = [ a; b ]
+    let window = show root 320.0 520.0
+    try
+        sidebar.SetConversations [ summary a "A" false; summary b "B" false ]
+        Dispatcher.UIThread.RunJobs()
+        let selectAll =
+            descendants root |> Seq.find (fun c -> AutomationProperties.GetName(c) = "全选")
+        sidebar.EnterSelection a
+        Dispatcher.UIThread.RunJobs()
+        // 只勾一项：仍是「全选」。
+        Assert.Equal("全选", textOf selectAll)
+        sidebar.ToggleSelected b
+        Dispatcher.UIThread.RunJobs()
+        // 全部勾上：键面翻成「取消全选」（动作仍是取消，见 ToggleSelectAllVisible）。
+        Assert.Equal("取消全选", textOf selectAll)
+        sidebar.ToggleSelected a
+        Dispatcher.UIThread.RunJobs()
+        // 退一项又变回「全选」：标签跟随选择实时判定，不是一次性装饰。
+        Assert.Equal("全选", textOf selectAll)
+    finally
+        window.Close()
+
+// 发送键与换行键严格互补：Enter 发送模式下 Ctrl+Enter 归换行，Ctrl+Enter 发送模式下
+// 裸 Enter 归换行。此前裸 Enter 发送模式把 Ctrl+Enter 也发出去，用户改行只剩 Shift+Enter
+// 一条路。锁：发送永远只在当前模式被声明的那个键上发生，另一个键不许提交。
+[<Fact>]
+let ``composer sends only on the mode's declared key`` () =
+    Headless.ensure ()
+    let submitted = ResizeArray<string>()
+    let composerActions =
+        { submit = fun text ->
+            submitted.Add text
+            true
+          stopGeneration = ignore
+          pickAttachment = ignore
+          removeAttachment = ignore
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
+    let composer = Composer(composerActions)
+    composer.Build()
+    composer.SetEnabled(true, "")
+    let rec findInput (c: Control) : TextBox option =
+        match c with
+        | :? TextBox as tb -> Some tb
+        | :? Panel as p -> p.Children |> Seq.tryPick findInput
+        | :? Decorator as d when not (isNull d.Child) -> findInput d.Child
+        | _ -> None
+    let input = findInput composer |> Option.defaultWith (fun () -> failwith "input missing")
+    let sendKey (mods: KeyModifiers) =
+        composer.SetText "payload"
+        let args = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = mods)
+        input.RaiseEvent args
+        Dispatcher.UIThread.RunJobs()
+        args
+    try
+        // 模式一：Enter 发送。裸 Enter 提交，Ctrl+Enter 不提交。
+        sendKey KeyModifiers.None |> ignore
+        Assert.Equal<string seq>([ "payload" ], submitted)
+        let inEnterMode = sendKey KeyModifiers.Control
+        Assert.False inEnterMode.Handled, "Ctrl+Enter 在 Enter 发送模式下必须留给 TextBox 换行"
+        // 未被提交即留在草稿里：Composer 只在不该发时把事件放行给 TextBox。
+        Assert.Equal(1, submitted.Count)
+        // 模式二：Ctrl+Enter 发送。裸 Enter 不提交。
+        submitted.Clear()
+        composer.SetEnterSends false
+        Dispatcher.UIThread.RunJobs()
+        let plainInCtrlMode = sendKey KeyModifiers.None
+        Assert.False plainInCtrlMode.Handled, "裸 Enter 在 Ctrl+Enter 发送模式下必须留给 TextBox 换行"
+        Assert.Empty submitted
+        sendKey KeyModifiers.Control |> ignore
+        Assert.Equal<string seq>([ "payload" ], submitted)
+    finally
+        // composer 未挂窗，无根可关：测完只撤销其副作用。
+        composer.SetEnabled(false, "")
+
+// 从外部切换当前会话（Ctrl+1..9 / 搜索结果 / 新建）后，选中行若在视口外，
+// 侧栏上看不到正在进行的会话。SetActive 只滚屏不抢焦点：焦点归属照旧由调用方决定。
+// 锁：激活的行必须被滚进可视区。
+[<Fact>]
+let ``setting the active conversation scrolls it into view`` () =
+    let root, sidebar, _, _, _, _ = buildSidebar ()
+    let ids = [ for i in 1 .. 30 -> Guid.NewGuid() ]
+    let window = show root 320.0 300.0
+    try
+        sidebar.SetConversations [ for id in ids -> summary id "会话" false ]
+        Dispatcher.UIThread.RunJobs()
+        // 先激活第一个：列表滚回顶部。
+        sidebar.SetActive (List.tryHead ids)
+        Dispatcher.UIThread.RunJobs()
+        let list = descendants root |> Seq.pick (function :? ListBox as lb -> Some lb | _ -> None)
+        // ListBox 自带内部 ScrollViewer（虚拟化滚动容器）：从视觉树里找。
+        let scroller =
+            list.GetVisualDescendants()
+            |> Seq.choose (function :? ScrollViewer as s -> Some s | _ -> None)
+            |> Seq.tryHead
+        // 再把最后一项设为当前：它在长列表里远在视口外，必须被滚进来。
+        sidebar.SetActive (List.tryLast ids)
+        Dispatcher.UIThread.RunJobs()
+        Dispatcher.UIThread.RunJobs()
+        match scroller with
+        | Some s ->
+            // 视图顶部应从 0 移下来：未滚动时列表在 0，滚动后 Offset.Y > 0。
+            Assert.True(s.Offset.Y > 0.0, "激活列表末端的会话应把列表滚出顶部")
+        | None -> Assert.Fail("找不到会话列表的滚动容器")
+    finally
+        window.Close()
