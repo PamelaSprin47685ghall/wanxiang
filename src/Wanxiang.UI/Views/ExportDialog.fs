@@ -103,8 +103,8 @@ type ConversationExportDialog(
         // 键盘用户随后 Tab/Esc 无处可去。与方向键「落点必须同时可用」同一纪律
         // （见 Show 内 rowButtons 注释）：宿主不可用且全局焦点已空，补到始终可用的关闭。
         if not (saveShown && saveUsable) then
-            match topLevel () with
-            | :? TopLevel as top when not (isNull top.FocusManager) ->
+            match box (topLevel ()) with
+            | :? TopLevel as top when not (isNull top) && not (isNull top.FocusManager) ->
                 match top.FocusManager.GetFocusedElement() with
                 | null ->
                     if closeButton.IsEnabled && closeButton.IsEffectivelyVisible then

@@ -101,6 +101,7 @@ function makeClient(url) {
 }
 
 async function main() {
+    const errors = [];
     const browser = await puppeteer.launch({
         executablePath: CHROME,
         headless: true,
@@ -120,7 +121,6 @@ async function main() {
     const page = await browser.newPage();
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: THEME }]);
 
-    const errors = [];
     const resizeChecks = [];
     page.on('console', (m) => {
         const t = m.text();
@@ -352,11 +352,14 @@ async function main() {
         process.exitCode = 1;
     }
     } finally {
-        // SwANGLE 下 browser.close() 偶发挂起：10 秒关不掉就放手，matrix 会 pkill 残留。
-        await Promise.race([
-            browser.close().catch(() => {}),
-            sleep(10000).then(() => console.error('browser.close timed out, leaving for cleanup')),
-        ]);
+        // SwANGLE 下 browser.close() 偶发挂起：2 秒关不掉就直接退出
+        try {
+            await Promise.race([
+                browser.close().catch(() => {}),
+                sleep(2000).then(() => {}),
+            ]);
+        } catch {}
+        process.exit(errors.length > 0 ? 1 : 0);
     }
 }
 

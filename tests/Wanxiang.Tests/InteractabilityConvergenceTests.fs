@@ -155,7 +155,7 @@ module InteractabilityConvergenceTests =
                 | cm -> Some cm
             Assert.True(menu.IsSome, "消息卡应挂右键菜单")
             let items =
-                menu.Value.ItemsSource :?> System.Collections.IEnumerable
+                menu.Value.ItemsSource
                 |> Seq.cast<obj>
                 |> Seq.choose (function :? MenuItem as item -> Some item | _ -> None)
                 |> List.ofSeq

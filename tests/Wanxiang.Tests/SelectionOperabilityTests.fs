@@ -587,7 +587,7 @@ let ``composer sends only on the mode's declared key`` () =
         sendKey KeyModifiers.None |> ignore
         Assert.Equal<string seq>([ "payload" ], submitted)
         let inEnterMode = sendKey KeyModifiers.Control
-        Assert.False inEnterMode.Handled, "Ctrl+Enter 在 Enter 发送模式下必须留给 TextBox 换行"
+        Assert.False(inEnterMode.Handled, "Ctrl+Enter 在 Enter 发送模式下必须留给 TextBox 换行")
         // 未被提交即留在草稿里：Composer 只在不该发时把事件放行给 TextBox。
         Assert.Equal(1, submitted.Count)
         // 模式二：Ctrl+Enter 发送。裸 Enter 不提交。
@@ -595,7 +595,7 @@ let ``composer sends only on the mode's declared key`` () =
         composer.SetEnterSends false
         Dispatcher.UIThread.RunJobs()
         let plainInCtrlMode = sendKey KeyModifiers.None
-        Assert.False plainInCtrlMode.Handled, "裸 Enter 在 Ctrl+Enter 发送模式下必须留给 TextBox 换行"
+        Assert.False(plainInCtrlMode.Handled, "裸 Enter 在 Ctrl+Enter 发送模式下必须留给 TextBox 换行")
         Assert.Empty submitted
         sendKey KeyModifiers.Control |> ignore
         Assert.Equal<string seq>([ "payload" ], submitted)
@@ -721,7 +721,9 @@ let ``batch delete with an empty selection never reaches the batch action`` () =
             let field =
                 typeof<Sidebar>.GetField("searchDebounce", Reflection.BindingFlags.NonPublic ||| Reflection.BindingFlags.Instance)
             field.GetValue(sidebar) :?> DispatcherTimer
-        timer.Interval <- TimeSpan.FromMilliseconds(1.0)
+        let rebuild = typeof<Sidebar>.GetMethod("Rebuild", Reflection.BindingFlags.NonPublic ||| Reflection.BindingFlags.Instance)
+        rebuild.Invoke(sidebar, [||]) |> ignore
+        Dispatcher.UIThread.RunJobs()
         // 睡固定 20ms 在并行负载下会踩空：timer 到期回调排在别的淡入后面。
         // 改成「观察到过滤效果再往下走」，最多 1s 兜底。
         let mutable waited = 0
@@ -731,6 +733,7 @@ let ``batch delete with an empty selection never reaches the batch action`` () =
             && (rowByNameOpt sidebar "Beta").IsSome
         while (not (hasOnlyBeta ())) && waited < 40 do
             timer.Interval <- TimeSpan.FromMilliseconds(1.0)
+            rebuild.Invoke(sidebar, [||]) |> ignore
             Dispatcher.UIThread.RunJobs()
             Thread.Sleep 25
             Dispatcher.UIThread.RunJobs()

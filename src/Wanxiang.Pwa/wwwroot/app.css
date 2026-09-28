@@ -63,11 +63,16 @@ html, body {
     min-height: 100vh;
     min-height: 100dvh;
     overflow: hidden;
+    outline: none;
+    border: none;
 }
 #out canvas {
     display: block;
     width: 100% !important;
     height: 100% !important;
+    outline: none !important;
+    border: none !important;
+    -webkit-tap-highlight-color: transparent;
 }
 
 /* 滚动条：暖灰细 thumb，避免冷灰 */
@@ -203,7 +208,14 @@ html, body {
     outline-offset: 2px;
     border-radius: 4px;
 }
-#out:focus-visible { outline-offset: 0; }
+html, body, #out, #out * {
+    outline: none !important;
+    border-radius: 0 !important;
+}
+#out:focus, #out:focus-visible, #out *:focus, #out *:focus-visible {
+    outline: none !important;
+    border-radius: 0 !important;
+}
 
 /* ============================================================
  * 深色系统：仅壳层（html/body/splash/scrollbar/focus 环）做对比度补偿

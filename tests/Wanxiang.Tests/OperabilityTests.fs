@@ -182,7 +182,7 @@ module OperabilityTests =
             let menuSet = Set.ofList (menuLabels control)
             // hover 行的按钮以 AutomationProperties.Name 暴露（勿与卡片上的消息文本混淆）。
             let hoverNames =
-                [ yield control :> Control
+                [ yield control
                   yield! control.GetVisualDescendants() |> Seq.choose (function :? Control as c -> Some c | _ -> None) ]
                 |> Seq.choose (fun c ->
                     let n = AutomationProperties.GetName(c)
