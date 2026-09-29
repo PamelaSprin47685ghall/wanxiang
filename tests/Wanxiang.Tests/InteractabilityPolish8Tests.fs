@@ -27,9 +27,6 @@ open Wanxiang.UI
 
 let private toasts = ResizeArray<string * ToastTone>()
 
-/// Ui 模块顶层建有 Cursor：触碰任何 Ui.* 成员前先确保无头平台就绪。
-let private ensureHeadless () = Headless.ensure ()
-
 let rec private descendants (control: Control) = seq {
     match control with
     | :? Panel as panel -> yield! panel.Children |> Seq.collect descendants
@@ -65,7 +62,6 @@ let private privateKey (ctrl: Control) (key: Key) =
     e
 
 let private show (content: Control) width height =
-    ensureHeadless ()
     let window = Window(Width = width, Height = height, Content = content)
     window.Show()
     Dispatcher.UIThread.RunJobs()
@@ -87,7 +83,6 @@ let private sidebarSummary (id: Guid) title =
       lastCommitId = 1UL }
 
 let private buildSidebar () =
-    ensureHeadless ()
     let root = Grid()
     let overlay = OverlayHost(root)
     let actions: SidebarActions =
@@ -116,6 +111,7 @@ let private buildSidebar () =
 
 [<Fact>]
 let ``down in the search box reaches the empty state action`` () =
+    Headless.run (fun () ->
     let root, _, sidebar = buildSidebar ()
     let window = show root 320.0 420.0
     try
@@ -139,11 +135,13 @@ let ``down in the search box reaches the empty state action`` () =
         Assert.True(actionButton.IsFocused, "焦点应落进空态主按钮（新建会话）")
     finally
         window.Close()
+    )
 
 // ── 2. 多选批量操作条左右键 ───────────────────────────────────────────────
 
 [<Fact>]
 let ``selection action bar arrows walk the batch buttons`` () =
+    Headless.run (fun () ->
     let root, _, sidebar = buildSidebar ()
     let window = show root 320.0 420.0
     try
@@ -174,11 +172,11 @@ let ``selection action bar arrows walk the batch buttons`` () =
         Assert.True(archive.IsFocused, "左方向键把焦点交回归档")
     finally
         window.Close()
+    )
 
 // ── 3. 问答锚点取视口顶端 ─────────────────────────────────────────────────
 
 let private buildChat (messages: MessageView list) =
-    ensureHeadless ()
     // 平滑滚动在减弱动效下退化成立即跳转：锚点测试只看目标卡片落点，
     // 动画会增加中间态不确定性，直接走减弱档。
     MotionPolicy.setReduced true
@@ -249,6 +247,7 @@ let private userCardAt (chat: ChatView) (round: int) : Control =
 
 [<Fact>]
 let ``next question anchors on the topmost visible card`` () =
+    Headless.run (fun () ->
     let chat, window = buildChat (exchanges 3)
     try
         let panel, scroller = chatPanel chat
@@ -274,6 +273,7 @@ let ``next question anchors on the topmost visible card`` () =
             sprintf "第 2 轮不得晚于第 3 轮（second=%f third=%f）" second.Bounds.Y third.Bounds.Y)
     finally
         window.Close()
+    )
 
 // 批量删除含当前会话时，主视图不能挂在已删会话上：单条删除早已落在邻位，
 // 批量这条路此前直接漏掉，删完主屏仍留着已删会话的内容，此刻发消息/停止
@@ -281,7 +281,7 @@ let ``next question anchors on the topmost visible card`` () =
 // 整列全删→欢迎页（None）。
 [<Fact>]
 let ``batch delete of the active conversation lands on a surviving neighbor`` () =
-    ensureHeadless ()
+    Headless.run (fun () ->
     let shell = MainView()
     shell.Build()
     let window = Window(Width = 900.0, Height = 700.0, Content = shell)
@@ -329,3 +329,4 @@ let ``batch delete of the active conversation lands on a surviving neighbor`` ()
         Assert.True(noneLeft.IsNone, "删掉整列时退回欢迎页")
     finally
         window.Close()
+    )

@@ -108,7 +108,6 @@ let private highlightedRuns (palette: Palette) (block: TextBlock) =
     |> List.ofSeq
 
 let private show (content: Control) width height =
-    Headless.ensure ()
     let window = Window(Width = width, Height = height, Content = content)
     window.Show()
     Dispatcher.UIThread.RunJobs()
@@ -131,7 +130,6 @@ let private summary id title preview pinned =
 
 /// 建一个带真实 OverlayHost 的 Sidebar：搜索框、行渲染、复用路径全部走真代码。
 let private buildSidebar () =
-    Headless.ensure ()
     let root = Grid()
     let overlay = OverlayHost(root)
     let actions: SidebarActions =
@@ -175,35 +173,44 @@ let private typeQuery (sidebar: Sidebar) (query: string) (items: ConversationSum
 
 [<Fact>]
 let ``empty query yields one plain segment covering the whole text`` () =
+    Headless.run (fun () ->
     let spans = SidebarText.segments "" "万象 会话标题"
     Assert.Equal<string list>([ "万象 会话标题" ], spans |> List.map _.text)
     Assert.False(spans |> List.forall _.isMatch)
+    )
 
 [<Fact>]
 let ``whitespace-only query is treated as no query`` () =
+    Headless.run (fun () ->
     // 与 ConversationSummary.matches 同口径：纯空白查询放行所有行，
     // 所以也不该有任何高亮——否则列表会出现「没有任何查询却到处上色」。
     let spans = SidebarText.segments "   " "随便一段文本"
     Assert.Equal<string list>([ "随便一段文本" ], spans |> List.map _.text)
     Assert.False(spans |> List.forall _.isMatch)
+    )
 
 [<Fact>]
 let ``single term highlights only the matched substring, keeping original casing`` () =
+    Headless.run (fun () ->
     let spans = SidebarText.segments "模型" "万象 模型 设计草案"
     // 命中片段保留原文，不是查询词本身；大小写不敏感但内容不改写。
     Assert.Equal<string list>([ "万象 "; "模型"; " 设计草案" ], spans |> List.map _.text)
     Assert.Equal<bool list>([ false; true; false ], spans |> List.map _.isMatch)
+    )
 
 [<Fact>]
 let ``segments always reassemble the original text exactly`` () =
+    Headless.run (fun () ->
     // 分段一旦漏字或重复取，渲染出来的标题就会和真实标题不一致——这是最直觉的回归面。
     let text = "存储模型的方案讨论与回顾"
     for query in [ "存储"; "存储 方案"; "方案 存储"; "型"; "讨论 回顾"; "xyz"; "存储 存储" ] do
         let spans = SidebarText.segments query text
         Assert.Equal(text, spans |> List.map _.text |> String.concat "")
+    )
 
 [<Fact>]
 let ``every term that matched the row is highlighted`` () =
+    Headless.run (fun () ->
     // 分段口径必须与 ConversationSummary.matches 对齐：matches 用「所有词都命中」
     // 过滤，这里就把这些词全部标出来。两个口径若漂移，会出现
     // 「这行被搜出来了却看不出哪里匹配」。
@@ -214,9 +221,11 @@ let ``every term that matched the row is highlighted`` () =
         |> List.filter _.isMatch
         |> List.map _.text
     Assert.Equal<string list>([ "模型"; "选型" ], highlighted)
+    )
 
 [<Fact>]
 let ``adjacent matches cover the whole text without gaps`` () =
+    Headless.run (fun () ->
     // 「存储」「模型」挨着命中：合并后不再夹一段普通文字，整块都是高亮。
     // 断言口径是「高亮片段拼回去等于原文」——分成一个还是两个 run 是渲染细节，
     // 「有没有漏出普通文字」才是用户看得见的行为。
@@ -224,27 +233,34 @@ let ``adjacent matches cover the whole text without gaps`` () =
     Assert.Equal<string list>([ "存储"; "模型" ], spans |> List.map _.text)
     Assert.True(spans |> List.forall _.isMatch)
     Assert.Equal("存储模型", spans |> List.filter _.isMatch |> List.map _.text |> String.concat "")
+    )
 
 [<Fact>]
 let ``overlapping occurrences of one term are not double counted`` () =
+    Headless.run (fun () ->
     // 「aa」在「aaaa」里出现两次且区域重叠：合并后是两个不重叠命中，
     // 文本被完整覆盖一次，没有哪一段被算两遍（否则渲染会重复上色、拼接会多字）。
     let spans = SidebarText.segments "aa" "aaaa"
     Assert.Equal("aaaa", spans |> List.map _.text |> String.concat "")
     Assert.Equal<int>(2, spans |> List.filter _.isMatch |> List.length)
+    )
 
 [<Fact>]
 let ``a term that does not occur leaves the text unstyled`` () =
+    Headless.run (fun () ->
     // matches 会否掉这一行；万一调用方仍渲染它（例如调用顺序不同），
     // 也不能出现「什么都没匹配却整行上色」。
     let spans = SidebarText.segments "不存在的词" "万象 会话"
     Assert.Equal<string list>([ "万象 会话" ], spans |> List.map _.text)
     Assert.False(spans |> List.forall _.isMatch)
+    )
 
 [<Fact>]
 let ``terms helper splits on spaces and tabs and drops duplicates`` () =
+    Headless.run (fun () ->
     Assert.Equal<string list>([ "甲"; "乙" ], SidebarText.terms "甲\t乙 甲")
     Assert.Equal<string list>([], SidebarText.terms "   ")
+    )
 
 // =========================================================================
 // 2. 真实行渲染（含回收复用）
@@ -252,6 +268,7 @@ let ``terms helper splits on spaces and tabs and drops duplicates`` () =
 
 [<Fact>]
 let ``title and preview both highlight while searching`` () =
+    Headless.run (fun () ->
     let id = Guid.NewGuid()
     let root = Grid()
     let _, sidebar = buildSidebar ()
@@ -273,9 +290,11 @@ let ``title and preview both highlight while searching`` () =
         Assert.Equal<string list>([ "模型" ], highlightedRuns Palette.light preview)
     finally
         window.Close ()
+    )
 
 [<Fact>]
 let ``clearing the query removes every highlight`` () =
+    Headless.run (fun () ->
     let id = Guid.NewGuid()
     let root = Grid()
     let _, sidebar = buildSidebar ()
@@ -299,9 +318,11 @@ let ``clearing the query removes every highlight`` () =
         Assert.Equal("万象模型选型", String.concat "" (titleAfter.Inlines |> Seq.choose (function :? Run as r -> Some r | _ -> None) |> Seq.map (fun r -> r.Text)))
     finally
         window.Close ()
+    )
 
 [<Fact>]
 let ``recycled rows keep their highlight after a snapshot refresh`` () =
+    Headless.run (fun () ->
     // 只在新行渲染时上色的话，刷新会走 RefreshRowHost，那条路径先把 title.Text 重新赋值
     // （整块替换 Inlines），高亮就消失了。这里专门锁复用路径也重放高亮。
     let id = Guid.NewGuid()
@@ -327,6 +348,7 @@ let ``recycled rows keep their highlight after a snapshot refresh`` () =
         Assert.Equal<string list>([ "模型" ], highlightedRuns Palette.light title)
     finally
         window.Close ()
+    )
 
 // =========================================================================
 // 3. 命中色可读性
@@ -334,6 +356,7 @@ let ``recycled rows keep their highlight after a snapshot refresh`` () =
 
 [<Fact>]
 let ``search highlight keeps readable contrast in both palettes`` () =
+    Headless.run (fun () ->
     let relativeLuminance (color: Color) =
         let channel (value: byte) =
             let c = float value / 255.0
@@ -350,3 +373,4 @@ let ``search highlight keeps readable contrast in both palettes`` () =
         Assert.True(contrast palette.accent palette.surface >= 4.5)
         // 选中行（当前会话）底色也要能压住命中色，否则选中的那行高亮会糊。
         Assert.True(contrast palette.accent palette.selected >= 4.5)
+    )

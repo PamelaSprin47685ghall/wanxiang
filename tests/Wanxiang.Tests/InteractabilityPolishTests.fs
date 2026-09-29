@@ -23,9 +23,6 @@ open Wanxiang.UI
 
 let private toasts = ResizeArray<string * ToastTone>()
 
-/// Ui 模块顶层建有 Cursor：触碰任何 Ui.* 成员前先确保无头平台就绪。
-let private ensureHeadless () = Headless.ensure ()
-
 let private pending = ResizeArray<JsonObject>()
 
 let private settingsActions () : SettingsActions =
@@ -127,7 +124,6 @@ let private raiseWheel (scroller: ScrollViewer) (delta: float) =
     e
 
 let private show (content: Control) width height =
-    Headless.ensure ()
     let window = Window(Width = width, Height = height, Content = content)
     window.Show()
     Dispatcher.UIThread.RunJobs()
@@ -137,7 +133,6 @@ let private show (content: Control) width height =
 
 /// ChatView 夹具：与 ExchangeNavTests 同源的最小构造（Round7 复用它自己的交互路径）。
 let private buildChat (messages: MessageView list) =
-    Headless.ensure ()
     // 平滑滚动路径在减弱动效下退化成立即跳转：这里要测动画中断，显式开启动效。
     MotionPolicy.setReduced false
     let chatActions =
@@ -184,6 +179,7 @@ let private exchanges (count: int) : MessageView list =
 
 [<Fact>]
 let ``wheel moving either way stops an in-flight smooth scroll`` () =
+    Headless.run (fun () ->
     // 「上一条提问」是一场有帧节拍的平滑滚动（smoothScrollTimer）。
     // 中断判据此前只认上滚（Delta.Y > 0）：上滚途中改主意往下滚，
     // 两个动画争抢 Offset，手势输给动画。
@@ -226,12 +222,13 @@ let ``wheel moving either way stops an in-flight smooth scroll`` () =
         Assert.False(running (), "上滚同样打断平滑滚动")
     finally
         window.Close()
+    )
 
 // ── 2. 服务商表单：单行字段 Enter 被消费 ───────────────────────────────────
 
 [<Fact>]
 let ``provider form consumes enter from a single line field`` () =
-    ensureHeadless ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     let providers = SettingsProviders(overlay, settingsActions ())
@@ -284,6 +281,7 @@ let ``provider form consumes enter from a single line field`` () =
         Assert.False(overlay.IsDialogOpen, "字段齐备后 Enter 提交并关闭对话框")
     finally
         window.Close()
+    )
 
 // ── 3/4. 侧栏多选模式 ──────────────────────────────────────────────────────
 
@@ -303,7 +301,6 @@ let private sidebarSummary id title =
       lastCommitId = 1UL }
 
 let private buildSidebarForPolish () =
-    Headless.ensure ()
     let root = Grid()
     let overlay = OverlayHost(root)
     let actions: SidebarActions =
@@ -330,6 +327,7 @@ let private buildSidebarForPolish () =
 
 [<Fact>]
 let ``row context menu stays closed while the sidebar is in selection mode`` () =
+    Headless.run (fun () ->
     let root, overlay, sidebar = buildSidebarForPolish ()
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -357,9 +355,11 @@ let ``row context menu stays closed while the sidebar is in selection mode`` () 
         Assert.False(overlay.IsPopupOpen, "多选态下更多按钮不得打开单条菜单")
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``row more button leaves the hit tree in selection mode`` () =
+    Headless.run (fun () ->
     let root, _, sidebar = buildSidebarForPolish ()
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -377,9 +377,11 @@ let ``row more button leaves the hit tree in selection mode`` () =
         Assert.False(moreButton.IsHitTestVisible, "下线即不可命中：不再诱导点击空转菜单")
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``escape in the search box leaves selection mode first`` () =
+    Headless.run (fun () ->
     let root, _, sidebar = buildSidebarForPolish ()
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -401,3 +403,4 @@ let ``escape in the search box leaves selection mode first`` () =
         Assert.False(sidebar.IsSelectionMode, "搜索框中的 Escape 应先退出多选")
     finally
         window.Close()
+    )

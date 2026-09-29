@@ -4,7 +4,6 @@ open System
 open System.Diagnostics
 open Avalonia.Controls
 open Xunit
-open Xunit.Abstractions
 open Wanxiang.UI
 open Wanxiang.Tests
 
@@ -25,7 +24,6 @@ type Pathological(output: ITestOutputHelper) =
           brandAvatar = fun () -> Border() :> Control }
 
     let timeRender (label: string) (text: string) =
-        Headless.ensure ()
         let message = { MessageView.empty with role = "assistant"; text = text; commitId = Some 1UL }
         let watch = Stopwatch.StartNew()
         let control = MessageCard.render message context actions
@@ -36,7 +34,7 @@ type Pathological(output: ITestOutputHelper) =
 
     [<Fact>]
     member _.``报告病态输入的渲染代价``() =
-        Headless.ensure ()
+        Headless.run (fun () ->
         timeRender "预热" "hello" |> ignore
 
         let hugeCode =
@@ -61,3 +59,4 @@ type Pathological(output: ITestOutputHelper) =
         for (label, ms) in costs do
             // 单条消息渲染超过两秒，用户会认为程序死了
             Assert.True(ms < 2000.0, $"{label} 渲染 {ms:F0} ms，太久")
+        )

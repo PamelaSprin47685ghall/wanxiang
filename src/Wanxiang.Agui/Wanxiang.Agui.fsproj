@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Capabilities.fs" />
+    <Compile Include="TolerantReader.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AGUI.Abstractions" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
+  </ItemGroup>
+
+</Project>

@@ -54,7 +54,6 @@ let private summary id title updatedAt pinned =
       lastCommitId = 0UL }
 
 let private show (content: Control) width height =
-    Headless.ensure ()
     let window = Window(Width = width, Height = height, Content = content)
     window.Show()
     Dispatcher.UIThread.RunJobs()
@@ -87,7 +86,6 @@ let private rowByName (sidebar: Sidebar) (title: string) =
 /// 造一棵真侧栏。夹具只记置顶调用，不验证命令载荷——那条由 CommandDispatch
 /// 相关的用例覆盖，这里只关心「按键触发了哪个动作、参数是什么」。
 let private buildSidebar () =
-    Headless.ensure ()
     let root = Grid()
     let overlayHost = OverlayHost(root)
     // 只收行级置顶（P 键走这条），批量置顶留给别的夹具。
@@ -129,6 +127,7 @@ let private pressRow (row: Control) (key: Key) (modifiers: KeyModifiers) =
 // 键盘用户得先唤菜单再找项。与 F2 / Delete 同一约定。
 [<Fact>]
 let ``p key on a focused row toggles pin`` () =
+    Headless.run (fun () ->
     let root, sidebar, rowPins = buildSidebar ()
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -156,11 +155,13 @@ let ``p key on a focused row toggles pin`` () =
         Assert.Equal<Guid * bool>([ (id, false) ], Seq.toList rowPins)
     finally
         window.Close()
+    )
 
 // P 不带修饰键才归侧栏：Ctrl+P 等组合键是全局快捷键表的领地，
 // 行里吞掉会让全局键位出现不可解释的失效。
 [<Fact>]
 let ``ctrl p on a focused row is left for the global table`` () =
+    Headless.run (fun () ->
     let root, sidebar, rowPins = buildSidebar ()
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -175,6 +176,7 @@ let ``ctrl p on a focused row is left for the global table`` () =
         Assert.Empty rowPins
     finally
         window.Close()
+    )
 
 // ── 删除后的邻位：打开谁与焦点落谁同一个答案 ────────────────────────────────
 
@@ -182,6 +184,7 @@ let ``ctrl p on a focused row is left for the global table`` () =
 // FocusAfterDelete 一致，否则键盘用户与主区看到的是两个会话。
 [<Fact>]
 let ``neighbor after delete matches the row focus falls to`` () =
+    Headless.run (fun () ->
     let root, sidebar, _ = buildSidebar ()
     let first, second, third = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -209,11 +212,13 @@ let ``neighbor after delete matches the row focus falls to`` () =
         Assert.Equal(Some expectedPrev, sidebar.NeighborAfterDelete(lastVisible.ToString()))
     finally
         window.Close()
+    )
 
 // 只剩一条时没有邻位可言：必须给 None，让调用方退回欢迎页，
 // 而不是随便挑一个不存在的会话。
 [<Fact>]
 let ``no neighbor when the list becomes empty`` () =
+    Headless.run (fun () ->
     let root, sidebar, _ = buildSidebar ()
     let only = Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -223,6 +228,7 @@ let ``no neighbor when the list becomes empty`` () =
         Assert.Equal(None, sidebar.NeighborAfterDelete(only.ToString()))
     finally
         window.Close()
+    )
 
 // ── 打开设置即有焦点归宿 ────────────────────────────────────────────────────
 
@@ -244,6 +250,7 @@ let private focusedControl (window: Window) =
 // 焦点悬在已隐藏的 workspace 里，键盘用户按 Tab 前无处可去。
 [<Fact>]
 let ``focus initial lands on a settings section nav button`` () =
+    Headless.run (fun () ->
     let overlayRoot = Grid()
     let overlayHost = OverlayHost(overlayRoot)
     let actions: SettingsActions =
@@ -274,6 +281,7 @@ let ``focus initial lands on a settings section nav button`` () =
         Assert.True(isNavFocused (focusedControl window), "\u6253\u5f00\u8bbe\u7f6e\u540e\u7126\u70b9\u5e94\u843d\u5728\u5206\u533a\u5bfc\u822a\u6309\u94ae\u4e0a")
     finally
         window.Close()
+    )
 
 // PageUp/PageDown 在侧栏行里与 Home/End 同义。行是定制 Border（容器 ListBoxItem
 // 一律 Focusable=false），ListBox 自带的翻页导航对定制行不生效：未接线时按键从
@@ -285,6 +293,7 @@ let ``focus initial lands on a settings section nav button`` () =
 // 必须把首行实现出来；未接线时行永远是末行附近那一窗。
 [<Fact>]
 let ``page up on a sidebar row scrolls the list to the first item`` () =
+    Headless.run (fun () ->
     let root, sidebar, _ = buildSidebar ()
     let window = show root 360.0 700.0
     try
@@ -330,4 +339,5 @@ let ``page up on a sidebar row scrolls the list to the first item`` () =
         // 首行永远实现不出来。
     finally
         window.Close()
+    )
 

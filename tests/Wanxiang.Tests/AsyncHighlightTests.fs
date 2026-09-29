@@ -28,6 +28,7 @@ let private kindsOf (tokens: CodeToken list) = tokens |> List.map (fun t -> t.ki
 
 [<Fact>]
 let ``桌面端先给纯文本，后台算完再换成着色版`` () =
+    Headless.run (fun () ->
     let backend = CountingBackend()
     RichBackend.install backend
     let code = uniqueCode "delayed"
@@ -40,9 +41,11 @@ let ``桌面端先给纯文本，后台算完再换成着色版`` () =
     Assert.Contains(CodeKeyword, kindsOf highlighted)
     // 着色不能吃字
     Assert.Equal(code, highlighted |> List.map (fun t -> t.text) |> String.concat "")
+    )
 
 [<Fact>]
 let ``流式进行中一次也不调用着色`` () =
+    Headless.run (fun () ->
     // 未写完的代码着不准，而每个 token 重算一遍会把机器点着
     let backend = CountingBackend()
     RichBackend.install backend
@@ -52,9 +55,11 @@ let ``流式进行中一次也不调用着色`` () =
         Highlight.tokenize false "fsharp" (code.Substring(0, cut)) |> ignore
     Thread.Sleep 120
     Assert.Equal(before, backend.Calls)
+    )
 
 [<Fact>]
 let ``同一段代码只排队一次`` () =
+    Headless.run (fun () ->
     // 重绘很频繁；同一段被反复排队会灌满线程池
     let backend = CountingBackend()
     RichBackend.install backend
@@ -64,18 +69,22 @@ let ``同一段代码只排队一次`` () =
     Assert.True(waitForReady 5000, "等不到后台着色完成")
     Thread.Sleep 150
     Assert.Equal(1, backend.Calls)
+    )
 
 [<Fact>]
 let ``认不出的语言不进后台队列`` () =
+    Headless.run (fun () ->
     let backend = CountingBackend()
     RichBackend.install backend
     let before = backend.Calls
     Assert.Equal<CodeTokenKind list>([ CodePlain ], kindsOf (Highlight.tokenize true "沒有這種語言" "任意内容"))
     Thread.Sleep 120
     Assert.Equal(before, backend.Calls)
+    )
 
 [<Fact>]
 let ``多段代码同时算完只通知一次`` () =
+    Headless.run (fun () ->
     // 打开含二十个代码块的旧会话时，每次通知都会触发一次全量重画。
     // 不合并的话屏幕要连抖几秒。
     let backend = CountingBackend()
@@ -94,3 +103,4 @@ let ``多段代码同时算完只通知一次`` () =
     // 而且结果都进了缓存
     for code in blocks do
         Assert.Contains(CodeKeyword, kindsOf (Highlight.tokenize true "fsharp" code))
+    )

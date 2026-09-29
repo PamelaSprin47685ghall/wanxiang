@@ -88,15 +88,16 @@ module OperabilityTests =
 
     [<Fact>]
     let ``ctrl+L 解析为聚焦输入框`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let resolve (key: Key) (mods: KeyModifiers) =
             ShortcutRouter.resolve(
                 KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = mods))
         Assert.Equal(ShortcutAction.FocusComposer, resolve Key.L KeyModifiers.Control)
+        )
 
     [<Fact>]
     let ``ctrl+L 不与既有快捷键或输入框快捷键撞车`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let resolve (key: Key) (mods: KeyModifiers) =
             ShortcutRouter.resolve(
                 KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = mods))
@@ -108,25 +109,27 @@ module OperabilityTests =
         // 裸 L 是普通输入，绝不能被吞；Shift+L 同理。
         Assert.Equal(ShortcutAction.NoShortcut, resolve Key.L KeyModifiers.None)
         Assert.Equal(ShortcutAction.NoShortcut, resolve Key.L KeyModifiers.Shift)
+        )
 
     // ---------- 右键菜单 ----------
 
     /// 用户消息：复制 + 编辑并分叉 + 删除。没有「重新生成」——那是助手侧的动作。
     [<Fact>]
     let ``用户消息右键菜单含复制、编辑并分叉、删除`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let spy = SpyActions()
         let items = render (makeMessage "user" "帮我解释一下" (Some 7UL)) (makeContext false false) spy |> menuLabels
         Assert.Contains("复制消息", items)
         Assert.Contains("编辑并分叉", items)
         Assert.Contains("删除这条消息", items)
         Assert.DoesNotContain("重新生成", items)
+        )
 
     /// 末条助手消息才带「重新生成」；非末条助手没有——重生成只会影响最后一段回复，
     /// 给中间消息挂一个假入口，点了也是重新生成末尾，纯误导。
     [<Fact>]
     let ``重新生成只见于末条助手消息菜单`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let spy = SpyActions()
         let lastItems = render (makeMessage "assistant" "最后一次回复" (Some 3UL)) (makeContext true false) spy |> menuLabels
         let midItems = render (makeMessage "assistant" "中间回复" (Some 2UL)) (makeContext false false) spy |> menuLabels
@@ -135,43 +138,47 @@ module OperabilityTests =
         // 两条都该有复制；删除只跟着 commitId 走。
         Assert.Contains("复制消息", lastItems)
         Assert.Contains("复制消息", midItems)
+        )
 
     /// 流式进行中没有可提交的东西：半句话拷出去、签一份还没定的稿，全是假入口。
     [<Fact>]
     let ``流式进行中消息没有右键菜单项`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let spy = SpyActions()
         let items = render (makeMessage "assistant" "正在生成…" None) (makeContext true true) spy |> menuLabels
         Assert.Empty(items)
+        )
 
     /// 没有 commitId 的消息（尚未落盘的乐观插入、流式临时卡）不能删：
     /// 删除走的是服务端历史，没有 commit 就没有可删的行。
     [<Fact>]
     let ``未落盘消息没有删除项`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let spy = SpyActions()
         let items = render (makeMessage "user" "还没落盘" None) (makeContext false false) spy |> menuLabels
         Assert.Contains("复制消息", items)
         Assert.DoesNotContain("删除这条消息", items)
+        )
 
     /// 菜单项必须真的去调注入的执行体：一条「看起来对」但点了没反应的菜单，
     /// 比没有菜单更糟（用户会以为自己点到别的东西上去了）。
     [<Fact>]
     let ``菜单项点击走注入的动作`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let spy = SpyActions()
         let control = render (makeMessage "assistant" "终稿" (Some 9UL)) (makeContext true false) spy
         invokeLabel control "复制消息"
         Assert.Equal<string list>([ "copy" ], spy.Log)
         invokeLabel control "删除这条消息"
         Assert.Equal<string list>([ "copy"; "delete" ], spy.Log)
+        )
 
     /// 菜单是「入口」不是「能力」：与 hover 按钮的集合必须一致。
     /// 两边各有各的消失条件（hover 行 vs 菜单项），必须由同一批判定驱动，
     /// 否则早晚长出「左键能删、右键不能」这种割裂。
     [<Fact>]
     let ``菜单项与 hover 按钮的可用集合一致`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let spy = SpyActions()
         let cases =
             [ render (makeMessage "user" "用户消息" (Some 7UL)) (makeContext false false) spy
@@ -192,13 +199,14 @@ module OperabilityTests =
                 |> set
             for name in hoverNames do
                 Assert.Contains(name, menuSet)
+        )
 
     // 思考过程与工具调用 / 错误详情同档：头部带独立复制入口。底部复制只取正文，
     // 思维链此前只能展开后手动拖选——几百字没法精确全选。锁：按下那个按钮，
     // 注入的 copyText 真的被调用，且载荷是整段 reasoning。
     [<Fact>]
     let ``reasoning header copies the whole chain of thought`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let spy = SpyActions()
         let message =
             { makeMessage "assistant" "结论" (Some 4UL) with reasoning = "先观察\n再推演\n最后收口" }
@@ -223,6 +231,7 @@ module OperabilityTests =
             Assert.Equal<string list>([ "copy" ], spy.Log)
         finally
             card.Close()
+        )
 
 
     // 图片附件的意图与普通文件不同：都是「下到本地」写死成一个文案，
@@ -231,7 +240,7 @@ module OperabilityTests =
     // 锁：卡的自动化名里图片条目报的是「查看或下载图片」，文件条目仍报「下载附件」。
     [<Fact>]
     let ``image attachment row describes its own intent`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let spy = SpyActions()
         let image =
             { sha256 = "img"
@@ -261,12 +270,13 @@ module OperabilityTests =
             Assert.Contains("diagram.png", message.attachments |> List.map (fun a -> a.fileName))
         finally
             card.Close()
+        )
 
     // 附件内容丢失后退化成静态条，正常条有悬停提示与读屏名，丢失条两样都没有：
     // 读屏只念得出文件名，用户不知道它已经打不开了。补齐同一份自描述。
     [<Fact>]
     let ``missing attachment row explains that it is unavailable`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let spy = SpyActions()
         let lost =
             { sha256 = "gone"
@@ -290,12 +300,13 @@ module OperabilityTests =
             Assert.DoesNotContain("查看或下载图片 photo.png", names)
         finally
             card.Close()
+        )
 
     // 脚注时刻是紧凑格式（今天只有 HH:mm），精确时刻此前无处可看：
     // 悬停补完整时间戳，读屏取同一份完整文本，不把「14:20」读成一片空白。
     [<Fact>]
     let ``footer timestamp carries the full timestamp for hover and screen readers`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let spy = SpyActions()
         // 用当下时刻：脚注滚动格式今天只显示 HH:mm（这是要覆盖的那条分支），
         // 固定历史日期反而走进「5月4日」分支，测不到紧凑时刻。
@@ -338,3 +349,4 @@ module OperabilityTests =
                 plainCard.Close()
         finally
             card.Close()
+        )

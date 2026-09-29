@@ -33,7 +33,6 @@ let rec private descendants (control: Control) =
     }
 
 let private show (content: Control) width height =
-    Headless.ensure ()
     let window = Window(Width = width, Height = height, Content = content)
     window.Show()
     Dispatcher.UIThread.RunJobs()
@@ -65,7 +64,6 @@ let private chatActions : ChatActions =
 /// 每次调用都是一次全新的窗口与卡片挂载：第二个流式用例借此模拟 ChatView
 /// 「每个 delta 重建流式卡」的真实行为（新 Border attach），断言节奏不因此重启。
 let private renderStreamingCaret () =
-    Headless.ensure ()
     let chat = ChatView(chatActions, brandLogo)
     chat.Build()
     let window = show chat 760.0 520.0
@@ -95,7 +93,7 @@ let private renderStreamingCaret () =
 
 [<Fact>]
 let ``user bubble keeps hairline strong one pixel border in both palettes`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let chat = ChatView(chatActions, brandLogo)
     chat.Build()
     let window = show chat 760.0 520.0
@@ -134,9 +132,11 @@ let ``user bubble keeps hairline strong one pixel border in both palettes`` () =
             settle ()
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``streaming caret keeps opacity inside the breath band and pins to max under reduced motion`` () =
+    Headless.run (fun () ->
     // 确定性说明：Tokens.fs 的帧调度注释记录了本套件的无显示制度
     // （SetupWithoutStarting + RunJobs）下 DispatcherTimer 每次 Start 至多被服务一个
     // tick，无法稳定泵出连续帧。因此这里不断言「呼吸幅度随时间起伏」——
@@ -145,7 +145,6 @@ let ``streaming caret keeps opacity inside the breath band and pins to max under
     // 并由减弱动效分支补上「静态钉在 Max、不起计时器」的锚点。
     // MessageCard 模块顶层建有 Cursor（handCursor）：触碰其任何成员前必须先 ensure，
     // 否则模块静态构造在无 ICursorFactory 的进程里直接炸（TypeInitializationException）。
-    Headless.ensure ()
     Assert.True(Tokens.opacityCaretBreathMin < Tokens.opacityCaretBreathMax)
     Assert.True(Tokens.opacityCaretBreathMax <= 1.0)
     Assert.Equal(50.0, MotionLedger.caretBreathFrame.TotalMilliseconds, 3)
@@ -171,13 +170,14 @@ let ``streaming caret keeps opacity inside the breath band and pins to max under
         Assert.Equal(Tokens.opacityCaretBreathMax, reducedCaret.Opacity, 3)
     finally
         MotionPolicy.setReduced false
+    )
 
 [<Fact>]
 let ``caret breath opacity is a periodic pure function pinned inside the band`` () =
+    Headless.run (fun () ->
     // 纯函数本身不触碰布局，但这是本套件中第一处可能触发 MessageCard 模块静态构造的
     // 调用点（handCursor = new Cursor）：进程若无头平台未注册会直接炸，
     // 因此与其它 UI 测试一样先 ensure——也让本测试不依赖别的测试的执行次序。
-    Headless.ensure ()
     // 相位是「自运行原点流逝时间」的纯函数，不挂任何控件或挂载状态：
     // 同一输入永远得到同一输出（修复前相位挂在 Border 上、每次 attach 重置到峰值，
     // 等价于一份不可测的挂载相对状态）。这里把该契约钉死：t=0 峰值、半周期见下限、
@@ -215,9 +215,11 @@ let ``caret breath opacity is a periodic pure function pinned inside the band`` 
     |> List.iter (fun (a, b) ->
         // 30ms 内理论最大变化约 0.45·(π/1800)·30 ≈ 0.0236；这里留一倍余量
         Assert.True(abs (a - b) <= 0.05))
+    )
 
 [<Fact>]
 let ``rebuilt streaming caret continues the breath run instead of restarting at peak`` () =
+    Headless.run (fun () ->
     // 缺陷回归：ChatView 每个流式 delta 都整张重建流式卡（键为 None、不进缓存），
     // 旧 Border detach、新 Border attach。修复前 attach 一律把相位重置到峰值，
     // 于是每个 delta 光标都从最亮重新起跳，节奏碎裂。修复后相位取自模块级运行原点：
@@ -233,7 +235,6 @@ let ``rebuilt streaming caret continues the breath run instead of restarting at 
     //   · 重建光标明显暗于峰值（相位接上了，不是回到最亮）。
     // 三类复位回归都会被抓：OriginTicks 被改写 → 原点断言红；elapsed 归零
     // （attach 重开运行）→ 纯度断言与「暗于峰值」红；亮度写错来源 → 纯度断言红。
-    Headless.ensure ()
 
     // 第一枚：把运行推进到 620ms（周期中段、明显暗于峰值、斜率中等，
     // attach 与断言之间几毫秒的计时抖动只会带来 ~0.01 的亮度差）。
@@ -274,14 +275,15 @@ let ``rebuilt streaming caret continues the breath run instead of restarting at 
         sprintf "重建光标亮度偏离纯函数：%f" (abs (rebuilt.Opacity - MessageCard.caretBreathOpacity rebuiltElapsed)))
     // 核心断言三：重建光标明显暗于峰值（周期中段），而非每次从最亮重新起跳。
     Assert.True(rebuilt.Opacity < Tokens.opacityCaretBreathMax - 0.1, sprintf "重建光标仍钉在峰值：%f" rebuilt.Opacity)
+    )
 
 [<Fact>]
 let ``code block copy confirmation dips toward fade opacity and keeps the confirmed label`` () =
+    Headless.run (fun () ->
     // 确定性说明：回到 1.0 的那一腿跑在 MotionLedger.copyConfirmationFade 的
     // DispatcherTimer 上，本套件的无显示制度无法确定性地泵到它（同 Tokens.fs 帧调度注释），
     // 因此这里锁两件确定的事：(1) 点下复制的瞬间 opacity 同步 dip 到中间档附近、
     // 且始终不越过 [fade, 1.0] 闭区间；(2) 减弱动效时完全不做这段淡出，保持 1.0。
-    Headless.ensure ()
     let runCopy () =
         let mutable copiedText = ""
         let renderer = MarkdownRenderer(14.0, (fun text -> copiedText <- text), ignore, false)
@@ -322,13 +324,14 @@ let ``code block copy confirmation dips toward fade opacity and keeps the confir
             reducedWindow.Close()
     finally
         MotionPolicy.setReduced false
+    )
 
 [<Fact>]
 let ``disclosure chevron and copy confirmation ride the shared easeOutCubic`` () =
+    Headless.run (fun () ->
     // 全应用统一缓动：披露箭头旋转与复制确认淡出都接 MotionPolicy.easeOutCubic，
     // 时长分别锚定 MotionLedger.disclosureChevronRotate / copyConfirmationFade
     // （经 MotionPolicy 门控，减弱动效归零），且旋转只改 transform、不碰布局几何。
-    Headless.ensure ()
     let message : MessageView =
         { MessageView.empty with
             role = "assistant"
@@ -384,10 +387,11 @@ let ``disclosure chevron and copy confirmation ride the shared easeOutCubic`` ()
         Assert.Same(MotionPolicy.easeOutCubic, fade.Easing)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``settings appearance grouping sits on surface container with hairline border`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions : SettingsActions =
         { upsertProvider = fun _ _ -> ()
           deleteProvider = ignore
@@ -416,10 +420,11 @@ let ``settings appearance grouping sits on surface container with hairline borde
         Assert.True(List.length groupingCards >= 1)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``chat header divider uses the lightest hairline tier`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let chat = ChatView(chatActions, brandLogo)
     chat.Build()
     chat.SetConversationChrome true
@@ -437,16 +442,18 @@ let ``chat header divider uses the lightest hairline tier`` () =
         Assert.True(Object.ReferenceEquals(header.BorderBrush, Tokens.hairline))
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``standard hairline helper stays on the border soft tier`` () =
+    Headless.run (fun () ->
     // Ui.hairline 是「标准分隔」档（borderSoft）；最轻档是 Tokens.hairline，两档分层。
     // 这里防止将来有人把 Ui.hairline 改成追更浅的色——那会让所有调用点一起变浅。
     // Ui 模块顶层建有 Cursor（handCursor）：触碰其任何成员前必须先 ensure。
-    Headless.ensure ()
     let divider = Ui.hairline ()
     Assert.True(Object.ReferenceEquals(divider.Background, Tokens.borderSoft))
     Assert.False(Object.ReferenceEquals(divider.Background, Tokens.hairline))
+    )
 
 /// 判定披露头是否挂着共享的「带描边表面过渡」集合：Transitions 里恰好含
 /// Background / BorderBrush 两个 BrushTransition，时长同出
@@ -468,10 +475,10 @@ let private assertBorderedDisclosureTransition (control: Control) =
 
 [<Fact>]
 let ``disclosure headers share one bordered transition`` () =
+    Headless.run (fun () ->
     // 确定性说明：无显示制度下 Avalonia 原生过渡不会推进（见 Tokens.fs 帧调度注释），
     // 因此不断言补间中的颜色，只锁「思考过程 / 工具调用 / 错误技术细节三个披露头都挂着
     // 同一套共享过渡集合（Ui.surfaceBorderedTransitions）」这一结构不变量。
-    Headless.ensure ()
     let context : MessageContext =
         { fontSize = Tokens.fontReading
           autoCollapseReasoning = false
@@ -515,14 +522,15 @@ let ``disclosure headers share one bordered transition`` () =
           retryable = true
           retryAfterSeconds = Some 5 }
     withHeader "技术细节" (MessageCard.errorCard err (fun () -> ()) None)
+    )
 
 [<Fact>]
 let ``export progress bar is determinate under reduced motion`` () =
+    Headless.run (fun () ->
     // 确定性说明：ConversationExportController.Start 必然把状态置为 ExportReading(0, None)，
     // RenderProgress 因此必定经过 total.IsNone 分支。这里只锁 IsIndeterminate 这一个
     // 确定不变量：注入的 sendQuery 返回 false 后异步 continuation 可能把状态推到
     // ExportFailed（隐藏进度条），但那不改 IsIndeterminate，故不断言可见性/文字。
-    Headless.ensure ()
 
     let renderProgress () =
         // OverlayHost 是控制器而非控件：对话框挂在它持有的 root Grid 上，从 root 遍历。
@@ -560,3 +568,4 @@ let ``export progress bar is determinate under reduced motion`` () =
         Assert.False(reducedBar.IsIndeterminate)
     finally
         MotionPolicy.setReduced false
+    )

@@ -7,7 +7,10 @@
 
   <ItemGroup>
     <Compile Include="Headless.fs" />
+    <Compile Include="HeadlessTests.fs" />
     <Compile Include="Helpers.fs" />
+    <Compile Include="EventLogTests.fs" />
+    <Compile Include="AguiMappingTests.fs" />
     <Compile Include="StoreConsistencyTests.fs" />
     <Compile Include="ReplayTests.fs" />
     <Compile Include="CoordinatorTests.fs" />
@@ -62,17 +65,20 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
-    <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" />
+    <!-- xunit v3 = MTP 原生（见根 global.json）。3.2.2 是稳定版。
+         刻意**不**引入 Avalonia.Headless.XUnit：它在 .NET 10 上会死锁
+         （上游 #21467 / #22021），改用底层 HeadlessUnitTestSession，见 Headless.fs。 -->
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
     <!-- 无显示环境下也能跑真实的 Skia 文本整形：公式排版的字体度量必须在测试里可验，
          否则每改一个数字都要重建 WASM 包再截图，一轮五分钟。 -->
     <PackageReference Include="Avalonia.Headless" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
     <PackageReference Include="Avalonia.Skia" Version="12.1.2" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Wanxiang.Core\Wanxiang.Core.fsproj" />
+    <ProjectReference Include="..\..\src\Wanxiang.Agui\Wanxiang.Agui.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Store\Wanxiang.Store.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Config\Wanxiang.Config.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />

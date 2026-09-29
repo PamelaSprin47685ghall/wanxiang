@@ -51,7 +51,7 @@ let private pathOf (icon: Control) =
 
 [<Fact>]
 let ``全量图标几何墨迹中心恰在画布中心`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let icons = factories ()
     Assert.True(List.length icons >= 40, $"反射只找到 {List.length icons} 个图标，Icons 模块结构可能变了")
     for name, icon in icons do
@@ -65,10 +65,11 @@ let ``全量图标几何墨迹中心恰在画布中心`` () =
                 abs (centerX - 8.0) < 0.001 && abs (centerY - 8.0) < 0.001,
                 $"{name} 墨迹中心=({centerX:F2},{centerY:F2})，不在 16×16 画布中心")
         | _ -> failwith $"{name} 工厂没有施加居中平移"
+    )
 
 [<Fact>]
 let ``全量图标渲染像素墨迹居中`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     for name, icon in factories () do
         let control = icon Brushes.Black
         control.Measure(Size(infinity, infinity))
@@ -103,3 +104,4 @@ let ``全量图标渲染像素墨迹居中`` () =
             abs (centerX - float pixels.Width / 2.0) <= 1.0
             && abs (centerY - float pixels.Height / 2.0) <= 1.0,
             $"{name} 渲染墨迹中心=({centerX:F1},{centerY:F1})，偏离 {pixels.Width}×{pixels.Height} 位图中心")
+    )

@@ -23,7 +23,6 @@ module private Fixture =
         File.ReadAllText(Path.Combine(dir, "fixtures", $"{name}.html"))
 
     let layout (name: string) =
-        Headless.ensure ()
         match MathLayout.tryRender Brushes.Black 14.5 (load name) with
         | Ok box -> box
         | Error reason -> failwith $"{name} 排不出来：{reason}"
@@ -47,6 +46,7 @@ module private Fixture =
 
 [<Fact>]
 let ``数字与运算符用直立的 KaTeX_Main`` () =
+    Headless.run (fun () ->
     // 数学里数字与运算符必须直立，变量才斜体；选错字族公式会「看起来不像数学」
     let upright =
         Fixture.layout "summation"
@@ -56,9 +56,11 @@ let ``数字与运算符用直立的 KaTeX_Main`` () =
     for (text, typeface, _, _) in upright do
         Assert.Equal("KaTeX_Main", typeface.FontFamily.Name)
         Assert.False(System.String.IsNullOrEmpty text)
+    )
 
 [<Fact>]
 let ``变量用斜体的数学字体`` () =
+    Headless.run (fun () ->
     // 斜体由字族本身提供（KaTeX_MathItalic），不靠样式匹配也不靠合成倾斜：
     // 浏览器端按样式在字族内挑成员会挑错，挑到缺减号的那张表
     let italics =
@@ -69,9 +71,11 @@ let ``变量用斜体的数学字体`` () =
     for (_, typeface, _, _) in italics do
         Assert.Equal("KaTeX_MathItalic", typeface.FontFamily.Name)
         Assert.Equal(FontStyle.Normal, typeface.Style)
+    )
 
 [<Fact>]
 let ``大型算符取 Size 系列字体`` () =
+    Headless.run (fun () ->
     // ∑ 在正文字号下是小的，KaTeX 靠 KaTeX_Size2 换一个真正的大字形
     let sigma =
         Fixture.layout "summation"
@@ -80,9 +84,11 @@ let ``大型算符取 Size 系列字体`` () =
     match sigma with
     | Some(_, typeface, _, _) -> Assert.StartsWith("KaTeX_Size", typeface.FontFamily.Name)
     | None -> failwith "没有找到 ∑ 字形"
+    )
 
 [<Fact>]
 let ``减号与正负号落在有这些字形的字体上`` () =
+    Headless.run (fun () ->
     // KaTeX_Math 里没有 U+2212 / U+00B1，选错就是两个豆腐块
     let signs =
         Fixture.layout "quadratic"
@@ -91,11 +97,13 @@ let ``减号与正负号落在有这些字形的字体上`` () =
     Assert.Equal(3, signs.Length)
     for (_, typeface, _, _) in signs do
         Assert.Equal("KaTeX_Main", typeface.FontFamily.Name)
+    )
 
 // ---------------------------------------------------------------- 居中
 
 [<Fact>]
 let ``分子分母与分数线共享同一条中轴`` () =
+    Headless.run (fun () ->
     let box = Fixture.layout "quadratic"
     let bar = Fixture.rules box |> List.maxBy (fun r -> r.Width)
     let denominator =
@@ -107,9 +115,11 @@ let ``分子分母与分数线共享同一条中轴`` () =
     let barCenter = Fixture.centerOf bar.X bar.Width
     let denomCenter = Fixture.centerOf left (right - left)
     Assert.True(abs (barCenter - denomCenter) < 1.5, $"分母偏离中轴：分数线 {barCenter}，分母 {denomCenter}")
+    )
 
 [<Fact>]
 let ``上下限居中于大型算符`` () =
+    Headless.run (fun () ->
     let box = Fixture.layout "summation"
     let glyphs = Fixture.glyphs box
     let (_, _, sigmaAt, sigmaWidth) = glyphs |> List.find (fun (t, _, _, _) -> t = "\u2211")
@@ -129,11 +139,13 @@ let ``上下限居中于大型算符`` () =
         Assert.True(
             abs (center - sigmaCenter) < 1.5,
             $"""{(if upper then "上限" else "下限")}偏离算符中轴：算符 {sigmaCenter}，限 {center}""")
+    )
 
 // ---------------------------------------------------------------- 根号
 
 [<Fact>]
 let ``根号画成 SVG 且保留上方横线`` () =
+    Headless.run (fun () ->
     let box = Fixture.layout "quadratic"
     match Fixture.paths box with
     | [] -> failwith "根号没有生成 SVG 图元"
@@ -143,6 +155,7 @@ let ``根号画成 SVG 且保留上方横线`` () =
         // 必须按 SVG 语义用 nonzero 解析。
         Assert.True(geometry.Bounds.Width > 100000.0, $"横线不在几何体里，Bounds={geometry.Bounds}")
         Assert.True(clip.Width > 0.0, "裁剪框为零宽，等于什么都不画")
+    )
 
 // ---------------------------------------------------------------- 越界
 
@@ -181,8 +194,8 @@ let private inkBounds (control: Control) (pad: float) (size: Size) =
 [<InlineData("inline-emc2", false)>]
 [<InlineData("inline-greek", false)>]
 let ``公式的墨迹不越出它自己声明的尺寸`` (name: string) (display: bool) =
+    Headless.run (fun () ->
     // 排版盒若比实际墨迹小，公式就会压到相邻文字上——这是最难从截图里看出来的错
-    Headless.ensure ()
     RichBackend.install (FixtureBackend(Fixture.load name))
     let visual = MathVisual("(fixture)", display, 14.5, 14.5 * 1.65)
     visual.Measure(Size(infinity, infinity))
@@ -201,3 +214,4 @@ let ``公式的墨迹不越出它自己声明的尺寸`` (name: string) (display
         Assert.True(
             ink.Bottom <= pad + size.Height + slack,
             $"{name} 向下越界：墨迹下缘 {ink.Bottom}，应不超过 {pad + size.Height}")
+    )
