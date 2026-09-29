@@ -8,10 +8,12 @@
   <ItemGroup>
     <Compile Include="WireEvent.fs" />
     <Compile Include="WireCodec.fs" />
+    <Compile Include="WireAgui.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
+    <ProjectReference Include="..\Wanxiang.Agui\Wanxiang.Agui.fsproj" />
   </ItemGroup>
 
 </Project>

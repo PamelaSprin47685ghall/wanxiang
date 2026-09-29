@@ -12,6 +12,7 @@
     <Compile Include="EventLogTests.fs" />
     <Compile Include="AguiMappingTests.fs" />
     <Compile Include="MessageMapTests.fs" />
+    <Compile Include="WireAguiTests.fs" />
     <Compile Include="StoreConsistencyTests.fs" />
     <Compile Include="ReplayTests.fs" />
     <Compile Include="CoordinatorTests.fs" />

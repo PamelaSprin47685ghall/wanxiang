@@ -16,7 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
-    <ProjectReference Include="..\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
   </ItemGroup>
 
 </Project>
