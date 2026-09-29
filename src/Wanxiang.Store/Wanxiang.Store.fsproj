@@ -8,7 +8,7 @@
   <ItemGroup>
     <Compile Include="DataPaths.fs" />
     <Compile Include="DataLock.fs" />
-    <Compile Include="NdjsonWriter.fs" />
+    <Compile Include="JsonSeqWriter.fs" />
     <Compile Include="Replay.fs" />
     <Compile Include="CommitCoordinator.fs" />
   </ItemGroup>

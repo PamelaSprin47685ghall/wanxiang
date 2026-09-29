@@ -83,7 +83,7 @@ module Stderr =
     /// 决策 40 第三问要求字段：file、commitId、byteOffset、exceptionType、exceptionMessage、rawCommit、action。
     let truncated (commit: Wanxiang.Core.Events.Commit) (file: string) (byteOffset: int64) (err: Wanxiang.Core.WanxiangError) =
         write
-            "ndjson-tail-truncated"
+            "jsonseq-tail-truncated"
             [ "phase", "runtime-commit"
               "file", file
               "commitId", commit.id
@@ -95,4 +95,4 @@ module Stderr =
 
     /// 启动截尾记录。
     let replayTruncated (file: string) (reason: string) =
-        write "ndjson-replay-truncated" [ "phase", "startup-replay"; "file", file; "reason", reason ]
+        write "jsonseq-replay-truncated" [ "phase", "startup-replay"; "file", file; "reason", reason ]

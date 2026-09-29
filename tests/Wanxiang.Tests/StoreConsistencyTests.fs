@@ -125,7 +125,7 @@ let ``停机跨天（中间日期无日志）正常恢复不损坏`` () =
         let p3 = DataPaths.eventFilePath dir day3
         Directory.CreateDirectory(Path.GetDirectoryName p1) |> ignore
         Directory.CreateDirectory(Path.GetDirectoryName p3) |> ignore
-        File.AppendAllText(p1, CommitCodec.commitToJsonLine c1 + "\n")
+        File.AppendAllText(p1, CommitCodec.commitToJsonLine c1 |> Wanxiang.Core.Ledger.Frame.encode |> System.Text.Encoding.UTF8.GetString)
         File.AppendAllText(p3, CommitCodec.commitToJsonLine c2 + "\n")
         // id 连续（1,2）且日期不降序：08-02 无日志是正常停机，不应报告损坏
         match Replay.replay dir false with
@@ -287,14 +287,14 @@ let ``replay fix deletes invalid-named file and all later files`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        // "111-bad.ndjson" 字典序最前（'1' < '2'）→ 其后全部文件（含合法日期文件）都应被删除
-        let badPath = Path.Combine(DataPaths.eventsDir dir, "111-bad.ndjson")
+        // "111-bad.jsonseq" 字典序最前（'1' < '2'）→ 其后全部文件（含合法日期文件）都应被删除
+        let badPath = Path.Combine(DataPaths.eventsDir dir, "111-bad.jsonseq")
         let day1 = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
         let c1 = Events.Commit.create 1UL (DateTimeOffset(day1)) [ ConversationCreated { conversationId = newConversationId (); title = "A"; config = testConfig () } ]
         let p1 = DataPaths.eventFilePath dir day1
         Directory.CreateDirectory(Path.GetDirectoryName p1) |> ignore
         File.WriteAllText(badPath, "garbage\n")
-        File.AppendAllText(p1, CommitCodec.commitToJsonLine c1 + "\n")
+        File.AppendAllText(p1, CommitCodec.commitToJsonLine c1 |> Wanxiang.Core.Ledger.Frame.encode |> System.Text.Encoding.UTF8.GetString)
         // fix 模式：删除非法文件自身（offset=0 无可保留）并级联删除其后所有文件
         match Replay.replay dir true with
         | Ok outcome ->

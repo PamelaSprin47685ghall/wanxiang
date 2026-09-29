@@ -4,12 +4,14 @@ open System
 open System.IO
 open System.Text
 open Wanxiang.Core
+open Wanxiang.Core.Ledger
 
-/// NDJSON 写入器：按 UTC 日期分文件，append + 用户态 flush（不 fsync，UPS 兜底）。
+/// RFC 7464 JSON Text Sequence 写入器：记录 = RS + JSON 对象 + LF，
+/// 按 UTC 日期分文件，append + 用户态 flush（不 fsync，UPS 兜底）。
 /// 单写者：所有写操作由 Commit Coordinator 串行调用。
 /// 故障语义（决策 40）：Write/Flush 失败必须回滚到写前偏移并抛出，
-/// 由协调器按"截尾 + 复用 id"处理，不允许残留半行或未 flush 的整行。
-type NdjsonWriter(dataDir: string, initialDateUtc: DateTime) =
+/// 由协调器按"截尾 + 复用 id"处理，不允许残留半记录或未 flush 的整记录。
+type JsonSeqWriter(dataDir: string, initialDateUtc: DateTime) =
 
     let mutable stream: FileStream = null
     let mutable currentDate: DateTime = initialDateUtc.Date
@@ -43,14 +45,14 @@ type NdjsonWriter(dataDir: string, initialDateUtc: DateTime) =
             currentDate <- nowUtc
             oldStream.Dispose()
         let offsetBefore = stream.Length
-        let line = CommitCodec.commitToJsonLine commit + "\n"
-        let bytes = Encoding.UTF8.GetBytes(line)
+        // 一条提交 = 一条 RFC 7464 记录（RS + JSON 对象 + LF）。
+        let bytes = CommitCodec.commitToJsonLine commit |> Frame.encode
         try
             stream.Write(bytes, 0, bytes.Length)
             stream.Flush()
             offsetBefore
         with e ->
-            // 失败：回滚到写前偏移，保证不残留半行；随后抛出由协调器按截尾复用 id 处理
+            // 失败：回滚到写前偏移，保证不残留半记录；随后抛出由协调器按截尾复用 id 处理
             try
                 stream.SetLength offsetBefore
                 stream.Flush()

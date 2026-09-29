@@ -216,7 +216,10 @@ module CommitCodec =
     let commitToJsonLine (commit: Events.Commit) : string =
         let o = JsonObject()
         o["formatVersion"] <- commit.formatVersion
-        o["id"] <- commit.id
+        // 大整数陷阱（RFC 8785 附录 D）：id 与 bootId 都用字符串承载。
+        o["id"] <- commit.id.ToString(CultureInfo.InvariantCulture)
+        o["bootId"] <- commit.bootId.ToString("D")
+        o["source"] <- commit.source
         o["committedAtUtc"] <- commit.committedAtUtc.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture)
         match commit.commandId with Some c -> o["commandId"] <- c | None -> ()
         match commit.commandType with Some t -> o["commandType"] <- t | None -> ()
@@ -236,10 +239,18 @@ module CommitCodec =
                 match tryGet o "formatVersion", tryGet o "id", tryGet o "committedAtUtc", tryGet o "events" with
                 | Some fv, Some idNode, Some tsNode, Some evNode
                     when fv.GetValueKind() = JsonValueKind.Number
-                         && idNode.GetValueKind() = JsonValueKind.Number
+                         && idNode.GetValueKind() = JsonValueKind.String
                          && tsNode.GetValueKind() = JsonValueKind.String
                          && evNode.GetValueKind() = JsonValueKind.Array ->
-                    match tryGetInt fv, tryGetUInt64 idNode with
+                    // id 以字符串承载（大整数陷阱）；旧格式数字 id 不再接受（clean-break）。
+                    let idParsed =
+                        match idNode with
+                        | :? JsonValue as jv ->
+                            match jv.TryGetValue<string>() with
+                            | true, s -> match UInt64.TryParse s with | true, v -> Some v | _ -> None
+                            | _ -> None
+                        | _ -> None
+                    match tryGetInt fv, idParsed with
                     | Some f, Some id when f = Constants.FormatVersion ->
                         let events =
                             let mutable ok = true
@@ -261,6 +272,8 @@ module CommitCodec =
                                 Some
                                     { formatVersion = f
                                       id = id
+                                      bootId = (match tryString o "bootId" with Some b -> Guid.Parse b | None -> Constants.DefaultBootId)
+                                      source = (tryString o "source" |> Option.defaultValue Constants.DefaultSource)
                                       committedAtUtc = t
                                       commandId = commandId
                                       commandType = commandType

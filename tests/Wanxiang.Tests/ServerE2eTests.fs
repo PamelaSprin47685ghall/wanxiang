@@ -56,13 +56,20 @@ module private E2e =
             match initialCommits with
             | Some commits ->
                 DataPaths.ensureDataDirs dir
-                File.WriteAllLines(DataPaths.eventFilePath dir DateTime.UtcNow, commits |> List.map CommitCodec.commitToJsonLine)
+                // 种子也按 RFC 7464 记录写（RS + JSON + LF），与运行期写入器一致。
+                let path = DataPaths.eventFilePath dir DateTime.UtcNow
+                let bytes =
+                    commits
+                    |> List.map (fun c -> CommitCodec.commitToJsonLine c |> Wanxiang.Core.Ledger.Frame.encode)
+                    |> Array.concat
+                File.WriteAllBytes(path, bytes)
             | None -> ()
             let app = new Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
             app.Start(false)
             server <- Some app
         member _.CommitCount =
-            Directory.GetFiles(DataPaths.eventsDir dir, "*.ndjson") |> Array.sumBy (fun path -> File.ReadLines(path) |> Seq.length)
+            Directory.GetFiles(DataPaths.eventsDir dir, "*.jsonseq")
+            |> Array.sumBy (fun path -> System.IO.File.ReadAllText(path).Split(char 0x1E) |> Array.filter (fun seg -> seg.Trim().Length > 0) |> Array.length)
         member _.Dispose() =
             match server with
             | Some s -> (s :> IDisposable).Dispose()

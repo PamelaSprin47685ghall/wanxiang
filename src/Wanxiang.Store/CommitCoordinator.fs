@@ -34,7 +34,7 @@ type SubmitResult =
 /// 命中时返回 IdempotentReplay，不追加事件。
 type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Events.Commit -> unit, onTruncated: Events.Commit * WanxiangError * int64 * string -> unit) =
 
-    let writer = new NdjsonWriter(dataDir, outcome.lastDateUtc)
+    let writer = JsonSeqWriter(dataDir, outcome.lastDateUtc)
 
     // 以下状态只在 mailbox 处理线程内访问
     let mutable projection: Projection = outcome.projection
