@@ -93,6 +93,12 @@ module private E2e =
                 | :? JsonObject as v when v.ContainsKey "payload" ->
                     // value 里存的就是原外壳
                     v.DeepClone() :?> JsonObject
+                | :? JsonObject as v ->
+                    // 扁平 value：直接作 payload
+                    let wrapped = JsonObject()
+                    wrapped["type"] <- inner
+                    wrapped["payload"] <- v.DeepClone()
+                    wrapped
                 | _ ->
                     let wrapped = JsonObject()
                     wrapped["type"] <- inner
@@ -101,7 +107,7 @@ module private E2e =
             else
                 o
         else
-            // 标准面事件折回旧语义名，供既有断言（generation.started 等）复用：
+            // 标准面事件折成语义事件名，供场景断言复用：
             // RUN_STARTED→generation.started；RUN_FINISHED→generation.finished；
             // RUN_ERROR→generation.finished(failed)；TEXT_MESSAGE_*→generation.delta。
             match wireType with
@@ -109,8 +115,8 @@ module private E2e =
                 let w = JsonObject()
                 w["type"] <- "generation.started"
                 let pl = JsonObject()
-                pl["conversationId"] <- o["threadId"].DeepClone()
-                pl["generationId"] <- o["runId"].DeepClone()
+                pl["threadId"] <- o["threadId"].DeepClone()
+                pl["runId"] <- o["runId"].DeepClone()
                 pl["providerId"] <- ""
                 pl["model"] <- ""
                 w["payload"] <- pl
@@ -119,9 +125,23 @@ module private E2e =
                 let w = JsonObject()
                 w["type"] <- "generation.finished"
                 let pl = JsonObject()
-                pl["conversationId"] <- o["threadId"].DeepClone()
-                pl["generationId"] <- o["runId"].DeepClone()
-                pl["status"] <- "completed"
+                pl["threadId"] <- o["threadId"].DeepClone()
+                pl["runId"] <- o["runId"].DeepClone()
+                // Outcome 是 {type:"..."} 对象（RunFinishedCancelledOutcome 等）
+                let status =
+                    match o["outcome"] with
+                    | :? JsonObject as oc ->
+                        match oc["type"] with
+                        | :? JsonValue as v when v.TryGetValue<string>() |> fst -> v.GetValue<string>()
+                        | _ -> "success"
+                    | _ -> "success"
+                // outcome 名 → status 名
+                let wanxiangStatus =
+                    match status with
+                    | "cancelled" -> "cancelled"
+                    | "interrupted" -> "cancelled"
+                    | _ -> "completed"
+                pl["status"] <- wanxiangStatus
                 w["payload"] <- pl
                 w
             | "RUN_ERROR" ->
@@ -154,8 +174,7 @@ module private E2e =
         (JsonNode.Parse(text) |> normalizeAgui)
 
     let send (ws: ClientWebSocket) (ev: JsonObject) (ct: CancellationToken) =
-        // 测试手写的多是旧外壳 {type,payload}；出站统一折成 AG-UI 承载
-        // （非标准面 → CUSTOM wanxiang.dev/<type>，value = 原外壳），服务端才能认出。
+        // 手写 {type,payload} 事件统一折成 CUSTOM wanxiang.dev/<type> 承载（value = 原对象）。
         let carrier =
             let t = ev["type"].GetValue<string>()
             if t = "CUSTOM" then ev
@@ -179,8 +198,7 @@ module private E2e =
     let conn (port: int) (token: string) (ct: CancellationToken) : ClientWebSocket =
         let ws = new ClientWebSocket()
         ws.ConnectAsync(Uri(sprintf "ws://127.0.0.1:%d/ws" port), ct).GetAwaiter().GetResult()
-        // Hello 已删除（SSOT 55.4：版本改 in-band）；连接后直接认证。
-        // 发旧外壳 {type,payload}，由 send() 统一折成 AG-UI CUSTOM 承载。
+        // 连接即认证（版本 in-band，SSOT 55.4）；{type,payload} 由 send() 折成 CUSTOM 承载。
         let auth = JsonObject()
         auth["type"] <- "auth.present"
         let ap = JsonObject()
@@ -291,7 +309,7 @@ let ``e2e reobserve restores cancel identity and retrying the original send is i
         let mutable commit: uint64 option = None
         while generation.IsNone || commit.IsNone do
             let ev = E2e.recvEvent owner ct
-            if eventType ev = "generation.started" then generation <- Some(Guid.Parse((value ev "generationId").GetValue<string>()))
+            if eventType ev = "generation.started" then generation <- Some(Guid.Parse((value ev "runId").GetValue<string>()))
             elif eventType ev = "command.committed" && (value ev "invocationId").GetValue<string>() = invocation.ToString("D") then
                 commit <- Some((value ev "commitId").GetValue<uint64>())
         // 新客户端没有见过 generation.started，只能依赖快照中的运行身份。
@@ -299,7 +317,7 @@ let ``e2e reobserve restores cancel identity and retrying the original send is i
         wait observer "auth.accepted" |> ignore
         send observer (ObserveConversation {| conversationId = id |})
         let resumed = wait observer "conversation.snapshot"
-        let resumedGeneration = Guid.Parse((value resumed "generationId").GetValue<string>())
+        let resumedGeneration = Guid.Parse((value resumed "runId").GetValue<string>())
         Assert.Equal(generation.Value, resumedGeneration)
         send observer (CursorAdvanced {| id = (value resumed "lastCommitId").GetValue<uint64>() |})
         // 模拟客户端未处理保存确认，按原 invocationId 和原载荷重试。
@@ -316,7 +334,7 @@ let ``e2e reobserve restores cancel identity and retrying the original send is i
         send observer (ObserveConversation {| conversationId = id |})
         let idle = wait observer "conversation.snapshot"
         Assert.Equal("idle", (value idle "runtimeState").GetValue<string>())
-        Assert.Null(value idle "generationId")
+        Assert.Null(value idle "runId")
         let guarded = Wanxiang.Client.WsClient()
         try
             let epoch = guarded.ConnectWithGenerationAsync(Uri(sprintf "ws://127.0.0.1:%d/ws" port), ct).GetAwaiter().GetResult()
@@ -358,7 +376,7 @@ let ``e2e write command succeeds after snapshot cursor advance`` () =
         create["type"] <- "conversation.create"
         let cp = JsonObject()
         cp["invocationId"] <- Guid.NewGuid().ToString("D")
-        cp["conversationId"] <- convId.ToString("D")
+        cp["threadId"] <- convId.ToString("D")
         cp["title"] <- "e2e 会话"
         cp["config"] <- JsonNode.Parse("""{"provider":"openai","model":"test-model"}""")
         create["payload"] <- cp
@@ -411,7 +429,7 @@ let ``e2e observe advance cursor then enqueue gets response and push`` () =
             let obs = JsonObject()
             obs["type"] <- "conversation.observe"
             let op = JsonObject()
-            op["conversationId"] <- convId.ToString("D")
+            op["threadId"] <- convId.ToString("D")
             obs["payload"] <- op
             E2e.send ws obs cts.Token
             let snap = E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "conversation.snapshot")
@@ -427,7 +445,7 @@ let ``e2e observe advance cursor then enqueue gets response and push`` () =
             enq["type"] <- "chat.user-message.enqueue"
             let ep = JsonObject()
             ep["invocationId"] <- Guid.NewGuid().ToString("D")
-            ep["conversationId"] <- convId.ToString("D")
+            ep["threadId"] <- convId.ToString("D")
             ep["message"] <- JsonNode.Parse("""{"role":"user","contents":[{"text":"hi"}]}""")
             enq["payload"] <- ep
             E2e.send ws enq cts.Token
@@ -486,7 +504,7 @@ let ``e2e history paging slices by commit id`` () =
             let obs = JsonObject()
             obs["type"] <- "conversation.observe"
             let op = JsonObject()
-            op["conversationId"] <- convId.ToString("D")
+            op["threadId"] <- convId.ToString("D")
             obs["payload"] <- op
             E2e.send ws obs cts.Token
             let snap = E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "conversation.snapshot")
@@ -504,7 +522,7 @@ let ``e2e history paging slices by commit id`` () =
             let hr = JsonObject()
             hr["type"] <- "history.request"
             let hp = JsonObject()
-            hp["conversationId"] <- convId.ToString("D")
+            hp["threadId"] <- convId.ToString("D")
             hp["beforeCommitId"] <- 6UL
             hp["limit"] <- 2
             hr["payload"] <- hp
@@ -615,7 +633,7 @@ let ``e2e stale client write command is rejected`` () =
         create["type"] <- "conversation.create"
         let cp = JsonObject()
         cp["invocationId"] <- Guid.NewGuid().ToString("D")
-        cp["conversationId"] <- convId.ToString("D")
+        cp["threadId"] <- convId.ToString("D")
         cp["title"] <- "制造提交"
         cp["config"] <- JsonNode.Parse("""{"provider":"openai","model":"test-model"}""")
         create["payload"] <- cp
@@ -629,7 +647,7 @@ let ``e2e stale client write command is rejected`` () =
         create2["type"] <- "conversation.create"
         let cp2 = JsonObject()
         cp2["invocationId"] <- Guid.NewGuid().ToString("D")
-        cp2["conversationId"] <- convId2.ToString("D")
+        cp2["threadId"] <- convId2.ToString("D")
         cp2["title"] <- "陈旧客户端"
         cp2["config"] <- JsonNode.Parse("""{"provider":"openai","model":"test-model"}""")
         create2["payload"] <- cp2
@@ -675,7 +693,7 @@ let ``e2e empty session config is filled from toml default provider`` () =
         create["type"] <- "conversation.create"
         let cp = JsonObject()
         cp["invocationId"] <- Guid.NewGuid().ToString("D")
-        cp["conversationId"] <- convId.ToString("D")
+        cp["threadId"] <- convId.ToString("D")
         cp["title"] <- "默认配置"
         cp["config"] <- JsonNode.Parse("""{"provider":"","model":""}""")
         create["payload"] <- cp
@@ -688,7 +706,7 @@ let ``e2e empty session config is filled from toml default provider`` () =
         let ob = JsonObject()
         ob["type"] <- "conversation.observe"
         let op = JsonObject()
-        op["conversationId"] <- convId.ToString("D")
+        op["threadId"] <- convId.ToString("D")
         ob["payload"] <- op
         E2e.send ws ob cts.Token
         let snap = E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "conversation.snapshot")
@@ -810,7 +828,7 @@ let ``e2e deleting a conversation never sweeps attachment blobs`` () =
             create["type"] <- "conversation.create"
             let ccp = JsonObject()
             ccp["invocationId"] <- Guid.NewGuid().ToString("D")
-            ccp["conversationId"] <- convId.ToString("D")
+            ccp["threadId"] <- convId.ToString("D")
             ccp["title"] <- "待删会话"
             ccp["config"] <- JsonNode.Parse("""{"provider":"","model":""}""")
             create["payload"] <- ccp
@@ -829,7 +847,7 @@ let ``e2e deleting a conversation never sweeps attachment blobs`` () =
             delete["type"] <- "conversation.delete"
             let dp = JsonObject()
             dp["invocationId"] <- Guid.NewGuid().ToString("D")
-            dp["conversationId"] <- convId.ToString("D")
+            dp["threadId"] <- convId.ToString("D")
             delete["payload"] <- dp
             E2e.send ws delete cts.Token
             let deleted = E2e.waitFor ws cts.Token (fun o ->

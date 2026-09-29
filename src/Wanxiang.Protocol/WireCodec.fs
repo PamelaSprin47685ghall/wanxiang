@@ -122,9 +122,10 @@ module WireCodec =
 
     // ---------- 编码 ----------
 
-    let encode (ev: WireEvent) : string =
-        let o = JsonObject()
-        o["type"] <- WireEvent.typeName ev
+    /// 语义事件的业务载荷（不含 type 外壳）——CUSTOM 扁平承载的数据源。
+    /// 身份字段按 AG-UI 命名对齐（SSOT 55.3）：conversationId→threadId、
+    /// generationId→runId、消息边界 commitId→messageId。
+    let payloadOf (ev: WireEvent) : string =
         let p = JsonObject()
         match ev with
         | Hello d ->
@@ -152,45 +153,45 @@ module WireCodec =
         | ConversationListSnapshot d ->
             p["items"] <- d.items.DeepClone()
             p["lastCommitId"] <- d.lastCommitId
-        | ObserveConversation d -> putGuid p "conversationId" d.conversationId
-        | UnobserveConversation d -> putGuid p "conversationId" d.conversationId
+        | ObserveConversation d -> putGuid p "threadId" d.conversationId
+        | UnobserveConversation d -> putGuid p "threadId" d.conversationId
         | ConversationSnapshot d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["title"] <- d.title
             p["lastCommitId"] <- d.lastCommitId
             p["runtimeState"] <- d.runtimeState
-            match d.generationId with Some id -> putGuid p "generationId" id | None -> ()
+            match d.generationId with Some id -> putGuid p "runId" id | None -> ()
             p["messages"] <- d.messages.DeepClone()
             p["snapshotEarliestCommitId"] <- d.snapshotEarliestCommitId
             p["snapshotHasMore"] <- d.snapshotHasMore
             p["config"] <- CommitCodec.configToJson d.config
         | ConversationUpdated d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["commitId"] <- d.commitId
             p["change"] <- d.change.DeepClone()
         | MessageCommitted d ->
-            putGuid p "conversationId" d.conversationId
-            p["commitId"] <- d.commitId
+            putGuid p "threadId" d.conversationId
+            p["messageId"] <- d.commitId
             p["committedAt"] <- d.committedAt.UtcDateTime.ToString("o", CultureInfo.InvariantCulture)
-            p["payload"] <- d.payload.DeepClone()
+            p["content"] <- d.payload.DeepClone()
         | HistoryRequest d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["beforeCommitId"] <- d.beforeCommitId
             p["limit"] <- d.limit
         | HistoryPage d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["beforeCommitId"] <- d.beforeCommitId
             p["items"] <- d.items.DeepClone()
             p["hasMore"] <- d.hasMore
         | Command _ -> failwith "Command 事件使用 encodeCommand"
         | ConversationExportRead d ->
             putGuid p "exportId" d.exportId
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["beforeCommitId"] <- d.beforeCommitId
             match d.atCommitId with Some id -> p["atCommitId"] <- id | None -> ()
         | ConversationExportPage d ->
             putGuid p "exportId" d.exportId
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["atCommitId"] <- d.atCommitId
             p["beforeCommitId"] <- d.beforeCommitId
             p["title"] <- d.title
@@ -219,17 +220,17 @@ module WireCodec =
             p["toCommitId"] <- d.toCommitId
             p["items"] <- d.items.DeepClone()
         | GenerationDelta d ->
-            putGuid p "conversationId" d.conversationId
-            putGuid p "generationId" d.generationId
-            p["payload"] <- d.payload.DeepClone()
+            putGuid p "threadId" d.conversationId
+            putGuid p "runId" d.generationId
+            p["content"] <- d.payload.DeepClone()
         | GenerationStarted d ->
-            putGuid p "conversationId" d.conversationId
-            putGuid p "generationId" d.generationId
+            putGuid p "threadId" d.conversationId
+            putGuid p "runId" d.generationId
             p["providerId"] <- d.providerId
             p["model"] <- d.model
         | GenerationFinished d ->
-            putGuid p "conversationId" d.conversationId
-            putGuid p "generationId" d.generationId
+            putGuid p "threadId" d.conversationId
+            putGuid p "runId" d.generationId
             p["status"] <- d.status
             match d.error with Some e -> p["error"] <- encodeGenerationError e | None -> ()
             match d.usage with
@@ -243,8 +244,8 @@ module WireCodec =
                 p["usage"] <- uo
             | None -> ()
         | GenerationCancel d ->
-            putGuid p "conversationId" d.conversationId
-            putGuid p "generationId" d.generationId
+            putGuid p "threadId" d.conversationId
+            putGuid p "runId" d.generationId
         | AttachmentBegin d ->
             putGuid p "attachmentId" d.attachmentId
             p["totalBytes"] <- d.totalBytes
@@ -314,8 +315,14 @@ module WireCodec =
         | ServerError d -> p["message"] <- d.message
         | Ping -> ()
         | Pong -> ()
-        if p.Count > 0 then
-            o["payload"] <- p
+        p.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General))
+
+    let encode (ev: WireEvent) : string =
+        let o = JsonObject()
+        o["type"] <- WireEvent.typeName ev
+        let payloadJson = payloadOf ev
+        if not (String.IsNullOrEmpty payloadJson) && payloadJson <> "{}" then
+            o["payload"] <- JsonNode.Parse(payloadJson).DeepClone()
         o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General))
 
     /// 编码客户端写命令（Command 事件专用路径）。
@@ -327,33 +334,33 @@ module WireCodec =
         putGuid p "invocationId" inv
         match cmd with
         | CreateConversation d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["title"] <- d.title
             p["config"] <- CommitCodec.configToJson d.config
         | ForkConversation d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             putGuid p "parentConversationId" d.parentConversationId
             match d.forkAfterId with Some id -> p["forkAfterId"] <- id | None -> ()
             p["config"] <- CommitCodec.configToJson d.config
             p["message"] <- d.editedMessageJson.DeepClone()
         | SendUserMessage d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["message"] <- d.messageJson.DeepClone()
         | RenameConversation d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["title"] <- d.title
-        | DeleteConversation d -> putGuid p "conversationId" d.conversationId
+        | DeleteConversation d -> putGuid p "threadId" d.conversationId
         | DeleteMessage d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["messageCommitId"] <- d.messageCommitId
         | UpdateConversationConfig d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["config"] <- CommitCodec.configToJson d.config
         | SetConversationFlags d ->
-            putGuid p "conversationId" d.conversationId
+            putGuid p "threadId" d.conversationId
             p["pinned"] <- d.pinned
             p["archived"] <- d.archived
-        | RegenerateResponse d -> putGuid p "conversationId" d.conversationId
+        | RegenerateResponse d -> putGuid p "threadId" d.conversationId
         o["payload"] <- p
         o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General))
 
@@ -368,7 +375,7 @@ module WireCodec =
                 | Some "conversation.create" ->
                     match tryGet o "payload" with
                     | Some (:? JsonObject as p) ->
-                        match tryGuid p "invocationId", tryGuid p "conversationId" with
+                        match tryGuid p "invocationId", tryGuid p "threadId" with
                         | Some inv, Some cid ->
                             let title = tryString p "title" |> Option.defaultValue ""
                             let cfg =
@@ -376,12 +383,12 @@ module WireCodec =
                                 | Some (:? JsonObject as c) -> CommitCodec.configFromJson c
                                 | _ -> SessionConfig.empty
                             Ok(CreateConversation {| invocationId = inv; conversationId = cid; title = title; config = cfg |})
-                        | _ -> Error "conversation.create: missing invocationId/conversationId"
+                        | _ -> Error "conversation.create: missing invocationId/threadId"
                     | _ -> Error "conversation.create: missing payload"
                 | Some "conversation.fork" ->
                     match tryGet o "payload" with
                     | Some (:? JsonObject as p) ->
-                        match tryGuid p "invocationId", tryGuid p "conversationId", tryGuid p "parentConversationId" with
+                        match tryGuid p "invocationId", tryGuid p "threadId", tryGuid p "parentConversationId" with
                         | Some inv, Some cid, Some pid ->
                             let after = match tryUInt64 p "forkAfterId" with Some v -> Some v | None -> None
                             let cfg =
@@ -392,71 +399,71 @@ module WireCodec =
                             | Some msg ->
                                 Ok(ForkConversation {| invocationId = inv; conversationId = cid; parentConversationId = pid; forkAfterId = after; config = cfg; editedMessageJson = msg.DeepClone() |})
                             | None -> Error "conversation.fork: missing message"
-                        | _ -> Error "conversation.fork: missing invocationId/conversationId/parentConversationId"
+                        | _ -> Error "conversation.fork: missing invocationId/threadId/parentConversationId"
                     | _ -> Error "conversation.fork: missing payload"
                 | Some "chat.user-message.enqueue" ->
                     match tryGet o "payload" with
                     | Some (:? JsonObject as p) ->
-                        match tryGuid p "invocationId", tryGuid p "conversationId" with
+                        match tryGuid p "invocationId", tryGuid p "threadId" with
                         | Some inv, Some cid ->
                             match tryGet p "message" with
                             | Some msg -> Ok(SendUserMessage {| invocationId = inv; conversationId = cid; messageJson = msg.DeepClone() |})
                             | None -> Error "chat.user-message.enqueue: missing message"
-                        | _ -> Error "chat.user-message.enqueue: missing invocationId/conversationId"
+                        | _ -> Error "chat.user-message.enqueue: missing invocationId/threadId"
                     | _ -> Error "chat.user-message.enqueue: missing payload"
                 | Some "conversation.rename" ->
                     match tryGet o "payload" with
                     | Some (:? JsonObject as p) ->
-                        match tryGuid p "invocationId", tryGuid p "conversationId" with
+                        match tryGuid p "invocationId", tryGuid p "threadId" with
                         | Some inv, Some cid ->
                             let title = tryString p "title" |> Option.defaultValue ""
                             Ok(RenameConversation {| invocationId = inv; conversationId = cid; title = title |})
-                        | _ -> Error "conversation.rename: missing invocationId/conversationId"
+                        | _ -> Error "conversation.rename: missing invocationId/threadId"
                     | _ -> Error "conversation.rename: missing payload"
                 | Some "conversation.delete" ->
                     match tryGet o "payload" with
                     | Some (:? JsonObject as p) ->
-                        match tryGuid p "invocationId", tryGuid p "conversationId" with
+                        match tryGuid p "invocationId", tryGuid p "threadId" with
                         | Some inv, Some cid -> Ok(DeleteConversation {| invocationId = inv; conversationId = cid |})
-                        | _ -> Error "conversation.delete: missing invocationId/conversationId"
+                        | _ -> Error "conversation.delete: missing invocationId/threadId"
                     | _ -> Error "conversation.delete: missing payload"
                 | Some "message.delete" ->
                     match tryGet o "payload" with
                     | Some (:? JsonObject as p) ->
-                        match tryGuid p "invocationId", tryGuid p "conversationId", tryUInt64 p "messageCommitId" with
+                        match tryGuid p "invocationId", tryGuid p "threadId", tryUInt64 p "messageCommitId" with
                         | Some inv, Some cid, Some mid -> Ok(DeleteMessage {| invocationId = inv; conversationId = cid; messageCommitId = mid |})
-                        | _ -> Error "message.delete: missing invocationId/conversationId/messageCommitId"
+                        | _ -> Error "message.delete: missing invocationId/threadId/messageId"
                     | _ -> Error "message.delete: missing payload"
                 | Some "conversation.config-update" ->
                     match tryGet o "payload" with
                     | Some (:? JsonObject as p) ->
-                        match tryGuid p "invocationId", tryGuid p "conversationId" with
+                        match tryGuid p "invocationId", tryGuid p "threadId" with
                         | Some inv, Some cid ->
                             let cfg =
                                 match tryGet p "config" with
                                 | Some (:? JsonObject as c) -> CommitCodec.configFromJson c
                                 | _ -> SessionConfig.empty
                             Ok(UpdateConversationConfig {| invocationId = inv; conversationId = cid; config = cfg |})
-                        | _ -> Error "conversation.config-update: missing invocationId/conversationId"
+                        | _ -> Error "conversation.config-update: missing invocationId/threadId"
                     | _ -> Error "conversation.config-update: missing payload"
                 | Some "conversation.flags-set" ->
                     match tryGet o "payload" with
                     | Some (:? JsonObject as p) ->
-                        match tryGuid p "invocationId", tryGuid p "conversationId" with
+                        match tryGuid p "invocationId", tryGuid p "threadId" with
                         | Some inv, Some cid ->
                             let flag k =
                                 match tryGet p k with
                                 | Some v -> v.GetValueKind() = JsonValueKind.True
                                 | None -> false
                             Ok(SetConversationFlags {| invocationId = inv; conversationId = cid; pinned = flag "pinned"; archived = flag "archived" |})
-                        | _ -> Error "conversation.flags-set: missing invocationId/conversationId"
+                        | _ -> Error "conversation.flags-set: missing invocationId/threadId"
                     | _ -> Error "conversation.flags-set: missing payload"
                 | Some "chat.regenerate" ->
                     match tryGet o "payload" with
                     | Some (:? JsonObject as p) ->
-                        match tryGuid p "invocationId", tryGuid p "conversationId" with
+                        match tryGuid p "invocationId", tryGuid p "threadId" with
                         | Some inv, Some cid -> Ok(RegenerateResponse {| invocationId = inv; conversationId = cid |})
-                        | _ -> Error "chat.regenerate: missing invocationId/conversationId"
+                        | _ -> Error "chat.regenerate: missing invocationId/threadId"
                     | _ -> Error "chat.regenerate: missing payload"
                 | _ -> Error "not a command event"
             | _ -> Error "not a JSON object"
@@ -495,14 +502,14 @@ module WireCodec =
                 | Some "conversation-list.observe" -> Ok ObserveConversationList
                 | Some "conversation-list.unobserve" -> Ok UnobserveConversationList
                 | Some "conversation.observe" ->
-                    match tryGuid p "conversationId" with Some cid -> Ok(ObserveConversation {| conversationId = cid |}) | None -> Error "conversation.observe: missing conversationId"
+                    match tryGuid p "threadId" with Some cid -> Ok(ObserveConversation {| conversationId = cid |}) | None -> Error "conversation.observe: missing threadId"
                 | Some "conversation.unobserve" ->
-                    match tryGuid p "conversationId" with Some cid -> Ok(UnobserveConversation {| conversationId = cid |}) | None -> Error "conversation.unobserve: missing conversationId"
+                    match tryGuid p "threadId" with Some cid -> Ok(UnobserveConversation {| conversationId = cid |}) | None -> Error "conversation.unobserve: missing threadId"
                 | Some "conversation-list.snapshot" ->
                     let items = match tryGet p "items" with Some (:? JsonArray as a) -> a | _ -> JsonArray()
                     Ok(ConversationListSnapshot {| items = items; lastCommitId = tryUInt64 p "lastCommitId" |> Option.defaultValue 0UL |})
                 | Some "conversation.snapshot" ->
-                    match tryGuid p "conversationId" with
+                    match tryGuid p "threadId" with
                     | Some cid ->
                         let msgs = match tryGet p "messages" with Some (:? JsonArray as a) -> a | _ -> JsonArray()
                         let hasMore =
@@ -513,33 +520,33 @@ module WireCodec =
                             match tryGet p "config" with
                             | Some (:? JsonObject as c) -> CommitCodec.configFromJson c
                             | _ -> SessionConfig.empty
-                        Ok(ConversationSnapshot {| conversationId = cid; title = tryString p "title" |> Option.defaultValue ""; lastCommitId = tryUInt64 p "lastCommitId" |> Option.defaultValue 0UL; runtimeState = tryString p "runtimeState" |> Option.defaultValue "idle"; generationId = tryGuid p "generationId"; messages = msgs; snapshotEarliestCommitId = tryUInt64 p "snapshotEarliestCommitId" |> Option.defaultValue 0UL; snapshotHasMore = hasMore; config = cfg |})
-                    | None -> Error "conversation.snapshot: missing conversationId"
+                        Ok(ConversationSnapshot {| conversationId = cid; title = tryString p "title" |> Option.defaultValue ""; lastCommitId = tryUInt64 p "lastCommitId" |> Option.defaultValue 0UL; runtimeState = tryString p "runtimeState" |> Option.defaultValue "idle"; generationId = tryGuid p "runId"; messages = msgs; snapshotEarliestCommitId = tryUInt64 p "snapshotEarliestCommitId" |> Option.defaultValue 0UL; snapshotHasMore = hasMore; config = cfg |})
+                    | None -> Error "conversation.snapshot: missing threadId"
                 | Some "conversation.updated" ->
-                    match tryGuid p "conversationId" with
+                    match tryGuid p "threadId" with
                     | Some cid ->
                         let change = match tryGet p "change" with Some (:? JsonObject as c) -> c | _ -> JsonObject()
                         Ok(ConversationUpdated {| conversationId = cid; commitId = tryUInt64 p "commitId" |> Option.defaultValue 0UL; change = change |})
-                    | None -> Error "conversation.updated: missing conversationId"
+                    | None -> Error "conversation.updated: missing threadId"
                 | Some "conversation.message-committed" ->
-                    match tryGuid p "conversationId" with
+                    match tryGuid p "threadId" with
                     | Some cid ->
-                        match tryGet p "payload" with
+                        match tryGet p "content" with
                         | Some payload ->
                             Ok(MessageCommitted
                                 {| conversationId = cid
-                                   commitId = tryUInt64 p "commitId" |> Option.defaultValue 0UL
+                                   commitId = tryUInt64 p "messageId" |> Option.defaultValue 0UL
                                    committedAt = tryTimestamp p "committedAt"
                                    payload = payload |})
                         | None -> Error "conversation.message-committed: missing payload"
-                    | None -> Error "conversation.message-committed: missing conversationId"
+                    | None -> Error "conversation.message-committed: missing threadId"
                 | Some "history.request" ->
-                    match tryGuid p "conversationId" with
+                    match tryGuid p "threadId" with
                     | Some cid ->
                         Ok(HistoryRequest {| conversationId = cid; beforeCommitId = tryUInt64 p "beforeCommitId" |> Option.defaultValue 0UL; limit = tryInt p "limit" |> Option.defaultValue 100 |})
-                    | None -> Error "history.request: missing conversationId"
+                    | None -> Error "history.request: missing threadId"
                 | Some "history.page" ->
-                    match tryGuid p "conversationId" with
+                    match tryGuid p "threadId" with
                     | Some cid ->
                         let items = match tryGet p "items" with Some (:? JsonArray as a) -> a | _ -> JsonArray()
                         let hasMore =
@@ -547,18 +554,18 @@ module WireCodec =
                             | Some v when v.GetValueKind() = JsonValueKind.True -> true
                             | _ -> false
                         Ok(HistoryPage {| conversationId = cid; beforeCommitId = tryUInt64 p "beforeCommitId" |> Option.defaultValue 0UL; items = items; hasMore = hasMore |})
-                    | None -> Error "history.page: missing conversationId"
+                    | None -> Error "history.page: missing threadId"
                 | Some "command.accepted" ->
                     match tryGuid p "invocationId" with Some inv -> Ok(CommandAccepted {| invocationId = inv |}) | None -> Error "command.accepted: missing invocationId"
                 | Some "conversation.export-read" ->
                     let at = tryUInt64 p "atCommitId"
                     let validAt = (tryGet p "atCommitId").IsNone || at.IsSome
-                    match tryGuid p "exportId", tryGuid p "conversationId", tryUInt64 p "beforeCommitId" with
+                    match tryGuid p "exportId", tryGuid p "threadId", tryUInt64 p "beforeCommitId" with
                     | Some exportId, Some conversationId, Some before when validAt ->
                         Ok(ConversationExportRead { exportId = exportId; conversationId = conversationId; atCommitId = at; beforeCommitId = before })
                     | _ -> Error "conversation.export-read: invalid identity or boundary"
                 | Some "conversation.export-page" ->
-                    match tryGuid p "exportId", tryGuid p "conversationId", tryUInt64 p "atCommitId", tryUInt64 p "beforeCommitId", tryInt p "totalMessages", tryString p "title", tryGet p "items", tryGet p "hasMore" with
+                    match tryGuid p "exportId", tryGuid p "threadId", tryUInt64 p "atCommitId", tryUInt64 p "beforeCommitId", tryInt p "totalMessages", tryString p "title", tryGet p "items", tryGet p "hasMore" with
                     | Some exportId, Some conversationId, Some at, Some before, Some count, Some title, Some (:? JsonArray as items), Some more
                         when count >= 0 && (more.GetValueKind() = JsonValueKind.True || more.GetValueKind() = JsonValueKind.False) ->
                         Ok(ConversationExportPage
@@ -587,30 +594,30 @@ module WireCodec =
                     let items = match tryGet p "items" with Some (:? JsonArray as a) -> a | _ -> JsonArray()
                     Ok(AuthorityCatchUp {| fromCursor = tryUInt64 p "fromCursor" |> Option.defaultValue 0UL; toCommitId = tryUInt64 p "toCommitId" |> Option.defaultValue 0UL; items = items |})
                 | Some "generation.delta" ->
-                    match tryGuid p "conversationId", tryGuid p "generationId" with
+                    match tryGuid p "threadId", tryGuid p "runId" with
                     | Some cid, Some gid ->
-                        match tryGet p "payload" with
+                        match tryGet p "content" with
                         | Some payload -> Ok(GenerationDelta {| conversationId = cid; generationId = gid; payload = payload |})
                         | None -> Error "generation.delta: missing payload"
-                    | _ -> Error "generation.delta: missing conversationId/generationId"
+                    | _ -> Error "generation.delta: missing threadId/runId"
                 | Some "generation.started" ->
-                    match tryGuid p "conversationId", tryGuid p "generationId" with
+                    match tryGuid p "threadId", tryGuid p "runId" with
                     | Some cid, Some gid ->
                         Ok(GenerationStarted
                             {| conversationId = cid
                                generationId = gid
                                providerId = tryString p "providerId" |> Option.defaultValue ""
                                model = tryString p "model" |> Option.defaultValue "" |})
-                    | _ -> Error "generation.started: missing conversationId/generationId"
+                    | _ -> Error "generation.started: missing threadId/runId"
                 | Some "generation.finished" ->
-                    match tryGuid p "conversationId", tryGuid p "generationId" with
+                    match tryGuid p "threadId", tryGuid p "runId" with
                     | Some cid, Some gid ->
                         Ok(GenerationFinished {| conversationId = cid; generationId = gid; status = tryString p "status" |> Option.defaultValue "completed"; error = parseGenerationError p; usage = parseUsage p |})
-                    | _ -> Error "generation.finished: missing conversationId/generationId"
+                    | _ -> Error "generation.finished: missing threadId/runId"
                 | Some "generation.cancel" ->
-                    match tryGuid p "conversationId", tryGuid p "generationId" with
+                    match tryGuid p "threadId", tryGuid p "runId" with
                     | Some cid, Some gid -> Ok(GenerationCancel {| conversationId = cid; generationId = gid |})
-                    | _ -> Error "generation.cancel: missing conversationId/generationId"
+                    | _ -> Error "generation.cancel: missing threadId/runId"
                 | Some "attachment.begin" ->
                     match tryGuid p "attachmentId" with
                     | Some aid ->

@@ -275,7 +275,7 @@ let ``snapshot generation identity roundtrips and legacy snapshots remain readab
     let json = JsonNode.Parse(WireCodec.encode(snapshot id)).AsObject()
     let payload = json["payload"].AsObject()
     payload["runtimeState"] <- "generating"
-    payload["generationId"] <- generation.ToString("D")
+    payload["runId"] <- generation.ToString("D")
     match WireCodec.tryDecode(json.ToJsonString()) with
     | Ok (ConversationSnapshot d) ->
         Assert.Equal(Some generation, d.generationId)
@@ -283,7 +283,7 @@ let ``snapshot generation identity roundtrips and legacy snapshots remain readab
         run.Snapshot(id, d.runtimeState, d.generationId)
         Assert.Equal(Some generation, (run.Get(Some id)).generationId)
     | other -> failwithf "unexpected snapshot: %A" other
-    json["payload"].AsObject().Remove "generationId" |> ignore
+    json["payload"].AsObject().Remove "runId" |> ignore
     match WireCodec.tryDecode(json.ToJsonString()) with
     | Ok (ConversationSnapshot d) -> Assert.True d.generationId.IsNone
     | other -> failwithf "legacy snapshot rejected: %A" other

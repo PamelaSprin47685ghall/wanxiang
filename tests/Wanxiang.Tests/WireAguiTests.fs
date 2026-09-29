@@ -27,22 +27,39 @@ module WireAguiTests =
         Assert.Contains(sprintf "\"threadId\":\"%O\"" convId, json)
         Assert.Contains(sprintf "\"runId\":\"%O\"" genId, json)
 
+    /// MAF ChatMessage JSON 形状（编排层真实出站形态）
+    let private mafText (text: string) : JsonObject =
+        let p = JsonObject()
+        p["role"] <- "assistant"
+        let cs = JsonArray()
+        let c = JsonObject()
+        c["$type"] <- "text"
+        c["text"] <- text
+        cs.Add c
+        p["contents"] <- cs
+        p
+
     [<Fact>]
     let ``text delta maps to TEXT_MESSAGE_CHUNK`` () =
-        let payload = JsonObject()
-        payload["text"] <- "你好"
-        let json = WireAgui.encode (GenerationDelta {| conversationId = convId; generationId = genId; payload = payload |})
+        let json = WireAgui.encode (GenerationDelta {| conversationId = convId; generationId = genId; payload = mafText "你好" |})
         Assert.Contains("\"type\":\"TEXT_MESSAGE_CHUNK\"", json)
 
     [<Fact>]
     let ``non text delta maps to CUSTOM`` () =
+        // MAF 形状但 $type 无法映射（如 DataContent 的 dataUri）
         let payload = JsonObject()
-        payload["reasoning"] <- "思考中"
+        payload["role"] <- "assistant"
+        let cs = JsonArray()
+        let c = JsonObject()
+        c["$type"] <- "dataUri"
+        c["dataUri"] <- "data:image/png;base64,AAAA"
+        cs.Add c
+        payload["contents"] <- cs
         let json = WireAgui.encode (GenerationDelta {| conversationId = convId; generationId = genId; payload = payload |})
         Assert.Contains("\"type\":\"CUSTOM\"", json)
         Assert.Contains("wanxiang.dev/generation-delta", json)
         // AG-UI 序列化对非 ASCII 做 \uXXXX 转义（实测），断言用转义形式。
-        Assert.Contains("\\u601D\\u8003\\u4E2D", json)
+        Assert.Contains("data:image/png;base64,AAAA", json)
 
     [<Fact>]
     let ``completed generation maps to RUN_FINISHED`` () =

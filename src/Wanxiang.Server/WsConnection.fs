@@ -709,11 +709,27 @@ type WsConnection(
             // 先剥掉 AG-UI/CUSTOM 外层拿到内层 JSON，再按原双路径（命令外壳 / 事件外壳）解码。
             // 未知类型/别家 CUSTOM：合法忽略并告警，**不得**断连（AG-UI 增量安全，SSOT 55.4）。
             // 剥层结果：Some payload = 内层 JSON；None = 宽容忽略；Error = 畸形。
+            // 承载归一：wanxiang.dev/* CUSTOM 的 value 统一折成 {type,payload} 外壳，
+            // 再按命令/事件双路径解码。扁平 value 与完整外壳都合法。
             let inner =
                 match Wanxiang.Agui.TolerantReader.parse jsonText with
                 | Wanxiang.Agui.ParsedEvent.Custom(name, value) when name.StartsWith Wanxiang.Agui.Capabilities.Namespace ->
-                    // wanxiang.dev/* CUSTOM：value 是内层载荷（命令外壳或事件外壳）
-                    Ok(Some(value.ToJsonString()))
+                    let wireType = name.Substring Wanxiang.Agui.Capabilities.Namespace.Length
+                    match value with
+                    | :? System.Text.Json.Nodes.JsonObject as vo when vo.ContainsKey "type" ->
+                        // value 已是完整外壳
+                        Ok(Some(value.ToJsonString()))
+                    | :? System.Text.Json.Nodes.JsonObject as vo ->
+                        // 扁平字段 → 折成 {type,payload}
+                        let wrapped = System.Text.Json.Nodes.JsonObject()
+                        wrapped["type"] <- wireType
+                        wrapped["payload"] <- vo.DeepClone()
+                        Ok(Some(wrapped.ToJsonString()))
+                    | _ ->
+                        let wrapped = System.Text.Json.Nodes.JsonObject()
+                        wrapped["type"] <- wireType
+                        wrapped["payload"] <- (match value with null -> System.Text.Json.Nodes.JsonObject() :> System.Text.Json.Nodes.JsonNode | v -> v.DeepClone())
+                        Ok(Some(wrapped.ToJsonString()))
                 | Wanxiang.Agui.ParsedEvent.Custom _ ->
                     Ok(None)    // 别家 CUSTOM：忽略
                 | Wanxiang.Agui.ParsedEvent.Unrecognized _ ->
