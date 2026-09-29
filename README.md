@@ -231,6 +231,19 @@ defaultModel = "gemini-2.5-flash"
 > 规范化哈希采用 [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) JCS。
 > **旧 `.ndjson` 数据不兼容、不迁移**；`doctor` 会识别并明确指出。
 
+### 协议与落盘已切换到标准承载（2026-09-29）
+
+| 层 | 承载 | 实现 |
+|---|---|---|
+| 线上（WebSocket `/ws`） | **AG-UI 1.0** 事件（标准面 + `wanxiang.dev/*` CUSTOM 面） | `src/Wanxiang.Protocol/WireAgui.fs` |
+| 落盘（`events/*.jsonseq`） | **RFC 7464** JSON Text Sequence（`RS`+JSON+`LF`），`commitId`/`bootId` 字符串承载 | `src/Wanxiang.Core/Ledger/` + `src/Wanxiang.Store/JsonSeqWriter.fs` |
+| 幂等哈希 | **RFC 8785** JCS | `src/Wanxiang.Core/Ledger/Jcs.fs`（手写 `CanonicalJson` 已删） |
+| 消息模型 | AG-UI 消息对象为落盘权威，MAF `ChatMessage` 为运行时 | `src/Wanxiang.Agent/MessageMap.fs` |
+
+56 个 `WireEvent` 语义变体**保留**（语义层不换，承载层换）；
+`protocol.hello` / `protocol.upgrade-required` 已删除（版本改 in-band）；
+入站未知事件类型**宽容忽略**（AG-UI 增量安全），不再断连。
+
 删除会话后，只被它引用的附件会在后台被回收。回收刻意保守：
 只要还有任何存活会话（含其分叉的祖先链，以及已删除的历史消息）
 可能展示某个附件，它就留着——多占一点磁盘远好过把历史变成「内容已丢失」。
