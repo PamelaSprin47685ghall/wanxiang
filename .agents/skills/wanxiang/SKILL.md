@@ -279,7 +279,6 @@ Linux x64 能以默认 UI+S 模式运行，也能独立 headless S 和 client-on
 | `wanxiang-runtime` | 运行与运维：24、25、44 |
 | `wanxiang-principles` | 原则与规则：41–43 |
 | `wanxiang-agui-migration` | **AG-UI 化改造实施指导**：账本内核/语义层代码、服务端与客户端改造步骤、验收标准、实测陷阱（配套第 56 节） |
-| `wanxiang-concurrency-plan` | **⚠️ 临时（迁移完成后删除）**：AG-UI 改造的并发开发步骤指南——契约冻结、worktree 隔离、合并顺序、冲突热点 |
 | `agent-framework` / `avalonia` / `kelivo` | 原 AGENTS.md 尾部三份第三方框架参考文档，原样保留 |
 
 > 加载约定：任务开始前先读本 skill（`skill://wanxiang`），再按上表按主题读对应 skill。
@@ -331,4 +330,4 @@ Linux x64 能以默认 UI+S 模式运行，也能独立 headless S 和 client-on
 
 ## 56.5 实施指导
 
-保姆级分步、已验证的 F# 代码样例、陷阱清单见 **`wanxiang-agui-migration`** skill。
+保姆级分步、已验证的 F# 代码样例、陷阱清单、实施现状见 **`wanxiang-agui-migration`** skill。
