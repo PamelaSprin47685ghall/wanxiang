@@ -346,11 +346,13 @@ module MessageMap =
     let private opts = AGUIJsonSerializerContext.Default.Options
 
     /// MAF → AG-UI 消息对象（JsonNode）。
-    /// **MUST 按运行期类型序列化**：传 typeof<AGUIMessage> 会静默丢掉 content。
+    /// **MUST 按 typeof<AGUIMessage> 序列化**（2026-09-29 实测修正，方向与初稿相反）：
+    /// 按运行期类型（如 AGUIUserMessage）会静默丢掉 content；按基类 AGUIMessage 反而保留。
+    /// 官方 converter 挂在基类上，子类各自的序列化上下文没带它。
     let toAgui (msg: ChatMessage) : JsonNode =
         let list = AGUIChatMessageExtensions.AsAGUIMessages([msg], opts) |> List.ofSeq
         match list with
-        | [m] -> JsonNode.Parse(JsonSerializer.Serialize(m, m.GetType(), opts))
+        | [m] -> JsonNode.Parse(JsonSerializer.Serialize(m, typeof<AGUIMessage>, opts))
         | _ -> failwithf "expected exactly one AG-UI message, got %d" list.Length
 
     /// AG-UI 消息对象 → MAF ChatMessage。
@@ -527,7 +529,7 @@ cp -a /tmp/wanxiang-backup-YYYY-MM-DD <数据目录>
 
 | # | 坑 | 症状 | 对策 |
 |---|---|---|---|
-| 1 | AG-UI 序列化按静态类型 | `content` 字段静默消失 | 一律用 `m.GetType()` |
+| 1 | AG-UI 消息序列化方向 | 按运行期类型（AGUIUserMessage 等）序列化会**静默丢 `content`** | **一律用 `typeof<AGUIMessage>`**（converter 挂在基类上）|
 | 2 | 官方 SDK 未知事件抛异常 | 收到新事件就断连 | 用 `TolerantReader` 包一层 |
 | 3 | JCS 改写大整数 | `18446744073709551615` → `...52000` | 大整数一律 JSON 字符串 |
 | 4 | RFC 7464 裸数字截断 | `RS` + 裸数字被误判 | 记录顶层恒为对象 |

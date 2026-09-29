@@ -12,6 +12,7 @@
     <Compile Include="GeminiRequest.fs" />
     <Compile Include="GeminiTransport.fs" />
     <Compile Include="MessageSerde.fs" />
+    <Compile Include="MessageMap.fs" />
     <Compile Include="AttachmentContent.fs" />
     <Compile Include="HistoryProvider.fs" />
     <Compile Include="AgentRuntime.fs" />
@@ -19,6 +20,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI" Version="1.20.0" />
+    <!-- AG-UI 消息模型：MAF ChatMessage ⇄ AGUIMessage（决策 19/20 现行：AG-UI 为落盘权威） -->
+    <PackageReference Include="AGUI.Abstractions" Version="1.0.0" />
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.20.0" />
   </ItemGroup>
 

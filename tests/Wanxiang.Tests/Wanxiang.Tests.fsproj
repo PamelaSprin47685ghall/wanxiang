@@ -11,6 +11,7 @@
     <Compile Include="Helpers.fs" />
     <Compile Include="EventLogTests.fs" />
     <Compile Include="AguiMappingTests.fs" />
+    <Compile Include="MessageMapTests.fs" />
     <Compile Include="StoreConsistencyTests.fs" />
     <Compile Include="ReplayTests.fs" />
     <Compile Include="CoordinatorTests.fs" />
@@ -79,6 +80,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Wanxiang.Core\Wanxiang.Core.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Agui\Wanxiang.Agui.fsproj" />
+    <ProjectReference Include="..\..\src\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Store\Wanxiang.Store.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Config\Wanxiang.Config.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
