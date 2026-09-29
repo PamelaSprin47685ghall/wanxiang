@@ -46,19 +46,19 @@ module WireAgui =
                     e.Usage <- ResizeArray<TokenUsage>([ tu ]))
                 e :> BaseEvent
             | "cancelled" ->
-                let e = RunFinishedEvent()
-                e.ThreadId <- d.conversationId.ToString("D")
-                e.RunId <- d.generationId.ToString("D")
-                // 实测：无 Reason 成员；Outcome 无公共构造器，cancelled 用 CUSTOM 面承载。
+                // 实测：RunFinishedEvent 无 Reason 成员、Outcome 无公共构造器，
+                // cancelled 语义无法在标准面上表达 → 用 CUSTOM 面承载（SSOT 55.5）。
                 let ce = CustomEvent()
                 ce.Name <- sprintf "%sgeneration-finished" Capabilities.Namespace
                 let o = JsonObject()
-                o["conversationId"] <- d.conversationId.ToString("D")
-                o["generationId"] <- d.generationId.ToString("D")
-                o["status"] <- "cancelled"
-                ce.Value <- Nullable(o.ToJsonString() |> JsonDocument.Parse |> fun d -> d.RootElement.Clone())
+                o["type"] <- "generation.finished"
+                let pl = JsonObject()
+                pl["conversationId"] <- d.conversationId.ToString("D")
+                pl["generationId"] <- d.generationId.ToString("D")
+                pl["status"] <- "cancelled"
+                o["payload"] <- pl
+                ce.Value <- Nullable(o.ToJsonString() |> JsonDocument.Parse |> fun doc -> doc.RootElement.Clone())
                 ce :> BaseEvent
-                e :> BaseEvent
             | _ ->
                 // failed / 其它异常态：RUN_ERROR（SSOT 55.4）
                 let e = RunErrorEvent()

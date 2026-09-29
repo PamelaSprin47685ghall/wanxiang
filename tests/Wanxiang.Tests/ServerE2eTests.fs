@@ -76,6 +76,72 @@ module private E2e =
             | None -> ()
             cleanup dir
 
+
+    /// 入站 AG-UI 事件归一化回 {type, payload} 外壳，供既有断言复用。
+    /// 服务端出站承载（SSOT 55）：
+    /// - 标准事件（生成流）→ {type:"RUN_STARTED",...}（扁平）
+    /// - 其余语义 → {type:"CUSTOM", name:"wanxiang.dev/<wireType>", value:{type,payload}}
+    /// 这里统一折回 {type:<wireType>, payload:<payload>}；标准面事件按需映射。
+    let normalizeAgui (node: JsonNode) : JsonObject =
+        let o = node.AsObject()
+        let wireType = o["type"].GetValue<string>()
+        if wireType = "CUSTOM" then
+            let name = o["name"].GetValue<string>()
+            if name.StartsWith "wanxiang.dev/" then
+                let inner = name.Substring "wanxiang.dev/".Length
+                match o["value"] with
+                | :? JsonObject as v when v.ContainsKey "payload" ->
+                    // value 里存的就是原外壳
+                    v.DeepClone() :?> JsonObject
+                | _ ->
+                    let wrapped = JsonObject()
+                    wrapped["type"] <- inner
+                    wrapped["payload"] <- (match o["value"] with null -> JsonObject() :> JsonNode | v -> v.DeepClone())
+                    wrapped
+            else
+                o
+        else
+            // 标准面事件折回旧语义名，供既有断言（generation.started 等）复用：
+            // RUN_STARTED→generation.started；RUN_FINISHED→generation.finished；
+            // RUN_ERROR→generation.finished(failed)；TEXT_MESSAGE_*→generation.delta。
+            match wireType with
+            | "RUN_STARTED" ->
+                let w = JsonObject()
+                w["type"] <- "generation.started"
+                let pl = JsonObject()
+                pl["conversationId"] <- o["threadId"].DeepClone()
+                pl["generationId"] <- o["runId"].DeepClone()
+                pl["providerId"] <- ""
+                pl["model"] <- ""
+                w["payload"] <- pl
+                w
+            | "RUN_FINISHED" ->
+                let w = JsonObject()
+                w["type"] <- "generation.finished"
+                let pl = JsonObject()
+                pl["conversationId"] <- o["threadId"].DeepClone()
+                pl["generationId"] <- o["runId"].DeepClone()
+                pl["status"] <- "completed"
+                w["payload"] <- pl
+                w
+            | "RUN_ERROR" ->
+                let w = JsonObject()
+                w["type"] <- "generation.finished"
+                let pl = JsonObject()
+                pl["status"] <- "failed"
+                pl["conversationId"] <- ""
+                pl["generationId"] <- ""
+                w["payload"] <- pl
+                w
+            | "TEXT_MESSAGE_CHUNK" ->
+                let w = JsonObject()
+                w["type"] <- "generation.delta"
+                let pl = JsonObject()
+                pl["text"] <- o["delta"].DeepClone()
+                w["payload"] <- pl
+                w
+            | _ -> o
+
     let recvEvent (ws: ClientWebSocket) (ct: CancellationToken) : JsonObject =
         let buffer = Array.zeroCreate<byte> (1024 * 1024)
         let ms = new MemoryStream()
@@ -85,10 +151,21 @@ module private E2e =
             ms.Write(buffer, 0, result.Count)
             if result.EndOfMessage then finished <- true
         let text = Encoding.UTF8.GetString(ms.ToArray())
-        JsonNode.Parse(text).AsObject()
+        (JsonNode.Parse(text) |> normalizeAgui)
 
     let send (ws: ClientWebSocket) (ev: JsonObject) (ct: CancellationToken) =
-        let bytes = Encoding.UTF8.GetBytes(ev.ToJsonString())
+        // 测试手写的多是旧外壳 {type,payload}；出站统一折成 AG-UI 承载
+        // （非标准面 → CUSTOM wanxiang.dev/<type>，value = 原外壳），服务端才能认出。
+        let carrier =
+            let t = ev["type"].GetValue<string>()
+            if t = "CUSTOM" then ev
+            else
+                let ce = JsonObject()
+                ce["type"] <- "CUSTOM"
+                ce["name"] <- sprintf "wanxiang.dev/%s" t
+                ce["value"] <- ev.DeepClone()
+                ce
+        let bytes = Encoding.UTF8.GetBytes(carrier.ToJsonString())
         ws.SendAsync(ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, ct).GetAwaiter().GetResult()
 
     let waitFor (ws: ClientWebSocket) (ct: CancellationToken) (predicate: JsonObject -> bool) : JsonObject =
@@ -102,15 +179,8 @@ module private E2e =
     let conn (port: int) (token: string) (ct: CancellationToken) : ClientWebSocket =
         let ws = new ClientWebSocket()
         ws.ConnectAsync(Uri(sprintf "ws://127.0.0.1:%d/ws" port), ct).GetAwaiter().GetResult()
-        // hello
-        let hello = JsonObject()
-        hello["type"] <- "protocol.hello"
-        let hp = JsonObject()
-        hp["protocol"] <- "wanxiang"
-        hp["version"] <- Constants.ProtocolVersion
-        hello["payload"] <- hp
-        send ws hello ct
-        // auth
+        // Hello 已删除（SSOT 55.4：版本改 in-band）；连接后直接认证。
+        // 发旧外壳 {type,payload}，由 send() 统一折成 AG-UI CUSTOM 承载。
         let auth = JsonObject()
         auth["type"] <- "auth.present"
         let ap = JsonObject()
@@ -143,7 +213,7 @@ let ``e2e full export is read-only and stable while another client deletes and r
             let event = E2e.waitFor ws ct (fun ev -> ev["type"].GetValue<string>() = name)
             Assert.Equal(name, event["type"].GetValue<string>())
             event
-        let send ws event = E2e.send ws (JsonNode.Parse(WireCodec.encode event).AsObject()) ct
+        let send ws event = E2e.send ws (JsonNode.Parse(WireAgui.encode event).AsObject()) ct
         let command ws cmd = E2e.send ws (JsonNode.Parse(WireCodec.encodeCommand cmd).AsObject()) ct
         let value (event: JsonObject) (key: string) = event["payload"].AsObject()[key]
         wait reader "auth.accepted" |> ignore

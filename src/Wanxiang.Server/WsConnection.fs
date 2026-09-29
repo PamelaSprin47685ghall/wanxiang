@@ -246,7 +246,8 @@ type WsConnection(
                         while more && not closed do
                             let mutable ev: WireEvent = Unchecked.defaultof<WireEvent>
                             if reader.TryRead(&ev) then
-                                let json = WireCodec.encode ev
+                                // AG-UI 承载（SSOT 55：语义 WireEvent → AG-UI 事件对象）
+                                let json = WireAgui.encode ev
                                 let bytes = Encoding.UTF8.GetBytes json
                                 try
                                     if ws.State = WebSocketState.Open then
@@ -310,21 +311,16 @@ type WsConnection(
     member private this.HandleEvent(ev: WireEvent) : Task =
         task {
             match ev with
-            | Hello d ->
-                if d.protocol <> "wanxiang" || d.version <> Constants.ProtocolVersion then
-                    do! this.SendAndClose(UpgradeRequired {| serverVersion = Constants.ProtocolVersion; clientVersion = d.version |}, "protocol version mismatch")
-                else
-                    match lock cursorLock (fun () -> handshakeState) with
-                    | NotStarted -> lock cursorLock (fun () -> handshakeState <- HelloSeen)
-                    | _ -> () // 重复 Hello 幂等
+            // Hello / UpgradeRequired 已删除（SSOT 55.4：版本改 in-band，
+            // 由 RunAgentInput.protocolVersion / RUN_STARTED.protocolVersion 承载）。
+            // 认证不再要求先握手——连接后直接认证合法。
+            | Hello _ | UpgradeRequired _ -> ()
             | Ping -> this.TrySend Pong |> ignore
             | Pong -> ()
             | AuthPresent d ->
+                // 连接即认证（Hello 已删除）：NotStarted/HelloSeen 一视同仁，直接认证。
                 match handshakeState with
-                | NotStarted ->
-                    // 握手先于认证（决策 55/69）：未发 Hello 直接认证 → 协议违规
-                    do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "hello required before auth")
-                | HelloSeen ->
+                | NotStarted | HelloSeen ->
                     match this.TryAuthenticate d.token with
                     | Some client ->
                         lock cursorLock (fun () ->
@@ -345,9 +341,8 @@ type WsConnection(
                 | Authenticated -> () // 已认证重复 auth.present：忽略
             | PairingRequested d ->
                 match handshakeState with
-                | NotStarted -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "hello required before pairing")
                 | Authenticated -> () // 已认证：配对无意义，忽略
-                | HelloSeen ->
+                | NotStarted | HelloSeen ->
                     if not pairingRequested then
                         let now = DateTimeOffset.UtcNow
                         if failureTracker.IsFrozen(now, remoteAddress) then
@@ -360,9 +355,8 @@ type WsConnection(
                             this.TrySend(PairingStarted {| expiresInSeconds = 300 |}) |> ignore
             | PairingAttempted d ->
                 match handshakeState with
-                | NotStarted -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "hello required before pairing")
                 | Authenticated -> ()
-                | HelloSeen ->
+                | NotStarted | HelloSeen ->
                     if pairingRequested then
                         let now = DateTimeOffset.UtcNow
                         if failureTracker.IsFrozen(now, remoteAddress) then
@@ -663,8 +657,7 @@ type WsConnection(
     /// 认证超时（决策 55）：建立后 15 秒内未完成认证则关闭，避免悬挂连接占用资源。
     member this.Run(ct: CancellationToken) : Task =
         task {
-            let cfg = getConfig ()
-            this.TrySend(Hello {| protocol = "wanxiang"; version = Constants.ProtocolVersion; instanceId = Some(cfg.instanceId.ToString("D")) |}) |> ignore
+            // 出站 Hello 已删除（SSOT 55.4）：连接即认证，版本 in-band。
             let sendTask = this.SendLoop(ct)
             let recvTask =
                 task {
@@ -712,16 +705,42 @@ type WsConnection(
 
     member private this.HandleJson(jsonText: string) : Task =
         task {
-            // 命令事件走专用解码路径（决策 25：fire-and-forget，无传输 request/response）
-            match WireCodec.tryDecodeCommand jsonText with
-            | Ok cmd ->
-                do! this.HandleEvent(WireEvent.Command cmd)
-            | Error _ ->
-                match WireCodec.tryDecode jsonText with
-                | Error msg ->
-                    Stderr.write "protocol-decode-error" [ "address", remoteAddress; "message", msg ]
-                    do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "invalid event")
-                | Ok ev -> do! this.HandleEvent ev
+            // 入站承载是 AG-UI（SSOT 55）。命令与事件都可能在 CUSTOM 面里：
+            // 先剥掉 AG-UI/CUSTOM 外层拿到内层 JSON，再按原双路径（命令外壳 / 事件外壳）解码。
+            // 未知类型/别家 CUSTOM：合法忽略并告警，**不得**断连（AG-UI 增量安全，SSOT 55.4）。
+            // 剥层结果：Some payload = 内层 JSON；None = 宽容忽略；Error = 畸形。
+            let inner =
+                match Wanxiang.Agui.TolerantReader.parse jsonText with
+                | Wanxiang.Agui.ParsedEvent.Custom(name, value) when name.StartsWith Wanxiang.Agui.Capabilities.Namespace ->
+                    // wanxiang.dev/* CUSTOM：value 是内层载荷（命令外壳或事件外壳）
+                    Ok(Some(value.ToJsonString()))
+                | Wanxiang.Agui.ParsedEvent.Custom _ ->
+                    Ok(None)    // 别家 CUSTOM：忽略
+                | Wanxiang.Agui.ParsedEvent.Unrecognized _ ->
+                    Ok(None)    // 未知类型：忽略（对端可能比本端新）
+                | Wanxiang.Agui.ParsedEvent.Known _ ->
+                    // 标准 AG-UI 面（RUN_STARTED 等）：走事件解码
+                    Ok(Some jsonText)
+                | Wanxiang.Agui.ParsedEvent.Malformed reason ->
+                    Error reason
+            match inner with
+            | Error reason ->
+                Stderr.write "protocol-decode-error" [ "address", remoteAddress; "message", reason ]
+                do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "invalid event")
+            | Ok None ->
+                Stderr.write "protocol-unknown-event-ignored" [ "address", remoteAddress ]
+            | Ok(Some payload) ->
+                match WireCodec.tryDecodeCommand payload with
+                | Ok cmd ->
+                    do! this.HandleEvent(WireEvent.Command cmd)
+                | Error cmdErr ->
+                    match WireCodec.tryDecode payload with
+                    | Ok ev -> do! this.HandleEvent ev
+                    | Error evErr ->
+                        // 两条路都解不出：真畸形。报两者中更相关的（命令优先）。
+                        let detail = sprintf "command: %s; event: %s" (string cmdErr) (string evErr)
+                        Stderr.write "protocol-decode-error" [ "address", remoteAddress; "message", detail ]
+                        do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "invalid event")
         }
 
 /// 连接注册表：管理全部连接并广播权威增量。
