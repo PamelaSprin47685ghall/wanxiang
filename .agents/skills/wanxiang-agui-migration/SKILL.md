@@ -524,6 +524,28 @@ match TolerantReader.parse text with
 6. 截断恢复 ✅（EventLogTests：尾部截断/中间损坏/序号空洞/跨代回退）
 7. 大整数 ✅（EventLogTests：字符串承载/裸数字被改写钉成回归）
 
+### 标准面覆盖（2026-09-29 第二轮：能用 AG-UI 语义的都用）
+
+| 万象语义 | AG-UI 标准事件 |
+|---|---|
+| 文本 delta | `TEXT_MESSAGE_CHUNK` |
+| functionCall 内容 | `TOOL_CALL_START` |
+| functionResult 内容 | `TOOL_CALL_RESULT` |
+| cancelled 生成 | `RUN_FINISHED` + `RunFinishedCancelledOutcome` |
+| completed 生成（含 usage） | `RUN_FINISHED` + `TokenUsage` |
+| failed 生成 | `RUN_ERROR` |
+| 生成开始 | `RUN_STARTED` |
+
+**CUSTOM 面**（万象设计特色决策，保留语义但仿标准面风格）：
+- value 是**扁平字段**，不套外壳
+- 身份字段用 `threadId`/`runId`/`messageId`（AG-UI 命名）
+- 消息/增量载荷叫 `content`（与 AG-UI 消息内容一致）
+
+### 命名原生化（无迁移痕迹）
+
+线上字段、错误串、测试断言全部统一 `threadId`/`runId`/`messageId`/`content`；
+外壳判定按「有无 `type` 键」；注释描述设计而非改动史。
+
 ### 架构落点（与原方案的差异，实测驱动）
 
 - **方案 Y（外壳适配）取代方案 X（全量重写）**：56 个 WireEvent 变体保留为语义层，
