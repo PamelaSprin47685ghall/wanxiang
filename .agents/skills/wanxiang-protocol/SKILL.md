@@ -1,6 +1,6 @@
 ---
 name: wanxiang-protocol
-description: 万象传输协议：muxed WebSocket fire-and-forget 事件、observe 模型、游标与慢客户端、写权限与陈旧检测、帧格式与版本协商（决策 14–18/32，问答 Q131–150）。
+description: 万象传输协议：AG-UI 1.0 事件流（线上格式权威，第 55 节）、muxed WebSocket、observe 模型、游标与慢客户端、写权限与陈旧检测、版本协商（决策 14–18/32/68–70，问答 Q131–150）。
 ---
 
 # 14. 传输协议：muxed WebSocket、fire-and-forget
@@ -443,6 +443,10 @@ SSE
 # 32. WebSocket 帧格式与版本协商
 
 > 覆盖对话决策 68、69、70（两个子决策）。会话时间：2026-08-01 12:46–12:48。
+>
+> **⚠️ 本节已于 2026-09-29 整体修订（AG-UI 化，clean-break）**：协议面改用 **AG-UI 1.0** 事件流。
+> 决策 68/69/70 的**编号与原始理由保留在下方「原始决议」小节**（只读存档，不得再作为实现依据）；
+> 现行实现以「**现行决议（2026-09-29）**」为准。负责人拍板：传输层与落盘层全部用 AG-UI；clean-break。
 
 ## 决策 68：WebSocket 帧采用文本 JSON 还是二进制格式？
 
@@ -460,6 +464,18 @@ SSE
 **用户回答（12:46:33）：** "好的"
 
 **已确认（12:46:38）：** 首版 `/ws` 只使用 UTF-8 JSON 文本帧；每个协议事件对应一个 WebSocket message，不接受二进制帧。
+
+### 现行决议（2026-09-29）
+
+**决策 68（修订）：帧格式 = AG-UI 事件的 UTF-8 JSON 文本帧。**
+- 一帧 = 一个 AG-UI 事件（JSON 对象）；保持「一个 WebSocket message 一个事件」；
+- **MUST NOT** 使用二进制帧（收到即按协议错误关闭）；
+- 帧内字段遵循 AG-UI 1.0 schema（`type` / `timestamp` / `metadata` / `rawEvent`）；
+- 私有面走 `CUSTOM`（`name` **MUST** 以 `wanxiang.dev/` 前缀）与 `_meta`；
+- 由于 muxed 单连接可能交错多个 run，接收方 **MUST** 按 `threadId`/`runId`/`messageId` 解复用，
+  且每个 run **MUST** 独立满足 AG-UI 的关闭规则（开着的 message/tool call 必须先关闭再 `RUN_FINISHED`）。
+
+**原始理由中仍然有效的部分**（保留）：透明映射、易调试、`stderr` 忠实诊断、不维护两套序列化。
 
 ## 决策 69：WebSocket 协议如何处理版本不兼容？
 
@@ -484,14 +500,15 @@ SSE
 
 **用户回答（12:46:55）：** "好的"
 
-**已确认（12:47:01）协议握手：**
-- WebSocket 建立后，双方先交换 `protocol.hello`；
-- 握手先于认证与配对；
-- 服务端声明 `instanceId`；
-- 主版本不一致立即断开；
-- 主版本一致时允许次版本不同。
+**原始决议（已被下方现行决议取代）：** 双方先交换 `protocol.hello`，握手先于认证与配对。
 
-> 注：本决策的「主版本 + 次版本」协商方案随后被决策 70 修正——`protocol.hello` 只携带一个整数版本号，双方必须完全相等，以实现版为准（见本节决策 70）。
+### 现行决议（2026-09-29）
+
+**决策 69（修订）：版本协商改由 AG-UI 的 in-band 版本字段承载，`protocol.hello` 事件删除。**
+- 客户端在 `RunAgentInput.protocolVersion` 声明自己支持的版本；
+- 服务端在 `RUN_STARTED.protocolVersion` 声明自己的版本；
+- 版本不匹配的处理遵循 AG-UI：客户端不支持服务端声明的版本时**应**断开并告知用户；
+- **MUST NOT** 再引入自定义的版本握手事件。
 
 ## 决策 70（第一问）：未知事件能否一律忽略？
 
@@ -515,15 +532,19 @@ SSE
 
 否则旧客户端若忽略新的关键事件，可能仍以为自己已经追平并获得错误写权限。
 
-**用户回答（12:47:56）：** "不，我认为 hello 时候版本号只有1个，版本不够就提示升级"
+**原始决议（已被下方现行决议取代）：** 版本号只有一个整数，双方必须完全相等；未知事件即协议违规。
 
-**已确认（12:48:04）协议版本策略：**
-- `protocol.hello` 只携带一个整数版本号，例如 `version: 1`；
-- 客户端与服务端版本必须**完全相等**；
-- 不划分 major/minor；
-- 不引入 `required` 字段；
-- 不支持同版本内"忽略未知事件"的兼容策略；
-- 版本一致却收到未知事件，视为实现错误或协议违规，记录到 `stderr` 并关闭连接。
+### 现行决议（2026-09-29）—— **本条语义反转，注意**
+
+**决策 70（修订）：未知事件必须宽容处理，不得终止。**
+- **未知事件类型 MUST 被忽略并告警**，连接继续（对齐 AG-UI `spec/1.0/basic/processing`：
+  *"An event of a type this implementation does not recognise MUST NOT abort the run"*）；
+- **未知属性 MUST 原样保留**，不得剥离；
+- **已知字段的畸形值 MUST 致命**（不得兜底、不得猜值）；
+- 原「版本一致却收到未知事件即关闭连接」的规定**作废**：它会把「对端更新」误判为「协议违规」，
+  与 AG-UI 的加法安全（additions are safe）策略直接冲突；
+- **实现注意**：AG-UI 官方 .NET SDK 对未知 `type` 抛 `AGUIUnknownEventTypeException`（与其自家规范矛盾，
+  2026-09-29 实测），因此**必须自建宽容读层**，不得直接把 SDK 的多态反序列化当作入口。
 
 ## 决策 70（第二问）：版本不匹配时如何提示升级？
 
@@ -541,7 +562,27 @@ SSE
 
 **用户回答（12:48:17）：** "好的"
 
-**已确认（12:48:34）：** 协议版本不匹配时，服务端先发送 `protocol.upgrade-required`，随后关闭 WebSocket；客户端展示升级提示。协议只使用一个整数版本，双方必须完全一致。
+**原始决议（已被下方现行决议取代）：** 版本不匹配时发 `protocol.upgrade-required` 后关闭。
+
+### 现行决议（2026-09-29）
+
+**决策 70 第二问（修订）：`protocol.upgrade-required` 事件删除。**
+- 版本不兼容时，由 AG-UI 的版本字段协商处理；客户端自行决定是否断开并展示升级提示；
+- 错误如需下传，用 `CUSTOM` `wanxiang.dev/error`，其 `value` **MUST** 为 RFC 9457 问题对象。
+
+### 原始决议存档（只读 · 不得作为实现依据）
+
+> 以下三段为 2026-08-01 原始问答原文，仅作历史存证。
+
+**决策 68 原始确认（12:46:38）：** 首版 `/ws` 只使用 UTF-8 JSON 文本帧；每个协议事件对应一个 WebSocket message，不接受二进制帧。
+
+**决策 69 原始确认（12:47:01）：** WebSocket 建立后双方先交换 `protocol.hello`；握手先于认证与配对；
+服务端声明 `instanceId`；主版本不一致立即断开。
+
+**决策 70 原始确认（12:48:04）：** `protocol.hello` 只携带一个整数版本号；双方版本必须完全相等；
+不引入 `required` 字段；版本一致却收到未知事件，视为实现错误或协议违规，记录 `stderr` 并关闭连接。
+
+**决策 70 第二问原始确认（12:48:34）：** 版本不匹配时服务端先发 `protocol.upgrade-required`，随后关闭 WebSocket。
 
 # 47. 自动问答 四：Observe、快照与慢客户端（Q131–140）
 
@@ -606,3 +647,122 @@ SSE
 
 **150. 问：客户端离线时是否本地持久化待发送命令？**
 答：首版不持久化。编辑器内容可保留在当前 UI 状态，但重启后的可靠离线发送队列不属于首版。
+
+# 55. 传输层权威规范（AG-UI 1.0 · 2026-09-29 生效）
+
+> **本节是线上格式的唯一权威。** 实施前必读。依据见本节末「规范依据」。
+> 用词遵循 RFC 2119/8174：**MUST** = 必须，**SHOULD** = 应当，**MAY** = 可以。
+
+## 55.1 分层（为什么是 AG-UI）
+
+| 关系 | 协议 | 是否适用 |
+|---|---|---|
+| 编辑器/IDE ↔ coding agent | ACP（Zed） | ✗ 角色倒置；JSON-RPC 请求响应与 fire-and-forget 冲突；主传输 stdio |
+| agent ↔ agent | A2A | ✗ 需远端 HTTP 端点，本地单进程不适用 |
+| agent ↔ 工具与数据 | MCP | ✗ 已在用（工具面），不是 UI 面 |
+| **用户 ↔ agent 应用** | **AG-UI 1.0** | **✓ 万象这条链路** |
+
+## 55.2 自定义绑定的契约（AG-UI 允许，但必须文档化）
+
+| 项 | 规定 |
+|---|---|
+| 端点 / 帧 | `/ws`；WebSocket **文本帧**，一帧 = 一个 AG-UI 事件（JSON 对象）；**MUST NOT** 二进制帧 |
+| 保活 | WebSocket 层 ping/pong，**MUST NOT** 占用事件面 |
+| 顺序 | 连接内单写者 FIFO 队列（沿用决策 31） |
+| 多 run 交错 | 一条连接**MAY** 交错多个并发 run；接收方 **MUST** 按 `threadId`/`runId`/`messageId` 解复用 |
+| run 独立性 | 每个 run **MUST** 独立满足 AG-UI 关闭规则（开的 message/tool call 先关闭再 `RUN_FINISHED`） |
+| 断线补发 | **不提供**；恢复靠 `wanxiang.dev/*` 的 observe/游标机制（决策 26–34 不变） |
+
+## 55.3 身份映射
+
+| 万象 | AG-UI |
+|---|---|
+| `conversationId` | `threadId` |
+| `generationId` | `runId` |
+| 消息 `commitId` | `messageId`（稳定字符串形式） |
+
+## 55.4 标准事件映射
+
+| 现私有事件 | 改为 AG-UI |
+|---|---|
+| `generation.started` | `RUN_STARTED` |
+| `generation.delta`（文本 / 推理） | `TEXT_MESSAGE_*` / `REASONING_MESSAGE_*` |
+| 工具调用 / 工具结果 | `TOOL_CALL_START`/`ARGS`/`END` / `TOOL_CALL_RESULT` |
+| `conversation.message-committed` | `MESSAGES_SNAPSHOT`（对账）或 `TOOL_CALL_RESULT`（工具） |
+| `generation.finished`（completed/cancelled/failed） | `RUN_FINISHED` / `RUN_FINISHED`(cancelled) / `RUN_ERROR` |
+| `generation.finished` 的 usage | `RUN_FINISHED.usage` |
+| `conversation.snapshot` | `MESSAGES_SNAPSHOT` + `STATE_SNAPSHOT` |
+| `protocol.hello` / `protocol.upgrade-required` | **删除**（版本改 in-band） |
+| `server.error`（run 内） | `RUN_ERROR` |
+
+## 55.5 `CUSTOM` 扩展（私有面）
+
+`name` **MUST** 以 `wanxiang.dev/` 前缀（AG-UI 保留无前缀名给协议自身）。
+
+| 私有面 | `CUSTOM.name` |
+|---|---|
+| observe / unobserve、列表 observe | `wanxiang.dev/observe`、`wanxiang.dev/observe-list` |
+| 列表快照、会话变更通知 | `wanxiang.dev/conversation-list`、`wanxiang.dev/conversation-updated` |
+| 历史分页 | `wanxiang.dev/history` |
+| 完整导出（3 个事件） | `wanxiang.dev/export` |
+| 命令确认（accepted/committed/rejected） | `wanxiang.dev/command` |
+| 游标推进、catch-up | `wanxiang.dev/cursor`、`wanxiang.dev/catch-up` |
+| 附件（7 个事件） | `wanxiang.dev/attachment` |
+| 目录 / 探活 | `wanxiang.dev/catalog`、`wanxiang.dev/probe` |
+| 配置（增删改与应用/变更） | `wanxiang.dev/config` |
+| 配对与令牌（8 个事件） | `wanxiang.dev/auth` |
+| run 外错误 | `wanxiang.dev/error`（RFC 9457 问题对象） |
+
+**关键取舍**：线上层**可以**用 `CUSTOM`（线上事件是临时的；AG-UI 规定不认识的 `CUSTOM` 合法忽略）。
+**账本层禁止使用 `CUSTOM`** —— 账本记录必须不可忽略（见 `wanxiang-store` 现行决议）。
+
+## 55.6 认证与配对（`wanxiang.dev/auth`）
+
+沿用现有语义（6 位配对码、5 分钟有效、令牌永久、失败限流），仅换承载：
+
+| 步骤 | `op` |
+|---|---|
+| 请求配对 / 已打印码 / 提交码 | `pair-request` / `pair-started` / `pair-attempt` |
+| 结果 | `pair-succeeded` / `pair-failed` |
+| 提交令牌 | `present` → `accepted` / `rejected` |
+
+- 认证完成前，服务端 **MUST** 拒绝一切非认证类事件（含 `RunAgentInput`）并关闭连接；
+- 未认证连接 **MUST** 在超时后关闭（沿用现有 15s）。
+
+## 55.7 错误对象（RFC 9457）
+
+`wanxiang.dev/error` 的 `value` **MUST** 为 RFC 9457 问题对象：
+
+```json
+{ "type": "urn:wanxiang:error:stale-projection",
+  "title": "Client state is stale",
+  "status": 409,
+  "detail": "client state is stale; required commit id 1846",
+  "requiredCommitId": "1846" }
+```
+
+- `type` **MUST** 为 `urn:wanxiang:error:<现有错误码>`；现有 20 个 `WanxiangError.code` **MUST NOT** 重命名；
+- 扩展成员中的大整数 **MUST** 用字符串承载。
+
+## 55.8 读方的强制宽容（**语义反转，见决策 70 现行决议**）
+
+- [ ] R1 不认识的事件类型 **MUST NOT** 终止连接；丢弃 + 告警
+- [ ] R2 不认识的属性 **MUST** 原样保留，不得剥离
+- [ ] R3 已知字段的畸形值 **MUST** 致命，不得兜底/猜值
+- [ ] **实现注意**：AG-UI 官方 .NET SDK 对未知 `type` 抛 `AGUIUnknownEventTypeException`
+      （与其自家 `spec/1.0/basic/processing` 规范矛盾，2026-09-29 实测）
+      ⇒ **必须自建宽容读层**，不得直接把 SDK 多态反序列化当作入口。
+
+## 55.9 规范依据
+
+| 用途 | 规范 |
+|---|---|
+| 事件、消息、内容、工具、推理、状态 | **AG-UI 1.0**（`AGUI.Abstractions` / `AGUI.Server` 官方 .NET SDK） |
+| 版本协商 | AG-UI `RunAgentInput.protocolVersion` + `RUN_STARTED.protocolVersion` |
+| 扩展 | AG-UI `CUSTOM` + `_meta` |
+| 错误对象 | RFC 9457 Problem Details |
+| 用词 | RFC 2119 + RFC 8174 |
+
+**实测证据（2026-09-29）**：AG-UI .NET SDK 在 `net10.0` 与 `net10.0-browser` 下均可编译链接；
+MAF ⇄ AG-UI 消息往返对文本/工具调用/工具结果/推理/图片/混排均**无损**；
+序列化**必须按运行期类型**（否则静默丢 `content`）。

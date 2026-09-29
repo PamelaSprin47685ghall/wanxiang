@@ -1,6 +1,6 @@
 ---
 name: wanxiang-store
-description: 万象存储层：NDJSON 事件日志+CQRS、提交原子性与 flush、日志恢复（截尾/poison/崩溃）、命令幂等（commandId/invocationId）、提交协调器、投影与查询（决策 02–09/19，问答 Q111–130）。
+description: 万象存储层：RFC 7464 记录日志（落盘格式权威，第 47 节）+CQRS、提交原子性与 flush、日志恢复（截尾/poison/崩溃）、命令幂等（commandId/invocationId）、提交协调器、投影与查询（决策 02–09/19，问答 Q111–130）。
 ---
 
 # 02. 存储模型：NDJSON + CQRS、唯一权威
@@ -113,15 +113,25 @@ data/
 
 **用户回答（11:19:58）：** "按照 UTC 每天分文件"
 
-**已确认（11:20:08）：** 事件日志按 **UTC 自然日**分文件，例如：
+**已确认（11:20:08）：** 事件日志按 **UTC 自然日**分文件。提交记录归属哪个文件，以服务器生成该提交记录时的
+UTC 日期为准。跨过 UTC 零点后，下一次提交直接写入新文件；单次提交始终只占一条记录，因此不会跨文件。
+整体仍是一条逻辑事件流，只是按日做物理切分。
+
+### 现行决议（2026-09-29）——文件命名与分帧
+
+日期分片规则不变；**文件名与分帧改为 RFC 7464**：
 
 ```text
 events/
-  2026-08-01.ndjson
-  2026-08-02.ndjson
+  2026-09-29.jsonseq
+  2026-09-30.jsonseq
 ```
 
-提交记录归属哪个文件，以服务器生成该提交记录时的 UTC 日期为准。跨过 UTC 零点后，下一次提交直接写入新文件；单次提交始终只占一行，因此不会跨文件。整体仍是一条逻辑事件流，只是按日做物理切分。
+- 扩展名 `.ndjson` → **`.jsonseq`**（媒体类型 `application/json-seq`）；
+- 每条记录 = `RS`(0x1E) + 一个 **JSON 对象** + `LF`(0x0A)；
+- 记录顶层 **MUST** 为 JSON 对象（自定界，规避 RFC 7464 §2.4 的裸数字截断陷阱）；
+- 解析器 **MUST** 以 `RS` 为边界重同步，遇损坏段跳过并继续（RFC 7464 §2.1）；
+- **旧 `.ndjson` 数据不迁移**（负责人 2026-09-29 拍板），`doctor` **MUST** 识别并明确报错。
 
 ## 决策 7：跨日期文件是否维持全局序号？
 
@@ -222,6 +232,10 @@ events/
 # 08. 事件格式版本管理
 
 > 覆盖对话决策 12。会话时间：2026-08-01 11:26。
+>
+> **⚠️ 本节已于 2026-09-29 修订（clean-break）**：提交记录外壳改用 RFC 7464 记录 + RFC 3339 时间，
+> 大整数改为**字符串承载**（RFC 8785 附录 D）。事件级 `version` 与逐级升级策略**不变**。
+> 原始决议原文保留在下方「原始决议存档」。
 
 ## 决策 12：事件如何进行格式版本管理？
 
@@ -253,13 +267,34 @@ events/
 
 **用户回答（11:26:05）：** "可以"
 
-**已确认（11:26:19）版本策略：**
-- 提交外壳使用 `formatVersion`；
-- 每个事件使用独立 `version`；
-- 已发布的 `type + version` 语义永久固定；
-- 旧事件通过逐级升级函数转换为当前结构；
-- 不原地改写历史 NDJSON；
-- 根本性语义变化创建新的事件类型。
+### 现行决议（2026-09-29）
+
+**决策 12（修订）：提交外壳版本仍用 `formatVersion`（现为 2），但外壳结构与字段已改造：**
+
+```json
+RS{"formatVersion":2,"commitId":"1843","bootId":"0198d3a1-...","source":"wanxiang",
+   "at":"2026-09-29T10:19:45.594Z","commandId":"sha256:...",
+   "events":[{"type":"conversation.created","version":1,"data":{}}]}LF
+```
+
+- `formatVersion` 现为 **2**；读取方只在等于现值时接受，否则按损坏处理；
+- **大整数（`commitId` / `messageCommitId` / `forkAfterId` 等）MUST 以 JSON 字符串承载**
+  （依据 RFC 8785 附录 D：超 double 精度会被静默改写）；
+- 时间字段 `at` **MUST** 为 RFC 3339，带毫秒与 `Z`；
+- 新增 `bootId`（RFC 5848 Reboot Session ID）：进程重启后序号不得回退；同一 `bootId` 内 `commitId` 必须连续；
+- 新增 `source`（恒为 `"wanxiang"`）；
+- 事件数组内每项仍为 `{type, version, data}`，`type` **不重命名**；
+- 规范化哈希（`commandHash`）改用 **RFC 8785 JCS**；
+  **规范化输入 MUST 与信封解耦**（不得包含 `formatVersion`/`bootId`/`at` 等字段）；
+- 其余策略不变：`type + version` 语义永久固定、逐级升级、不原地改写历史、根本性变化新建 `type`。
+
+**变更细节**：`id` → `commitId`（改为字符串）、`committedAtUtc` → `at`。
+
+### 原始决议存档（只读 · 不得作为实现依据）
+
+**决策 12 原始确认（11:26:19）：** 提交外壳使用 `formatVersion`；每个事件使用独立 `version`；
+已发布的 `type + version` 语义永久固定；旧事件通过逐级升级函数转换为当前结构；
+不原地改写历史 NDJSON；根本性语义变化创建新的事件类型。
 
 # 09. 命令幂等：commandId / invocationId
 
@@ -609,3 +644,109 @@ Provider、Tool 和查询可以并行，但任何永久状态变化都必须交�
 
 **130. 问：被 tombstone 的会话或消息是否从查询中物理消失？**
 答：普通视图隐藏，审计和 fork 可达性逻辑仍能访问其历史事实。
+
+# 47. 落盘格式权威规范（RFC 7464 + AG-UI 语义 · 2026-09-29 生效）
+
+> **本节是落盘格式的唯一权威。** 实施前必读。
+> 用词遵循 RFC 2119/8174：**MUST** = 必须，**SHOULD** = 应当，**MAY** = 可以。
+
+## 47.1 为什么落盘不用 AG-UI 事件、也不用 `CUSTOM`
+
+- AG-UI 的信封（`BaseEvent`）**没有**事件身份、生产者身份、版本、持久性保证；
+- 更关键：AG-UI 规定不认识的 `CUSTOM` **MUST ignore** —— 而**账本记录必须不可忽略**，
+  用可忽略的载体装账本自相矛盾；
+- 成熟标准里**没有**覆盖「单文件账本 + 幂等 + 截断恢复」这套语义（Kafka/EventStore/Marten 需外部服务或数据库，已排除）；
+- 所以：**分帧与恢复挂到 RFC 7464，序号机制借 RFC 5848，规范化用 RFC 8785**，
+  **AG-UI 语义只落在载荷内部**。
+
+## 47.2 文件与分帧
+
+| 项 | 规定 |
+|---|---|
+| 文件 | `<data>/events/YYYY-MM-DD.jsonseq`（UTC 日期分片，见决策 6 现行决议） |
+| 媒体类型 | `application/json-seq` |
+| 分帧 | `RS`(0x1E) + 一个 JSON **对象** + `LF`(0x0A) |
+| 顶层类型 | **MUST** 为 JSON 对象（自定界，规避 RFC 7464 §2.4 裸数字截断陷阱） |
+| 追加 | 单写者顺序追加；**MUST NOT** 原地改写历史 |
+
+## 47.3 记录结构
+
+| 字段 | 类型 | 必填 | 规定 |
+|---|---|---|---|
+| `formatVersion` | number | ✓ | 恒为 `2`；读取方只在等于现值时接受 |
+| `commitId` | **string** | ✓ | 全局提交序号；**MUST 为 JSON 字符串**（RFC 8785 附录 D） |
+| `bootId` | string | ✓ | 本次进程启动标识（UUIDv7）；依据 RFC 5848 Reboot Session ID |
+| `source` | string | ✓ | 恒为 `"wanxiang"` |
+| `at` | string | ✓ | RFC 3339，带毫秒与 `Z`（UTC） |
+| `commandId` | string | — | 命令幂等键 |
+| `commandType` | string | — | 命令类型 |
+| `commandHash` | string | — | 规范化载荷哈希（十六进制小写） |
+| `events` | array | ✓ | `[{type, version, data}]`，顺序即应用顺序 |
+
+**字段存在性**：可选字段无值 **MUST** 省略，**MUST NOT** 写 `null`。
+
+## 47.4 事件载荷
+
+- `type` **沿用现有字符串，MUST NOT 重命名**（8 个：`conversation.created` / `.forked` / `.renamed` /
+  `.config-updated` / `.deleted` / `.flags-changed` / `agent-message-recorded` / `message.deleted`）；
+- **唯一有内容的改动**：`agent-message-recorded` 的 `data.payload`（MAF `ChatMessage` JSON）
+  改为 `data.message`（**AG-UI 消息对象**，见 `wanxiang-chat` 决策 19 第二问现行决议）；
+- 其余事件的 `data` 不变。
+
+## 47.5 序号与重启（RFC 5848）
+
+1. `commitId` **MUST** 全局单调递增、跨文件不归零，从 `1` 开始。
+2. 同一 `bootId` 内 `commitId` **MUST** 严格连续（`+1`）。
+3. 进程重启 **MUST** 产生新 `bootId`；新 `bootId` 首个 `commitId` **MUST** 严格大于上一 `bootId` 的最大值。
+4. 读取方 **MUST** 校验序号；同一 `bootId` 内不连续 → 按损坏处理；`bootId` 切换时序号回退 → **MUST 拒绝启动**（**MUST NOT** 静默截断）。
+5. **MUST NOT** 复用被截断提交的号。
+
+## 47.6 规范化与哈希（RFC 8785 JCS）
+
+1. `commandHash` **MUST** = `SHA-256(JCS(规范化命令载荷))`，十六进制小写。
+2. 实现 **MUST** 使用 RFC 8785（JCS），**用库**（`Jcs.Net`），**不得**手写规范化。
+3. **载荷内所有大整数 MUST 以 JSON 字符串承载**。
+4. **规范化输入 MUST 与信封解耦**：仅由「命令类型 + 业务载荷」决定，
+   **MUST NOT** 包含 `formatVersion`/`bootId`/`at` 等信封字段——否则信封换代会让幂等键漂移、重发变重复执行。
+5. 本条**取代**问答 Q146 的手写规范化描述（字段排序 + 数字归一）；Q146 的其余结论（数组保序、忽略纯传输字段）仍然有效。
+
+## 47.7 恢复算法（RFC 7464 §2.1 / §2.3 / §2.4）
+
+读取方 **MUST**：
+
+1. 以 `RS` 切分记录边界；
+2. 逐段尝试解析为 JSON 对象：解析失败 **MUST 跳过并继续**（规范原文：*"SHOULD nonetheless continue parsing the remainder"*）；
+3. 顶层非对象 **MUST 跳过并告警**（§2.4）；
+4. 校验 `formatVersion == 2`，否则跳过并告警；
+5. 校验 `commitId` 连续性（47.5）；
+6. **尾部**不完整记录 **MUST** 丢弃，**MUST NOT** 复用其 `commitId`；
+7. **中间**记录损坏 → **MUST** 报错并对账，**MUST NOT** 静默跳过（区别于尾部截断）；
+8. 所有跳过/丢弃 **MUST** 写入 stderr（结构化 JSON Lines，见 `wanxiang-runtime` Q198）。
+
+## 47.8 完整性边界（诚实声明）
+
+RFC 7464 §3 原文：*"This format provides no cryptographic integrity protection of any kind."*
+
+本格式的完整性**仅**由三者保证：① 序号连续性校验；② 单写者；③ 文件系统。
+**没有** Merkle 证明、**没有**签名（RFC 9162 与 RFC 5848 的签名部分**均未采纳**，负责人 2026-09-29 决定）。
+
+## 47.9 旧数据与迁移
+
+- **旧 `.ndjson` 数据不迁移**（负责人 2026-09-29 拍板）；
+- 实测：改造前 `CommitCodec` 只在 `formatVersion == 现值` 时接受 ⇒ 旧格式改后**读不出来**；
+- `doctor` **MUST** 能识别旧 `.ndjson` 文件并**明确报错说明原因**，**MUST NOT** 静默忽略。
+
+## 47.10 规范依据
+
+| 用途 | 规范 |
+|---|---|
+| 记录分帧、截断恢复 | **RFC 7464** JSON Text Sequences |
+| 序号连续性、重启不回退、丢消息检测 | **RFC 5848** Signed Syslog Messages（取其设计，不取其签名） |
+| JSON 规范化 | **RFC 8785** JCS（库：`Jcs.Net`） |
+| 时间格式 | **RFC 3339** |
+| 错误对象 | **RFC 9457** |
+| 载荷消息语义 | **AG-UI 1.0** |
+
+**实测证据（2026-09-29）**：`Jcs.Net` + `AGUI.Abstractions` 在 `net10.0` 与 `net10.0-browser` 下均可编译；
+JCS 对键序/空白不同的 JSON 产出同一哈希；
+**裸大整数会被静默改写**（`18446744073709551615` → `18446744073709552000`），字符串承载则原样保留。

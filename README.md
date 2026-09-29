@@ -3,7 +3,7 @@
 一个把「对话」当成账本来管的 AI 聊天客户端。
 
 每个实例既是服务端也是客户端：服务端跑模型、存会话、管密钥；客户端只是它的一个视图。
-两者之间只有一条 WebSocket，本机自己连自己也走同一条路径——没有第二套隐藏行为。
+两者之间只有一条 WebSocket，本机自己连自己也走同一条路径——没有第二套隐藏行为。线上走 [AG-UI](https://agentclientprotocol.com) 1.0 事件流。
 
 - **桌面端**（Linux x64）：完整节点，服务端 + 界面
 - **PWA**：纯前端客户端，由服务端托管，通过配对码接入
@@ -214,17 +214,22 @@ defaultModel = "gemini-2.5-flash"
 
 ```
 <data>/
-  events/YYYY-MM-DD.ndjson      事件日志：一行 = 一次原子提交
+  events/YYYY-MM-DD.jsonseq    事件日志：一条 RFC 7464 记录 = 一次原子提交
   attachments/ab/cd/<sha256>    附件，内容寻址（按哈希前四位分片）
   attachments/.tmp/             在途上传
   lock                          单进程锁
 ```
 
 事件日志是唯一权威，界面看到的一切都是它折叠出来的投影。
-重启只靠 TOML + NDJSON + 附件目录就能恢复全部永久状态。
+重启只靠 TOML + 事件日志 + 附件目录就能恢复全部永久状态。
 
 同一数据目录同时只允许一个服务端进程。日志尾部若因断电截断，
-启动时自动截到最后一条完整提交并继续写入，不会静默丢中间数据。
+启动时自动丢弃尾部不完整记录并继续写入，不会静默丢中间数据。
+
+> **格式已改变（2026-09-29）**：日志改用 [RFC 7464](https://www.rfc-editor.org/rfc/rfc7464) JSON Text Sequences
+> （`RS` + JSON 对象 + `LF`，媒体类型 `application/json-seq`），消息载荷采用 [AG-UI](https://agentclientprotocol.com) 1.0 消息模型，
+> 规范化哈希采用 [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) JCS。
+> **旧 `.ndjson` 数据不兼容、不迁移**；`doctor` 会识别并明确指出。
 
 删除会话后，只被它引用的附件会在后台被回收。回收刻意保守：
 只要还有任何存活会话（含其分叉的祖先链，以及已删除的历史消息）
@@ -317,9 +322,10 @@ dotnet test tests/Wanxiang.Tests/Wanxiang.Tests.fsproj -c Debug
 
 | 项目 | 职责 |
 |---|---|
-| `Wanxiang.Core` | 领域类型、事件、投影、命令规划、幂等 |
-| `Wanxiang.Store` | NDJSON 单写者、重放、数据锁 |
-| `Wanxiang.Protocol` | WebSocket 事件编解码 |
+| `Wanxiang.Core` | 领域类型、事件、投影、命令规划、幂等；账本格式内核（`Ledger/`：RFC 7464 分帧、RFC 8785 规范化、恢复） |
+| `Wanxiang.Store` | 提交日志单写者、重放、数据锁 |
+| `Wanxiang.Protocol` | AG-UI 事件编解码（线上格式权威见 `.agents/skills/wanxiang-protocol` 第 55 节） |
+| `Wanxiang.Agui` | AG-UI 语义层：消息映射、宽容读、能力声明、事件出站映射 |
 | `Wanxiang.Config` | TOML 解析与原子重写 |
 | `Wanxiang.Agent` | Provider 调用、消息映射、附件转内容 |
 | `Wanxiang.Server` | 编排、工具与 MCP、附件、连接 |

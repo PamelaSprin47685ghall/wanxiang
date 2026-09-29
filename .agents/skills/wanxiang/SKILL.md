@@ -269,8 +269,8 @@ Linux x64 能以默认 UI+S 模式运行，也能独立 headless S 和 client-on
 | Skill | 内容 |
 |---|---|
 | `wanxiang` | 本总纲：硬约束、SSOT 说明与文档地图、全局术语、平台范围(01)、命名边界与 clean-room(23)、PWA/UI/测试/交付问答(53)、首版完成定义(54) |
-| `wanxiang-store` | 存储与日志：02–09、19、45、46 |
-| `wanxiang-protocol` | 传输协议：14–18、32、47、48 |
+| `wanxiang-store` | 存储与日志：02–09、19、45、46；**落盘格式权威 47** |
+| `wanxiang-protocol` | 传输协议：14–18、32、47、48；**线上格式权威 55** |
 | `wanxiang-chat` | 会话与生成：10–13、35–38、49 |
 | `wanxiang-tools` | Tool 与 MCP：39、40、50 |
 | `wanxiang-attachments` | 附件：33、34、51 |
@@ -278,6 +278,57 @@ Linux x64 能以默认 UI+S 模式运行，也能独立 headless S 和 client-on
 | `wanxiang-auth` | 认证与配对：22、26–28、30、52 认证部分（Q187–190） |
 | `wanxiang-runtime` | 运行与运维：24、25、44 |
 | `wanxiang-principles` | 原则与规则：41–43 |
+| `wanxiang-agui-migration` | **AG-UI 化改造实施指导**：账本内核/语义层代码、服务端与客户端改造步骤、验收标准、实测陷阱（配套第 56 节） |
+| `wanxiang-concurrency-plan` | **⚠️ 临时（迁移完成后删除）**：AG-UI 改造的并发开发步骤指南——契约冻结、worktree 隔离、合并顺序、冲突热点 |
 | `agent-framework` / `avalonia` / `kelivo` | 原 AGENTS.md 尾部三份第三方框架参考文档，原样保留 |
 
-> 默认加载：`.agent/rules/wanxiang-ssot.md`（`alwaysApply: true`）在每次会话注入"任务前先读 `skill://wanxiang`，再按主题读对应 skill"的规则。
+> 加载约定：任务开始前先读本 skill（`skill://wanxiang`），再按上表按主题读对应 skill。
+> （原 `.agent/rules/wanxiang-ssot.md` 注入规则随治理仓清理已不存在，本行即现行约定。）
+
+# 56. AG-UI 化改造记录（2026-09-29）
+
+> 负责人拍板：**传输层与落盘层全部用 AG-UI**、**clean-break**、**不用数据库**、**要成熟规范不要手写**、**有库就用库**。
+
+## 56.1 新增/修订的权威章节
+
+| 主题 | 权威位置 |
+|---|---|
+| 线上格式（AG-UI 事件流） | `wanxiang-protocol` **第 55 节** |
+| 落盘格式（RFC 7464 记录） | `wanxiang-store` **第 47 节** |
+| 消息的落盘权威表示 | `wanxiang-chat` **决策 19 第二问 · 现行决议** |
+| 文件名与分帧 | `wanxiang-store` **决策 6 · 现行决议** |
+| 提交外壳字段与版本 | `wanxiang-store` **决策 12 · 现行决议** |
+| 帧格式与版本协商 | `wanxiang-protocol` **决策 68/69/70 · 现行决议** |
+
+被修订的原始决议**原文保留**在各文件末尾的「原始决议存档」小节（只读，不得作为实现依据）。
+
+## 56.2 采用的规范与库
+
+| 用途 | 规范 | 实现 |
+|---|---|---|
+| 事件流、消息、内容、工具、推理、状态 | AG-UI 1.0 | `AGUI.Abstractions` / `AGUI.Server` / `AGUI.Client` 1.0.0（官方 .NET SDK） |
+| 记录分帧、截断恢复 | RFC 7464 | **自写**（无可用库；规范 8 页） |
+| 序号连续性、重启不回退 | RFC 5848 | **借设计、自写**（无任何 NuGet 包） |
+| JSON 规范化 | RFC 8785 | `Jcs.Net` 0.1.1（MIT、零依赖） |
+| 时间 | RFC 3339 | .NET 内置 |
+| 错误对象 | RFC 9457 | **ASP.NET Core 内置**（`Microsoft.AspNetCore.Mvc.ProblemDetails`） |
+| 用词 | RFC 2119 + RFC 8174 | 文档约定 |
+
+**不采纳**：RFC 9162（负责人排除）；ACP / A2A / CloudEvents / 各类事件存储与数据库（分层不对口或违反单进程约束）。
+
+## 56.3 三条硬约束（违反了会出真 bug，均有实测）
+
+1. **大整数必须 JSON 字符串承载**。RFC 8785 JCS 会把超 double 精度的数字**静默改写**：
+   实测 `18446744073709551615` → `18446744073709552000`。涉及 `commitId` / `messageCommitId` / `forkAfterId`。
+2. **AG-UI 消息序列化必须按运行期类型**。`Serialize(msg, typeof<AGUIMessage>, opts)` 会**静默丢掉 `content`**。
+3. **未知事件必须宽容**。AG-UI 官方 .NET SDK 对未知 `type` 抛 `AGUIUnknownEventTypeException`，
+   与其自家规范矛盾（实测），**必须自建宽容读层**。
+
+## 56.4 旧数据
+
+**不迁移**（负责人 2026-09-29 拍板）。实测：改造前的编解码只在 `formatVersion == 现值` 时接受，
+故旧 `.ndjson` 在改造后**读不出来**。`doctor` **MUST** 识别并明确报错，**MUST NOT** 静默忽略。
+
+## 56.5 实施指导
+
+保姆级分步、已验证的 F# 代码样例、陷阱清单见 **`wanxiang-agui-migration`** skill。

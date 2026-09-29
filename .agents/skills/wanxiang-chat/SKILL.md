@@ -1,6 +1,6 @@
 ---
 name: wanxiang-chat
-description: 万象会话与生成：消息记账、Agent Framework 透明映射、会话归属与并行、排队消息、编辑即 fork、会话生命周期、生成取消与 generationId（决策 10–13/35–38，问答 Q151–160）。
+description: 万象会话与生成：消息记账、AG-UI 消息模型为落盘权威（决策 19 第二问现行决议）、会话归属与并行、排队消息、编辑即 fork、会话生命周期、生成取消与 generationId（决策 10–13/35–38，问答 Q151–160）。
 ---
 
 # 10. 模型生成作为长任务、消息记账
@@ -158,13 +158,34 @@ UserMessage
 
 ## 决策 19（第二问）：完全依赖 Agent Framework 自身序列化
 
+> **⚠️ 本条已于 2026-09-29 修订**：消息的**落盘权威表示**改为 **AG-UI 消息对象**，
+> Agent Framework 消息降为**运行时表示**。原始决议原文保留在本小节末尾「原始决议存档」。
+
 **问题：** 是否同意：首版完全依赖 Agent Framework 自身的 session／消息序列化，不额外维护 Framework schemaVersion；只有我们的 NDJSON 外壳维护 `formatVersion`？
 
 **用户回答（11:40:28，同上）：** 确认同意。
 
-**已确认（11:40:30）：** 首版不额外维护 Agent Framework 的 schemaVersion；只有 NDJSON 提交外壳维护 `formatVersion`。
+**原始决议（11:40:30）：** 首版不额外维护 Agent Framework 的 schemaVersion；只有提交外壳维护 `formatVersion`。
+
+### 现行决议（2026-09-29）
+
+**决策 19 第二问（修订）：消息的权威表示改为 AG-UI 消息模型。**
+- 落盘存的是 **AG-UI 1.0 消息对象**（由官方 `AGUI.Abstractions` 定义），不再存 MAF `ChatMessage` 的 `$type` JSON；
+- MAF `ChatMessage` 降为**运行时表示**，通过官方转换 API 与 AG-UI 消息互转：
+  `AGUIChatMessageExtensions.AsAGUIMessages` / `AsChatMessages`；
+- 依旧**不额外维护** Agent Framework 的 schemaVersion；AG-UI 消息结构的版本由 AG-UI 协议版本管辖；
+- 提交外壳仍由 `formatVersion` 管辖（现为 2）。
+
+**实测依据（2026-09-29）**：以下内容类型在 MAF ↔ AG-UI 往返中**无损**——
+用户文本、系统指令、助手+工具调用、工具结果、推理内容、多模态图片、文本+工具调用混排。
+
+**实现陷阱（实测）**：序列化 AG-UI 消息**必须按运行期类型**；
+`JsonSerializer.Serialize(msg, typeof<AGUIMessage>, opts)` 会**静默丢掉 `content`**。
 
 ## 决策 20：选择消息级序列化
+
+> **⚠️ 本条已于 2026-09-29 部分修订**：消息级序列化的**粒度与记账语义不变**，
+> 仅「消息的 JSON 由谁定义」改变（MAF → AG-UI，见决策 19 第二问现行决议）。
 
 **AI 建议：首版采用消息级序列化，不持久化整个 `AgentSession`。** 永久状态的基本单位是 Agent Framework 给出的每个完整 `ChatMessage`。一次回调若包含多条消息，则保持原顺序，为每条消息分别生成一次 NDJSON 提交：
 
@@ -187,7 +208,7 @@ Agent Framework 的 `ChatHistoryProvider` 本来就是外部存取消息历史�
 对应的首版约束是：**应用自己通过 `ChatHistoryProvider` 管理完整历史，启动时 replay 消息事件构建内存历史，再创建新的运行时 `AgentSession`。不依赖 Provider 服务端保存的 conversation/session ID。** Agent Framework 同时使用本地 `ChatHistoryProvider` 与服务端历史可能发生冲突，其当前实现也将这两种模式视为替代关系。
 
 因此：
-- **NDJSON 权威数据：逐条 Agent Framework `ChatMessage` JSON**
+- **日志权威数据：逐条消息**（2026-09-29 起为 **AG-UI 消息对象**，不再是 MAF `ChatMessage` JSON）
 - **内存状态：replay 后的有序消息集合**
 - **`AgentSession`：运行时对象，可随进程退出而丢弃**
 - **未来周度压缩：可引入 session 或应用状态快照，但不属于首版**
