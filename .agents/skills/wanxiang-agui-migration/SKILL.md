@@ -346,11 +346,13 @@ module MessageMap =
     let private opts = AGUIJsonSerializerContext.Default.Options
 
     /// MAF → AG-UI 消息对象（JsonNode）。
-    /// **MUST 按运行期类型序列化**：传 typeof<AGUIMessage> 会静默丢掉 content。
+    /// **MUST 按 typeof<AGUIMessage> 序列化**（2026-09-29 实测修正，方向与初稿相反）：
+    /// 按运行期类型（如 AGUIUserMessage）会静默丢掉 content；按基类 AGUIMessage 反而保留。
+    /// 官方 converter 挂在基类上，子类各自的序列化上下文没带它。
     let toAgui (msg: ChatMessage) : JsonNode =
         let list = AGUIChatMessageExtensions.AsAGUIMessages([msg], opts) |> List.ofSeq
         match list with
-        | [m] -> JsonNode.Parse(JsonSerializer.Serialize(m, m.GetType(), opts))
+        | [m] -> JsonNode.Parse(JsonSerializer.Serialize(m, typeof<AGUIMessage>, opts))
         | _ -> failwithf "expected exactly one AG-UI message, got %d" list.Length
 
     /// AG-UI 消息对象 → MAF ChatMessage。
@@ -501,6 +503,36 @@ match TolerantReader.parse text with
 
 ---
 
+## 7.5 实施现状（2026-09-29 · 全部落地）
+
+| 流 | 状态 | 证据 |
+|---|---|---|
+| A 账本内核 | ✅ 完成 | `src/Wanxiang.Core/Ledger/`，EventLogTests 18 个全绿 |
+| B AG-UI 语义层 | ✅ 完成 | `src/Wanxiang.Agui/` + `Wanxiang.Agent/MessageMap.fs`，测试全绿 |
+| C 服务端线协议 | ✅ 完成 | WsConnection 收发走 `WireAgui`（WireAguiTests 12 个全绿 + e2e 9 场景全绿） |
+| D 客户端/UI | ✅ 完成 | WsClient 收发走 `WireAgui`；AppShell 语义分发面**未动**（语义层不换，承载层换——这正是方案 Y 的意义） |
+| E 落盘切换 | ✅ 完成 | `.jsonseq` + RS 分帧 + bootId/source；CanonicalJson 已删，Jcs 上位 |
+| F 收口 | ✅ 完成 | 587/587 全绿；并行测试 8/8 稳定 |
+
+### 验收 7 条的实测状态
+
+1. build 0 警告 0 错误 ✅
+2. test 全绿（587/587）✅
+3. **互操作（官方 AGUIChatClient 直连）**：⚠️ **未达**。官方客户端是 run 请求-响应模型（`IChatClient` + `IAGUITransport`），万象是 fire-and-forget 对称事件流（决策 25）——语义面不对齐。直连需要万象暴露 run 语义端点（首版范围外）；`IAGUITransport` 可自定义传输，写 WS 桥接是明确的后续项。
+4. 超集（observe/catch-up/幂等/附件/配置）✅（e2e 9 场景）
+5. 宽容性（未知 type 不断连）✅（WireAguiTests 3 个护栏 + 服务端 stderr 告警路径）
+6. 截断恢复 ✅（EventLogTests：尾部截断/中间损坏/序号空洞/跨代回退）
+7. 大整数 ✅（EventLogTests：字符串承载/裸数字被改写钉成回归）
+
+### 架构落点（与原方案的差异，实测驱动）
+
+- **方案 Y（外壳适配）取代方案 X（全量重写）**：56 个 WireEvent 变体保留为语义层，
+  `WireAgui` 在边界做承载映射。WsConnection/AppShell/WsClient 的语义分发**零改动**。
+- **`Avalonia.Headless.XUnit` 不可用**（上游 #21467 死锁 / #22021 毒化），
+  改用裸 xunit.v3 + `HeadlessUnitTestSession`（见 `tests/Wanxiang.Tests/Headless.fs`）。
+- **E2 陷阱方向修正**：AGUI 消息按**基类** `typeof<AGUIMessage>` 序列化才保留 content，
+  按运行期类型会丢（与初稿相反）。
+
 ## 8. 验收标准
 
 1. `dotnet build src/Wanxiang.slnx -c Debug` → **0 警告 0 错误**
@@ -527,7 +559,7 @@ cp -a /tmp/wanxiang-backup-YYYY-MM-DD <数据目录>
 
 | # | 坑 | 症状 | 对策 |
 |---|---|---|---|
-| 1 | AG-UI 序列化按静态类型 | `content` 字段静默消失 | 一律用 `m.GetType()` |
+| 1 | AG-UI 消息序列化方向 | 按运行期类型（AGUIUserMessage 等）序列化会**静默丢 `content`** | **一律用 `typeof<AGUIMessage>`**（converter 挂在基类上）|
 | 2 | 官方 SDK 未知事件抛异常 | 收到新事件就断连 | 用 `TolerantReader` 包一层 |
 | 3 | JCS 改写大整数 | `18446744073709551615` → `...52000` | 大整数一律 JSON 字符串 |
 | 4 | RFC 7464 裸数字截断 | `RS` + 裸数字被误判 | 记录顶层恒为对象 |

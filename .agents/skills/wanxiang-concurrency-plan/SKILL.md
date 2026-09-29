@@ -66,56 +66,64 @@ Wave 3                 F 测试重做（e2e）
 5. 在各自的 fsproj 里**一次性登记全部** `<Compile Include>`（含尚未写的文件）
 6. 在 `tests/Wanxiang.Tests/Wanxiang.Tests.fsproj` 登记 `EventLogTests.fs`、`AguiMappingTests.fs`
 
-### 2.2 冻结的接口契约（各流按此实现，**不得单方修改**）
+### 2.2 冻结的接口契约（已落地，见各自源文件）
+
+> **现状**：Wave 0 起这批签名已用**实现**落进仓库（不是空骨架），
+> 各流按此实现，**不得单方修改**。模块均带 `[<RequireQualifiedAccess>]`。
 
 ```fsharp
-// ── 流 A 提供（namespace Wanxiang.Core.Ledger）──
-module Jcs =
-    val canonicalize : string -> byte[]
-    val canonicalizeToString : string -> string
+// ── 流 A 提供：src/Wanxiang.Core/Ledger/*.fs（namespace Wanxiang.Core.Ledger）──
+module Jcs =                     // Ledger/Jcs.fs
+    val canonicalizeUtf8 : string -> byte[]
+    val canonicalize : string -> string
     val sha256Hex : string -> string
     val trySha256Hex : string -> string option
 
-module Frame =
-    val RS : byte          // 0x1E
-    val LF : byte          // 0x0A
+module Frame =                   // Ledger/Frame.fs
+    val RS : byte                // 0x1E
+    val LF : byte                // 0x0A
     val encode : string -> byte[]
     val split : ReadOnlySpan<byte> -> (byte[] * bool) list
 
-type LedgerRecord = {
+type LedgerRecord = {            // Ledger/Record.fs
     formatVersion: int; commitId: uint64; bootId: Guid; source: string
     at: DateTimeOffset
     commandId: string option; commandType: string option; commandHash: string option
-    events: System.Text.Json.Nodes.JsonArray
+    events: System.Text.Json.Nodes.JsonArray   // 注意是 Array，不是 Object
 }
-
 module Record =
     val FormatVersion : int      // = 2
     val toJson : LedgerRecord -> string
     val tryFromJson : string -> Result<LedgerRecord, string>
 
-type RecoveryOutcome = {
+type RecoveryOutcome = {         // Ledger/Recovery.fs
     records: LedgerRecord list
-    truncatedBytes: int
-    skippedSegments: int
-    warnings: string list
+    truncatedBytes: int; skippedSegments: int; warnings: string list
 }
 module Recovery =
     val recover : byte[] -> RecoveryOutcome
 
-// ── 流 B 提供（namespace Wanxiang.Agui）──
-module MessageMap =
-    val toAgui : Microsoft.Extensions.AI.ChatMessage -> System.Text.Json.Nodes.JsonNode
-    val tryToMaf : System.Text.Json.Nodes.JsonNode -> Microsoft.Extensions.AI.ChatMessage option
+// ── 流 B 提供：src/Wanxiang.Agui/*.fs（namespace Wanxiang.Agui）──
+// 工程只依赖 AGUI.Abstractions + Core + Protocol（不引入未用包）。
+module Capabilities =            // Capabilities.fs
+    val ProtocolVersion : string // "1.0"
+    val Namespace : string       // "wanxiang.dev/"
+    val extensions : string list
 
+type ParsedEvent =               // TolerantReader.fs
+    | Known of AGUI.Abstractions.BaseEvent
+    | Unrecognized of typeName: string
+    | Malformed of reason: string
+    | Custom of name: string * value: System.Text.Json.Nodes.JsonNode
 module TolerantReader =
-    type Parsed =
-        | Known of AGUI.Abstractions.BaseEvent
-        | Unrecognized of typeName: string
-        | Malformed of reason: string
-        | Custom of name: string * value: System.Text.Json.Nodes.JsonNode
-    val parse : string -> Parsed
+    val parse : string -> ParsedEvent
 ```
+
+**消息模型映射（MAF ⇄ AG-UI）放哪**：`Wanxiang.Agui` **不**依赖 `Microsoft.Extensions.AI`；
+MAF `ChatMessage` ⇄ AG-UI 消息对象的映射属于 **Agent 层**（`Wanxiang.Agent` 已持有 MAF）。
+流 B 不再提供 `MessageMap`——它在流 D 范围内的 `Wanxiang.Agent` 中。
+（此条修订了原计划把 MessageMap 放进 Agui 工程的设想：那会为了一个映射函数把
+`Microsoft.Extensions.AI` 拖进线协议工程，属于不必要的重量。）
 
 **冻结规则**：
 - 任何流需要改契约 → **必须**先通知其余流并同步更新本节，**不许**各自改签名；

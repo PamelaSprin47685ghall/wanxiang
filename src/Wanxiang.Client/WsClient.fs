@@ -109,12 +109,12 @@ type WsClient() =
             else return false
         }
 
-    member this.TrySendAsync(ev: WireEvent) : Task<bool> = this.TrySendTextAsync(WireCodec.encode ev, None)
+    member this.TrySendAsync(ev: WireEvent) : Task<bool> = this.TrySendTextAsync(WireAgui.encode ev, None)
     member this.TrySendCommandAsync(cmd: ClientCommand) : Task<bool> = this.TrySendTextAsync(WireCodec.encodeCommand cmd, None)
     member this.TrySendCommandAtGenerationAsync(generation: int, cmd: ClientCommand) : Task<bool> =
         this.TrySendTextAsync(WireCodec.encodeCommand cmd, Some generation)
     member this.TrySendAtGenerationAsync(generation: int, ev: WireEvent) : Task<bool> =
-        this.TrySendTextAsync(WireCodec.encode ev, Some generation)
+        this.TrySendTextAsync(WireAgui.encode ev, Some generation)
 
     /// 保留原有 API；需要用户反馈的调用方使用 TrySend 系列。
     member this.SendAsync(ev: WireEvent) : Task =
@@ -156,12 +156,14 @@ type WsClient() =
                         if result.EndOfMessage then
                             let text = Encoding.UTF8.GetString(ms.ToArray())
                             ms.SetLength 0L
-                            match WireCodec.tryDecode text with
-                            | Ok ev when isCurrent () ->
+                            // AG-UI 承载：宽容解码。未知类型（Ok None）与解码失败都忽略——
+                            // 客户端对协议错误的兜底是重连，不是断言（与服务端的严格度不同）。
+                            match WireAgui.tryDecode text with
+                            | Ok(Some ev) when isCurrent () ->
                                 onConnectionEvent.Trigger(generation, ev)
                                 onEvent.Trigger ev
-                            | Ok _ -> ()
-                            | Error _ -> ()
+                            | Ok(Some _) -> ()
+                            | Ok None | Error _ -> ()
                 if shouldNotify then closed None
             with
             | :? OperationCanceledException -> if shouldNotify then closed None

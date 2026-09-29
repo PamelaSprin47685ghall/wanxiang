@@ -78,7 +78,7 @@ let private stubActions
 
 [<Fact>]
 let ``switch row consumes the shared settings row height and toggle semantics`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let row, read, write = Ui.switchRow "测试开关" "用于验证开关行契约。" true ignore
     Assert.Equal(ControlMetrics.settingsRowMinHeight, row.MinHeight, 3)
     Assert.Equal(ControlMetrics.rowMinHeight, ControlMetrics.settingsRowMinHeight, 3)
@@ -88,26 +88,30 @@ let ``switch row consumes the shared settings row height and toggle semantics`` 
     Assert.False(read ())
     Assert.Equal("关闭", AutomationProperties.GetItemStatus(row))
     Assert.Equal(Tokens.radiusMd, (row :?> Border).CornerRadius.TopLeft, 3)
+    )
 
 [<Fact>]
 let ``settings row and text area metrics keep single sources`` () =
+    Headless.run (fun () ->
     Assert.Equal(ControlMetrics.rowMinHeight, ControlMetrics.settingsRowMinHeight, 3)
     Assert.True(ControlMetrics.textAreaMinHeight > 0.0)
     Assert.True(ControlMetrics.textAreaLongMinHeight > ControlMetrics.textAreaMinHeight)
+    )
 
 [<Fact>]
 let ``validation feedback with a single error toasts the message and hides the summary`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let box = TextBox()
     let summary = TextBlock(IsVisible = true, Focusable = true)
     let toasts = ResizeArray<string>()
     Ui.applyValidationFeedback [ box, "内容不能为空。" ] (Some summary) (fun message -> toasts.Add message)
     Assert.Equal<string list>([ "内容不能为空。" ], List.ofSeq toasts)
     Assert.False(summary.IsVisible)
+    )
 
 [<Fact>]
 let ``validation feedback with multiple errors fills the focusable summary`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let first = TextBox()
     let second = TextBox()
     let summary = TextBlock(IsVisible = false, Focusable = true)
@@ -116,21 +120,23 @@ let ``validation feedback with multiple errors fills the focusable summary`` () 
     Assert.True(summary.IsVisible)
     Assert.Equal("有 2 处需要修正：甲错；乙错", summary.Text)
     Assert.Equal<string list>([ "有 2 处需要修正，请查看表单顶部摘要。" ], List.ofSeq toasts)
+    )
 
 [<Fact>]
 let ``validation feedback with no errors stays silent and hides the summary`` () =
+    Headless.run (fun () ->
     // Ui 模块顶层建有 Cursor（handCursor）：触碰其任何成员前必须先 ensure，
     // 否则模块静态构造在无 ICursorFactory 的进程里直接炸。
-    Headless.ensure ()
     let summary = TextBlock(IsVisible = true)
     let toasts = ResizeArray<string>()
     Ui.applyValidationFeedback [] (Some summary) (fun message -> toasts.Add message)
     Assert.False(summary.IsVisible)
     Assert.Equal(0, toasts.Count)
+    )
 
 [<Fact>]
 let ``warning tag tone uses the warning brush while neutral stays muted`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let warning = Ui.tagWith Ui.TagTone.Warning "缺少密钥"
     let neutral = Ui.tag "已配置"
     let warningBorder = warning
@@ -139,10 +145,11 @@ let ``warning tag tone uses the warning brush while neutral stays muted`` () =
     Assert.Equal(Tokens.warning.Color, ((warningBorder.Child :?> TextBlock).Foreground :?> SolidColorBrush).Color)
     Assert.Equal(Tokens.border.Color, (neutralBorder.BorderBrush :?> SolidColorBrush).Color)
     Assert.Equal(Tokens.textMuted.Color, ((neutralBorder.Child :?> TextBlock).Foreground :?> SolidColorBrush).Color)
+    )
 
 [<Fact>]
 let ``generation form consumes shared column spacing and text metrics`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let toasts = ResizeArray<string * ToastTone>()
     let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
     let built = general.BuildGeneration()
@@ -166,6 +173,7 @@ let ``generation form consumes shared column spacing and text metrics`` () =
             | _ -> None)
         |> Seq.length
     Assert.True(switchRows >= 1, "生成表单至少有一个开关行走共享行最小高")
+    )
 
 // 生成设置是设置区唯一不认 Ctrl+Enter 的表单：本地其余表单（服务商 / MCP / 会话参数）
 // 全部「Ctrl/⌘+Enter 保存」。补上同样的行级 KeyDown，并把键位写进按钮的无障碍说明，
@@ -181,7 +189,7 @@ let ``generation form consumes shared column spacing and text metrics`` () =
 // listener 失焦即落库。锁：数值框失焦真的触发 updateGeneration。
 [<Fact>]
 let ``editing a generation number and moving away commits it`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let toasts = ResizeArray<string * ToastTone>()
     let saved = ResizeArray<JsonObject>()
     let general =
@@ -225,10 +233,11 @@ let ``editing a generation number and moving away commits it`` () =
         Assert.Equal(321, int (payload.["maxContextMessages"].GetValue<int>()))
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``generation save button advertises the ctrl enter shortcut`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let toasts = ResizeArray<string * ToastTone>()
     let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
     let built = general.BuildGeneration()
@@ -240,10 +249,11 @@ let ``generation save button advertises the ctrl enter shortcut`` () =
         :?> Border
     Assert.Equal<string>("保存生成设置 (Ctrl+Enter)", AutomationProperties.GetHelpText saveButton)
     Assert.Equal<string>("保存生成设置 (Ctrl+Enter)", ToolTip.GetTip saveButton :?> string)
+    )
 
 [<Fact>]
 let ``about section drops the misplaced spacer`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let toasts = ResizeArray<string * ToastTone>()
     let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
     let built = general.BuildAbout("instance-1", "ws://127.0.0.1:8765/ws")
@@ -261,10 +271,11 @@ let ``about section drops the misplaced spacer`` () =
             | _ -> false)
         |> Seq.length
     Assert.True(hairlines >= 1, "关于区应在信息行与操作按钮之间保留一条发丝线")
+    )
 
 [<Fact>]
 let ``disabled mcp card dims its text while keeping row actions alive`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let overlayHost = overlay ()
     let toasts = ResizeArray<string * ToastTone>()
     let tools = SettingsTools(overlayHost, stubActions toasts (fun _ completed -> completed true))
@@ -285,10 +296,11 @@ let ``disabled mcp card dims its text while keeping row actions alive`` () =
     let rowActionButtons = iconButtons built |> Seq.toList
     Assert.True(rowActionButtons.Length >= 2, "已停用 MCP 卡仍应暴露编辑与更多按钮")
     Assert.All(rowActionButtons, fun button -> Assert.True(button.IsEnabled && button.IsHitTestVisible))
+    )
 
 [<Fact>]
 let ``missing key reads as warning tag and disabled provider dims its text`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let overlayHost = overlay ()
     let toasts = ResizeArray<string * ToastTone>()
     let providers = SettingsProviders(overlayHost, stubActions toasts (fun _ completed -> completed true))
@@ -327,10 +339,11 @@ let ``missing key reads as warning tag and disabled provider dims its text`` () 
     let rowActionButtons = iconButtons built |> Seq.toList
     Assert.True(rowActionButtons.Length >= 4, "每个服务商行都应保留编辑与更多按钮")
     Assert.All(rowActionButtons, fun button -> Assert.True(button.IsEnabled && button.IsHitTestVisible))
+    )
 
 [<Fact>]
 let ``generation save failure surfaces a failure toast instead of silence`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let toasts = ResizeArray<string * ToastTone>()
     let general =
         SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed false), ignore)
@@ -348,10 +361,11 @@ let ``generation save failure surfaces a failure toast instead of silence`` () =
         |> Seq.exists (fun (message, tone) -> message = "保存失败，请重试。" && tone = ToastTone.Failure),
         "保存失败必须给出 Failure 档提示，不能静默。")
     Assert.Equal("保存生成设置", AutomationProperties.GetName(saveButton))
+    )
 
 [<Fact>]
 let ``settings window title dominates section headings`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlayHost = OverlayHost(root)
     let actions: SettingsActions =
@@ -374,10 +388,11 @@ let ``settings window title dominates section headings`` () =
     // 窗口（页面主标题）应不小于小节标题，消除「标题 < 小节标题」的层级倒挂。
     Assert.True(windowTitle.FontSize >= sectionHeading.FontSize, "窗口标题应不小于小节标题")
     Assert.True(windowTitle.FontSize >= Tokens.fontHeading, "窗口标题应达到区块标题档（Ui.heading = fontHeading）")
+    )
 
 [<Fact>]
 let ``appearance and about consume new metrics tokens and content-tier dividers`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let toasts = ResizeArray<string * ToastTone>()
     let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
     // 字号槽宽走 token（原裸 56.0）
@@ -406,10 +421,11 @@ let ``appearance and about consume new metrics tokens and content-tier dividers`
             | _ -> false)
         |> Seq.length
     Assert.Equal(0, chromeTierDividers)
+    )
 
 [<Fact>]
 let ``built-in tool row title shares the row-title body font`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let overlayHost = overlay ()
     let toasts = ResizeArray<string * ToastTone>()
     let tools = SettingsTools(overlayHost, stubActions toasts (fun _ completed -> completed true))
@@ -422,13 +438,14 @@ let ``built-in tool row title shares the row-title body font`` () =
         |> Option.defaultWith (fun () -> failwith "内置工具行缺少名称文本")
     // 与 MCP 行名、服务商行名同一「行标题」角色，统一 fontBody（此前本地用 fontSmall）。
     Assert.Equal(Tokens.fontBody, nameBlock.FontSize, 3)
+    )
 
 [<Fact>]
 let ``generation form fields sit inside a grouping card`` () =
+    Headless.run (fun () ->
     // Generation 面板的数值表单、指令框与开关行收进分组卡（与 Appearance / About 同档的
     // 面板卡：surfaceContainer + hairline + 1px），不再裸露成 vstack。判定特征与
     // PresentationRefreshTests 对 BuildAppearance groupingCards >= 1 的既有断法同一套。
-    Headless.ensure ()
     let toasts = ResizeArray<string * ToastTone>()
     let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
     let built = general.BuildGeneration()
@@ -443,4 +460,5 @@ let ``generation form fields sit inside a grouping card`` () =
             && border.BorderThickness = Thickness 1.0)
         |> Seq.toList
     Assert.True(List.length groupingCards >= 1, "生成表单字段应收进至少一张 Ui.groupingCard 分组卡")
+    )
 

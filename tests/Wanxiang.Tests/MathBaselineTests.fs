@@ -11,7 +11,6 @@ open Avalonia.Media
 open Avalonia.Media.Imaging
 open Avalonia.Threading
 open Xunit
-open Xunit.Abstractions
 open Wanxiang.UI
 open Wanxiang.Tests
 
@@ -31,7 +30,6 @@ type Baseline(output: ITestOutputHelper) =
     let scale = 4.0
 
     member private _.Compose() =
-        Headless.ensure ()
         let html =
             let dir = Path.GetDirectoryName(typeof<FixtureBackend>.Assembly.Location)
             File.ReadAllText(Path.Combine(dir, "fixtures", "inline-emc2.html"))
@@ -95,6 +93,7 @@ type Baseline(output: ITestOutputHelper) =
 
     [<Fact>]
     member this.``行内公式与正文共用同一条基线``() =
+        Headless.run (fun () ->
         let textBottom, mathBottom = this.Compose()
         let delta = float (mathBottom - textBottom) / scale
         output.WriteLine(
@@ -102,12 +101,13 @@ type Baseline(output: ITestOutputHelper) =
         Assert.True(textBottom > 0, "没量到正文墨迹")
         Assert.True(mathBottom > 0, "没量到公式墨迹")
         Assert.True(abs delta <= 1.0, $"基线落差 {delta:F2}pt，应当在 1pt 以内")
+        )
 
 // 公式渲染出来的是自绘图形：读屏看到的是一块空白。原式进自动化名与 ToolTip，
 // 听得到、悬停看得见。Kelivo 把 TeX 原文暴露给文本朗读，同一意图的更彻底版本。
 [<Fact>]
 let ``rendered inline math exposes its tex source`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let dir = Path.GetDirectoryName(typeof<FixtureBackend>.Assembly.Location)
     let html = File.ReadAllText(Path.Combine(dir, "fixtures", "inline-emc2.html"))
     RichBackend.install(FixtureBackend html)
@@ -133,3 +133,4 @@ let ``rendered inline math exposes its tex source`` () =
         | None -> failwith "公式排不出来"
     finally
         window.Close()
+    )

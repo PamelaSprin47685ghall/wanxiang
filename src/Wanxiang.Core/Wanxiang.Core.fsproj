@@ -7,8 +7,11 @@
 
   <ItemGroup>
     <Compile Include="Types.fs" />
+    <Compile Include="Ledger\Jcs.fs" />
+    <Compile Include="Ledger\Frame.fs" />
+    <Compile Include="Ledger\Record.fs" />
+    <Compile Include="Ledger\Recovery.fs" />
     <Compile Include="PlainText.fs" />
-    <Compile Include="CanonicalJson.fs" />
     <Compile Include="CommandId.fs" />
     <Compile Include="SessionConfig.fs" />
     <Compile Include="Events.fs" />
@@ -16,6 +19,11 @@
     <Compile Include="Projection.fs" />
     <Compile Include="WireCommands.fs" />
     <Compile Include="CommandEngine.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- RFC 8785 JCS 规范化：取代手写 CanonicalJson。 -->
+    <PackageReference Include="Jcs.Net" Version="0.1.1" />
   </ItemGroup>
 
 </Project>

@@ -26,6 +26,14 @@ module Constants =
     [<Literal>]
     let WsPath = "/ws"
 
+    /// 提交来源默认值（诊断字段；服务端单写者会覆盖为真实实例标识）。
+    [<Literal>]
+    let DefaultSource = "wanxiang"
+
+    /// 测试/无服务端场景下的哨兵 bootId：全零表示「未指定进程世代」。
+    /// 真实提交由单写者赋真实 bootId（RFC 5848 语义）。
+    let DefaultBootId = Guid.Empty
+
 /// 单次生成用量（generation.finished 透传，不落 NDJSON）。
 type GenerationUsage = {
     promptTokens: int option

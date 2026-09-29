@@ -28,7 +28,6 @@ let private byAutomationName (root: Control) (name: string) =
 
 /// 把内容装进一个真实窗口并跑一次布局，令浮层 / 焦点 / 定位的 UI 线程作业落地。
 let private show (content: Control) width height =
-    Headless.ensure ()
     let window = Window(Width = width, Height = height, Content = content)
     window.Show()
     Dispatcher.UIThread.RunJobs()
@@ -38,30 +37,32 @@ let private show (content: Control) width height =
 // 这里钉住令牌数值，既防止有人改回内联字面量，也防止 token 漂移。
 [<Fact>]
 let toast_dwell_timings_are_owned_by_MotionLedger () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     Assert.Equal(9000.0, MotionLedger.toastDwellFailure.TotalMilliseconds, 3)
     Assert.Equal(6500.0, MotionLedger.toastDwellWarning.TotalMilliseconds, 3)
     Assert.Equal(4000.0, MotionLedger.toastDwellDefault.TotalMilliseconds, 3)
     Assert.Equal(300.0, MotionLedger.toastFade.TotalMilliseconds, 3)
+    )
 
 // 下拉钮垂直内边距引 ControlMetrics.selectButtonPaddingY（单一来源），水平仍是 space3。
 // 数值恰为 6.0、与旧内联一致，故此测试锁的是「取值随 token 走」这一权威来源。
 [<Fact>]
 let select_button_vertical_padding_is_anchored_to_ControlMetrics () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let host, setText = Menu.selectButton (OverlayHost(Grid())) "模型" (fun () -> [])
     Assert.Equal(ControlMetrics.selectButtonPaddingY, host.Padding.Top, 3)
     Assert.Equal(ControlMetrics.selectButtonPaddingY, host.Padding.Bottom, 3)
     Assert.Equal(Tokens.space3, host.Padding.Left, 3)
     Assert.Equal(Tokens.space3, host.Padding.Right, 3)
     setText "已切换"
+    )
 
 // 下拉钮必须有可播报的自动化名：ComboBox 语义没有名字时读屏用户 Tab 过去只听到
 // 空控件名，分不清这是什么设置。名字随显示文本同步刷新——调用方（如模型 chip）
 // 已命名过的按钮不被覆盖。
 [<Fact>]
 let select_button_carries_an_automation_name_that_tracks_the_text () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let host, setText = Menu.selectButton (OverlayHost(Grid())) "跟随系统" (fun () -> [])
     Assert.Equal("跟随系统", AutomationProperties.GetName host)
     setText "浅色"
@@ -71,12 +72,13 @@ let select_button_carries_an_automation_name_that_tracks_the_text () =
     AutomationProperties.SetName(named, "切换模型")
     setText "无所谓" |> ignore
     Assert.Equal("切换模型", AutomationProperties.GetName named)
+    )
 
 // 按压反馈只写不透明度、不改几何契约：非按压态整层不透明度满值，MinHeight 仍由 ControlMetrics 供给。
 // 注：本无头套件不注入原始指针事件，「按下→0.78 / 松开→1.0」的迁移不在此自动化覆盖，交真机/DevOps 判定。
 [<Fact>]
 let select_button_and_menu_items_keep_full_opacity_until_pressed () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let anchor = Border()
     root.Children.Add anchor
@@ -94,11 +96,12 @@ let select_button_and_menu_items_keep_full_opacity_until_pressed () =
         Assert.Equal(ControlMetrics.menuItemMinHeight, item.MinHeight, 3)
     finally
         window.Close()
+    )
 
 // 删除 focus 死代码后行为不变：提示条仍 Focusable=false、Escape 仍按 topmost-first 解散最新一条。
 [<Fact>]
 let toast_stays_non_focusable_and_escape_dismisses_it () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     overlay.Toast("已保存", ToastTone.Neutral)
@@ -115,11 +118,12 @@ let toast_stays_non_focusable_and_escape_dismisses_it () =
         descendants root
         |> Seq.exists (fun control -> AutomationProperties.GetName(control) = "已保存")
     Assert.False(stillPresent)
+    )
 
 // 减弱动效下 toast 退场即时移除（无淡出、零等待），保持可预期的关闭手感。
 [<Fact>]
 let toast_removes_immediately_under_reduced_motion () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     MotionPolicy.setReduced true
@@ -132,3 +136,4 @@ let toast_removes_immediately_under_reduced_motion () =
         Assert.False(present)
     finally
         MotionPolicy.setReduced false
+    )

@@ -45,7 +45,7 @@ module Replay =
                  lastDateUtc = DateTime.UtcNow.Date }
         else
             let files =
-                Directory.GetFiles(eventsDir, "*.ndjson")
+                Directory.GetFiles(eventsDir, "*.jsonseq")
                 |> Array.map (fun p -> Path.GetFileName p, p)
                 |> Array.sortBy fst
                 |> Array.toList
@@ -65,22 +65,21 @@ module Replay =
                 let mutable stop = false
                 let mutable currentDamage: Damage option = None
 
-                let processLine (path: string) (lineNumber: int) (line: string) : bool =
-                    // 行内可能含尾部 \r（跨平台文件）——NDJSON 以 \n 结尾
-                    let line = line.TrimEnd('\r', '\n')
-                    if String.IsNullOrWhiteSpace line then
+                let processRecord (path: string) (recordNumber: int) (record: string) : bool =
+                    // 一条 RFC 7464 记录（已剥去 RS/LF）
+                    if String.IsNullOrWhiteSpace record then
                         true
                     else
-                        match CommitCodec.tryCommitFromJsonLine line with
+                        match CommitCodec.tryCommitFromJsonLine record with
                         | None ->
                             currentDamage <-
-                                Some(DamageAt(path, 0L, sprintf "line %d: unparseable commit" lineNumber))
+                                Some(DamageAt(path, 0L, sprintf "record %d: unparseable commit" recordNumber))
                             false
                         | Some commit ->
                             if commit.id <> expectedId then
                                 currentDamage <-
                                     Some
-                                        (DamageAt(path, 0L, sprintf "line %d: id %d out of order; expected %d" lineNumber commit.id expectedId))
+                                        (DamageAt(path, 0L, sprintf "record %d: id %d out of order; expected %d" recordNumber commit.id expectedId))
                                 false
                             else
                                 match Projection.applyCommit projection commit with
@@ -94,68 +93,79 @@ module Replay =
                                 | Error err ->
                                     currentDamage <-
                                         Some
-                                            (DamageAt(path, 0L, sprintf "line %d: projection failed: %s" lineNumber (WanxiangError.message err)))
+                                            (DamageAt(path, 0L, sprintf "record %d: projection failed: %s" recordNumber (WanxiangError.message err)))
                                     false
 
-                // 逐字节扫描单个文件（正确处理 \n 与 \r\n；StreamReader.ReadLine 会剥离 \r，无法用于偏移计算）。
-                // 返回 true 表示文件完整处理；false 表示发现损坏（bytesRead 回退到损坏行行首）。
+                // 逐字节扫描单个文件，按 RFC 7464 分帧：记录 = RS(0x1E) + JSON + LF(0x0A)。
+                // 保留偏移语义：损坏记录回退到该记录的 RS 起点（= 有效前缀末尾）。
+                // 返回 true 表示文件完整处理；false 表示发现损坏。
                 let scanFile (name: string) (path: string) : bool =
                     use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
                     let buf = Array.zeroCreate<byte> (64 * 1024)
-                    // 当前行字节缓冲（行结束时用 Encoding.UTF8 整体解码，避免逐字节当 char 拼出乱码）
-                    let lineBytes = new System.IO.MemoryStream()
-                    let mutable lineNumber = 0
+                    // 当前记录字节缓冲（RS 到 LF 之间，含 LF；不含 RS）
+                    let recBytes = new System.IO.MemoryStream()
+                    let mutable recordNumber = 0
                     let mutable bytesRead = 0L
-                    let mutable lineStartOffset = 0L
-                    let mutable lineOk = true
+                    let mutable recordStartOffset = 0L
+                    let mutable recordOk = true
                     let mutable eof = false
-                    let flushLine () : bool =
-                        // 解码当前行并交给 processLine；返回 true=该行有效
-                        let raw = lineBytes.ToArray()
-                        lineBytes.SetLength 0L
-                        // 严格 UTF-8 解码（决策 8/10）：非法字节序列视为损坏行，触发截尾而非静默 U+FFFD 入库
-                        let line =
+                    let flushRecord (terminated: bool) : bool =
+                        // 解码当前记录并交给 processRecord；terminated=false 表示尾部无 LF（截断）
+                        let raw = recBytes.ToArray()
+                        recBytes.SetLength 0L
+                        // 严格 UTF-8 解码（决策 8/10）：非法字节序列视为损坏记录，触发截尾而非静默 U+FFFD 入库
+                        let record =
                             try
                                 (UTF8Encoding(false, true)).GetString(raw)
                             with :? System.Text.DecoderFallbackException ->
                                 currentDamage <-
-                                    Some(DamageAt(path, lineStartOffset, sprintf "line %d: invalid UTF-8 sequence" (lineNumber + 1)))
+                                    Some(DamageAt(path, recordStartOffset, sprintf "record %d: invalid UTF-8 sequence" (recordNumber + 1)))
                                 ""
-                        lineNumber <- lineNumber + 1
+                        recordNumber <- recordNumber + 1
                         if currentDamage.IsSome then false
-                        else processLine path lineNumber (line.TrimEnd('\r'))
-                    while not eof && lineOk do
+                        else
+                            let payload = if terminated && record.EndsWith "\n" then record.TrimEnd '\n' else record
+                            processRecord path recordNumber payload
+                    while not eof && recordOk do
                         let n = fs.Read(buf, 0, buf.Length)
                         if n = 0 then
                             eof <- true
-                            if lineBytes.Length > 0L then
-                                // 尾行无换行：仍作为一行处理（损坏判定交给 processLine）
-                                if not (flushLine ()) then
-                                    // 回退到行首（有效前缀末尾，不含损坏行字节）
-                                    bytesRead <- lineStartOffset
-                                    lineOk <- false
+                            if recBytes.Length > 0L then
+                                // 尾部残留无 RS/LF 收尾：按截断记录处理（损坏判定交给 processRecord）
+                                if not (flushRecord false) then
+                                    bytesRead <- recordStartOffset
+                                    recordOk <- false
                         else
                             let mutable i = 0
-                            while i < n && lineOk do
+                            while i < n && recordOk do
                                 let b = buf[i]
-                                if b = 10uy (* \n *) then
-                                    if flushLine () then
-                                        bytesRead <- bytesRead + 1L
-                                        lineStartOffset <- bytesRead
-                                    else
-                                        // 损坏行：回退到该行行首（= 有效前缀末尾）
-                                        bytesRead <- lineStartOffset
-                                        lineOk <- false
+                                bytesRead <- bytesRead + 1L
+                                if b = 30uy (* RS *) then
+                                    if recBytes.Length > 0L then
+                                        // 上一记录未正常收尾（无 LF）就遇到新 RS：按未终止处理
+                                        if not (flushRecord false) then
+                                            bytesRead <- recordStartOffset
+                                            recordOk <- false
+                                    if recordOk then
+                                        recordStartOffset <- bytesRead - 1L
+                                elif b = 10uy (* LF *) then
+                                    if recBytes.Length > 0L then
+                                        if flushRecord true then
+                                            recordStartOffset <- bytesRead
+                                        else
+                                            // 损坏记录：回退到该记录 RS 起点（= 有效前缀末尾）
+                                            bytesRead <- recordStartOffset
+                                            recordOk <- false
+                                    // LF 之前的空段（RS 后直接 LF）：RFC 7464 空段忽略
                                 else
-                                    lineBytes.WriteByte b
-                                    bytesRead <- bytesRead + 1L
+                                    recBytes.WriteByte b
                                 i <- i + 1
-                    if not lineOk then
+                    if not recordOk then
                         // 用 processLine 设置的详细 reason；这里补上精确字节偏移
                         let reason =
                             match currentDamage with
                             | Some (DamageAt(_, _, r)) -> r
-                            | None -> sprintf "file %s line %d" name lineNumber
+                            | None -> sprintf "file %s record %d" name recordNumber
                         currentDamage <- Some(DamageAt(path, bytesRead, reason))
                         stop <- true
                         false

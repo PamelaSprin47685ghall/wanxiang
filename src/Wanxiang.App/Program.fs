@@ -132,26 +132,40 @@ module Doctor =
             d.lockOk <- true
             (l :> IDisposable).Dispose()
         | Error e -> d.lockError <- e
-        // replay（只读，不修复）
-        match Replay.replay dataDir false with
-        | Ok outcome ->
-            d.replayOk <- true
-            // Q179：附件引用可达性检查（只读报告，不修复）
+        // 旧格式检测（clean-break，不迁移）：.ndjson 是 formatVersion 1 时代的文件，
+        // 当前读取器只认 .jsonseq。发现即明确报错，绝不静默忽略。
+        let legacyNdjson =
             try
-                let store = new Wanxiang.Server.AttachmentStore(dataDir, 1024L)
+                System.IO.Directory.GetFiles(Wanxiang.Store.DataPaths.eventsDir dataDir, "*.ndjson")
+            with _ -> [||]
+        if legacyNdjson.Length > 0 then
+            d.replayOk <- false
+            d.replayError <-
+                sprintf
+                    "found %d legacy .ndjson log(s) (format version 1). The current format is RFC 7464 .jsonseq and old data is NOT migrated (clean break). Archive or remove: %s"
+                    legacyNdjson.Length
+                    (String.Join(", ", legacyNdjson |> Array.map System.IO.Path.GetFileName))
+        // replay（只读，不修复）；旧格式在场时跳过（上面已给出明确报错）
+        if legacyNdjson.Length = 0 then
+            match Replay.replay dataDir false with
+            | Ok outcome ->
+                d.replayOk <- true
+                // Q179：附件引用可达性检查（只读报告，不修复）
                 try
-                    let missing = System.Collections.Generic.HashSet<string>()
-                    for conv in Projection.conversationList outcome.projection do
-                        for m in Projection.effectiveMessages outcome.projection conv do
-                            for (sha, _, _, _) in Wanxiang.Server.ServerModel.attachmentRefsOf m.payloadJson do
-                                if not (store.Exists sha) then
-                                    missing.Add(sha) |> ignore
-                    d.attachmentsMissing <- missing |> Seq.toList
-                    d.attachmentsOk <- List.isEmpty d.attachmentsMissing
-                finally
-                    store.Dispose()
-            with _ -> ()
-        | Error e -> d.replayError <- e
+                    let store = new Wanxiang.Server.AttachmentStore(dataDir, 1024L)
+                    try
+                        let missing = System.Collections.Generic.HashSet<string>()
+                        for conv in Projection.conversationList outcome.projection do
+                            for m in Projection.effectiveMessages outcome.projection conv do
+                                for (sha, _, _, _) in Wanxiang.Server.ServerModel.attachmentRefsOf m.payloadJson do
+                                    if not (store.Exists sha) then
+                                        missing.Add(sha) |> ignore
+                        d.attachmentsMissing <- missing |> Seq.toList
+                        d.attachmentsOk <- List.isEmpty d.attachmentsMissing
+                    finally
+                        store.Dispose()
+                with _ -> ()
+            | Error e -> d.replayError <- e
         d
 
     let print (d: Diagnosis) : unit =

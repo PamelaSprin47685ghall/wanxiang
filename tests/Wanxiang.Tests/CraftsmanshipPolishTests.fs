@@ -29,6 +29,7 @@ open Wanxiang.Tests.Helpers
 
 [<Fact>]
 let ``PlainText.summarize handles multi-byte emojis without breaking surrogate pairs`` () =
+    Headless.run (fun () ->
     // 👨‍👩‍👧‍👦 (family ZWJ sequence: U+1F468 U+200D U+1F469 U+200D U+1F467 U+200D U+1F466)
     // 🇨🇳 (regional indicator flag sequence: U+1F1E8 U+1F1F3)
     // 𠮷 (surrogate pair: U+20BB7 -> \uD842\uDFB7)
@@ -53,9 +54,11 @@ let ``PlainText.summarize handles multi-byte emojis without breaking surrogate p
         let utf8Bytes = Encoding.UTF8.GetBytes(summary)
         let roundtrip = Encoding.UTF8.GetString(utf8Bytes)
         Assert.Equal(summary, roundtrip)
+    )
 
 [<Fact>]
 let ``MarkdownRenderer.SafeChunk does not slice surrogate pairs into separate chunks`` () =
+    Headless.run (fun () ->
     // A long text mixing emojis, surrogate pairs, and ZWJ sequences
     let emojiText =
         "👨‍👩‍👧‍👦🇨🇳𠮷野家👍🏽"
@@ -88,6 +91,7 @@ let ``MarkdownRenderer.SafeChunk does not slice surrogate pairs into separate ch
             elif Char.IsLowSurrogate ch then
                 Assert.True(i > 0, "Low surrogate must have preceding high surrogate in chunk")
                 Assert.True(Char.IsHighSurrogate chunk[i - 1], "Low surrogate must be preceded by high surrogate")
+    )
 
 // =========================================================================
 // 2. Provider Error Copy & Classification
@@ -95,6 +99,7 @@ let ``MarkdownRenderer.SafeChunk does not slice surrogate pairs into separate ch
 
 [<Fact>]
 let ``ProviderFailure.classify accurately formats 5xx HTTP service unavailable errors`` () =
+    Headless.run (fun () ->
     let statuses =
         [ (HttpStatusCode.InternalServerError, 500)
           (HttpStatusCode.BadGateway, 502)
@@ -108,9 +113,11 @@ let ``ProviderFailure.classify accurately formats 5xx HTTP service unavailable e
         Assert.True(error.retryable)
         let expectedMsg = sprintf "「Anthropic」服务暂时不可用（HTTP %d）。" num
         Assert.Equal(expectedMsg, error.message)
+    )
 
 [<Fact>]
 let ``ProviderFailure.classify accurately formats network connection failure copy`` () =
+    Headless.run (fun () ->
     // 1. HttpRequestException without status code (DNS failure, connection reset, etc.)
     let netEx = new HttpRequestException("Connection refused")
     let netError = ProviderFailure.classify "DeepSeek" "deepseek-chat" netEx
@@ -137,6 +144,7 @@ let ``ProviderFailure.classify accurately formats network connection failure cop
         Assert.DoesNotContain("\n", detail)
         Assert.Contains("502 Bad Gateway nginx", detail)
     | None -> Assert.Fail("Expected detail to be present")
+    )
 
 // =========================================================================
 // 3. Conversation Activity Tracking & Bucket Grouping
@@ -144,6 +152,7 @@ let ``ProviderFailure.classify accurately formats network connection failure cop
 
 [<Fact>]
 let ``Projection updates lastActivityAtUtc when AgentMessageRecorded event committed`` () =
+    Headless.run (fun () ->
     let convId = Guid.NewGuid()
     let initTime = DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero)
     
@@ -183,9 +192,11 @@ let ``Projection updates lastActivityAtUtc when AgentMessageRecorded event commi
     Assert.Equal(initTime, updatedConv.createdAtUtc)
     Assert.Equal(msgTime, updatedConv.lastActivityAtUtc)
     Assert.Equal(Some 2UL, updatedConv.lastCommitId)
+    )
 
 [<Fact>]
 let ``ConversationSummary.bucketOf groups conversations by updatedAt rather than createdAt`` () =
+    Headless.run (fun () ->
     let now = DateTimeOffset(2026, 9, 7, 18, 0, 0, TimeSpan.FromHours(8.0)) // Today evening
     let createdAt30DaysAgo = now.AddDays(-30.0)
     let updatedAtToday = now.AddHours(-2.0)
@@ -215,6 +226,7 @@ let ``ConversationSummary.bucketOf groups conversations by updatedAt rather than
     let oldOrder, oldLabel = ConversationSummary.bucketOf now oldSummary
     Assert.NotEqual<string>("今天", oldLabel)
     Assert.True(oldOrder > 0)
+    )
 
 // =========================================================================
 // 4. ChatView Skeleton Loading State Transitions
@@ -222,7 +234,7 @@ let ``ConversationSummary.bucketOf groups conversations by updatedAt rather than
 
 [<Fact>]
 let ``ChatView skeleton loading transitions toggle skeletonPanel and messagePanel visibility`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let chatActions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -256,6 +268,7 @@ let ``ChatView skeleton loading transitions toggle skeletonPanel and messagePane
     chat.HideSkeletonLoading()
     Assert.False(chat.IsSkeletonVisible)
     Assert.True(chat.IsMessagePanelVisible)
+    )
 
 // =========================================================================
 // 5. Composer Drag-and-Drop & Clipboard Paste File Handling Hooks
@@ -263,7 +276,7 @@ let ``ChatView skeleton loading transitions toggle skeletonPanel and messagePane
 
 [<Fact>]
 let ``Composer handles clipboard paste hook on Ctrl+V`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable pasteCalled = false
     let composerActions =
         { submit = fun _ -> true
@@ -298,10 +311,11 @@ let ``Composer handles clipboard paste hook on Ctrl+V`` () =
     input.RaiseEvent keyArgs
     Assert.True(pasteCalled, "pasteFromClipboard hook must be invoked on Ctrl+V")
     Assert.True(keyArgs.Handled, "Key event should be handled when paste succeeds")
+    )
 
 [<Fact>]
 let ``Composer handles dropFiles hook when files are dropped`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let dropped = ResizeArray<IStorageItem>()
     let composerActions =
         { submit = fun _ -> true
@@ -345,10 +359,11 @@ let ``Composer handles dropFiles hook when files are dropped`` () =
     Assert.NotEmpty dropped
     Assert.Equal("test.png", dropped[0].Name)
     Assert.True(dropArgs.Handled)
+    )
 
 [<Fact>]
 let ``Composer drag over and drag leave updates visual affordance and resets cleanly`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let composerActions =
         { submit = fun _ -> true
           stopGeneration = ignore
@@ -411,10 +426,11 @@ let ``Composer drag over and drag leave updates visual affordance and resets cle
     // When disabled with a disabledReason
     composer.SetEnabled(false, "连接已断开，请检查网络")
     Assert.Equal("连接已断开，请检查网络", input.PlaceholderText)
+    )
 
 [<Fact>]
 let ``ChatView empty state renders balanced optical layout and accessible primary button`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let chatActions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -450,6 +466,7 @@ let ``ChatView empty state renders balanced optical layout and accessible primar
     let buttons = findButtons chat
     Assert.NotEmpty buttons
     Assert.True(buttons[0].Focusable)
+    )
 
 // =========================================================================
 // 6. Markdown Table Layout (<4 vs >4 columns)
@@ -473,7 +490,7 @@ let rec private descendants (control: Control) =
 
 [<Fact>]
 let ``MarkdownRenderer wide table (>4 columns) wraps in horizontal scroll viewer`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
 
     // 1. Wide table with 6 columns (> 4)
@@ -513,6 +530,7 @@ let ``MarkdownRenderer wide table (>4 columns) wraps in horizontal scroll viewer
 
     // 2-column table renders directly without an inner horizontal ScrollViewer
     Assert.Empty narrowScrollViewers
+    )
 
 // =========================================================================
 // 7. ChatView Floating Rhythm & Scroll-to-Bottom Unread Indicator
@@ -520,7 +538,7 @@ let ``MarkdownRenderer wide table (>4 columns) wraps in horizontal scroll viewer
 
 [<Fact>]
 let ``ChatView tracks unread messages when scrolled away from bottom`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let chatActions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -602,6 +620,7 @@ let ``ChatView tracks unread messages when scrolled away from bottom`` () =
         Assert.Equal("回到最新", btnLabel.Text)
     finally
         window.Close()
+    )
 
 // 划上去翻更早的历史，不是来了新消息：分页装载的那批旧消息不许计入未读。
 // 判据是同一个 pendingHistoryAnchor：AppShell 派发 HistoryRequest 前置位、
@@ -609,7 +628,7 @@ let ``ChatView tracks unread messages when scrolled away from bottom`` () =
 // kelivo 把内容从上方增长与尾部新增分成两条定位/准入通路，从不相混。
 [<Fact>]
 let ``paging older history does not count as unread messages`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let chatActions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -686,10 +705,11 @@ let ``paging older history does not count as unread messages`` () =
         Assert.Contains("新消息", btnLabel.Text)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``SettingsView preserves and restores scroll offset across sections`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     let actions: SettingsActions =
@@ -737,10 +757,11 @@ let ``SettingsView preserves and restores scroll offset across sections`` () =
         Assert.Equal(150.0, settings.GetSectionScrollOffset SettingsSection.Providers)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``Sidebar conversation row right click invokes context menu`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     let actions: SidebarActions =
@@ -817,10 +838,11 @@ let ``Sidebar conversation row right click invokes context menu`` () =
         Assert.False overlay.IsPopupOpen
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``Markdown hyperlink responds to Enter and Space key to openLink`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable opened = None
     let renderer = MarkdownRenderer(14.0, ignore, (fun url -> opened <- Some url), false)
     let doc =
@@ -847,10 +869,11 @@ let ``Markdown hyperlink responds to Enter and Space key to openLink`` () =
         Assert.Equal(Some "https://wanxiang.ai", opened)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``Sidebar search clear button has accessible tooltip and automation properties`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     let actions: SidebarActions =
@@ -878,6 +901,7 @@ let ``Sidebar search clear button has accessible tooltip and automation properti
     let tip = ToolTip.GetTip(clearBtn) :?> string
     Assert.Equal("清空搜索", tip)
     Assert.Equal("清空搜索", Avalonia.Automation.AutomationProperties.GetName(clearBtn))
+    )
 
 // =========================================================================
 // 8. Composer Prompt History & Draft Restoration
@@ -885,7 +909,7 @@ let ``Sidebar search clear button has accessible tooltip and automation properti
 
 [<Fact>]
 let ``Composer prompt history records submissions and recalls with Up/Down`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let submittedTexts = ResizeArray<string>()
     let composerActions =
         { submit = fun text ->
@@ -955,6 +979,7 @@ let ``Composer prompt history records submissions and recalls with Up/Down`` () 
     let down2 = sendKey Key.Down KeyModifiers.None
     Assert.True(down2.Handled)
     Assert.Equal("Draft in progress", input.Text)
+    )
 
 // =========================================================================
 // 9. Sidebar Search Keyboard Navigation & Shortcuts
@@ -962,7 +987,7 @@ let ``Composer prompt history records submissions and recalls with Up/Down`` () 
 
 [<Fact>]
 let ``Sidebar search navigation moves focus and handles escape`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable openedConvId: Guid option = None
     let sidebarActions =
         { newConversation = ignore
@@ -1058,6 +1083,7 @@ let ``Sidebar search navigation moves focus and handles escape`` () =
         Assert.Equal("", searchBox.Text)
     finally
         window.Close()
+    )
 
 // =========================================================================
 // 8. Batch 5, 6, 7 Craftsmanship Polish Tests
@@ -1065,7 +1091,7 @@ let ``Sidebar search navigation moves focus and handles escape`` () =
 
 [<Fact>]
 let ``SettingsView supports Up and Down arrow traversal across navigation sections`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     let actions: SettingsActions =
@@ -1146,6 +1172,7 @@ let ``SettingsView supports Up and Down arrow traversal across navigation sectio
         Assert.True(providersBtn.IsFocused)
     finally
         window.Close()
+    )
 
 // Destructive confirms default-focus the SAFE option (cancel): Enter/Space on
 // content must not hair-trigger the danger action (Dialogs.confirm ->
@@ -1153,7 +1180,7 @@ let ``SettingsView supports Up and Down arrow traversal across navigation sectio
 // row-level Enter/Space confirm for Ui.Danger).
 [<Fact>]
 let ``Dialogs confirm focuses the safe cancel action by default`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
@@ -1205,10 +1232,11 @@ let ``Dialogs confirm focuses the safe cancel action by default`` () =
     finally
         overlay.CloseDialog()
         window.Close()
+    )
 
 [<Fact>]
 let ``MessageCard toolCallCard header toggles argument and result details`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let ctx: MessageContext =
         { fontSize = 15.0
           autoCollapseReasoning = false
@@ -1254,6 +1282,7 @@ let ``MessageCard toolCallCard header toggles argument and result details`` () =
         Assert.Equal("展开工具调用 weather", toolName2)
     finally
         window.Close()
+    )
 
 // =========================================================================
 // 9. Batch 2, 3, 4 Craftsmanship Polish Tests
@@ -1261,7 +1290,7 @@ let ``MessageCard toolCallCard header toggles argument and result details`` () =
 
 [<Fact>]
 let ``ChatView header supports F2 to edit title and Escape to cancel`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable renamedTitle: string option = None
     let actions: ChatActions =
         { renameTitle = fun t -> renamedTitle <- Some t
@@ -1313,10 +1342,11 @@ let ``ChatView header supports F2 to edit title and Escape to cancel`` () =
         Assert.False titleEditShell.IsVisible
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``Composer restores focus to input when removing last attachment and supports Escape when generating`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable stopped = false
     let mutable submitted = None
     let actions: ComposerActions =
@@ -1353,10 +1383,11 @@ let ``Composer restores focus to input when removing last attachment and support
         Assert.Contains("停止生成 (Escape)", tip)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``ChatView ShowEmpty configures action button accessibility properties`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions: ChatActions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -1388,10 +1419,11 @@ let ``ChatView ShowEmpty configures action button accessibility properties`` () 
         Assert.Equal("新建对话", ToolTip.GetTip(button) :?> string)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``Markdown code block copy button confirms visually with check icon and tooltip`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable copiedText = ""
     let renderer = MarkdownRenderer(14.0, (fun t -> copiedText <- t), ignore, false)
     let markdown = "```fsharp\nlet x = 42\n```"
@@ -1421,10 +1453,11 @@ let ``Markdown code block copy button confirms visually with check icon and tool
         Assert.Equal("已复制！", ToolTip.GetTip(copyButton) :?> string)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``Sidebar conversation row activates on Enter and Space keys`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     let mutable openedId: Guid option = None
@@ -1513,14 +1546,15 @@ let ``Sidebar conversation row activates on Enter and Space keys`` () =
         Assert.Equal(Some testId1, openedId)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``Sidebar row more action stays reachable in compact mode`` () =
+    Headless.run (fun () ->
     // 触屏/PWA 无 hover、无右键、无 Shift+F10：compact 下行上下文菜单只能由
     // moreButton 触达，因此它必须常驻可命中、可聚焦、可被读屏发现；桌面与 compact
     // 现已同构（常驻一档淡显），扫视列表即可感知每行有更多操作，不喧宾夺主。
     // 命中面仍按模式分档：桌面 iconButton、compact 触控下限 compactActionTarget。
-    Headless.ensure ()
     let root = Grid()
     let overlay = OverlayHost(root)
     let actions: SidebarActions =
@@ -1611,6 +1645,7 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
         Assert.Equal(1.0, restored.Opacity, 3)
     finally
         window.Close()
+    )
 
 // =========================================================================
 // 10. Composer 拖放入口可发现性（footer 常驻弱提示）
@@ -1618,11 +1653,11 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
 
 [<Fact>]
 let ``Composer footer keeps a persistent drop hint outside compact and folds it inside compact`` () =
+    Headless.run (fun () ->
     // 拖放入口的可发现性：footer caption 行的常驻弱提示（「可将文件拖入此处添加附件」）
     // 在宽屏默认可见——静态界面不拖文件也能看到入口线索；compact 档与键位提示
     // hintText 走同一显隐逻辑一并折叠（Composer.SetCompactMode），footer 高度由
     // modelChip.MinHeight 兜底。控件以 AutomationName 暴露（读屏可发现），与文本同名。
-    Headless.ensure ()
     let composerActions =
         { submit = fun _ -> true
           stopGeneration = ignore
@@ -1647,10 +1682,11 @@ let ``Composer footer keeps a persistent drop hint outside compact and folds it 
     // 退回宽屏：恢复常驻。
     composer.SetCompactMode false
     Assert.True(dropHint.IsVisible)
+    )
 
 [<Fact>]
 let ``ChatView header title tooltip reflects full title and preserves character ellipsis`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions: ChatActions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -1682,13 +1718,14 @@ let ``ChatView header title tooltip reflects full title and preserves character 
         Assert.Equal(fullTitle, ToolTip.GetTip(titleAction) :?> string)
     finally
         window.Close()
+    )
 
 // 超长代码块（>120 行）折叠后底部有「展开全部 / 收起」按钮：文案之外，
 // 展开态还应对无障碍树报成 expander 状态（SetExpanded），读屏据此播音
 // 「已展开 / 已折叠」，不靠按钮名猜。此前只改了名称，读屏听到的仍是错的状态。
 [<Fact>]
 let ``huge code block expand button reports its expanded state`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     // 本项目的 expander 语义经 AutomationProperties.SetExpanded 落到 ItemStatus。
     let expandedState (control: Control) =
         Avalonia.Automation.AutomationProperties.GetItemStatus control
@@ -1719,13 +1756,14 @@ let ``huge code block expand button reports its expanded state`` () =
         KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
     Assert.Equal("展开全部", ((expandButton.Child :?> TextBlock).Text))
     Assert.Equal<string>("已折叠", expandedState expandButton)
+    )
 
 // kelivo markdown_with_highlight.dart:5877-5950 的任务勾号是 Flutter 原生
 // Checkbox，读屏直接播报勾选态；我们自绘 Border 只有视觉，补 CheckBox 语义
 // 与勾选名（视觉不变）。
 [<Fact>]
 let ``MarkdownRenderer task boxes expose checkbox automation state`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
     let doc = "- [x] 已完成的一步\n- [ ] 还没做的一步"
     let control = renderer.RenderText doc
@@ -1745,3 +1783,4 @@ let ``MarkdownRenderer task boxes expose checkbox automation state`` () =
             if o.HasValue then Some o.Value else None)
         |> Seq.toList
     Assert.Contains(Avalonia.Automation.Peers.AutomationControlType.CheckBox, overrides)
+    )

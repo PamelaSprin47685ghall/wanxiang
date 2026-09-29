@@ -24,7 +24,7 @@ let private flags = BindingFlags.Instance ||| BindingFlags.NonPublic ||| Binding
 
 [<Fact>]
 let ``export of an unopened conversation has its own progress view without navigating`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let view = MainView()
     let invoke name args = typeof<MainView>.GetMethod(name, flags).Invoke(view, args)
     for name in [ "BuildSidebar"; "BuildChat"; "BuildComposer"; "BuildSettings" ] do
@@ -41,6 +41,7 @@ let ``export of an unopened conversation has its own progress view without navig
     Assert.True(overlay.IsDialogOpen, "导出必须有独立进度／失败视图，而不是要求用户先加载会话。")
     Assert.Equal(Some selected, typeof<MainView>.GetField("activeConvId", flags).GetValue(view) :?> Guid option)
     overlay.CloseDialog()
+    )
 
 let private append events (proj: Projection) =
     let commit = Events.Commit.create (proj.latestCommitId + 1UL) DateTimeOffset.UtcNow events
@@ -70,6 +71,7 @@ let private complete proj (controller: ConversationExportController) query =
 
 [<Fact>]
 let ``export retrieves all 450 messages while normal snapshot still contains only 200`` () =
+    Headless.run (fun () ->
     let proj, id = fixture 450
     let normal, _, more = ServerModel.conversationMessagesTail proj proj.conversations[id] 200
     Assert.Equal(200, normal.Count)
@@ -80,9 +82,11 @@ let ``export retrieves all 450 messages while normal snapshot still contains onl
     Assert.Equal("message-0001", document.messages.Head.text)
     Assert.Equal("message-0450", document.messages |> List.last |> _.text)
     Assert.Equal<CommitId list>([ 2UL .. 451UL ], document.messages |> List.choose _.commitId)
+    )
 
 [<Fact>]
 let ``later deletion insertion and renaming cannot alter an export already reading`` () =
+    Headless.run (fun () ->
     let original, id = fixture 250
     let controller = ConversationExportController id
     let first = page original (controller.Start())
@@ -99,18 +103,22 @@ let ``later deletion insertion and renaming cannot alter an export already readi
     Assert.Equal(250, document.messages.Length)
     Assert.Equal("message-0001", document.messages.Head.text)
     Assert.DoesNotContain(document.messages, fun message -> message.text = "不能混入")
+    )
 
 [<Fact>]
 let ``deletions before export stay hidden even on older pages`` () =
+    Headless.run (fun () ->
     let original, id = fixture 350
     let proj = original |> append [ MessageDeleted { conversationId = id; messageCommitId = 3UL } ]
     let controller = ConversationExportController id
     let document = complete proj controller (controller.Start())
     Assert.Equal(349, document.messages.Length)
     Assert.DoesNotContain(document.messages, fun message -> message.commitId = Some 3UL)
+    )
 
 [<Fact>]
 let ``nested fork export preserves its frozen ancestors after parent deletion`` () =
+    Headless.run (fun () ->
     let root, parentId = fixture 250
     let childId, grandchildId = Guid.NewGuid(), Guid.NewGuid()
     let withChild = root |> append [ ConversationForked { conversationId = childId; parentConversationId = parentId; forkAfterId = Some 221UL } ]
@@ -126,17 +134,21 @@ let ``nested fork export preserves its frozen ancestors after parent deletion`` 
     Assert.Equal(222, document.messages.Length)
     Assert.Equal("message-0001", document.messages.Head.text)
     Assert.Equal<string list>([ "子分支"; "孙分支" ], document.messages |> List.skip 220 |> List.map _.text)
+    )
 
 [<Fact>]
 let ``empty conversation can be exported as an empty transcript`` () =
+    Headless.run (fun () ->
     let proj, id = fixture 0
     let controller = ConversationExportController id
     let document = complete proj controller (controller.Start())
     Assert.Empty document.messages
     Assert.Contains("完整历史", Export.toMarkdown document.title document.messages)
+    )
 
 [<Fact>]
 let ``cancel retry and disconnect cannot expose partial or stale documents`` () =
+    Headless.run (fun () ->
     let proj, id = fixture 250
     let controller = ConversationExportController id
     let first = page proj (controller.Start())
@@ -152,6 +164,7 @@ let ``cancel retry and disconnect cannot expose partial or stale documents`` () 
     controller.Disconnect()
     Assert.True controller.Document.IsNone
     match controller.Status with ExportFailed _ -> () | other -> failwithf "%A" other
+    )
 
 [<Theory>]
 [<InlineData("short")>]
@@ -160,6 +173,7 @@ let ``cancel retry and disconnect cannot expose partial or stale documents`` () 
 [<InlineData("foreign")>]
 [<InlineData("boundary")>]
 let ``invalid export pages never become saveable`` mode =
+    Headless.run (fun () ->
     let proj, id = fixture 250
     let controller = ConversationExportController id
     let first = page proj (controller.Start())
@@ -173,9 +187,11 @@ let ``invalid export pages never become saveable`` mode =
     Assert.True(controller.Accept(invalid).IsNone)
     Assert.True controller.Document.IsNone
     match controller.Status with ExportFailed _ -> () | other -> failwithf "%A" other
+    )
 
 [<Fact>]
 let ``changed watermark or total aborts a multi-page export`` () =
+    Headless.run (fun () ->
     let proj, id = fixture 250
     let alterations: (ConversationExportPageData -> ConversationExportPageData) list =
         [ (fun p -> { p with atCommitId = p.atCommitId + 1UL })
@@ -186,9 +202,11 @@ let ``changed watermark or total aborts a multi-page export`` () =
         controller.Accept(alter (page proj next)) |> ignore
         Assert.True controller.Document.IsNone
         match controller.Status with ExportFailed _ -> () | other -> failwithf "%A" other
+    )
 
 [<Fact>]
 let ``timeout and size limit stop without offering a partial file`` () =
+    Headless.run (fun () ->
     let proj, id = fixture 250
     let small = ConversationExportController(id, maxBytes = 100L)
     small.Accept(page proj (small.Start())) |> ignore
@@ -198,9 +216,11 @@ let ``timeout and size limit stop without offering a partial file`` () =
     slow.Start() |> ignore
     Assert.True(slow.Expire(DateTimeOffset.UtcNow.AddMinutes 1.0, TimeSpan.FromSeconds 30.0))
     Assert.True slow.Document.IsNone
+    )
 
 [<Fact>]
 let ``page byte budget splits large messages without splitting or truncating a message`` () =
+    Headless.run (fun () ->
     let initial, id = fixture 0
     let text = String('x', 200000)
     let proj = [ 1 .. 5 ] |> List.fold (fun proj _ -> proj |> append [ AgentMessageRecorded { conversationId = id; payloadJson = userMessageJson text } ]) initial
@@ -212,18 +232,22 @@ let ``page byte budget splits large messages without splitting or truncating a m
     let document = complete proj controller query
     Assert.Equal(5, document.messages.Length)
     Assert.All(document.messages, fun message -> Assert.Equal(text, message.text))
+    )
 
 [<Fact>]
 let ``oversized message fails explicitly rather than returning a shortened message`` () =
+    Headless.run (fun () ->
     let initial, id = fixture 0
     let proj = initial |> append [ AgentMessageRecorded { conversationId = id; payloadJson = userMessageJson (String('x', ConversationExportLimits.maxMessageBytes)) } ]
     let query = (ConversationExportController id).Start()
     match ServerModel.exportPage proj query with
     | Error message -> Assert.Contains("没有截断", message)
     | Ok _ -> failwith "oversized export should fail"
+    )
 
 [<Fact>]
 let ``missing deleted and future-watermark exports are rejected`` () =
+    Headless.run (fun () ->
     let proj, id = fixture 1
     let query = (ConversationExportController id).Start()
     for source, query in
@@ -231,9 +255,11 @@ let ``missing deleted and future-watermark exports are rejected`` () =
           (proj |> append [ EventData.ConversationDeleted { conversationId = id } ]), query
           proj, { query with atCommitId = Some(proj.latestCommitId + 10UL) } ] do
         Assert.True(Result.isError (ServerModel.exportPage source query))
+    )
 
 [<Fact>]
 let ``export wire roundtrips and cannot advance the chat cursor`` () =
+    Headless.run (fun () ->
     let proj, id = fixture 1
     let query = (ConversationExportController id).Start()
     let response = page proj query
@@ -249,9 +275,11 @@ let ``export wire roundtrips and cannot advance the chat cursor`` () =
     let invalid = JsonNode.Parse(WireCodec.encode(ConversationExportPage response)).AsObject()
     invalid["payload"].AsObject().Remove "hasMore" |> ignore
     Assert.True(Result.isError (WireCodec.tryDecode(invalid.ToJsonString())))
+    )
 
 [<Fact>]
 let ``Markdown keeps orphan tool results timestamps and embedded fences`` () =
+    Headless.run (fun () ->
     let timestamp = DateTimeOffset.Parse "2026-09-07T12:00:00Z"
     let tool = { MessageView.empty with role = "tool"; toolResults = [ "orphan", "result with ``` inside" ]; committedAt = Some timestamp }
     let markdown = Export.toMarkdown "工具记录" [ tool ]
@@ -259,17 +287,21 @@ let ``Markdown keeps orphan tool results timestamps and embedded fences`` () =
     Assert.Contains("result with ``` inside", markdown)
     Assert.Contains("````json", markdown)
     Assert.Contains("2026-09-07", markdown)
+    )
 
 [<Fact>]
 let ``unrenderable messages retain their raw content in export`` () =
+    Headless.run (fun () ->
     let initial, id = fixture 0
     let proj = initial |> append [ AgentMessageRecorded { conversationId = id; payloadJson = JsonNode.Parse("""{"role":"assistant","contents":[{"type":"future-content","value":"keep-me"}]}""") } ]
     let controller = ConversationExportController id
     let document = complete proj controller (controller.Start())
     Assert.Contains("keep-me", Export.toMarkdown document.title document.messages)
+    )
 
 [<Fact>]
 let ``export filenames stay a bounded filename including long emoji titles`` () =
+    Headless.run (fun () ->
     Assert.Equal("会话.md", Export.safeFileName "..")
     let name = Export.safeFileName "../a\\b\nfile"
     Assert.DoesNotContain("/", name)
@@ -279,15 +311,16 @@ let ``export filenames stay a bounded filename including long emoji titles`` () 
     Assert.True(Encoding.UTF8.GetByteCount emoji <= 223)
     let baseName = emoji.Substring(0, emoji.Length - 3)
     Assert.Equal(baseName, String.replicate (Globalization.StringInfo.ParseCombiningCharacters(baseName).Length) "👩🏽‍💻")
+    )
 
 [<Theory>]
 [<InlineData(390.0)>]
 [<InlineData(900.0)>]
 let ``export footer arrows move focus between the three buttons`` width =
+    Headless.run (fun () ->
     // 导出对话框的页脚三按钮此前没有左右方向键接线，而其余对话框页脚
     // （Dialogs.fs:48-57、SettingsProviders/Tools）都有。桌面端键盘用户按方向键
     // 无响应，交互节拍与系统其余对话框割裂。
-    Headless.ensure ()
     let proj, id = fixture 250
     let root = Grid()
     let overlay = OverlayHost root
@@ -349,10 +382,11 @@ let ``export footer arrows move focus between the three buttons`` width =
         Assert.True(close.IsFocused, "焦点应回到取消导出")
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``export ready state skips the hidden retry slot for arrow navigation`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost root
     let window = Window(Content = root, Width = 480.0, Height = 600.0)
@@ -400,12 +434,13 @@ let ``export ready state skips the hidden retry slot for arrow navigation`` () =
     finally
         overlay.CloseDialog()
         window.Close()
+    )
 
 [<Theory>]
 [<InlineData(390.0)>]
 [<InlineData(900.0)>]
 let ``export save action appears only after the last page and fits the window`` width =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let proj, id = fixture 250
     let root = Grid()
     let overlay = OverlayHost root
@@ -435,10 +470,11 @@ let ``export save action appears only after the last page and fits the window`` 
     finally
         overlay.CloseDialog()
         window.Close()
+    )
 
 [<Fact>]
 let ``reconnecting the same instance keeps export recovery but changing instance closes it`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let view = MainView()
     let invoke name args = typeof<MainView>.GetMethod(name, flags).Invoke(view, args)
     for name in [ "BuildSidebar"; "BuildChat"; "BuildComposer"; "BuildSettings" ] do invoke name [||] |> ignore
@@ -456,10 +492,11 @@ let ``reconnecting the same instance keeps export recovery but changing instance
         invoke "HandleEvent" [| box (AuthAccepted {| instanceId = "different" |}) |] |> ignore
         Assert.False overlay.IsDialogOpen
     finally overlay.CloseDialog()
+    )
 
 [<Fact>]
 let ``cancel stays in the dialog and offers the retry entry`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost root
     let window = Window(Content = root, Width = 480.0, Height = 600.0)
@@ -507,6 +544,7 @@ let ``cancel stays in the dialog and offers the retry entry`` () =
     finally
         overlay.CloseDialog()
         window.Close()
+    )
 
 // 保存键被禁用/藏掉时，Avalonia 把焦点直接清成 null（不自动迁到相邻键，
 // 探针实测 focused=<null>）：键盘用户刚按完保存就失焦，随后 Tab/Esc 无处可去。
@@ -514,7 +552,7 @@ let ``cancel stays in the dialog and offers the retry entry`` () =
 // 时把焦点交回始终可用的关闭键。
 [<Fact>]
 let ``export dialog returns focus to close when the save slot becomes unusable`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost root
     let window = Window(Content = root, Width = 480.0, Height = 600.0)
@@ -549,3 +587,4 @@ let ``export dialog returns focus to close when the save slot becomes unusable``
     finally
         overlay.CloseDialog()
         window.Close()
+    )

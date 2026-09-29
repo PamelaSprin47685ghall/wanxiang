@@ -25,7 +25,6 @@ module ExchangeNavTests =
     let private approx (a: float) (b: float) = abs (a - b) < 0.5
 
     let private buildChat (messages: MessageView list) =
-        Headless.ensure ()
         // 本文件只锁「跳到哪一轮」；动效路径由既有 smoothScroll 用例覆盖。
         MotionPolicy.setReduced true
         let chatActions =
@@ -108,6 +107,7 @@ module ExchangeNavTests =
 
     [<Fact>]
     let ``首屏贴底后下一条禁用、上一条可用`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 3)
         try
@@ -126,9 +126,11 @@ module ExchangeNavTests =
             Assert.True(prev.IsEnabled, "前面还有提问，上一条应可用")
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``手动滚回顶部后端点禁用互换`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 3)
         try
@@ -145,9 +147,11 @@ module ExchangeNavTests =
             Assert.True((named chat "下一条提问").IsEnabled, "第 1 轮之后还有下一轮")
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``上一条把上一轮提问完整带进视口`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 8)
         try
@@ -164,9 +168,11 @@ module ExchangeNavTests =
                 sprintf "上一条后第 5 轮提问未完整可见：offset=%f" scroller.Offset.Y)
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``连续按上一条沿锚点顺序往回翻`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 8)
         try
@@ -183,9 +189,11 @@ module ExchangeNavTests =
                 sprintf "第二次上一条应落在第 4 轮：offset=%f" scroller.Offset.Y)
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``只有用户消息算问答边界`` () =
+        Headless.run (fun () ->
         // 一屏全是助手消息时没有任何边界：两个按钮都该禁用。
         let chat, window =
             buildChat [ for i in 1 .. 6 -> { MessageView.empty with role = "assistant"; text = sprintf "回复 %d：%s" i (String.replicate 8 "填充。"); commitId = Some(uint64 i) } ]
@@ -194,9 +202,11 @@ module ExchangeNavTests =
             Assert.False((named chat "下一条提问").IsEnabled)
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``compact 档收起顶栏跳转按钮`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 3)
         try
@@ -210,9 +220,11 @@ module ExchangeNavTests =
             Assert.False(next.IsVisible)
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``跳转清掉未读计数并放下 atBottom`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 6)
         try
@@ -241,19 +253,22 @@ module ExchangeNavTests =
             Assert.Equal("回到最新", label ())
         finally
             window.Close()
+        )
 
     // ---------- 用量角标的缓存命中行 ----------
 
     [<Fact>]
     let ``cachedCount 只在有命中时给数`` () =
+        Headless.run (fun () ->
         // 0 与 None 一样不显示：命中 0 不是信息。
         Assert.Equal(None, GenerationUsage.cachedCount { GenerationUsage.empty with cachedTokens = None })
         Assert.Equal(None, GenerationUsage.cachedCount { GenerationUsage.empty with cachedTokens = Some 0 })
         Assert.Equal(Some 512, GenerationUsage.cachedCount { GenerationUsage.empty with cachedTokens = Some 512 })
+        )
 
     [<Fact>]
     let ``用量脚注把缓存命中显示出来`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let message =
             { MessageView.empty with
                 role = "assistant"
@@ -300,10 +315,11 @@ module ExchangeNavTests =
             Assert.True(texts |> List.forall (fun text -> not (text.Contains "缓存")), "缓存不应另起一行")
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``没有缓存命用量脚注不提缓存`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let message =
             { MessageView.empty with
                 role = "assistant"
@@ -342,12 +358,13 @@ module ExchangeNavTests =
             Assert.Contains("入", footerText)
         finally
             window.Close()
+        )
 
     // ---------- 快捷键解析：Ctrl+上 / 下 ----------
 
     [<Fact>]
     let ``ctrl+up/down resolve to exchange jumps`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let resolve (key: Key) =
             ShortcutRouter.resolve(
                 KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = KeyModifiers.Control))
@@ -358,3 +375,4 @@ module ExchangeNavTests =
             ShortcutRouter.resolve(
                 KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Up, KeyModifiers = KeyModifiers.None))
         Assert.Equal(ShortcutAction.NoShortcut, plain)
+        )

@@ -6,7 +6,6 @@ open Avalonia.Controls
 open Avalonia.Threading
 open Avalonia.VisualTree
 open Xunit
-open Xunit.Abstractions
 open Wanxiang.UI
 open Wanxiang.Tests
 
@@ -49,7 +48,6 @@ type Incremental(output: ITestOutputHelper) =
 
     /// 建一个挂在窗口里的 ChatView，并返回「取当前已挂载卡片」的函数。
     let mount () =
-        Headless.ensure ()
         let view = ChatView(noopActions, fun size -> Border(Width = size, Height = size) :> Control)
         view.Build()
         let window = Window(Width = 900.0, Height = 700.0, Content = view)
@@ -73,6 +71,7 @@ type Incremental(output: ITestOutputHelper) =
 
     [<Fact>]
     member _.``重绘时已提交的消息卡被复用而不是重建``() =
+        Headless.run (fun () ->
         let view, window, cards = mount ()
         try
             let messages = [ for i in 1 .. 40 -> messageAt i ]
@@ -88,9 +87,11 @@ type Incremental(output: ITestOutputHelper) =
                 Assert.Same(a, b)
         finally
             window.Close()
+        )
 
     [<Fact>]
     member _.``追加一条消息只新建一张卡``() =
+        Headless.run (fun () ->
         let view, window, cards = mount ()
         try
             let messages = [ for i in 1 .. 30 -> messageAt i ]
@@ -108,9 +109,11 @@ type Incremental(output: ITestOutputHelper) =
             Assert.True(reused >= 29, $"只复用了 {reused}/30 张，追加一条消息不该重建整表")
         finally
             window.Close()
+        )
 
     [<Fact>]
     member _.``流式卡每帧都是新的而已提交部分不动``() =
+        Headless.run (fun () ->
         let view, window, cards = mount ()
         try
             let messages = [ for i in 1 .. 25 -> messageAt i ]
@@ -130,9 +133,11 @@ type Incremental(output: ITestOutputHelper) =
             Assert.NotSame(List.last first, List.last second)
         finally
             window.Close()
+        )
 
     [<Fact>]
     member _.``改字号会让全部卡片失效``() =
+        Headless.run (fun () ->
         // 字号进入卡片身份：否则改了字号旧卡还挂着，看起来「设置没生效」
         let view, window, cards = mount ()
         try
@@ -146,9 +151,11 @@ type Incremental(output: ITestOutputHelper) =
                 Assert.NotSame(a, b)
         finally
             window.Close()
+        )
 
     [<Fact>]
     member _.``丢弃缓存后重绘会换成新卡片``() =
+        Headless.run (fun () ->
         // 后台着色算完走的就是这条路：着色结果进了 Highlight 的缓存，
         // 但卡片身份没变，必须靠丢缓存才能把着色版换上屏
         let view, window, cards = mount ()
@@ -164,9 +171,11 @@ type Incremental(output: ITestOutputHelper) =
                 Assert.NotSame(a, b)
         finally
             window.Close()
+        )
 
     [<Fact>]
     member _.``长对话的流式刷新代价与消息条数无关``() =
+        Headless.run (fun () ->
         let view, window, _ = mount ()
         try
             let messages = [ for i in 1 .. 200 -> messageAt i ]
@@ -183,3 +192,4 @@ type Incremental(output: ITestOutputHelper) =
             Assert.True(perFrame < 20.0, $"每帧 {perFrame:F2} ms，仍然太贵")
         finally
             window.Close()
+        )

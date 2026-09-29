@@ -100,7 +100,6 @@ let private rowByNameOpt (sidebar: Sidebar) (title: string) : Control option =
                | _ -> false)
 
 let private show (content: Control) width height =
-    Headless.ensure ()
     let window = Window(Width = width, Height = height, Content = content)
     window.Show()
     Dispatcher.UIThread.RunJobs()
@@ -127,7 +126,6 @@ let private lastOverlay = ResizeArray<OverlayHost>()
 
 let private buildSidebar () =
     // Ui / Sidebar 模块顶层建有 Cursor：先确保无头平台就绪，否则触碰成员即炸。
-    Headless.ensure ()
     let root = Grid()
     let overlay = OverlayHost(root)
     lastOverlay.Clear()
@@ -164,6 +162,7 @@ let private buildSidebar () =
 // 也是「误点不会跳走」的保障。
 [<Fact>]
 let ``entering selection mode turns row clicks into selection toggles`` () =
+    Headless.run (fun () ->
     let root, sidebar, opened, _, _, _ = buildSidebar ()
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -186,10 +185,12 @@ let ``entering selection mode turns row clicks into selection toggles`` () =
         sidebar.ExitSelection()
     finally
         window.Close()
+    )
 
 // 清空最后一项即退出模式：空选择保留操作条会让用户面对无意义的计数。
 [<Fact>]
 let ``deselecting the last item exits selection mode`` () =
+    Headless.run (fun () ->
     let root, sidebar, _, _, _, _ = buildSidebar ()
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -205,6 +206,7 @@ let ``deselecting the last item exits selection mode`` () =
         Assert.Empty(sidebar.SelectedIds())
     finally
         window.Close()
+    )
 
 // 多选期内 Esc 一律先退多选，不因焦点落在列表底部已归档开关上而失灵：
 // 归档开关行也是列表内的 Tab 停靠点（up/down/home 四处键位都通得到），
@@ -213,6 +215,7 @@ let ``deselecting the last item exits selection mode`` () =
 // kelivo interactive_drawer.dart:399-407 同序：抽屉级返回先问「是不是在多选」。
 [<Fact>]
 let ``escape exits selection mode from the archived toggle row`` () =
+    Headless.run (fun () ->
     let root, sidebar, _, _, _, _ = buildSidebar ()
     let live = Guid.NewGuid()
     let archived = Guid.NewGuid()
@@ -247,10 +250,12 @@ let ``escape exits selection mode from the archived toggle row`` () =
         Assert.Empty(sidebar.SelectedIds())
     finally
         window.Close()
+    )
 
 // 批量置顶/归档按当前选择逐个发命令，Payload 逐条独立可确认。
 [<Fact>]
 let ``batch pin and archive issue one command per selected conversation`` () =
+    Headless.run (fun () ->
     let root, sidebar, _, pinned, archived, _ = buildSidebar ()
     let a, b = Guid.NewGuid(), Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -302,12 +307,14 @@ let ``batch pin and archive issue one command per selected conversation`` () =
         Assert.True archiveValue
     finally
         window.Close()
+    )
 
 // 批量模式里 Escape 只做退出：在搜索结果中进入多选的用户，Esc 的意图是离开
 // 批量态，而不是被清掉筛选用词。此前有词的守卫让退出失效，Esc 落到普通态的
 // 清词分支——用户丢失筛选条件还没退出多选。
 [<Fact>]
 let ``escape in selection mode exits the mode even with a search query`` () =
+    Headless.run (fun () ->
     let root, sidebar, _, _, _, _ = buildSidebar ()
     let a, b = Guid.NewGuid(), Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -335,11 +342,13 @@ let ``escape in selection mode exits the mode even with a search query`` () =
         Assert.True(searchBox.Text = "甲", sprintf "退出多选不得顺手清掉搜索词，实际 %s" searchBox.Text)
     finally
         window.Close()
+    )
 
 // 批量条三个动作键随选中数翻面：0 项时禁用。既有守卫只挡住点击，键盘用户仍能
 // Tab 上去按 Enter 得到静默无反应——按钮的启用态本身就是可操作性的承诺。
 [<Fact>]
 let ``selection action buttons disable themselves while nothing is selected`` () =
+    Headless.run (fun () ->
     let root, sidebar, _, _, _, _ = buildSidebar ()
     let a = Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -379,12 +388,14 @@ let ``selection action buttons disable themselves while nothing is selected`` ()
         Assert.False(pinButton.Value.Focusable, "禁用同时必须退出 Tab 序")
     finally
         window.Close()
+    )
 
 // Ctrl+M 解析为打开模型选择器：不必先找到左下角芯片，键盘可直接换模型。
 // 选择模式只留「取消 / 全选 / 计数」与底部批量条：品牌行与页脚让位。
 // 侧栏只有 232–420pt 宽，四条常驻条会把列表压成几条——这条不变量锁住空间纪律。
 [<Fact>]
 let ``selection mode gives up the brand header and footer`` () =
+    Headless.run (fun () ->
     let root, sidebar, _, _, _, _ = buildSidebar ()
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
@@ -410,11 +421,13 @@ let ``selection mode gives up the brand header and footer`` () =
         Assert.True(sidebar.IsSelectionMode)
     finally
         window.Close()
+    )
 
 // 「多选」入口就在行右键菜单里：桌面用户不必先知道有批量模式。
 // 这里驱动真实菜单项（浮层画在 OverlayHost 上），验证入口 → 进入模式 → 首项选中。
 [<Fact>]
 let ``row context menu offers the selection entry`` () =
+    Headless.run (fun () ->
     let root, sidebar, opened, _, _, _ = buildSidebar ()
     let overlay = lastOverlay.[0]
     let id = Guid.NewGuid()
@@ -453,22 +466,24 @@ let ``row context menu offers the selection entry`` () =
         sidebar.ExitSelection()
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``ctrl+m resolves to the model picker action`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let args =
         KeyEventArgs(
             RoutedEvent = InputElement.KeyDownEvent,
             Key = Key.M,
             KeyModifiers = KeyModifiers.Control)
     Assert.Equal(OpenModelPicker, ShortcutRouter.resolve args)
+    )
 
 // 长用户消息折叠在同一 detailViewport contract 上：未超限时不出现展开入口，
 // 超限时才出现，且上限取自 LayoutPolicy 的专用常量（比工具详情更矮）。
 [<Fact>]
 let ``long user messages get a clipped viewport with an expand entry`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let ctx: MessageContext =
         { fontSize = Tokens.fontReading
           autoCollapseReasoning = false
@@ -518,12 +533,14 @@ let ``long user messages get a clipped viewport with an expand entry`` () =
         Assert.True(userViewport.Value.Extent.Height > userViewport.Value.Viewport.Height)
     finally
         longWindow.Close()
+    )
 
 // 批量键的文案是当前选择的状态，不是固定标签：全选后同一键变成「取消全选」、
 // 全已置顶后变成「取消置顶」。此前两者只在 Build 时算一次，勾选变化后只说旧话，
 // 用户再点会得到与预期相反的动作。锁按钮文本随勾选变化翻转。
 [<Fact>]
 let ``selection buttons rename themselves as the selection changes`` () =
+    Headless.run (fun () ->
     let root, sidebar, _, _, _, _ = buildSidebar ()
     let a = Guid.NewGuid()
     let b = Guid.NewGuid()
@@ -548,13 +565,14 @@ let ``selection buttons rename themselves as the selection changes`` () =
         Assert.Equal("全选", textOf selectAll)
     finally
         window.Close()
+    )
 
 // 发送键与换行键严格互补：Enter 发送模式下 Ctrl+Enter 归换行，Ctrl+Enter 发送模式下
 // 裸 Enter 归换行。此前裸 Enter 发送模式把 Ctrl+Enter 也发出去，用户改行只剩 Shift+Enter
 // 一条路。锁：发送永远只在当前模式被声明的那个键上发生，另一个键不许提交。
 [<Fact>]
 let ``composer sends only on the mode's declared key`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let submitted = ResizeArray<string>()
     let composerActions =
         { submit = fun text ->
@@ -602,12 +620,14 @@ let ``composer sends only on the mode's declared key`` () =
     finally
         // composer 未挂窗，无根可关：测完只撤销其副作用。
         composer.SetEnabled(false, "")
+    )
 
 // 从外部切换当前会话（Ctrl+1..9 / 搜索结果 / 新建）后，选中行若在视口外，
 // 侧栏上看不到正在进行的会话。SetActive 只滚屏不抢焦点：焦点归属照旧由调用方决定。
 // 锁：激活的行必须被滚进可视区。
 [<Fact>]
 let ``setting the active conversation scrolls it into view`` () =
+    Headless.run (fun () ->
     let root, sidebar, _, _, _, _ = buildSidebar ()
     let ids = [ for i in 1 .. 30 -> Guid.NewGuid() ]
     let window = show root 320.0 300.0
@@ -634,14 +654,15 @@ let ``setting the active conversation scrolls it into view`` () =
         | None -> Assert.Fail("找不到会话列表的滚动容器")
     finally
         window.Close()
+    )
 
 // 置顶键的文案只按「已选项是否全部置顶」判定。此前混入「必须全选可见行」的前提，
 // 于是只挑两个已置顶的会话时键面仍说「置顶」，点下去发出的却是取消置顶——
 // 文案与动作相反，用户要么不敢点，要么点错。
 [<Fact>]
 let ``pin key follows the selected items' pinned state alone`` () =
+    Headless.run (fun () ->
     // Ui / Sidebar 模块顶层建有 Cursor：先确保无头平台就绪，否则触碰成员即炸。
-    Headless.ensure ()
     let root = Grid()
     let overlay = OverlayHost(root)
     let pinnedMany = ResizeArray<Guid list * bool>()
@@ -692,6 +713,7 @@ let ``pin key follows the selected items' pinned state alone`` () =
         Assert.False(pinnedMany |> Seq.map snd |> Seq.head)
     finally
         window.Close()
+    )
 
 // 空选择不进删除流：SelectedIds 只报可见行里的已选项，搜索把选中行滤掉后
 // 选择计数非 0 而批量载荷为空——行上按 Delete 仍会调 deleteMany，确认框弹出
@@ -699,6 +721,7 @@ let ``pin key follows the selected items' pinned state alone`` () =
 // （sidebar_selection_bars.dart:186），同一约定。
 [<Fact>]
 let ``batch delete with an empty selection never reaches the batch action`` () =
+    Headless.run (fun () ->
     let root, sidebar, _, _, _, deleted = buildSidebar ()
     let a = Guid.NewGuid()
     let b = Guid.NewGuid()
@@ -749,3 +772,4 @@ let ``batch delete with an empty selection never reaches the batch action`` () =
         Assert.Equal(0, deleted.Count)
     finally
         window.Close()
+    )

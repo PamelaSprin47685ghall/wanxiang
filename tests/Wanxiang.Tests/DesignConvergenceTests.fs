@@ -33,65 +33,77 @@ let private hasSurfaceFeedback (control: Control) =
 type DesignConvergenceTests() =
     // 本类多处调用 Ui.* 原语（tag / tagWith / switchRow / toggle / emptyState /
     // applyValidationFeedback / textField …）构造控件。Ui 模块顶层建有 Cursor
-    // （handCursor，Primitives.fs）：进程若无头平台未注册，触碰 Ui 任意成员都会在
-    // 模块静态构造里炸掉（TypeInitializationException）。冷启动时若本类比
-    // 首个 ensure 的测试先跑，整类一起红；放构造器里一劳永逸——xUnit 每个用例
-    // new 一个实例，ensure 的 lazy 初始化之后近乎零成本。
-    do Headless.ensure ()
+    // （handCursor，Primitives.fs），触碰它前必须已有无头平台；现在每个用例体
+    // 都经 Headless.run 编组，平台在 Dispatch 内装配完毕。
 
     [<Fact>]
     member _.CompactRowPaddingFamilyMatchesScatteredLiterals() =
+        Headless.run (fun () ->
         // 替代散落的 1.0 / 2.0 / 3.0 纵向内边距（tag/chip/pill、行容器、字段留白）。
         Assert.Equal(1.0, Tokens.tightRowPaddingY)
         Assert.Equal(2.0, Tokens.compactRowPaddingY)
         Assert.Equal(3.0, Tokens.fieldRowPaddingY)
+        )
 
     [<Fact>]
     member _.LetterSpacingTracksMatchScatteredLiterals() =
+        Headless.run (fun () ->
         // 替代散落的 0.3 / 0.4 / 0.6 / 0.8。
         Assert.Equal(0.3, Tokens.letterSpacingLabel)
         Assert.Equal(0.4, Tokens.letterSpacingEmphasis)
         Assert.Equal(0.6, Tokens.letterSpacingSection)
         Assert.Equal(0.8, Tokens.letterSpacingDisplay)
+        )
 
     [<Fact>]
     member _.SkeletonOpacityGroupMatchesScatteredLiterals() =
+        Headless.run (fun () ->
         // 替代散落的 0.65（骨架条静态）/ 0.55（呼吸下限）/ 0.85（减弱动效静态）。
         Assert.Equal(0.65, Tokens.skeletonOpacityBase)
         Assert.Equal(0.55, Tokens.skeletonOpacityBreathMin)
         Assert.Equal(0.85, Tokens.skeletonOpacityReduced)
+        )
 
     [<Fact>]
     member _.HoverDimIsNamedOutsideStateLadder() =
+        Headless.run (fun () ->
         // 替代 MessageCard 三处裸 0.9（hover 微暗），有意不并入状态阶梯。
         Assert.Equal(0.9, Tokens.opacityHoverDim)
+        )
 
     [<Fact>]
     member _.AccentEdgeTiersKeepIntentionalSplit() =
+        Headless.run (fun () ->
         // 2.0 统一档：侧栏选中 / toast / 思考竖线；3.0 引用块有意宽一档。
         Assert.Equal(2.0, ControlMetrics.accentEdgeWidth)
         Assert.Equal(3.0, ControlMetrics.quoteEdgeWidth)
         Assert.Equal(ControlMetrics.accentEdgeWidth, ControlMetrics.sidebarSelectedEdgeWidth)
         Assert.Equal(ControlMetrics.accentEdgeWidth, ControlMetrics.toastAccentWidth)
         Assert.True(ControlMetrics.quoteEdgeWidth > ControlMetrics.accentEdgeWidth)
+        )
 
     [<Fact>]
     member _.RowMinHeightIsSingleSourceForBothRowKinds() =
+        Headless.run (fun () ->
         // 44.0 同值不同源 → 单一真源；两个旧名保留为别名，值不再分叉。
         Assert.Equal(44.0, ControlMetrics.rowMinHeight)
         Assert.Equal(ControlMetrics.rowMinHeight, ControlMetrics.sidebarRowMinHeight)
         Assert.Equal(ControlMetrics.rowMinHeight, ControlMetrics.settingsRowMinHeight)
+        )
 
     [<Fact>]
     member _.SelectButtonPaddingAndTextAreaHeights() =
+        Headless.run (fun () ->
         // 替代 Menu.selectButton 的 6.0；textArea 两档保留（长文本特例 > 标准档）。
         Assert.Equal(6.0, ControlMetrics.selectButtonPaddingY)
         Assert.Equal(96.0, ControlMetrics.textAreaMinHeight)
         Assert.Equal(160.0, ControlMetrics.textAreaLongMinHeight)
         Assert.True(ControlMetrics.textAreaLongMinHeight > ControlMetrics.textAreaMinHeight)
+        )
 
     [<Fact>]
     member _.ComponentGeometryConstants() =
+        Headless.run (fun () ->
         Assert.Equal(14.0, ControlMetrics.spinnerSize)
         Assert.Equal(11.0, ControlMetrics.spinnerCompactSize)
         Assert.Equal(34.0, ControlMetrics.toggleTrackWidth)
@@ -115,9 +127,11 @@ type DesignConvergenceTests() =
         // 两个名字必须独立存在，任何一方都不得被合档成一个"通用 96"。
         Assert.Equal(96.0, ControlMetrics.pendingActionMinWidth)
         Assert.Equal(96.0, ControlMetrics.scrollToBottomMinWidth)
+        )
 
     [<Fact>]
     member _.MotionLedgerToastDwellAndFadeNames() =
+        Headless.run (fun () ->
         // toast 三档对应 OverlayHost 的 9000 / 6500 / 4000；150ms 两枚语义名分记。
         Assert.Equal(TimeSpan.FromMilliseconds 9000.0, MotionLedger.toastDwellFailure)
         Assert.Equal(TimeSpan.FromMilliseconds 6500.0, MotionLedger.toastDwellWarning)
@@ -126,9 +140,11 @@ type DesignConvergenceTests() =
         Assert.Equal(TimeSpan.FromMilliseconds 150.0, MotionLedger.controlRowFade)
         // 几何动画纪律不变：本批改动只收敛颜色/不透明度/命名。
         Assert.False(MotionLedger.geometryAnimationAllowed)
+        )
 
     [<Fact>]
     member _.ControlStateTransitionAlignsWithThemeTier() =
+        Headless.run (fun () ->
         // hover/press/focus/selected 底色补间从 120ms 提到 200ms，与 themeColorTransition 同档；
         // 消费时长仍单源经 controlStateDuration（= controlStateTransition 经 MotionPolicy 降级）。
         Assert.Equal(TimeSpan.FromMilliseconds 200.0, MotionLedger.controlStateTransition)
@@ -138,9 +154,11 @@ type DesignConvergenceTests() =
         MotionPolicy.setReduced true
         Assert.Equal(TimeSpan.Zero, MotionLedger.controlStateDuration ())
         MotionPolicy.setReduced false
+        )
 
     [<Fact>]
     member _.HorizontalInsetTracksCompactBreakpoints() =
+        Headless.run (fun () ->
         // 自适应水平留白四档单调不降，锚定既有断点；端点逐一钉住取值随 Tokens 留白阶梯走。
         Assert.Equal(Tokens.space4, LayoutPolicy.horizontalInset 0.0)
         Assert.Equal(Tokens.space4, LayoutPolicy.horizontalInset (LayoutPolicy.formSingleColumnBreakpoint - 1.0))
@@ -152,16 +170,20 @@ type DesignConvergenceTests() =
         // 单调性：留白随窗口变宽不减。
         Assert.True(LayoutPolicy.horizontalInset 1280.0 >= LayoutPolicy.horizontalInset 800.0)
         Assert.True(LayoutPolicy.horizontalInset 800.0 >= LayoutPolicy.horizontalInset 400.0)
+        )
 
     [<Fact>]
     member _.CompactActionTargetIsSingleTouchSource () =
+        Headless.run (fun () ->
         // 触控整合：compactActionTarget 提为触控下限 44，是全应用 compact/touch 图标
         // 动作 hit surface 的唯一来源（ChatView / Composer / Sidebar 的 compact 档共用）；
         // 地基曾加的重复 token（touchActionTarget / Ui.setIconTouchTarget）已删除。
         Assert.Equal(44.0, LayoutPolicy.compactActionTarget)
+        )
 
     [<Fact>]
     member _.TagDefaultBehaviourUnchanged() =
+        Headless.run (fun () ->
         // 默认 Neutral 外观与原 Ui.tag 逐字一致（含 1.0 的 tight 档 padding）。
         let neutral = Ui.tag "x"
         let child = neutral.Child :?> TextBlock
@@ -170,9 +192,11 @@ type DesignConvergenceTests() =
         Assert.Same(Tokens.surfaceRaised, neutral.Background)
         Assert.Same(Tokens.border, neutral.BorderBrush)
         Assert.Equal(Thickness(7.0, 1.0), neutral.Padding)
+        )
 
     [<Fact>]
     member _.TagTonesReuseExistingPensAndKeepGeometry() =
+        Headless.run (fun () ->
         // 语气档只换既有 warning / danger / dangerSoft 笔，几何不变（同排不错位）。
         let warning = Ui.tagWith Ui.TagTone.Warning "w"
         let danger = Ui.tagWith Ui.TagTone.Danger "d"
@@ -185,9 +209,11 @@ type DesignConvergenceTests() =
         Assert.Same(Tokens.dangerSoft, danger.Background)
         Assert.Equal(Thickness(7.0, 1.0), warning.Padding)
         Assert.Equal(Thickness(7.0, 1.0), danger.Padding)
+        )
 
     [<Fact>]
     member _.SwitchRowKeepsAutomationAndRowHeight() =
+        Headless.run (fun () ->
         // 公共 Ui.switchRow 保留 SettingsGeneral 原行为的三个支点：
         // 行最小高度（单一真源）、CheckBox 自动化语义、ItemStatus 开关状态。
         let row, read, write = Ui.switchRow "标题" "说明" false ignore
@@ -203,9 +229,11 @@ type DesignConvergenceTests() =
         write false
         Assert.False(read ())
         Assert.Equal("关闭", AutomationProperties.GetItemStatus(border))
+        )
 
     [<Fact>]
     member _.ValidationFeedbackMultiErrorSummaryAndToast() =
+        Headless.run (fun () ->
         // 多错：摘要 live region 文案 + 「有 N 处需要修正」toast，与两处旧实现逐字一致。
         let summary = TextBlock()
         let boxA = TextBox()
@@ -216,9 +244,11 @@ type DesignConvergenceTests() =
         Assert.True(summary.IsVisible)
         Assert.Single toasts |> ignore
         Assert.Equal("有 2 处需要修正，请查看表单顶部摘要。", toasts.[0])
+        )
 
     [<Fact>]
     member _.ValidationFeedbackSingleErrorToastsFieldMessage() =
+        Headless.run (fun () ->
         // 单错：toast 字段消息并收起摘要。
         let summary = TextBlock()
         summary.IsVisible <- true
@@ -228,26 +258,32 @@ type DesignConvergenceTests() =
         Assert.False(summary.IsVisible)
         Assert.Single toasts |> ignore
         Assert.Equal("错一个", toasts.[0])
+        )
 
     [<Fact>]
     member _.ValidationFeedbackEmptyErrorsAreNoOp() =
+        Headless.run (fun () ->
         let summary = TextBlock()
         let toasts = ResizeArray<string>()
         Ui.applyValidationFeedback [] (Some summary) toasts.Add
         Assert.False(summary.IsVisible)
         Assert.Empty toasts
+        )
 
     [<Fact>]
     member _.ControlSkinMetricsHaveNamedSources() =
+        Headless.run (fun () ->
         // 替代散落的 1.0 描边、6.0/6.0 行状态点、5.0 chip 内点。
         Assert.Equal(1.0, ControlMetrics.borderWidth)
         Assert.Equal(6.0, ControlMetrics.statusDotSize)
         Assert.Equal(6.0, ControlMetrics.sidebarRunningDotSize)
         Assert.Equal(5.0, ControlMetrics.chipDotSize)
         Assert.True(ControlMetrics.chipDotSize < ControlMetrics.statusDotSize)
+        )
 
     [<Fact>]
     member _.ChipDensityHasSingleSourceUnderBothNames() =
+        Headless.run (fun () ->
         // chip 内边距的唯一真源（8 × 2）；compactChipPadding* 只是同一对的兼容别名，
         // 值随真源走（旧纵向 4 已并入 compactRowPaddingY 的紧凑档，chip/tag 同为单行小控件）。
         Assert.Equal(8.0, ControlMetrics.chipPaddingX)
@@ -257,9 +293,11 @@ type DesignConvergenceTests() =
         Assert.Equal(ControlMetrics.chipPaddingY, ControlMetrics.compactChipPaddingY)
         // chip 横向 8 与 tag 横向 7 是有意两档，不许被合回同一个值。
         Assert.True(ControlMetrics.chipPaddingX > ControlMetrics.tagPaddingX)
+        )
 
     [<Fact>]
     member _.ValuePreservingNamesForScatteredLiterals() =
+        Headless.run (fun () ->
         // 只把字面量换成名字，值一字不动（下游 lane 继续按这些名字收敛）。
         Assert.Equal(7.0, ControlMetrics.tagPaddingX)
         Assert.Equal(2.0, ControlMetrics.fieldInsetX)
@@ -267,9 +305,11 @@ type DesignConvergenceTests() =
         Assert.Equal(16.0, ControlMetrics.spinnerCanvasSize)
         Assert.Equal(56.0, ControlMetrics.fontSizeValueMinWidth)
         Assert.Equal(110.0, ControlMetrics.aboutKeyMinWidth)
+        )
 
     [<Fact>]
     member _.TagStillYieldsTheLockedPaddingFromNamedTokens() =
+        Headless.run (fun () ->
         // 取值改名不改值：Ui.tag 仍是 Padding(7.0, 1.0)，描边仍是 canonical 1.0。
         let neutral = Ui.tag "x"
         Assert.Equal(Thickness(7.0, 1.0), neutral.Padding)
@@ -277,9 +317,11 @@ type DesignConvergenceTests() =
         Assert.Equal(Tokens.tightRowPaddingY, neutral.Padding.Top)
         Assert.Equal(ControlMetrics.borderWidth, neutral.BorderThickness.Left)
         Assert.Same(Tokens.border, neutral.BorderBrush)
+        )
 
     [<Fact>]
     member _.EmptyStateProminentTitleIsOptInAndDefaultUnchanged() =
+        Headless.run (fun () ->
         // 默认档与提取前逐字一致（label 档小号、无宽字距）；强调档只改标题字号与字距，
         // 卡片几何两档一致——档位不变成第二个契约。
         let plain = Ui.emptyState (Border()) (Some "还没有会话") "" None None
@@ -294,9 +336,11 @@ type DesignConvergenceTests() =
         Assert.Equal(Tokens.letterSpacingEmphasis, prominentTitle.LetterSpacing)
         Assert.Equal((plain :?> Border).Padding, (prominent :?> Border).Padding)
         Assert.Equal((plain :?> Border).CornerRadius, (prominent :?> Border).CornerRadius)
+        )
 
     [<Fact>]
     member _.PrimitiveStatesShareTransitionCollectionAndKeepContracts() =
+        Headless.run (fun () ->
         // 新加的 hover/pressed 反馈挂在共享的表面过渡集合上（只补间底色、时长出自
         // MotionLedger），自动化语义与几何契约不变。无显示制度下过渡不推进，只锁结构。
         let toggleControl, read, write, _ = Ui.toggle false ignore
@@ -322,3 +366,4 @@ type DesignConvergenceTests() =
         Assert.Same(Tokens.border, shell.BorderBrush)
         Assert.Equal(Thickness(ControlMetrics.borderWidth), shell.BorderThickness)
         Assert.True(hasSurfaceFeedback shell)
+        )

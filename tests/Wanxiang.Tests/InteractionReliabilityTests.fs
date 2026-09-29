@@ -32,7 +32,6 @@ let rec private controls (root: Control) = seq {
 
 // Build the real shell's components without AutoConnect or a live user's credentials.
 let private shell () =
-    Headless.ensure ()
     let view = MainView()
     for method in [ "BuildSidebar"; "BuildChat"; "BuildComposer"; "BuildSettings" ] do
         invoke view method [||] |> ignore
@@ -55,7 +54,7 @@ let private stopVisible view =
 
 [<Fact>]
 let ``composer retains input when dispatch does not take ownership`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let composer =
         Composer
             { submit = fun _ -> failwith "dispatch failed"
@@ -67,9 +66,11 @@ let ``composer retains input when dispatch does not take ownership`` () =
     try invoke composer "Submit" [||] |> ignore with :? TargetInvocationException -> ()
     let text = controls composer |> Seq.pick (function :? TextBox as t -> Some t.Text | _ -> None)
     Assert.Equal("这段文字不能丢", text)
+    )
 
 [<Fact>]
 let ``finishing a background conversation does not stop the foreground generation`` () =
+    Headless.run (fun () ->
     let view = shell ()
     let a, b, ga, gb = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
     select view a
@@ -78,9 +79,11 @@ let ``finishing a background conversation does not stop the foreground generatio
     Assert.True(stopVisible view)
     handle view (finish b gb)
     Assert.True(stopVisible view)
+    )
 
 [<Fact>]
 let ``finishing an old generation does not stop its replacement`` () =
+    Headless.run (fun () ->
     let view = shell ()
     let a, oldGeneration, currentGeneration = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
     select view a
@@ -89,18 +92,21 @@ let ``finishing an old generation does not stop its replacement`` () =
     handle view (start a currentGeneration)
     handle view (finish a oldGeneration)
     Assert.True(stopVisible view)
+    )
 
 [<Fact>]
 let ``late snapshot updates data without taking over navigation`` () =
+    Headless.run (fun () ->
     let view = shell ()
     let a, b = Guid.NewGuid(), Guid.NewGuid()
     select view b
     handle view (snapshot a)
     Assert.Equal(Some b, (field view "activeConvId").GetValue(view) :?> Guid option)
+    )
 
 [<Fact>]
 let ``a declined submission leaves the composer editable and intact`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let composer =
         Composer
             { submit = fun _ -> false
@@ -118,10 +124,11 @@ let ``a declined submission leaves the composer editable and intact`` () =
     composer.SetEnabled(false, "连接断开")
     let input = controls composer |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
     Assert.True input.IsEnabled
+    )
 
 [<Fact>]
 let ``generation accepts a queued message without turning send into cancel`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable submitted = ""
     let mutable stopped = false
     let composer =
@@ -141,9 +148,11 @@ let ``generation accepts a queued message without turning send into cancel`` () 
     Assert.Equal("补充一句", submitted)
     Assert.Equal("", composer.Text)
     Assert.False stopped
+    )
 
 [<Fact>]
 let ``switching conversations restores their separate drafts`` () =
+    Headless.run (fun () ->
     let view = shell ()
     let a, b = Guid.NewGuid(), Guid.NewGuid()
     let composer = (field view "composer").GetValue view :?> Composer
@@ -156,9 +165,11 @@ let ``switching conversations restores their separate drafts`` () =
     Assert.Equal("A 的草稿", composer.Text)
     invoke view "SelectConversation" [| box (Some b) |] |> ignore
     Assert.Equal("B 的草稿", composer.Text)
+    )
 
 [<Fact>]
 let ``outbox keeps the exact command and attachment references across a disconnect`` () =
+    Headless.run (fun () ->
     let outbox = MessageOutbox()
     let attachment = { attachmentId = Guid.NewGuid(); sha256 = "abc"; size = 12L
                        mediaType = "text/plain"; fileName = "notes.txt"; ready = true; failed = false }
@@ -179,9 +190,11 @@ let ``outbox keeps the exact command and attachment references across a disconne
     outbox.Commit id
     outbox.Accept id
     Assert.Equal(0, outbox.Count)
+    )
 
 [<Fact>]
 let ``preparing first message retains its original creation command for retry`` () =
+    Headless.run (fun () ->
     let outbox = MessageOutbox()
     let conversationId = Guid.NewGuid()
     let creation = CreateConversation {| invocationId = Guid.NewGuid(); conversationId = conversationId
@@ -193,9 +206,11 @@ let ``preparing first message retains its original creation command for retry`` 
     Assert.False retained.creationConfirmed
     outbox.ConversationReady("server", conversationId)
     Assert.True((outbox.TryFind(PendingMessage.invocationId item)).Value.creationConfirmed)
+    )
 
 [<Fact>]
 let ``unacknowledged sends expire but an explicitly queued message does not`` () =
+    Headless.run (fun () ->
     let outbox = MessageOutbox()
     let sending = outbox.Stage("server", Guid.NewGuid(), "发送中", [], None)
     let queued = outbox.Stage("server", Guid.NewGuid(), "长任务后插入", [], None)
@@ -203,9 +218,11 @@ let ``unacknowledged sends expire but an explicitly queued message does not`` ()
     Assert.True(outbox.Expire(DateTimeOffset.UtcNow.AddMinutes 2.0, TimeSpan.FromSeconds 30.0))
     Assert.True(PendingMessage.canRetry (outbox.TryFind(PendingMessage.invocationId sending)).Value)
     Assert.Equal(QueuedMessage, (outbox.TryFind(PendingMessage.invocationId queued)).Value.state)
+    )
 
 [<Fact>]
 let ``drafts and pending messages never cross server identities`` () =
+    Headless.run (fun () ->
     let drafts = ComposerDrafts()
     let id = Guid.NewGuid()
     (drafts.Get("a", Some id)).text <- "只属于 a"
@@ -213,9 +230,11 @@ let ``drafts and pending messages never cross server identities`` () =
     let outbox = MessageOutbox()
     outbox.Stage("a", id, "私有内容", [], None) |> ignore
     Assert.Empty(outbox.Items("b", Some id))
+    )
 
 [<Fact>]
 let ``stale deltas and finished snapshots cannot resurrect retired generations`` () =
+    Headless.run (fun () ->
     let runs = ConversationRuns()
     let id, oldId, newId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
     runs.Start(id, oldId)
@@ -227,9 +246,11 @@ let ``stale deltas and finished snapshots cannot resurrect retired generations``
     Assert.True(runs.Finish(id, newId, None, None))
     runs.Snapshot(id, "generating", Some newId)
     Assert.False((runs.Get(Some id)).running)
+    )
 
 [<Fact>]
 let ``configuration failure without a started event is still visible in its own conversation`` () =
+    Headless.run (fun () ->
     let view = shell ()
     let id = Guid.NewGuid()
     select view id
@@ -245,9 +266,11 @@ let ``configuration failure without a started event is still visible in its own 
     let runs = (field view "runs").GetValue view :?> ConversationRuns
     Assert.Equal(Some error, (runs.Get(Some id)).error)
     Assert.True((runs.Get(Some(Guid.NewGuid()))).error.IsNone)
+    )
 
 [<Fact>]
 let ``snapshot generation identity roundtrips and legacy snapshots remain readable`` () =
+    Headless.run (fun () ->
     let id, generation = Guid.NewGuid(), Guid.NewGuid()
     let json = JsonNode.Parse(WireCodec.encode(snapshot id)).AsObject()
     let payload = json["payload"].AsObject()
@@ -264,19 +287,22 @@ let ``snapshot generation identity roundtrips and legacy snapshots remain readab
     match WireCodec.tryDecode(json.ToJsonString()) with
     | Ok (ConversationSnapshot d) -> Assert.True d.generationId.IsNone
     | other -> failwithf "legacy snapshot rejected: %A" other
+    )
 
 [<Fact>]
 let ``disconnected command transport reports failure instead of silent success`` () =
+    Headless.run (fun () ->
     let client = Wanxiang.Client.WsClient()
     let command = RenameConversation {| invocationId = Guid.NewGuid(); conversationId = Guid.NewGuid(); title = "不会发出" |}
     Assert.False(client.TrySendCommandAsync(command).GetAwaiter().GetResult())
     let before = client.ConnectionGeneration
     client.Disconnect()
     Assert.True(client.ConnectionGeneration > before)
+    )
 
 [<Fact>]
 let ``failed first messages remain reachable after switching away`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let id = Guid.NewGuid()
     let outbox = MessageOutbox()
     let creation = CreateConversation {| invocationId = Guid.NewGuid(); conversationId = id; title = "尚未创建"; config = SessionConfig.empty |}
@@ -303,9 +329,11 @@ let ``failed first messages remain reachable after switching away`` () =
         Assert.Equal(Some id, opened)
         Assert.Equal(1, outbox.Count)
     finally window.Close()
+    )
 
 [<Fact>]
 let ``selecting an unloaded conversation does not display the previous conversation body`` () =
+    Headless.run (fun () ->
     let view = shell ()
     let a, b, generation = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
     select view a
@@ -326,10 +354,11 @@ let ``selecting an unloaded conversation does not display the previous conversat
     Assert.DoesNotContain("只属于会话 A 的正文", visibleText)
     let runs = (field view "runs").GetValue view :?> ConversationRuns
     Assert.Equal("只属于会话 A 的正文", (runs.Get(Some a)).message.Value.text)
+    )
 
 [<Fact>]
 let ``generation ending hands keyboard focus back to the composer`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let composer =
         Composer
             { submit = fun _ -> true
@@ -358,10 +387,11 @@ let ``generation ending hands keyboard focus back to the composer`` () =
             + "没有任何承接。kelivo chat_input_bar.dart:1010 在生成结束一律回 focusNode。")
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``top bar stop button hands keyboard focus back to the composer when a run finishes`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     // 直接驱动 ChatView：AppShell 下发生成态的连线已有 stopVisible 用例覆盖
     // （composer 那一侧），这里只钉「焦点从顶栏槽位回家」这一行为本身。
     let chat =
@@ -421,6 +451,7 @@ let ``top bar stop button hands keyboard focus back to the composer when a run f
         // 这里接自然完成与排队条目过期。
     finally
         window.Close()
+    )
 
 /// 分叉落定后焦点必须回家：三条会话切换路径（新建 / 打开 / 分叉）共用同一归宿，
 /// 唯独 ForkFrom 漏了 composer.Focus()。兄弟路径（NewConversation:513 /
@@ -429,7 +460,7 @@ let ``top bar stop button hands keyboard focus back to the composer when a run f
 /// （对话框关掉时其焦点宿主一并消失），得摸鼠标点回输入区。
 [<Fact>]
 let ``forking from a message hands keyboard focus back to the composer`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let view = MainView()
     view.Build()
     let window = Window(Content = view, Width = 900.0, Height = 700.0)
@@ -474,6 +505,7 @@ let ``forking from a message hands keyboard focus back to the composer`` () =
             + "不显式移交焦点，键盘用户接下来敲的字没有任何承接（D3/D4）。")
     finally
         window.Close()
+    )
 
 // 单条删除有成功 toast（「会话「x」已删除」），批量删除此前一条命令都没挂
 // Track、也没有任何提示：删完 N 个会话界面无反馈，命令被拒时同样无声
@@ -481,7 +513,7 @@ let ``forking from a message hands keyboard focus back to the composer`` () =
 // kelivo side_drawer.dart:752-756 删完即给汇总 snackbar，同一约定。
 [<Fact>]
 let ``batch delete reports what it did instead of staying silent`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let view = shell ()
     let root = (field view "root").GetValue view :?> Control
     let overlay = (field view "overlay").GetValue view :?> OverlayHost
@@ -528,6 +560,7 @@ let ``batch delete reports what it did instead of staying silent`` () =
         |> Seq.filter (fun s -> s.Contains "删除")
         |> List.ofSeq
     Assert.True(toasts |> List.exists (fun s -> s.Contains "已删除 2 个会话"), sprintf "批量删除必须给一条汇总反馈，实际 %A" toasts)
+    )
 
 // 重新生成服务端语义 = 删掉尾部整段回复链再重来
 // （CommandEngine.fs:220-232 连续 assistant/tool 消息全删）。本项目其余每一个
@@ -536,7 +569,7 @@ let ``batch delete reports what it did instead of staying silent`` () =
 // kelivo_chat_message_widget.dart:1346-1375 _confirmRegeneration 同一约定。
 [<Fact>]
 let ``regenerate asks before discarding the last reply`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let view = shell ()
     let root = (field view "root").GetValue view :?> Control
     let overlay = (field view "overlay").GetValue view :?> OverlayHost
@@ -575,3 +608,4 @@ let ``regenerate asks before discarding the last reply`` () =
     Dispatcher.UIThread.RunJobs()
     Assert.False(overlay.IsDialogOpen, "取消后确认框应关闭")
     Assert.False(composer.IsFocused, "取消不得发出命令")
+    )

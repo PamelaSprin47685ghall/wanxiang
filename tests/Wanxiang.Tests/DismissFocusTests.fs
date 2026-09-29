@@ -40,7 +40,6 @@ let private byName (root: Control) (name: string) =
 
 /// 把内容装进一个真实窗口并跑一次布局，令浮层 / 定位 / 焦点的 UI 线程作业落地。
 let private show (content: Control) width height =
-    Headless.ensure ()
     let window = Window(Width = width, Height = height, Content = content)
     window.Show()
     Dispatcher.UIThread.RunJobs()
@@ -80,6 +79,7 @@ let private wheelAt (target: Control) (root: Grid) =
 
 [<Fact>]
 let ``wheel outside an open popup dismisses it without scrolling the content`` () =
+    Headless.run (fun () ->
     let root = Grid()
     root.Children.Add(Border(Width = 400.0, Height = 300.0))
     let overlay = OverlayHost(root)
@@ -102,9 +102,11 @@ let ``wheel outside an open popup dismisses it without scrolling the content`` (
         Assert.True(e.Handled, "层外滚轮取消浮层后必须消费事件，避免穿透到底层滚动")
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``wheel inside an open popup is left to the popup itself`` () =
+    Headless.run (fun () ->
     let root = Grid()
     root.Children.Add(Border(Width = 400.0, Height = 300.0))
     let overlay = OverlayHost(root)
@@ -128,6 +130,7 @@ let ``wheel inside an open popup is left to the popup itself`` () =
         Assert.False(e.Handled, "命中浮层内的滚轮应放行给浮层自身的滚动条")
     finally
         window.Close()
+    )
 
 // ── 连接对话框：首焦落在第一个还缺内容的字段 ────────────────────────────────
 
@@ -135,7 +138,7 @@ let ``wheel inside an open popup is left to the popup itself`` () =
 [<InlineData("", true, false)>]
 [<InlineData("ws://127.0.0.1:8765/ws", false, true)>]
 let ``connect focuses the first field that still needs input`` defaultUrl expectUrl expectToken =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     root.Children.Add(Border(Width = 460.0, Height = 460.0))
     let overlay = OverlayHost(root)
@@ -175,3 +178,4 @@ let ``connect focuses the first field that still needs input`` defaultUrl expect
     finally
         overlay.CloseDialog()
         window.Close()
+    )

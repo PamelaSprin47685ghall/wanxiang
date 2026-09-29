@@ -4,7 +4,6 @@ open System
 open System.Diagnostics
 open Avalonia.Controls
 open Xunit
-open Xunit.Abstractions
 open Wanxiang.UI
 open Wanxiang.Tests
 
@@ -49,7 +48,7 @@ type Cost(output: ITestOutputHelper) =
 
     [<Fact>]
     member _.``报告整表重建的代价``() =
-        Headless.ensure ()
+        Headless.run (fun () ->
         // 预热：首次要付 Markdig / 字体 / 主题的一次性成本
         MessageCard.render (messageAt 0) context actions |> ignore
 
@@ -62,3 +61,4 @@ type Cost(output: ITestOutputHelper) =
             output.WriteLine(
                 sprintf "%3d 条消息重建一次 = %6.1f ms（每条 %.2f ms）"
                     count watch.Elapsed.TotalMilliseconds (watch.Elapsed.TotalMilliseconds / float count))
+        )

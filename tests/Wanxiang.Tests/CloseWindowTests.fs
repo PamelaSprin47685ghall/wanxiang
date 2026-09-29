@@ -27,7 +27,6 @@ module CloseWindowTests =
     /// 建一个真实壳：MainView.HandleShortcut 是壳内唯一把快捷键翻译成动作的地方，
     /// 壳本身又通过 TopLevel.GetTopLevel 反查宿主窗口。
     let private buildShell () =
-        Headless.ensure ()
         MotionPolicy.setReduced true
         let shell = MainView()
         shell.Build()
@@ -43,15 +42,20 @@ module CloseWindowTests =
 
     [<Fact>]
     let ``ctrl w resolves to close window`` () =
+        Headless.run (fun () ->
         Assert.Equal(CloseWindow, ShortcutRouter.resolve (keyEvent Key.W KeyModifiers.Control))
+        )
 
     [<Fact>]
     let ``close window accepts either ctrl or meta`` () =
+        Headless.run (fun () ->
         // ⌘W 在 macOS 上与 Ctrl+W 同权：与其它 Ctrl/* 快捷键同一判据。
         Assert.Equal(CloseWindow, ShortcutRouter.resolve (keyEvent Key.W KeyModifiers.Meta))
+        )
 
     [<Fact>]
     let ``close window does not steal neighbouring key bindings`` () =
+        Headless.run (fun () ->
         // Ctrl+Shift+W 留给浏览器/未来的标签语义；裸 W 是输入框正文，绝不能占。
         Assert.Equal(NoShortcut, ShortcutRouter.resolve (keyEvent Key.W KeyModifiers.None))
         Assert.Equal(
@@ -62,20 +66,24 @@ module CloseWindowTests =
         Assert.Equal(ToggleSidebar, ShortcutRouter.resolve (keyEvent Key.B KeyModifiers.Control))
         Assert.Equal(ScrollToEnd, ShortcutRouter.resolve (keyEvent Key.End KeyModifiers.Control))
         Assert.Equal(ScrollToBeginning, ShortcutRouter.resolve (keyEvent Key.Home KeyModifiers.Control))
+        )
 
     // ---------- 壳层行为 ----------
 
     [<Fact>]
     let ``ctrl w closes the hosting window`` () =
+        Headless.run (fun () ->
         let shell, window = buildShell ()
         // Avalonia 的 Close 是终态的（"Cannot re-show a closed window"），
         // 所以这里不用 try/finally 回收窗口——每个用例自建一个，无共享状态。
         Assert.True(window.IsActive, "前置条件：窗口已显示，TopLevel 可解析")
         handle shell (keyEvent Key.W KeyModifiers.Control)
         Assert.False(window.IsActive, "Ctrl+W 应经 Window.Close 关掉宿主窗口")
+        )
 
     [<Fact>]
     let ``ctrl w is marked handled so the host cannot act on it twice`` () =
+        Headless.run (fun () ->
         let shell, window = buildShell ()
         let e = keyEvent Key.W KeyModifiers.Control
         handle shell e
@@ -83,12 +91,13 @@ module CloseWindowTests =
         // 当自己的关标签/关窗口语义再解释一次。
         Assert.True(e.Handled, "Ctrl+W 必须被标记已处理，阻止宿主重复执行")
         Assert.False(window.IsActive, "同一路径也把窗口关掉了")
+        )
 
     [<Fact>]
     let ``ctrl w without a window host degrades to a no op`` () =
+        Headless.run (fun () ->
         // PWA（决策 48：browser 宿主下根视图是 Control，没有 Window）：
         // 关窗快捷键在那里必须安静地什么都不做，而不是抛。
-        Headless.ensure ()
         MotionPolicy.setReduced true
         let shell = MainView()
         shell.Build()
@@ -101,3 +110,4 @@ module CloseWindowTests =
         Assert.Empty(raised)
         // 没有宿主可关：不声称已处理，把按键交回给宿主。
         Assert.False(e.Handled)
+        )

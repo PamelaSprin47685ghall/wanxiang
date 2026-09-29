@@ -25,6 +25,7 @@ open Avalonia.Interactivity
 
 [<Fact>]
 let ``builtin echo function extracts text from various argument names`` () =
+    Headless.run (fun () ->
     let echo = BuiltinEchoFunction() :> AITool :?> AIFunction
     Assert.Equal("builtin_echo", echo.Name)
     Assert.NotNull echo.JsonSchema
@@ -43,9 +44,11 @@ let ``builtin echo function extracts text from various argument names`` () =
     let args3 = AIFunctionArguments(dict [ "msg", box "message-content" ])
     let res3 = echo.InvokeAsync(args3).AsTask().GetAwaiter().GetResult()
     Assert.Equal("message-content", string res3)
+    )
 
 [<Fact>]
 let ``builtin file read function extracts path from various argument names with sandbox check`` () =
+    Headless.run (fun () ->
     let dir = tempDir ()
     try
         let filePath = Path.Combine(dir, "data.txt")
@@ -74,9 +77,11 @@ let ``builtin file read function extracts path from various argument names with 
         Assert.Contains("error:", res4)
     finally
         cleanup dir
+    )
 
 [<Fact>]
 let ``builtin file list function lists directory entries`` () =
+    Headless.run (fun () ->
     let dir = tempDir ()
     try
         File.WriteAllText(Path.Combine(dir, "f1.txt"), "hello")
@@ -94,18 +99,22 @@ let ``builtin file list function lists directory entries`` () =
         Assert.Contains("f1.txt", res2)
     finally
         cleanup dir
+    )
 
 [<Fact>]
 let ``builtin time function returns ISO 8601 UTC timestamp`` () =
+    Headless.run (fun () ->
     let time = BuiltinTimeFunction() :> AITool :?> AIFunction
     Assert.Equal("builtin_time", time.Name)
     let res = string (time.InvokeAsync(AIFunctionArguments()).AsTask().GetAwaiter().GetResult())
     let (parsed, dt) = DateTimeOffset.TryParse(res)
     Assert.True(parsed)
     Assert.Equal(TimeSpan.Zero, dt.Offset)
+    )
 
 [<Fact>]
 let ``provider sse preserves indentation according to W3C specification`` () =
+    Headless.run (fun () ->
     let sseText =
         "data:     def indented_code():\n" +
         "data:         return 42\n\n"
@@ -126,9 +135,11 @@ let ``provider sse preserves indentation according to W3C specification`` () =
     Assert.Equal(2, lines.Length)
     Assert.Equal("    def indented_code():", lines[0])
     Assert.Equal("        return 42", lines[1])
+    )
 
 [<Fact>]
 let ``client state updates and removes deleted message in ConversationUpdated`` () =
+    Headless.run (fun () ->
     let state = ClientState()
     let convId = Guid.NewGuid()
     
@@ -172,9 +183,11 @@ let ``client state updates and removes deleted message in ConversationUpdated`` 
     let remainingCommitId = (view2.messages[0].AsObject()["commitId"]).GetValue<uint64>()
     Assert.Equal(11UL, remainingCommitId)
     Assert.Equal(12UL, view2.lastCommitId)
+    )
 
 [<Fact>]
 let ``client state catch up removes deleted message via MessageDeleted event`` () =
+    Headless.run (fun () ->
     let state = ClientState()
     let convId = Guid.NewGuid()
     
@@ -207,9 +220,11 @@ let ``client state catch up removes deleted message via MessageDeleted event`` (
 
     Assert.Equal(0, state.Conversations[convId].messages.Count)
     Assert.Equal(21UL, state.Conversations[convId].lastCommitId)
+    )
 
 [<Fact>]
 let ``session config topP and thinkingBudget roundtrip in commit codec`` () =
+    Headless.run (fun () ->
     let convId = Guid.NewGuid()
     let cfg =
         { SessionConfig.empty with
@@ -231,10 +246,11 @@ let ``session config topP and thinkingBudget roundtrip in commit codec`` () =
         Assert.Equal(Some 8192, d.config.maxTokens)
         Assert.Equal(Some 0.7, d.config.temperature)
     | _ -> failwith "unexpected event type"
+    )
 
 [<Fact>]
 let ``ui button triggers callback on Enter and Space keys`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable count = 0
     let btn = Ui.button Ui.Primary "Test" (fun () -> count <- count + 1)
     
@@ -247,10 +263,11 @@ let ``ui button triggers callback on Enter and Space keys`` () =
     let spaceArgs = Avalonia.Input.KeyEventArgs(RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Space)
     btn.RaiseEvent spaceArgs
     Assert.Equal(2, count)
+    )
 
 [<Fact>]
 let ``markdown renderer renders complex markdown with code, tables and math without error`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let doc =
         "# 标题一\n" +
         "正文包含 **粗体**、*斜体*、`行内代码` 和 [链接](https://example.com)。\n\n" +
@@ -265,10 +282,11 @@ let ``markdown renderer renders complex markdown with code, tables and math with
     let renderer = MarkdownRenderer(14.0, ignore, ignore, true)
     let control = renderer.RenderText doc
     Assert.NotNull control
+    )
 
 [<Fact>]
 let ``message card renders user and assistant with reasoning and tools without error`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let ctx =
         { fontSize = 14.0
           autoCollapseReasoning = false
@@ -301,9 +319,11 @@ let ``message card renders user and assistant with reasoning and tools without e
                 [ { callId = "c1"; name = "builtin_echo"; argumentsJson = """{"text":"hello"}"""; result = Some "hello" } ] }
     let assistantCard = MessageCard.render assistantMsg ctx msgActions
     Assert.NotNull assistantCard
+    )
 
 [<Fact>]
 let ``conversation summary matches multi word and model search`` () =
+    Headless.run (fun () ->
     let summary =
         { id = Guid.NewGuid()
           title = "探讨量子计算算法"
@@ -332,9 +352,11 @@ let ``conversation summary matches multi word and model search`` () =
     Assert.True(ConversationSummary.matches "Shor sonnet" summary)
     // Non matching term
     Assert.False(ConversationSummary.matches "量子 gpt-4o" summary)
+    )
 
 [<Fact>]
 let ``highlight parseHtml maps nested scopes and diff tokens correctly`` () =
+    Headless.run (fun () ->
     let html =
         """<span class="hljs-keyword">let</span> <span class="hljs-variable">x</span> = <span class="hljs-string">&quot;hello <span class="hljs-subst">name</span>&quot;</span> <span class="hljs-comment">// 注释</span>"""
     let tokens = Highlight.parseHtml html
@@ -348,10 +370,11 @@ let ``highlight parseHtml maps nested scopes and diff tokens correctly`` () =
     let diffTokens = Highlight.parseHtml diffHtml
     Assert.Contains(diffTokens, fun t -> t.kind = CodeAddition && t.text.Contains("added line"))
     Assert.Contains(diffTokens, fun t -> t.kind = CodeDeletion && t.text.Contains("deleted line"))
+    )
 
 [<Fact>]
 let ``textField maintains constant border thickness on focus to prevent layout shift`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let shell, box = Ui.textField "输入测试"
     Assert.Equal(1.0, shell.BorderThickness.Left)
     Assert.Equal(1.0, shell.BorderThickness.Top)
@@ -362,10 +385,11 @@ let ``textField maintains constant border thickness on focus to prevent layout s
     // Border thickness remains exactly 1.0 (no layout shift)
     Assert.Equal(1.0, shell.BorderThickness.Left)
     Assert.Equal(1.0, shell.BorderThickness.Top)
+    )
 
 [<Fact>]
 let ``theme mode switching updates palette and dynamic brushes`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     // 切色从旧色补间到新色（MotionLedger.themeColorTransition）：mode/palette
     // 同步到位，画笔颜色逐帧收敛。泵到收敛后再断言最终状态。
     let settle () =
@@ -389,10 +413,11 @@ let ``theme mode switching updates palette and dynamic brushes`` () =
     settle ()
     Assert.False(Tokens.isDark())
     Assert.Equal(lightCanvas, Tokens.canvas.Color)
+    )
 
 [<Fact>]
 let ``error card toggles technical detail and triggers retry action`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable retried = false
     let err =
         { kind = ProviderUnavailable
@@ -402,10 +427,11 @@ let ``error card toggles technical detail and triggers retry action`` () =
           retryAfterSeconds = Some 5 }
     let card = MessageCard.errorCard err (fun () -> retried <- true) None
     Assert.NotNull card
+    )
 
 [<Fact>]
 let ``chat view renders a focused empty state without extra actions`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable sidebarToggled = false
     let chatActions: ChatActions =
         { renameTitle = ignore
@@ -427,10 +453,11 @@ let ``chat view renders a focused empty state without extra actions`` () =
     chat.Build()
     chat.ShowEmpty(EmptyConversation, None)
     Assert.True(chat.IsVisible)
+    )
 
 [<Fact>]
 let ``composer accepts text without introducing extra send modes`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions: ComposerActions =
         { submit = fun _ -> true
           stopGeneration = ignore
@@ -445,10 +472,11 @@ let ``composer accepts text without introducing extra send modes`` () =
     comp.SetText("万象架构：事件溯源与对等连接")
     // Verification that composer accepts text and calculates state without crashing
     Assert.True(comp.IsVisible)
+    )
 
 [<Fact>]
 let ``message card renders assistant markdown without extra view mode`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let msg: MessageView =
         { commitId = Some 10UL
           role = "assistant"
@@ -475,10 +503,11 @@ let ``message card renders assistant markdown without extra view mode`` () =
           openLink = ignore }
     let card = MessageCard.render msg ctx actions
     Assert.NotNull card
+    )
 
 [<Fact>]
 let ``main view build mounts a non-empty root visual tree`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let oldHome = Environment.GetEnvironmentVariable "WANXIANG_HOME"
     let home = tempDir ()
     try
@@ -493,3 +522,4 @@ let ``main view build mounts a non-empty root visual tree`` () =
     finally
         Environment.SetEnvironmentVariable("WANXIANG_HOME", oldHome)
         cleanup home
+    )

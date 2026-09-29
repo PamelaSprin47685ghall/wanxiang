@@ -26,8 +26,8 @@ let ``commit line survives a serialize roundtrip`` () =
 let ``wire event survives a serialize roundtrip`` () =
     let payload1 = """{"b":2,"a":{"c":1},"arr":[1,2]}"""
     let payload2 = """{ "arr" : [1,2], "a": { "c" : 1 }, "b" : 2 }"""
-    let n1 = CanonicalJson.tryNormalize payload1
-    let n2 = CanonicalJson.tryNormalize payload2
+    let n1 = Some(Wanxiang.Core.Ledger.Jcs.canonicalize payload1)
+    let n2 = Some(Wanxiang.Core.Ledger.Jcs.canonicalize payload2)
     Assert.Equal(n1, n2)
     let inv = Guid.NewGuid()
     let id1 = CommandId.compute inv "test.cmd" n1.Value

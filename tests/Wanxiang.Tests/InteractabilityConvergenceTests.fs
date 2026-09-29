@@ -30,7 +30,6 @@ module InteractabilityConvergenceTests =
 
     /// 与 ExchangeNavTests 同构的 ChatView 装配（本文件只锁滚动未读计数）。
     let private buildChat (messages: MessageView list) =
-        Headless.ensure ()
         MotionPolicy.setReduced true
         let chatActions =
             { renameTitle = ignore
@@ -88,6 +87,7 @@ module InteractabilityConvergenceTests =
 
     [<Fact>]
     let ``streaming reply finalizing while scrolled away counts as an unread message`` () =
+        Headless.run (fun () ->
         let chat, window = buildChat (exchanges 6)
         try
             scrollAway chat
@@ -103,9 +103,11 @@ module InteractabilityConvergenceTests =
             | None -> failwith "流式回复落定后未读没记账：用户划上去等生成，最后看不到任何提示"
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``streaming reply finalizing while pinned to the bottom keeps the counter clear`` () =
+        Headless.run (fun () ->
         let chat, window = buildChat (exchanges 6)
         try
             // 贴着底部：落定只是同一张卡刷新，不该冒未读。
@@ -116,13 +118,14 @@ module InteractabilityConvergenceTests =
             Assert.True(Option.isNone (unreadLabelText chat), "贴底时流式收尾不该记账未读")
         finally
             window.Close()
+        )
 
     /// 右键菜单动作集由 messageMenuEntries 单一产出（hover 按钮共用同一份），
     /// 但 buildMessageContextMenu 过去只取 label/action，icon 被丢在半路：
     /// 同一个动作 hover 上有图、右键里是纯文字。这句锁的就是两端同图。
     [<Fact>]
     let ``message context menu carries the same icons as the hover toolbar`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let message =
             { MessageView.empty with
                 role = "assistant"
@@ -164,16 +167,17 @@ module InteractabilityConvergenceTests =
             let delete =
                 items |> List.find (fun i -> (string i.Header).Contains "删除")
             // 删错一条的代价最高：红字另有一层「别顺手点到它」的提醒。
-            Assert.IsAssignableFrom<IBrush>(delete.Foreground)
+            Assert.IsAssignableFrom(typeof<IBrush>, delete.Foreground)
         finally
             window.Close()
+        )
 
     /// 停止生成后焦点必须回到输入区。点了按钮却把焦点留在按钮上，
     /// 用户紧接着打的字全喂给按钮——回车还会再触发一次停止/发送。
     /// kelivo chat_input_bar.dart:1010 在 stop 分支同样 requestFocus 回 focusNode。
     [<Fact>]
     let ``stopping generation hands focus back to the input`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         let stops = ResizeArray<int>()
         let composerActions =
             { submit = fun _ -> true
@@ -235,13 +239,14 @@ module InteractabilityConvergenceTests =
             Assert.True(input.IsFocused, "停止之后焦点应回到输入区，否则接下来的字全喂给按钮")
         finally
             window.Close()
+        )
 
     // 空态下点模型芯片：过去固定弹「先选择一个会话。」——而此刻输入区是启用的、
     // 芯片上正亮着默认模型名。kelivo model_select_sheet.dart:216 的选择不依赖已有会话。
     // 这里锁三条：菜单开得出、选中写入草稿暂存位、草稿不走丢（建会话时作为起点）。
     [<Fact>]
     let ``empty state model chip opens the picker and remembers the choice`` () =
-        Headless.ensure ()
+        Headless.run (fun () ->
         MotionPolicy.setReduced true
         let shell = MainView()
         shell.Build()
@@ -321,3 +326,4 @@ module InteractabilityConvergenceTests =
             Assert.True(draft.IsSome, "选过之后草稿暂存位应有值")
         finally
             window.Close()
+        )

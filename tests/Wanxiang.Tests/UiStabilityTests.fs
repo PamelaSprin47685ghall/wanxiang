@@ -54,7 +54,6 @@ let private realizedByAutomationName (list: ListBox) (name: string) =
     |> Seq.find (fun control -> AutomationProperties.GetName(control) = name)
 
 let private show (content: Control) width height =
-    Headless.ensure ()
     let window = Window(Width = width, Height = height, Content = content)
     window.Show()
     Dispatcher.UIThread.RunJobs()
@@ -62,6 +61,7 @@ let private show (content: Control) width height =
 
 [<Fact>]
 let ``craft metrics form a stable readable hierarchy`` () =
+    Headless.run (fun () ->
     let size = Tokens.fontReading
     Assert.True(ReadingRhythm.proseLineHeight size > ReadingRhythm.secondaryLineHeight size)
     Assert.True(ReadingRhythm.secondaryLineHeight size > ReadingRhythm.technicalLineHeight size)
@@ -69,10 +69,11 @@ let ``craft metrics form a stable readable hierarchy`` () =
     Assert.True(ReadingRhythm.headingBefore 2 > ReadingRhythm.headingBefore 3)
     Assert.True(ControlMetrics.textButtonMinHeight >= Tokens.iconButton)
     Assert.True(ControlMetrics.sidebarRowMinHeight > ControlMetrics.textButtonMinHeight)
+    )
 
 [<Fact>]
 let ``markdown and primitive controls consume shared craft metrics`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
     let rendered = renderer.RenderText "一段用于验证阅读节奏的正文。"
     let button = Ui.button Ui.Secondary "保存" ignore
@@ -93,10 +94,11 @@ let ``markdown and primitive controls consume shared craft metrics`` () =
         Assert.Equal(ControlMetrics.textFieldPaddingY, fieldShell.Padding.Top, 3)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``reserved contextual actions never change their layout slot`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let action = Ui.iconButton Icons.more "更多"
     let window = show action 90.0 70.0
     try
@@ -121,10 +123,11 @@ let ``reserved contextual actions never change their layout slot`` () =
         Assert.True action.Focusable
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``standard input field group keeps label validation and hint in one rhythm`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let shell, box = Ui.textField "输入"
     let group = Ui.inputFieldGroup "字段" "辅助说明" box
     let window = show group 420.0 150.0
@@ -139,10 +142,11 @@ let ``standard input field group keeps label validation and hint in one rhythm``
         Assert.Equal(Tokens.space1, hint.Margin.Top, 3)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``chat reading column relies on avalonia stretch and max width across viewports`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let messageActions =
         { copyText = ignore
           regenerate = ignore
@@ -191,6 +195,7 @@ let ``chat reading column relies on avalonia stretch and max width across viewpo
                 Assert.True(readingColumn.Bounds.Width > width - Tokens.shellInset * 4.0)
         finally
             window.Close()
+    )
 
 // probe: collapse focus destination[<Fact>]
 let ``navigation controller owns compact and collapsed state transitions`` () =
@@ -215,7 +220,7 @@ let ``navigation controller owns compact and collapsed state transitions`` () =
 
 [<Fact>]
 let ``main layout controller is the only column projector and survives every matrix boundary`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let sidebarActions =
         { newConversation = ignore
           openConversation = ignore
@@ -330,9 +335,11 @@ let ``main layout controller is the only column projector and survives every mat
         Assert.True splitter.IsVisible
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``shortcut router maps global keys without executing UI effects`` () =
+    Headless.run (fun () ->
     let event key modifiers = KeyEventArgs(Key = key, KeyModifiers = modifiers)
     Assert.Equal(ToggleSidebar, ShortcutRouter.resolve (event Key.B KeyModifiers.Control))
     Assert.Equal(NewConversation, ShortcutRouter.resolve (event Key.N KeyModifiers.Meta))
@@ -340,10 +347,11 @@ let ``shortcut router maps global keys without executing UI effects`` () =
     Assert.Equal(OpenConversationAt 2, ShortcutRouter.resolve (event Key.D3 KeyModifiers.Control))
     Assert.Equal(ShowShortcuts, ShortcutRouter.resolve (event Key.F1 KeyModifiers.None))
     Assert.Equal(NoShortcut, ShortcutRouter.resolve (event Key.A KeyModifiers.None))
+    )
 
 [<Fact>]
 let ``disabled action surface cannot be invoked through automation`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable invoked = 0
     let button = Ui.iconButton Icons.paperclip "添加附件"
     Ui.onClick button (fun () -> invoked <- invoked + 1)
@@ -365,10 +373,11 @@ let ``disabled action surface cannot be invoked through automation`` () =
         Assert.Equal(1, invoked)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``custom toggle exposes toggle automation pattern and state`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable changed = false
     let toggle, read, _, _ = Ui.toggle false (fun value -> changed <- value)
     let window = show toggle 100.0 70.0
@@ -383,10 +392,11 @@ let ``custom toggle exposes toggle automation pattern and state`` () =
         Assert.Equal(ToggleState.On, provider.ToggleState)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``field validation is local and does not change geometry`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let field, box = Ui.labeledField "端点地址" "https://example.com"
     let window = show field 420.0 130.0
     try
@@ -410,10 +420,11 @@ let ``field validation is local and does not change geometry`` () =
         Assert.Equal(before, shell.BorderThickness)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``field group shows hint or error but never both`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let _, box = Ui.textField "输入"
     let group = Ui.inputFieldGroup "端点" "填写服务地址。" box
     let window = show group 420.0 150.0
@@ -433,10 +444,11 @@ let ``field group shows hint or error but never both`` () =
         Assert.True hint.IsVisible
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``composer blocks send while any attachment is uploading`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable submitted = 0
     let actions =
         { submit = fun _ -> submitted <- submitted + 1; true
@@ -485,10 +497,11 @@ let ``composer blocks send while any attachment is uploading`` () =
         Assert.Equal(1, submitted)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``composer send stop state keeps automation name in sync`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions =
         { submit = fun _ -> true
           stopGeneration = ignore
@@ -512,10 +525,11 @@ let ``composer send stop state keeps automation name in sync`` () =
         Assert.Equal("发送", AutomationProperties.GetName(send))
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``composer attachment slots stay stable across uploading ready and thirty items`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions =
         { submit = fun _ -> true
           stopGeneration = ignore
@@ -569,9 +583,11 @@ let ``composer attachment slots stay stable across uploading ready and thirty it
         Assert.True(attachmentScroller.Bounds.Height <= LayoutPolicy.attachmentDraftMaxHeight + 0.5)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``download buffers cap single transfer and dispose on cap`` () =
+    Headless.run (fun () ->
     let buffers = DownloadBuffers(1024L)
     buffers.Begin("ABC", "report.pdf")
     Assert.Equal(1, buffers.PendingCount)
@@ -595,9 +611,11 @@ let ``download buffers cap single transfer and dispose on cap`` () =
         Assert.Equal(10, bytes.Length)
     | None -> failwith "restarted download should complete"
     Assert.Equal(0, buffers.PendingCount)
+    )
 
 [<Fact>]
 let ``download buffers reset on repeated begin and clear on disconnect`` () =
+    Headless.run (fun () ->
     let buffers = DownloadBuffers(4096L)
     buffers.Begin("aa", "first.bin")
     Assert.Equal(Accepted, buffers.Append("aa", Array.zeroCreate 100))
@@ -620,9 +638,11 @@ let ``download buffers reset on repeated begin and clear on disconnect`` () =
     // Clear 后可继续服务新下载。
     buffers.Begin("cc", "next.bin")
     Assert.Equal(Accepted, buffers.Append("cc", Array.zeroCreate 4))
+    )
 
 [<Fact>]
 let ``conversation runs retire ledger is bounded with fifo eviction`` () =
+    Headless.run (fun () ->
     let runs = ConversationRuns()
     let conversation = Guid.NewGuid()
     // 生成 1025 个退休条目，超过容量 1024：最旧的被淘汰，集合不再单调增长。
@@ -640,9 +660,11 @@ let ``conversation runs retire ledger is bounded with fifo eviction`` () =
     // Clear 全量清空：换实例/重置时不残留。
     runs.Clear()
     Assert.Equal(0, runs.RetiredCount)
+    )
 
 [<Fact>]
 let ``attachment draft uses upload identity so duplicate files stay independent`` () =
+    Headless.run (fun () ->
     let draft = AttachmentDraftController()
     let firstId = Guid.NewGuid()
     let secondId = Guid.NewGuid()
@@ -675,9 +697,11 @@ let ``attachment draft uses upload identity so duplicate files stay independent`
     let consumed = draft.TryConsumeReady() |> Option.get
     Assert.Single consumed |> ignore
     Assert.Empty draft.Items
+    )
 
 [<Fact>]
 let ``command feedback tracker resolves exactly once on commit or reject`` () =
+    Headless.run (fun () ->
     let tracker = CommandFeedbackTracker()
     let conversationId = Guid.NewGuid()
     let firstInvocation = Guid.NewGuid()
@@ -699,9 +723,11 @@ let ``command feedback tracker resolves exactly once on commit or reject`` () =
     tracker.Reject rejectedInvocation |> ignore
     Assert.Equal(0, tracker.Count)
     Assert.Equal(1, committed)
+    )
 
 [<Fact>]
 let ``config feedback tracker resolves exactly once and rejects pending UI on disconnect`` () =
+    Headless.run (fun () ->
     let tracker = ConfigFeedbackTracker()
     let first = Guid.NewGuid()
     let mutable completions: bool list = []
@@ -722,10 +748,11 @@ let ``config feedback tracker resolves exactly once and rejects pending UI on di
     Assert.Equal(0, tracker.Count)
     Assert.Equal(3, completions.Length)
     Assert.Equal(2, completions |> List.filter not |> List.length)
+    )
 
 [<Fact>]
 let ``large tool detail is bounded first and can explicitly expand fully`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions: MessageActions =
         { copyText = ignore
           regenerate = ignore
@@ -784,10 +811,11 @@ let ``large tool detail is bounded first and can explicitly expand fully`` () =
         Assert.Equal("展开工具调用 huge_tool", AutomationProperties.GetName(tool))
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``dialog is constrained to the live viewport and restores focus`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let trigger = Ui.button Ui.Secondary "打开" ignore
     root.Children.Add trigger
@@ -822,10 +850,11 @@ let ``dialog is constrained to the live viewport and restores focus`` () =
         Assert.True trigger.IsFocused
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``popup flips and clamps inside the viewport then restores anchor focus`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let anchor = Ui.button Ui.Secondary "锚点" ignore
     anchor.HorizontalAlignment <- HorizontalAlignment.Right
@@ -872,10 +901,11 @@ let ``popup flips and clamps inside the viewport then restores anchor focus`` ()
         Assert.True anchor.IsFocused
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``long markdown link has one keyboard stop and remote image states its source`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
     let longLabel = String.replicate 12 "very-long-link-segment-"
     let rendered = renderer.RenderText(sprintf "[%s](https://example.com/path)\n\n![架构图](https://cdn.example.com/diagram.png)" longLabel)
@@ -899,10 +929,11 @@ let ``long markdown link has one keyboard stop and remote image states its sourc
         Assert.Contains("cdn.example.com", imageNotice)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``forty item menu keeps long labels bounded and supports directional focus`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let anchor = Ui.button Ui.Secondary "打开菜单" ignore
     anchor.HorizontalAlignment <- HorizontalAlignment.Right
@@ -941,6 +972,7 @@ let ``forty item menu keeps long labels bounded and supports directional focus``
         Assert.True(menuScroller.Extent.Height > menuScroller.Viewport.Height)
     finally
         window.Close()
+    )
 
 let private message commit text =
     { MessageView.empty with
@@ -950,7 +982,7 @@ let private message commit text =
 
 [<Fact>]
 let ``history prepend preserves the reader viewport anchor`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let messageActions =
         { copyText = ignore
           regenerate = ignore
@@ -999,10 +1031,11 @@ let ``history prepend preserves the reader viewport anchor`` () =
         Assert.True(abs (scroller.Offset.Y - expected) < 2.0, sprintf "offset %.1f expected %.1f" scroller.Offset.Y expected)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``repeated streaming updates preserve committed card instances`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let messageActions =
         { copyText = ignore
           regenerate = ignore
@@ -1051,10 +1084,11 @@ let ``repeated streaming updates preserve committed card instances`` () =
         Assert.True(watch.Elapsed.TotalMilliseconds < 2500.0, sprintf "30 streaming updates %.0f ms" watch.Elapsed.TotalMilliseconds)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``streaming completion keeps the message footnote row geometry constant`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions: MessageActions =
         { copyText = ignore
           regenerate = ignore
@@ -1107,6 +1141,7 @@ let ``streaming completion keeps the message footnote row geometry constant`` ()
             committedWindow.Close()
     finally
         streamingWindow.Close()
+    )
 
 let private summary id title =
     { id = id
@@ -1125,7 +1160,7 @@ let private summary id title =
 
 [<Fact>]
 let ``changing active sidebar row does not rebuild the conversation list`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions =
         { newConversation = ignore
           openConversation = ignore
@@ -1166,10 +1201,11 @@ let ``changing active sidebar row does not rebuild the conversation list`` () =
         Assert.True(obj.ReferenceEquals(betaBefore, betaAfter))
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``sidebar keeps a bounded visual tree for 5000 conversations`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions =
         { newConversation = ignore
           openConversation = ignore
@@ -1216,10 +1252,11 @@ let ``sidebar keeps a bounded visual tree for 5000 conversations`` () =
         Assert.True(realizedAfterScroll > 0 && realizedAfterScroll < 80, sprintf "realized after scroll = %d" realizedAfterScroll)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``sidebar running pin and idle states keep the same title origin`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions =
         { newConversation = ignore
           openConversation = ignore
@@ -1285,10 +1322,11 @@ let ``sidebar running pin and idle states keep the same title origin`` () =
         Assert.Equal("当前会话，生成中", AutomationProperties.GetItemStatus(selected))
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``sidebar recycles twenty thousand rows through scroll search active and theme changes`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let actions =
         { newConversation = ignore
           openConversation = ignore
@@ -1377,10 +1415,11 @@ let ``sidebar recycles twenty thousand rows through scroll search active and the
     finally
         Tokens.apply initialTheme
         window.Close()
+    )
 
 [<Fact>]
 let ``accelerated craft soak covers the long-session action ledger without visual growth`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
@@ -1502,10 +1541,11 @@ let ``accelerated craft soak covers the long-session action ledger without visua
     finally
         Tokens.apply initialTheme
         window.Close()
+    )
 
 [<Fact>]
 let ``long chat title never pushes header actions outside narrow viewport`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let messageActions =
         { copyText = ignore
           regenerate = ignore
@@ -1547,10 +1587,11 @@ let ``long chat title never pushes header actions outside narrow viewport`` () =
         Assert.Equal(LayoutPolicy.compactActionTarget, stop.Bounds.Width, 1)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``stop affordance keeps a constant header slot across generation`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let messageActions =
         { copyText = ignore
           regenerate = ignore
@@ -1634,10 +1675,11 @@ let ``stop affordance keeps a constant header slot across generation`` () =
         Assert.Equal(LayoutPolicy.compactActionTarget, stop.Bounds.Width, 1)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``desktop 125 and 150 percent scale equivalent viewports keep primary actions in bounds`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let messageActions =
         { copyText = ignore
           regenerate = ignore
@@ -1699,10 +1741,11 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
                     | _ -> failwithf "cannot translate %s at scale %.2f" name scale
         finally
             window.Close()
+    )
 
 [<Fact>]
 let ``escape precedence closes topmost overlay first and guards pending dialog`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
@@ -1753,10 +1796,11 @@ let ``escape precedence closes topmost overlay first and guards pending dialog``
         Assert.False overlay.IsDialogOpen
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``toast stays inside narrow viewport and is keyboard dismissible live content`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
@@ -1780,10 +1824,11 @@ let ``toast stays inside narrow viewport and is keyboard dismissible live conten
         Assert.DoesNotContain(toast, descendants root)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``reduced motion keeps spinner static`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     MotionPolicy.setReduced true
     let spinner = Ui.spinner 16.0
     let window = show spinner 80.0 80.0
@@ -1796,9 +1841,11 @@ let ``reduced motion keeps spinner static`` () =
     finally
         window.Close()
         MotionPolicy.setReduced false
+    )
 
 [<Fact>]
 let ``motion ledger permits no geometry animation and reduced durations collapse to zero`` () =
+    Headless.run (fun () ->
     Assert.False MotionLedger.geometryAnimationAllowed
     Assert.Equal(40.0, MotionLedger.busySpinnerFrame.TotalMilliseconds, 3)
     Assert.Equal(1500.0, MotionLedger.copyConfirmationHold.TotalMilliseconds, 3)
@@ -1807,9 +1854,11 @@ let ``motion ledger permits no geometry animation and reduced durations collapse
     MotionPolicy.setReduced true
     Assert.Equal(TimeSpan.Zero, MotionPolicy.duration 180)
     MotionPolicy.setReduced false
+    )
 
 [<Fact>]
 let ``motion ledger holds semantic business timer tokens`` () =
+    Headless.run (fun () ->
     Assert.Equal(160.0, MotionLedger.searchInputDebounce.TotalMilliseconds, 3)
     Assert.Equal(50.0, MotionLedger.skeletonBreathFrame.TotalMilliseconds, 3)
     Assert.Equal(300.0, MotionLedger.conversationSkeletonDelay.TotalMilliseconds, 3)
@@ -1821,10 +1870,11 @@ let ``motion ledger holds semantic business timer tokens`` () =
     Assert.Equal(1000.0, MotionLedger.exportExpiryCheckTick.TotalMilliseconds, 3)
     Assert.Equal(100.0, MotionLedger.progressTextThrottle.TotalMilliseconds, 3)
     Assert.Equal(200.0, MotionLedger.themeColorTransition.TotalMilliseconds, 3)
+    )
 
 [<Fact>]
 let ``theme color transition tweens brushes and the latest switch takes over`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let initial = Tokens.current ()
     let settle () =
         Thread.Sleep 240
@@ -1866,9 +1916,11 @@ let ``theme color transition tweens brushes and the latest switch takes over`` (
         MotionPolicy.setReduced false
         Tokens.apply initial
         settle ()
+    )
 
 [<Fact>]
 let ``tertiary text keeps readable contrast in both palette modes`` () =
+    Headless.run (fun () ->
     let relativeLuminance (color: Color) =
         let channel (value: byte) =
             let c = float value / 255.0
@@ -1882,9 +1934,11 @@ let ``tertiary text keeps readable contrast in both palette modes`` () =
         Assert.True(contrast palette.textFaint palette.canvas >= 4.5)
         Assert.True(contrast palette.textFaint palette.surface >= 4.5)
         Assert.True(contrast palette.textMuted palette.canvas >= 4.5)
+    )
 
 [<Fact>]
 let ``user bubble stays dark in both palettes so its selection overlay is theme independent`` () =
+    Headless.run (fun () ->
     // 用户气泡选中底（Tokens.userBubbleSelection）是主题无关的半透明白叠加层，
     // 其前提是气泡在浅/深两套调色板里都是深底、文字都是浅色。
     // 这里锁住前提：若未来有人把气泡改成浅底，叠加层会失效，测试立即报警。
@@ -1912,10 +1966,11 @@ let ``user bubble stays dark in both palettes so its selection overlay is theme 
                 blend 255uy palette.userBubble.G,
                 blend 255uy palette.userBubble.B)
         Assert.True(contrast selectionOverlay palette.userBubbleText >= 3.0)
+    )
 
 [<Fact>]
 let ``appearance preference update keeps the same focused control instance`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     let settingsActions =
@@ -1955,10 +2010,11 @@ let ``appearance preference update keeps the same focused control instance`` () 
         Assert.True largerAfter.IsFocused
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``font size stepper disables the direction that hits the scale boundary`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     let settingsActions =
@@ -2011,10 +2067,11 @@ let ``font size stepper disables the direction that hits the scale boundary`` ()
         Assert.Equal("19.0 pt", (fontCaption ()).Text)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``settings caps content width and centers it while exposing selected navigation status`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     let settingsActions =
@@ -2064,13 +2121,14 @@ let ``settings caps content width and centers it while exposing selected navigat
         Assert.Equal(HorizontalAlignment.Center, frame.HorizontalAlignment)
     finally
         window.Close()
+    )
 
 // 服务商编辑器首焦必须落在主输入框：表单首个可聚焦元素是预设下拉（历史行为），
 // 键盘用户打开编辑器的意图就是填字段。Kelivo model_edit_dialog.dart:88 同语义。
 // 断言走自动化名而非对象身份——焦点实现只能落在控件树上，名字即用户所见。
 [<Fact>]
 let ``provider editor opens focus on the primary text field`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
@@ -2113,10 +2171,11 @@ let ``provider editor opens focus on the primary text field`` () =
         | _ -> Assert.True(false, "新建服务商后焦点不得为 null")
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``provider editor stays pending until authoritative config result`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
@@ -2171,12 +2230,13 @@ let ``provider editor stays pending until authoritative config result`` () =
         Assert.False overlay.IsDialogOpen
     finally
         window.Close()
+    )
 
 
 
 [<Fact>]
 let ``sidebar empty state separates list loading from confirmed empty and embeds primary actions`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let mutable reconnectCount = 0
     let mutable createCount = 0
     let actions: SidebarActions =
@@ -2244,14 +2304,15 @@ let ``sidebar empty state separates list loading from confirmed empty and embeds
         Assert.True((byName "连接服务器" |> Option.get).IsVisible)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``chat header and scroller share one horizontal inset tier`` () =
+    Headless.run (fun () ->
     // 顶栏与滚动区水平留白同源同档：一次读取 ChatView 自身宽度（父级 chatColumn
     // 布局槽宽）经 LayoutPolicy.horizontalInset 取档，同步写两处 Padding——
     // 任何宽度下标题左缘与消息列左缘对齐，两端不会各取各的档。
     // scroller 的 Padding 只裁剪内容、不改变其自身 Bounds，无布局反馈环。
-    Headless.ensure ()
     let messageActions =
         { copyText = ignore
           regenerate = ignore
@@ -2289,15 +2350,16 @@ let ``chat header and scroller share one horizontal inset tier`` () =
             Assert.Equal(expected, header.Padding.Right, 3)
         finally
             window.Close()
+    )
 
 [<Fact>]
 let ``compact chat header drops the generating chip slot while desktop keeps it reserved`` () =
+    Headless.run (fun () ->
     // 顶栏生成中 chip 的槽位分档（SyncGeneratingChipVisibility 是 SetGenerating 与
     // SetCompactMode 两条路径的唯一收口）：桌面（非 compact）保留常驻槽位防跳动——
     // IsVisible 恒为 true、只切 Opacity（全显/归零随生成态），生成开始结束时顶栏不跳；
     // compact 下 chip 整体不占布局（IsVisible=false、Opacity 归零），紧凑顶栏不为
     // 一块隐形槽位白吃标题宽度。退回宽屏后恢复常驻，Opacity 跟随当时生成态。
-    Headless.ensure ()
     let messageActions =
         { copyText = ignore
           regenerate = ignore
@@ -2353,12 +2415,13 @@ let ``compact chat header drops the generating chip slot while desktop keeps it 
         Assert.Equal(0.0, chip.Opacity, 3)
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``composer inset adapts to width outside compact and stays tight inside compact`` () =
+    Headless.run (fun () ->
     // 非 compact：水平留白随 Composer 自身宽度按 horizontalInset 取档；
     // compact：固定收紧边距（窄屏省地优先），两条路径不互相覆盖。
-    Headless.ensure ()
     let actions =
         { submit = fun _ -> true
           stopGeneration = ignore
@@ -2385,6 +2448,7 @@ let ``composer inset adapts to width outside compact and stays tight inside comp
             Assert.Equal(expected, composer.Padding.Left, 3)
         finally
             window.Close()
+    )
 
 // 预设下拉此前展开后所有条目平铺，看不出当前是哪一项：按钮标题只显示一项，
 // 列表里第二眼就得靠试。与外观主题下拉同一 contract（MenuEntry.markSelected
@@ -2392,7 +2456,7 @@ let ``composer inset adapts to width outside compact and stays tight inside comp
 // 选中一个预设后重新展开，恰好一个勾。
 [<Fact>]
 let ``preset dropdown marks exactly the current preset`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
@@ -2472,6 +2536,7 @@ let ``preset dropdown marks exactly the current preset`` () =
         Assert.Equal<string list>([ nextPreset.label ], markedPresets ())
     finally
         window.Close()
+    )
 
 // 表单错误摘要（assistive live region）此前只在下次「保存」时才重置：字段行内错误
 // 一改即清，顶部的 assertive 摘要却继续指控已经填好的表单——视觉误导 + 读屏播报旧错。
@@ -2479,7 +2544,7 @@ let ``preset dropdown marks exactly the current preset`` () =
 // 用户动手修正任一字段，摘要立刻收起。
 [<Fact>]
 let ``form error summary clears as soon as the user starts fixing a field`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
@@ -2536,12 +2601,13 @@ let ``form error summary clears as soon as the user starts fixing a field`` () =
         Assert.Equal("", summary.Text)
     finally
         window.Close()
+    )
 
 // 远程图片占位：隐私策略下不加载外链图片，正文给出占位段 + ToolTip。
 // 读屏此前跳过整块：自动化树上没有名称。名称与 ToolTip 同文（占位说明 + 来源）。
 [<Fact>]
 let ``unloaded remote image placeholder has an automation name`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
     let control = renderer.RenderText("![架构图](https://cdn.example.com/diagram.png)")
     let window = show control 420.0 200.0
@@ -2563,13 +2629,14 @@ let ``unloaded remote image placeholder has an automation name`` () =
         Assert.Equal<string>(expected, ToolTip.GetTip(block) :?> string)
     finally
         window.Close()
+    )
 
 // 长链接切片成多个同 URL 的热区：首段才是一个 Tab stop（可聚焦、有名称）。
 // 后续片段从读屏树摘除（AccessibilityView.Raw）——只挡键盘不够，
 // 读屏仍会抓到无名片段，把一个链接念成碎句。kelivo 用零宽软断行避免同题。
 [<Fact>]
 let ``secondary link chunks stay out of the screen-reader tree`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
     let longLabel = String.replicate 12 "very-long-link-segment-"
     let control = renderer.RenderText(sprintf "[%s](https://example.com/path)" longLabel)
@@ -2591,6 +2658,7 @@ let ``secondary link chunks stay out of the screen-reader tree`` () =
         Assert.True(rawChunks > 0, "非首段切片应从读屏树摘除")
     finally
         window.Close()
+    )
 
 
 // probe: collapse focus destination
@@ -2600,7 +2668,7 @@ let ``secondary link chunks stay out of the screen-reader tree`` () =
 // 键盘用户按完快捷键就失焦。归宿与 compact 收起分支同一目标——输入区。
 [<Fact>]
 let ``collapsing the desktop sidebar returns focus to the composer`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let sidebarActions =
         { newConversation = ignore
           openConversation = ignore
@@ -2685,4 +2753,5 @@ let ``collapsing the desktop sidebar returns focus to the composer`` () =
         | _ -> Assert.True(false, "折叠后焦点不得为 null")
     finally
         window.Close()
+    )
 

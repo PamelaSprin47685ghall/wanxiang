@@ -26,7 +26,6 @@ module EndpointScrollTests =
     let private homeFocus = ref 0
     let private buildChat (messages: MessageView list) =
         homeFocus := 0
-        Headless.ensure ()
         // 只锁落位，不锁动画曲线；动效路径由既有 smoothScroll 用例覆盖。
         MotionPolicy.setReduced true
         let chatActions =
@@ -132,6 +131,7 @@ module EndpointScrollTests =
     // 部重走。归宿走 AppShell 注入的 focusHome（输入区），与停止键/生成收尾同一条路。
     [<Fact>]
     let ``keyboard activated scroll to bottom hands focus home`` () =
+        Headless.run (fun () ->
         let chat, window = buildChat (exchanges 8)
         try
             let scroller, _ = scrollerOf chat
@@ -157,39 +157,47 @@ module EndpointScrollTests =
             Assert.True(!homeFocus = 1, sprintf "键盘激活必须把焦点交还给输入区，实际 %d" !homeFocus)
         finally
             window.Close()
+        )
 
     // ---------- 快捷键解析 ----------
 
     [<Fact>]
     let ``ctrl home and ctrl end resolve to endpoint scroll intents`` () =
+        Headless.run (fun () ->
         let event key modifiers = KeyEventArgs(Key = key, KeyModifiers = modifiers)
         Assert.Equal(ScrollToBeginning, ShortcutRouter.resolve (event Key.Home KeyModifiers.Control))
         // ⌘ 与 Ctrl 同权：macOS 上 ⌘Home 就是同一意图。
         Assert.Equal(ScrollToBeginning, ShortcutRouter.resolve (event Key.Home KeyModifiers.Meta))
         Assert.Equal(ScrollToEnd, ShortcutRouter.resolve (event Key.End KeyModifiers.Control))
+        )
 
     [<Fact>]
     let ``plain home end and shifted variants stay unbound`` () =
+        Headless.run (fun () ->
         let event key modifiers = KeyEventArgs(Key = key, KeyModifiers = modifiers)
         // 裸 Home/End 必须是 NoShortcut：消息区正在读文本，端点键该归内容自己。
         Assert.Equal(NoShortcut, ShortcutRouter.resolve (event Key.Home KeyModifiers.None))
         Assert.Equal(NoShortcut, ShortcutRouter.resolve (event Key.End KeyModifiers.None))
         // Ctrl+Shift+Home 也不占用：端点键只设一个组合，避免与将来可能的选区快捷键相撞。
         Assert.Equal(NoShortcut, ShortcutRouter.resolve (event Key.Home (KeyModifiers.Control ||| KeyModifiers.Shift)))
+        )
 
     [<Fact>]
     let ``endpoint keys do not collide with exchange navigation`` () =
+        Headless.run (fun () ->
         let event key modifiers = KeyEventArgs(Key = key, KeyModifiers = modifiers)
         // 问答跳转占 Up/Down，端点占 Home/End：两条键位互不遮挡。
         Assert.Equal(JumpExchange -1, ShortcutRouter.resolve (event Key.Up KeyModifiers.Control))
         Assert.Equal(JumpExchange 1, ShortcutRouter.resolve (event Key.Down KeyModifiers.Control))
         Assert.Equal(ScrollToBeginning, ShortcutRouter.resolve (event Key.Home KeyModifiers.Control))
         Assert.Equal(ScrollToEnd, ShortcutRouter.resolve (event Key.End KeyModifiers.Control))
+        )
 
     // ---------- 落位 ----------
 
     [<Fact>]
     let ``scroll to beginning lands at offset zero with the first round visible`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 5)
         try
@@ -204,9 +212,11 @@ module EndpointScrollTests =
             Assert.True(cardInViewport chat "第 1 轮提问", "最早的提问应完整可见")
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``scroll to end lands at the maximum scrollable offset`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 5)
         try
@@ -225,9 +235,11 @@ module EndpointScrollTests =
             Assert.True(cardVisible chat "第 5 轮", "最新一轮应可见")
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``round trip between endpoints is stable`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 4)
         try
@@ -247,11 +259,13 @@ module EndpointScrollTests =
             Assert.True(atTop < atBottom, "顶部与底部偏移应不同")
         finally
             window.Close()
+        )
 
     // ---------- 与问答跳转的耦合 ----------
 
     [<Fact>]
     let ``scrolling to beginning clears the exchange anchor`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 6)
         try
@@ -285,9 +299,11 @@ module EndpointScrollTests =
             Assert.True(cardInViewport chat "第 1 轮提问", "继续上一条应到第 1 轮")
         finally
             window.Close()
+        )
 
     [<Fact>]
     let ``shortening content while away from the top still recovers`` () =
+        Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 5)
         try
@@ -302,3 +318,4 @@ module EndpointScrollTests =
             Assert.True(scroller.Offset.Y < 1.0, sprintf "内容变短后仍应能回到开头：offset=%f" scroller.Offset.Y)
         finally
             window.Close()
+        )

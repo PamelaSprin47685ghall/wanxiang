@@ -6,11 +6,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="DataPaths.fs" />
-    <Compile Include="DataLock.fs" />
-    <Compile Include="JsonSeqWriter.fs" />
-    <Compile Include="Replay.fs" />
-    <Compile Include="CommitCoordinator.fs" />
+    <Compile Include="Capabilities.fs" />
+    <Compile Include="TolerantReader.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AGUI.Abstractions" Version="1.0.0" />
   </ItemGroup>
 
   <ItemGroup>

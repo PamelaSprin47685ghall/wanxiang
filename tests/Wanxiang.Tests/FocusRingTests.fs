@@ -11,7 +11,6 @@ open Wanxiang.Tests
 /// 键盘焦点必须看得见，否则 Tab 过去用户不知道焦点在哪。
 /// 同时鼠标点完不该留一圈框——那是视觉噪音。
 let private withButton (act: Border -> unit) =
-    Headless.ensure ()
     let button = Ui.iconButton Icons.copy "复制"
     let panel = StackPanel(Orientation = Orientation.Vertical)
     panel.Children.Add button
@@ -25,28 +24,35 @@ let private withButton (act: Border -> unit) =
 
 [<Fact>]
 let ``键盘导航过来的按钮带焦点环`` () =
+    Headless.run (fun () ->
     withButton (fun button ->
         Assert.Equal(0, button.BoxShadow.Count)
         button.Focus NavigationMethod.Tab |> ignore
         Dispatcher.UIThread.RunJobs()
         Assert.True(button.BoxShadow.Count > 0, "Tab 过去应当出现焦点环"))
+    )
 
 [<Fact>]
 let ``方向键导航同样带焦点环`` () =
+    Headless.run (fun () ->
     withButton (fun button ->
         button.Focus NavigationMethod.Directional |> ignore
         Dispatcher.UIThread.RunJobs()
         Assert.True(button.BoxShadow.Count > 0, "方向键导航也该出现焦点环"))
+    )
 
 [<Fact>]
 let ``鼠标点出来的焦点不画环`` () =
+    Headless.run (fun () ->
     withButton (fun button ->
         button.Focus NavigationMethod.Pointer |> ignore
         Dispatcher.UIThread.RunJobs()
         Assert.Equal(0, button.BoxShadow.Count))
+    )
 
 [<Fact>]
 let ``程序化 / 初始焦点同样画焦点环`` () =
+    Headless.run (fun () ->
     // 对话框打开时的初始焦点一律走裸 Focus()——拿到的是 Unspecified：
     // OverlayHost.focusFirst（404 行 dialogCard 首可聚焦项）与
     // Dialogs.shortcuts 的首按钮都是这条路径。此前焦点环只认 Tab/Directional，
@@ -56,12 +62,13 @@ let ``程序化 / 初始焦点同样画焦点环`` () =
         button.Focus NavigationMethod.Unspecified |> ignore
         Dispatcher.UIThread.RunJobs()
         Assert.True(button.BoxShadow.Count > 0, "程序化焦点也要有焦点环"))
+    )
 
 [<Fact>]
 let ``对话框初始焦点（裸 Focus）带焦点环`` () =
+    Headless.run (fun () ->
     // 走真实对话框路径：OverlayHost.ShowDialog → focusFirst post 裸 Focus()。
     // 断言落点即 ShowDialog 默认首焦（内容树第一个可聚焦项）。
-    Headless.ensure ()
     let root = Grid()
     let overlay = OverlayHost(root)
     let box = TextBox()
@@ -85,9 +92,11 @@ let ``对话框初始焦点（裸 Focus）带焦点环`` () =
         Assert.True(close.BoxShadow.Count > 0, "对话框首按钮（Unspecified 焦点）必须带焦点环")
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``失去焦点后焦点环消失`` () =
+    Headless.run (fun () ->
     withButton (fun button ->
         button.Focus NavigationMethod.Tab |> ignore
         Dispatcher.UIThread.RunJobs()
@@ -99,6 +108,7 @@ let ``失去焦点后焦点环消失`` () =
         other.Focus NavigationMethod.Tab |> ignore
         Dispatcher.UIThread.RunJobs()
         Assert.Equal(0, button.BoxShadow.Count))
+    )
 
 /// compact 抽屉现场：背景放一个可聚焦的“背景输入区”（模拟被遮罩压住的 chat/composer），
 /// 侧栏即抽屉本体。返回句柄供各用例驱动 Tab。
@@ -139,7 +149,7 @@ let private drawerSearchBox (ring: Control[]) =
 
 [<Fact>]
 let ``compact 抽屉 Tab 只在侧栏内循环，两端回绕、不漏到背景`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let sidebar, overlay, background, window = buildCompactDrawer ()
     try
         sidebar.SetCompactMode true
@@ -194,10 +204,11 @@ let ``compact 抽屉 Tab 只在侧栏内循环，两端回绕、不漏到背景`
         Assert.False(nonTab.Handled, "包含逻辑只应接管 Tab，不应吞掉其它键")
     finally
         window.Close()
+    )
 
 [<Fact>]
 let ``非 compact 下侧栏不拦截 Tab，桌面态与主区互 Tab 如常`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let sidebar, overlay, background, window = buildCompactDrawer ()
     try
         // 未进入 compact：侧栏是普通工作区面板，Tab 应在侧栏与主区间自由移动。
@@ -218,6 +229,7 @@ let ``非 compact 下侧栏不拦截 Tab，桌面态与主区互 Tab 如常`` ()
         Assert.True(reachedBackground, "桌面态下 Tab 应越过侧栏落到背景输入区")
     finally
         window.Close()
+    )
 
 /// 视口把抽屉自动带开的路径（AppShell.ApplyResponsiveLayout → NavigationController.ApplyViewport）
 /// 也必须先聚焦进抽屉：进入 compact 且无会话时抽屉自动打开，焦点须落在抽屉搜索框，
@@ -227,7 +239,7 @@ let ``非 compact 下侧栏不拦截 Tab，桌面态与主区互 Tab 如常`` ()
 /// 在焦点环现场复现并对齐，并逐条钉住「聚焦进抽屉」的触发条件：仅当抽屉由「未开」翻到「compact 打开」。
 [<Fact>]
 let ``视口自动带开 compact 抽屉时焦点先落抽屉内，背景键盘不可达`` () =
-    Headless.ensure ()
+    Headless.run (fun () ->
     let sidebar, overlay, background, window = buildCompactDrawer ()
     try
         let focused () = window.FocusManager.GetFocusedElement()
@@ -293,3 +305,4 @@ let ``视口自动带开 compact 抽屉时焦点先落抽屉内，背景键盘�
             "非 compact 不得触发聚焦进抽屉")
     finally
         window.Close()
+    )
