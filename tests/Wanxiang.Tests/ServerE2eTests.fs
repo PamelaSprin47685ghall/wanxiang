@@ -81,7 +81,7 @@ module private E2e =
     /// 服务端出站承载（SSOT 55）：
     /// - 标准事件（生成流）→ {type:"RUN_STARTED",...}（扁平）
     /// - 其余语义 → {type:"CUSTOM", name:"wanxiang.dev/<wireType>", value:{type,payload}}
-    /// 这里统一折回 {type:<wireType>, payload:<payload>}；标准面事件按需映射。
+    /// 这里统一折成 {type:<wireType>, payload:<payload>}；标准面事件按语义事件名折算。
     let normalizeAgui (node: JsonNode) : JsonObject =
         let o = node.AsObject()
         let wireType = o["type"].GetValue<string>()

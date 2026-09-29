@@ -242,7 +242,7 @@ module CommitCodec =
                          && idNode.GetValueKind() = JsonValueKind.String
                          && tsNode.GetValueKind() = JsonValueKind.String
                          && evNode.GetValueKind() = JsonValueKind.Array ->
-                    // id 以字符串承载（大整数陷阱）；旧格式数字 id 不再接受（clean-break）。
+                    // id 以字符串承载（RFC 8785 附录 D：超出 double 精度的整数必须字符串）。
                     let idParsed =
                         match idNode with
                         | :? JsonValue as jv ->

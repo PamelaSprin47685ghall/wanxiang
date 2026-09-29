@@ -26,7 +26,7 @@ type LedgerParseError = string
 [<RequireQualifiedAccess>]
 module Record =
 
-    /// 当前外壳版本。读到其它值即判定为不可读（clean-break，不做迁移）。
+    /// 外壳格式版本。读到其它值即判定为不可读（不做版本猜测）。
     [<Literal>]
     let FormatVersion = 2
 

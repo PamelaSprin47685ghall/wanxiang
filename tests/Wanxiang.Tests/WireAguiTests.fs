@@ -122,7 +122,8 @@ module WireAguiTests =
         | Ok _ -> failwith "非法 JSON 必须判为协议违规"
 
     [<Fact>]
-    let ``removed handshake events are not produced`` () =
-        // Hello/UpgradeRequired 已删除（SSOT 55.4）：出站不再产生这两个名字
+    let ``handshake events ride the custom face not a dedicated type`` () =
+        // 协议无独立握手事件面：Hello 语义走 CUSTOM wanxiang.dev/protocol.hello
         let helloJson = WireAgui.encode (Hello {| protocol = "wanxiang"; version = 1; instanceId = None |})
-        Assert.DoesNotContain("protocol.hello", helloJson)
+        Assert.Contains("\"type\":\"CUSTOM\"", helloJson)
+        Assert.Contains("wanxiang.dev/protocol.hello", helloJson)

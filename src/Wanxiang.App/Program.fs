@@ -132,21 +132,21 @@ module Doctor =
             d.lockOk <- true
             (l :> IDisposable).Dispose()
         | Error e -> d.lockError <- e
-        // 旧格式检测（clean-break，不迁移）：.ndjson 是 formatVersion 1 时代的文件，
-        // 当前读取器只认 .jsonseq。发现即明确报错，绝不静默忽略。
-        let legacyNdjson =
+        // 事件日志只认 RFC 7464 .jsonseq；发现其它格式（如 .ndjson）即明确报错，
+        // 绝不静默忽略——用户需要自己归档或移除。
+        let unrecognizedLogs =
             try
                 System.IO.Directory.GetFiles(Wanxiang.Store.DataPaths.eventsDir dataDir, "*.ndjson")
             with _ -> [||]
-        if legacyNdjson.Length > 0 then
+        if unrecognizedLogs.Length > 0 then
             d.replayOk <- false
             d.replayError <-
                 sprintf
-                    "found %d legacy .ndjson log(s) (format version 1). The current format is RFC 7464 .jsonseq and old data is NOT migrated (clean break). Archive or remove: %s"
-                    legacyNdjson.Length
-                    (String.Join(", ", legacyNdjson |> Array.map System.IO.Path.GetFileName))
-        // replay（只读，不修复）；旧格式在场时跳过（上面已给出明确报错）
-        if legacyNdjson.Length = 0 then
+                    "found %d unrecognized .ndjson log(s). The event log format is RFC 7464 .jsonseq. Archive or remove: %s"
+                    unrecognizedLogs.Length
+                    (String.Join(", ", unrecognizedLogs |> Array.map System.IO.Path.GetFileName))
+        // replay（只读，不修复）；有无法识别的日志时跳过（上面已给出明确报错）
+        if unrecognizedLogs.Length = 0 then
             match Replay.replay dataDir false with
             | Ok outcome ->
                 d.replayOk <- true

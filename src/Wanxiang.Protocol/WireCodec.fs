@@ -123,8 +123,8 @@ module WireCodec =
     // ---------- 编码 ----------
 
     /// 语义事件的业务载荷（不含 type 外壳）——CUSTOM 扁平承载的数据源。
-    /// 身份字段按 AG-UI 命名对齐（SSOT 55.3）：conversationId→threadId、
-    /// generationId→runId、消息边界 commitId→messageId。
+    /// 身份字段用 AG-UI 命名：conversationId→threadId、generationId→runId、
+    /// 消息边界 commitId→messageId。
     let payloadOf (ev: WireEvent) : string =
         let p = JsonObject()
         match ev with

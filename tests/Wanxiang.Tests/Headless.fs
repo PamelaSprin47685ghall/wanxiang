@@ -22,7 +22,7 @@ open Wanxiang.UI
 /// 跑在 xunit 的工作线程上，因此：
 /// - 碰 Avalonia 控件/UI 类型的测试 **MUST** 用 `Headless.run (fun () -> ...)` 包住；
 /// - 纯逻辑测试保持普通 `[<Fact>]`，由 xunit **真并行**调度；
-/// - `PerAssembly` 复用同一个 Application/Dispatcher（等价于改造前那份 lazy 单例），
+/// - `PerAssembly` 复用同一个 Application/Dispatcher（进程内单实例），
 ///   避免每个 UI 测试都重建 Skia/字体。
 ///
 /// 因此**不需要**为了线程安全而关掉并行。

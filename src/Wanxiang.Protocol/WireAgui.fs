@@ -8,14 +8,14 @@ open Wanxiang.Agui
 
 /// WireEvent ⇄ AG-UI 承载适配层。
 ///
-/// **架构位置**（SSOT `wanxiang-protocol` 第 55 节）：
-/// `WireEvent` 的 56 个变体是万象自己的**语义层**，不换；
-/// 这一层只换**承载**——出站把语义事件映射成 AG-UI 事件对象，入站反向。
+/// **架构位置**：`WireEvent` 的 56 个变体是万象的语义层；
+/// 这一层负责**承载**——出站把语义事件编成 AG-UI 事件对象，入站解码。
 ///
-/// 映射规则（55.4 标准面 + 55.5 CUSTOM 面）：
-/// - 生成类事件（started/delta/finished）→ 标准 AG-UI 事件（RUN_STARTED / TEXT_MESSAGE_* / RUN_FINISHED / RUN_ERROR）
-/// - 其余全部 → `CUSTOM`，`name = wanxiang.dev/<面>`，`value` = 原载荷
-/// - `Hello` / `UpgradeRequired` **已删除**（版本改 in-band；宽容读取层会忽略旧名）
+/// 承载规则（标准面优先，`wanxiang.dev/*` CUSTOM 面承载自有语义）：
+/// - 生成流（started/delta/finished）→ 标准 AG-UI 事件
+///   （RUN_STARTED / TEXT_MESSAGE_* / TOOL_CALL_* / RUN_FINISHED / RUN_ERROR）
+/// - 其余语义 → `CUSTOM`，`name = wanxiang.dev/<type>`，`value` 为扁平字段
+/// - 协议版本 in-band（`RUN_STARTED.protocolVersion`），无独立握手事件
 ///
 /// 序列化陷阱（实测）：AG-UI 消息必须按 `typeof<AGUIMessage>` 序列化，
 /// 按运行期类型会丢 content。事件对象本身无此问题（converter 挂在事件基类上）。
@@ -64,7 +64,7 @@ module WireAgui =
                 e.Outcome <- RunFinishedCancelledOutcome()
                 e :> BaseEvent
             | _ ->
-                // failed / 其它异常态：RUN_ERROR（SSOT 55.4）
+                // failed / 其它异常态：RUN_ERROR
                 let e = RunErrorEvent()
                 e.Message <- (d.error |> Option.map (fun er -> er.message) |> Option.defaultValue d.status)
                 e.Code <- (d.status)
@@ -107,21 +107,10 @@ module WireAgui =
                     e :> BaseEvent
                 | _ -> customDelta d
             | _ -> customDelta d
-        | Hello _ ->
-            // 已删除的握手事件：宽容层会忽略；出站不再产生。
-            let ce = CustomEvent()
-            ce.Name <- sprintf "%serror" Capabilities.Namespace
-            ce.Value <- Nullable(JsonDocument.Parse("\"hello is removed\"").RootElement.Clone())
-            ce :> BaseEvent
-        | UpgradeRequired _ ->
-            let ce = CustomEvent()
-            ce.Name <- sprintf "%serror" Capabilities.Namespace
-            ce.Value <- Nullable(JsonDocument.Parse("\"upgrade-required is removed\"").RootElement.Clone())
-            ce :> BaseEvent
         | other ->
             // 其余语义面 → CUSTOM（wanxiang.dev/<type>）。
             // value 按 AG-UI 事件风格承载：**扁平字段**。
-            // 身份字段即 AG-UI 命名（threadId/runId/messageId，SSOT 55.3）；
+            // 身份字段即 AG-UI 命名（threadId/runId/messageId）；
             // 业务字段原样平铺，消息载荷用 content（与 AG-UI 消息内容命名一致）。
             let ce = CustomEvent()
             ce.Name <- sprintf "%s%s" Capabilities.Namespace (WireEvent.typeName other)

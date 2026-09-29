@@ -246,7 +246,7 @@ type WsConnection(
                         while more && not closed do
                             let mutable ev: WireEvent = Unchecked.defaultof<WireEvent>
                             if reader.TryRead(&ev) then
-                                // AG-UI 承载（SSOT 55：语义 WireEvent → AG-UI 事件对象）
+                                // AG-UI 承载（语义 WireEvent → AG-UI 事件对象）
                                 let json = WireAgui.encode ev
                                 let bytes = Encoding.UTF8.GetBytes json
                                 try
@@ -311,14 +311,13 @@ type WsConnection(
     member private this.HandleEvent(ev: WireEvent) : Task =
         task {
             match ev with
-            // Hello / UpgradeRequired 已删除（SSOT 55.4：版本改 in-band，
-            // 由 RunAgentInput.protocolVersion / RUN_STARTED.protocolVersion 承载）。
-            // 认证不再要求先握手——连接后直接认证合法。
+            // 协议无独立握手事件：版本 in-band（RUN_STARTED.protocolVersion），
+            // 认证即连接后的第一个动作。
             | Hello _ | UpgradeRequired _ -> ()
             | Ping -> this.TrySend Pong |> ignore
             | Pong -> ()
             | AuthPresent d ->
-                // 连接即认证（Hello 已删除）：NotStarted/HelloSeen 一视同仁，直接认证。
+                // 连接即认证：未认证的任何前置状态一视同仁，直接认证。
                 match handshakeState with
                 | NotStarted | HelloSeen ->
                     match this.TryAuthenticate d.token with
@@ -657,7 +656,6 @@ type WsConnection(
     /// 认证超时（决策 55）：建立后 15 秒内未完成认证则关闭，避免悬挂连接占用资源。
     member this.Run(ct: CancellationToken) : Task =
         task {
-            // 出站 Hello 已删除（SSOT 55.4）：连接即认证，版本 in-band。
             let sendTask = this.SendLoop(ct)
             let recvTask =
                 task {
@@ -705,12 +703,10 @@ type WsConnection(
 
     member private this.HandleJson(jsonText: string) : Task =
         task {
-            // 入站承载是 AG-UI（SSOT 55）。命令与事件都可能在 CUSTOM 面里：
-            // 先剥掉 AG-UI/CUSTOM 外层拿到内层 JSON，再按原双路径（命令外壳 / 事件外壳）解码。
-            // 未知类型/别家 CUSTOM：合法忽略并告警，**不得**断连（AG-UI 增量安全，SSOT 55.4）。
-            // 剥层结果：Some payload = 内层 JSON；None = 宽容忽略；Error = 畸形。
-            // 承载归一：wanxiang.dev/* CUSTOM 的 value 统一折成 {type,payload} 外壳，
-            // 再按命令/事件双路径解码。扁平 value 与完整外壳都合法。
+            // 入站承载归一：wanxiang.dev/* CUSTOM 的 value（扁平或 {type,payload} 形态）
+            // 统一折成 {type,payload}，再按命令/事件双路径解码。
+            // 未知类型与别家 CUSTOM：合法忽略并告警，**不得**断连（AG-UI 增量安全）；
+            // 畸形载荷才是协议违规。
             let inner =
                 match Wanxiang.Agui.TolerantReader.parse jsonText with
                 | Wanxiang.Agui.ParsedEvent.Custom(name, value) when name.StartsWith Wanxiang.Agui.Capabilities.Namespace ->
