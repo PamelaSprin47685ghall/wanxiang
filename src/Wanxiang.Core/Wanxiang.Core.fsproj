@@ -12,7 +12,6 @@
     <Compile Include="Ledger\Record.fs" />
     <Compile Include="Ledger\Recovery.fs" />
     <Compile Include="PlainText.fs" />
-    <Compile Include="CanonicalJson.fs" />
     <Compile Include="CommandId.fs" />
     <Compile Include="SessionConfig.fs" />
     <Compile Include="Events.fs" />

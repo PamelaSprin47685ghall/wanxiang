@@ -90,4 +90,7 @@ module ClientCommand =
             o["archived"] <- d.archived
         | RegenerateResponse d ->
             o["conversationId"] <- d.conversationId.ToString("D")
-        CanonicalJson.serialize o
+        // RFC 8785 JCS（取代手写 CanonicalJson；clean-break 窗口零代价切换）。
+        // 注意：载荷里的大整数会被 JCS 按 double 改写（附录 D 陷阱），
+        // 命令载荷不含裸大整数（commitId 一律字符串承载），此约束由 CodecTests 钉住。
+        Wanxiang.Core.Ledger.Jcs.canonicalize (o.ToJsonString())

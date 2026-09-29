@@ -208,7 +208,7 @@ let ``换日切换文件后继续写入且 id 连续`` () =
 
 [<Fact>]
 let ``canonical 数字规范化：1.50 与 1.5、1.0 与 1 等价`` () =
-    let norm (s: string) = CanonicalJson.tryNormalize s |> Option.defaultValue ""
+    let norm (s: string) = Wanxiang.Core.Ledger.Jcs.canonicalize s
     Assert.Equal(norm """{"n":1.5}""", norm """{"n":1.50}""")
     Assert.Equal(norm """{"n":1}""", norm """{"n":1.0}""")
     Assert.Equal(norm """{"n":100}""", norm """{"n":1e2}""")
