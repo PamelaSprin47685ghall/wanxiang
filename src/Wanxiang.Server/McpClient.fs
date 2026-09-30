@@ -2,6 +2,7 @@ namespace Wanxiang.Server
 
 open System
 open System.Collections.Concurrent
+open System.Text.Encodings.Web
 open System.Text.Json
 open System.Text.Json.Nodes
 open System.Threading
@@ -24,6 +25,8 @@ type McpToolInfo = {
 /// 2. 每次调用都有超时（`callTimeoutSeconds`），挂死的服务器不再冻结整场生成；
 /// 3. 传输可以是本地 stdio 也可以是远程 HTTP。
 type McpClient(config: McpServerConfig, onLog: string -> unit) =
+
+    static let jsonOptions = JsonSerializerOptions(Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping)
 
     let transport: IMcpTransport =
         match config.url with
@@ -157,8 +160,13 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) =
                 paramsObj["arguments"] <- args
                 let! response = this.Request("tools/call", paramsObj, ct)
                 match resultOf response with
-                | Ok result -> return result.ToJsonString()
-                | Error e -> return sprintf """{"error":%s}""" (JsonSerializer.Serialize e)
+                | Ok result -> return result.ToJsonString(jsonOptions)
+                | Error e ->
+                    let errObj = JsonObject()
+                    match (try Some(JsonNode.Parse e) with _ -> None) with
+                    | Some node -> errObj["error"] <- node
+                    | None -> errObj["error"] <- e
+                    return errObj.ToJsonString(jsonOptions)
         }
 
     /// 排空关闭（决策 98/100）：不再接新调用，允许在途与排队调用自然完成。

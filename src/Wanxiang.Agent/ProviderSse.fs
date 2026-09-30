@@ -65,7 +65,9 @@ module ProviderSse =
     /// `ProviderFailure` 正是按状态码归类错误，抛别的类型会退化成 UnknownFailure。
     let raiseForStatus (response: HttpResponseMessage) (body: string) : unit =
         if not response.IsSuccessStatusCode then
-            let detail = if String.IsNullOrWhiteSpace body then response.ReasonPhrase else body
+            let detail =
+                let raw = if String.IsNullOrWhiteSpace body then response.ReasonPhrase else body
+                sprintf "(%d) %s" (int response.StatusCode) raw
             let ex = new HttpRequestException(detail, null, Nullable response.StatusCode)
             try
                 if not (isNull response.Headers.RetryAfter) then

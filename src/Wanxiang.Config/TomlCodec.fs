@@ -97,6 +97,27 @@ module TomlCodec =
         | Some t -> Some(Map.ofSeq [ for kv in t -> kv.Key, string kv.Value ])
         | None -> None
 
+    let rec private tomlNodeToJson (node: obj) : JsonNode =
+        match node with
+        | :? System.Collections.Generic.IDictionary<string, obj> as t ->
+            let o = JsonObject()
+            for kv in t do
+                o[kv.Key] <- tomlNodeToJson kv.Value
+            o :> JsonNode
+        | :? System.Collections.Generic.IList<obj> as arr ->
+            let a = JsonArray()
+            for item in arr do
+                a.Add(tomlNodeToJson item)
+            a :> JsonNode
+        | :? string as s -> JsonValue.Create(s) :> JsonNode
+        | :? int64 as i -> JsonValue.Create(i) :> JsonNode
+        | :? int as i -> JsonValue.Create(i) :> JsonNode
+        | :? float as f -> JsonValue.Create(f) :> JsonNode
+        | :? bool as b -> JsonValue.Create(b) :> JsonNode
+        | null -> null
+        | other -> JsonValue.Create(string other) :> JsonNode
+
+
     let private checkKeys (table: System.Collections.Generic.IDictionary<string, obj>) (known: Set<string>) (path: string) (errors: ResizeArray<string>) =
         for key in table.Keys do
             if not (known.Contains key) then
@@ -237,7 +258,7 @@ module TomlCodec =
                               let model = getStr "model" |> Option.defaultValue ""
                               let extra =
                                   match pt.TryGetValue "extra" with
-                                  | true, b -> Some(JsonNode.Parse(string b))
+                                  | true, b -> Some(tomlNodeToJson b)
                                   | _ -> None
                               let models = if String.IsNullOrWhiteSpace model then [] else [ model.Trim() ]
                               yield
@@ -493,7 +514,7 @@ module TomlCodec =
                                   | _ -> Map.empty
                               let extra =
                                   match pt.TryGetValue "extra" with
-                                  | true, b -> Some(JsonNode.Parse(string b))
+                                  | true, b -> Some(tomlNodeToJson b)
                                   | _ -> None
                               yield
                                   kv.Key,

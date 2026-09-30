@@ -311,3 +311,256 @@ let ``replay fix deletes invalid-named file and all later files`` () =
         | Error e -> failwith e
     finally
         cleanup dir
+
+[<Fact>]
+let ``JsonSeqWriter 属性读取与 TruncateTo 截尾正确`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+        use writer = new JsonSeqWriter(dir, day)
+        let commit = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = newConversationId (); title = "A"; config = testConfig () } ]
+        writer.AppendCommit commit |> ignore
+        let expectedPath = DataPaths.eventFilePath dir day
+        Assert.Equal(expectedPath, writer.CurrentFilePath)
+        let pos = writer.Position
+        Assert.True(pos > 0L)
+        // 截断回 0
+        writer.TruncateTo 0L
+        Assert.Equal(0L, writer.Position)
+        // 再次写入
+        writer.AppendCommit commit |> ignore
+        Assert.True(writer.Position > 0L)
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``JsonSeqWriter 跨日提交自动 Flush 旧文件并切换新日期文件`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let day1 = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+        let day2 = DateTime(2026, 8, 2, 0, 0, 0, DateTimeKind.Utc)
+        use writer = new JsonSeqWriter(dir, day1)
+        let c1 = Events.Commit.create 1UL (DateTimeOffset(day1)) [ ConversationCreated { conversationId = newConversationId (); title = "Day1"; config = testConfig () } ]
+        let c2 = Events.Commit.create 2UL (DateTimeOffset(day2)) [ ConversationCreated { conversationId = newConversationId (); title = "Day2"; config = testConfig () } ]
+        writer.AppendCommit c1 |> ignore
+        let path1 = DataPaths.eventFilePath dir day1
+        Assert.Equal(path1, writer.CurrentFilePath)
+        // 写入第二天的数据 -> 触发 switchFile 分支
+        writer.AppendCommit c2 |> ignore
+        let path2 = DataPaths.eventFilePath dir day2
+        Assert.Equal(path2, writer.CurrentFilePath)
+        Assert.True(File.Exists path1)
+        Assert.True(File.Exists path2)
+        // 两个文件回放正常
+        match Replay.replay dir false with
+        | Error e -> failwith e
+        | Ok outcome ->
+            Assert.Equal(2UL, outcome.lastCommitId)
+            Assert.Equal(2, outcome.commits.Length)
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``JsonSeqWriter 写入底层异常时回滚写前偏移并重抛`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+        let writer = new JsonSeqWriter(dir, day)
+        let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = newConversationId (); title = "Init"; config = testConfig () } ]
+        writer.AppendCommit c1 |> ignore
+        let posBefore = writer.Position
+        Assert.True(posBefore > 0L)
+        
+        // 利用反射获取内部 stream 并关闭它，触发 AppendCommit 写入失败
+        let bindingFlags = System.Reflection.BindingFlags.NonPublic ||| System.Reflection.BindingFlags.Instance
+        let field = writer.GetType().GetField("stream", bindingFlags)
+        let streamObj = field.GetValue(writer) :?> System.IO.FileStream
+        streamObj.Dispose()
+        
+        let c2 = Events.Commit.create 2UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = newConversationId (); title = "Fail"; config = testConfig () } ]
+        Assert.ThrowsAny<Exception>(Action(fun () -> writer.AppendCommit c2 |> ignore)) |> ignore
+        writer.Dispose()
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``JsonSeqWriter 多次 Dispose 保持幂等不抛出`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+        let writer = new JsonSeqWriter(dir, day)
+        let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = newConversationId (); title = "Init"; config = testConfig () } ]
+        writer.AppendCommit c1 |> ignore
+        writer.Dispose()
+        writer.Dispose() // 二次调用幂等
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``CommitCoordinator CommitsAfter 二分查找覆盖边界条件`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        let convId = newConversationId ()
+        coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
+        coord.SubmitEvents [ ConversationRenamed { conversationId = convId; title = "B" } ] |> ignore
+        coord.SubmitEvents [ ConversationRenamed { conversationId = convId; title = "C" } ] |> ignore
+        coord.SubmitEvents [ ConversationRenamed { conversationId = convId; title = "D" } ] |> ignore
+        coord.SubmitEvents [ ConversationRenamed { conversationId = convId; title = "E" } ] |> ignore
+        
+        // after 0 -> 全部 5 条
+        let all = coord.CommitsAfter 0UL
+        Assert.Equal(5, all.Length)
+        // after 2 -> 返回 id 3, 4, 5
+        let after2 = coord.CommitsAfter 2UL
+        Assert.Equal(3, after2.Length)
+        Assert.Equal(3UL, after2.Head.id)
+        // after 5 -> 空
+        let after5 = coord.CommitsAfter 5UL
+        Assert.Empty after5
+        // after 10 -> 空
+        let after10 = coord.CommitsAfter 10UL
+        Assert.Empty after10
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``CommitCoordinator 提交非法事件触发 ApplyFailed 截尾并复用 commitId`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let truncated = ResizeArray<Events.Commit * WanxiangError * int64 * string>()
+        use coord = new CommitCoordinator(dir, outcome, ignore, (fun t -> truncated.Add(t)))
+        let badSubmit =
+            { events = [ EventData.ConversationDeleted { conversationId = Guid.NewGuid() } ] // 不存在的会话，apply 失败
+              commandId = None
+              commandType = None
+              commandHash = None
+              nowUtc = None }
+        match coord.Submit badSubmit with
+        | TruncatedAndReused(c, err) ->
+            Assert.Equal(1UL, c.id)
+            Assert.True(truncated.Count = 1)
+        | _ -> failwith "expected TruncatedAndReused"
+        
+        // 验证 commitId 被复用：下一次合法提交依然获得 id = 1UL
+        let convId = newConversationId ()
+        let goodSubmit =
+            { events = [ ConversationCreated { conversationId = convId; title = "Reused"; config = testConfig () } ]
+              commandId = None
+              commandType = None
+              commandHash = None
+              nowUtc = None }
+        match coord.Submit goodSubmit with
+        | Committed c -> Assert.Equal(1UL, c.id)
+        | _ -> failwith "expected Committed with reused id"
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``CommitCoordinator 正常 Dispose 释放 writer 且不抛出`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        let convId = newConversationId ()
+        coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "Test"; config = testConfig () } ] |> ignore
+        coord.Shutdown()
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``DataLock 与 JsonSeqWriter 显式 IDisposable 接口释放测试`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        match DataLock.Acquire dir with
+        | Ok lockObj ->
+            (lockObj :> IDisposable).Dispose()
+        | Error e -> failwith e
+        
+        let writer = new JsonSeqWriter(dir, DateTime.UtcNow.Date)
+        (writer :> IDisposable).Dispose()
+        (writer :> IDisposable).Dispose()
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``DataPaths tryParseEventFileName 各类非法与边界文件名解析`` () =
+    Assert.Equal(None, DataPaths.tryParseEventFileName "not-jsonseq.txt")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "2026-99-99.jsonseq")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "abc.jsonseq")
+    Assert.Equal(None, DataPaths.tryParseEventFileName ".jsonseq")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "")
+
+[<Fact>]
+let ``DataLock 与 JsonSeqWriter 显式 IDisposable 实现调用与幂等`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        match DataLock.Acquire dir with
+        | Ok lockObj ->
+            (lockObj :> IDisposable).Dispose()
+            (lockObj :> IDisposable).Dispose()
+        | Error e -> failwith e
+
+        let writer = new JsonSeqWriter(dir, DateTime.UtcNow.Date)
+        (writer :> IDisposable).Dispose()
+        (writer :> IDisposable).Dispose()
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``DataPaths tryParseEventFileName 无效扩展名与无效日期分支`` () =
+    Assert.Equal(None, DataPaths.tryParseEventFileName "2026-08-01.txt")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "2026-08-01")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "2026-99-99.jsonseq")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "invalid-date.jsonseq")
+    Assert.Equal(None, DataPaths.tryParseEventFileName ".jsonseq")
+
+
+[<Fact>]
+let ``DataPaths tryParseEventFileName 覆盖无效命名分支`` () =
+    // 非 .jsonseq 结尾分支
+    Assert.Equal(None, DataPaths.tryParseEventFileName "2026-08-01.txt")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "2026-08-01.json")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "events")
+    // .jsonseq 结尾但日期格式错误分支
+    Assert.Equal(None, DataPaths.tryParseEventFileName ".jsonseq")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "2026-99-99.jsonseq")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "invalid-date.jsonseq")
+    Assert.Equal(None, DataPaths.tryParseEventFileName "2026-8-1.jsonseq") // 非 2 位月份
+
+[<Fact>]
+let ``DataLock 与 JsonSeqWriter 显式 IDisposable 释放及边界覆盖`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        // 1. DataLock 显式 IDisposable
+        match DataLock.Acquire dir with
+        | Ok lockObj ->
+            (lockObj :> IDisposable).Dispose()
+        | Error e -> failwith e
+        
+        // 再次获取锁成功（证明上一锁已完全释放）
+        match DataLock.Acquire dir with
+        | Ok lockObj2 ->
+            lockObj2.Dispose()
+        | Error e -> failwith e
+        
+        // 2. JsonSeqWriter 显式 IDisposable 与重复释放
+        let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+        let writer = new JsonSeqWriter(dir, day)
+        (writer :> IDisposable).Dispose()
+        (writer :> IDisposable).Dispose() // 重复调用 Dispose 幂等（覆盖 isNull stream else 分支）
+    finally
+        cleanup dir
+

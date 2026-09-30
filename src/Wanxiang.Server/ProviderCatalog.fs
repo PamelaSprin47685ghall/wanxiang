@@ -103,18 +103,20 @@ module ProviderCatalog =
     /// `{models:[{name:"models/gemini-2.5-pro"}]}`，那层 `models/` 前缀要去掉，
     /// 否则填回模型列表后每个模型名都是错的。
     let modelIdsFromProbe (body: string) : Result<string list, string> =
-        match JsonNode.Parse body with
-        | :? JsonObject as root ->
-            let fromData = arrayField root "data" |> List.choose (stringField "id")
-            let fromModels =
-                arrayField root "models"
-                |> List.choose (stringField "name")
-                |> List.map (fun name ->
-                    if name.StartsWith("models/", StringComparison.Ordinal) then name.Substring 7 else name)
-            match fromData @ fromModels with
-            | [] -> Error "响应里没有模型清单（既无 data 也无 models）"
-            | ids -> Ok(ids |> List.distinct |> List.sort)
-        | _ -> Error "响应不是 JSON 对象"
+        try
+            match JsonNode.Parse body with
+            | :? JsonObject as root ->
+                let fromData = arrayField root "data" |> List.choose (stringField "id")
+                let fromModels =
+                    arrayField root "models"
+                    |> List.choose (stringField "name")
+                    |> List.map (fun name ->
+                        if name.StartsWith("models/", StringComparison.Ordinal) then name.Substring 7 else name)
+                match fromData @ fromModels with
+                | [] -> Error "响应里没有模型清单（既无 data 也无 models）"
+                | ids -> Ok(ids |> List.distinct |> List.sort)
+            | _ -> Error "响应不是 JSON 对象"
+        with _ -> Error "响应不是合法 JSON"
 
     /// 探活请求的端点与鉴权头。三种传输各不相同，用错就是 401 或 404。
     let private probeRequest (p: ProviderConfig) =

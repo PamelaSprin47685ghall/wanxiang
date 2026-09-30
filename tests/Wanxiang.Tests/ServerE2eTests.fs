@@ -13,6 +13,7 @@ open Wanxiang.Config
 open Wanxiang.Core
 open Wanxiang.Protocol
 open Wanxiang.Store
+open Wanxiang.Client
 open Wanxiang.Tests.Helpers
 
 /// 端到端：启动真实 ServerApp + ClientWebSocket。
@@ -861,3 +862,59 @@ let ``e2e deleting a conversation never sweeps attachment blobs`` () =
             (app :> IDisposable).Dispose()
     finally
         cleanup dir
+
+/// 端到端验证：客户端通过真实 WsClient.TrySendCommandAsync 发送命令，
+/// 服务端正常识别 AG-UI CUSTOM 承载并回传 command.committed（若使用旧外壳则会被服务端作为 Unrecognized 忽略而超时失败）。
+[<Fact>]
+let ``e2e wsclient sends command through agui custom carrier and server commits`` () =
+    let port = pickPort ()
+    let token = Auth.generateToken ()
+    let handle = E2e.ServerHandle(port, token)
+    try
+        use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
+        let client = new WsClient()
+        try
+            client.ConnectAsync(Uri(sprintf "ws://127.0.0.1:%d/ws" port), cts.Token).GetAwaiter().GetResult()
+            let authAcceptedTcs = TaskCompletionSource<bool>()
+            let commitTcs = TaskCompletionSource<string>()
+            use _sub =
+                client.EventReceived.Subscribe(fun ev ->
+                    match ev with
+                    | AuthAccepted _ -> authAcceptedTcs.TrySetResult true |> ignore
+                    | CommandCommitted d -> commitTcs.TrySetResult (d.invocationId.ToString("D")) |> ignore
+                    | _ -> ())
+            client.TrySendAsync(AuthPresent {| token = token |}).GetAwaiter().GetResult() |> ignore
+            let authed = authAcceptedTcs.Task.Wait(TimeSpan.FromSeconds 5.0)
+            Assert.True(authed)
+            // 先 observe 列表以获取游标（避免 stale）
+            let listSnapTcs = TaskCompletionSource<uint64>()
+            use _listSub =
+                client.EventReceived.Subscribe(fun ev ->
+                    match ev with
+                    | ConversationListSnapshot d -> listSnapTcs.TrySetResult d.lastCommitId |> ignore
+                    | _ -> ())
+            client.TrySendAsync(ObserveConversationList).GetAwaiter().GetResult() |> ignore
+            let snapArrived = listSnapTcs.Task.Wait(TimeSpan.FromSeconds 5.0)
+            Assert.True(snapArrived)
+            client.TrySendAsync(CursorAdvanced {| id = listSnapTcs.Task.Result |}).GetAwaiter().GetResult() |> ignore
+            // 发送创建会话命令
+            let invId = Guid.NewGuid()
+            let convId = Guid.NewGuid()
+            let cmd =
+                CreateConversation {|
+                    invocationId = invId
+                    conversationId = convId
+                    title = "E2E WsClient AGUI"
+                    config = { SessionConfig.empty with provider = "test-provider"; model = "test-model" }
+                |}
+            let sent = client.TrySendCommandAsync(cmd).GetAwaiter().GetResult()
+            Assert.True sent
+            // 若客户端发的是旧外壳，服务端作为 Unrecognized 忽略，不会回传 command.committed，此处必定超时红掉；
+            // 只有修复为 AG-UI CUSTOM 承载后，服务端正常解码处理，才会回传 command.committed。
+            let committed = commitTcs.Task.Wait(TimeSpan.FromSeconds 5.0)
+            Assert.True(committed)
+            Assert.Equal(invId.ToString("D"), commitTcs.Task.Result)
+        finally
+            client.Disconnect()
+    finally
+        handle.Dispose()

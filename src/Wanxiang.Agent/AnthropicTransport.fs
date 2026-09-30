@@ -32,6 +32,8 @@ type AnthropicChatClient(provider: ProviderConfig, model: string, http: HttpClie
         | Some key when not (String.IsNullOrWhiteSpace key) ->
             request.Headers.TryAddWithoutValidation("x-api-key", key) |> ignore
         | _ -> ()
+        if thinkingBudget > 0 then
+            request.Headers.TryAddWithoutValidation("anthropic-beta", "interleaved-thinking-2025-05-14") |> ignore
         request
 
     /// 累积中的工具调用。Anthropic 把入参切成 `input_json_delta` 片段流式下发，
@@ -72,9 +74,14 @@ type AnthropicChatClient(provider: ProviderConfig, model: string, http: HttpClie
                             if not moved then go <- false
                             else
                                 let event = enumerator.Current
-                                match JsonNode.Parse event.data with
-                                | null -> ()
-                                | node ->
+                                let parsedNode =
+                                    try
+                                        if String.IsNullOrWhiteSpace event.data then None
+                                        else Some(JsonNode.Parse event.data)
+                                    with _ -> None
+                                match parsedNode with
+                                | None | Some null -> ()
+                                | Some node ->
                                     let kind =
                                         ProviderSse.tryString node "type" |> Option.defaultValue event.name
                                     match kind with
@@ -116,7 +123,8 @@ type AnthropicChatClient(provider: ProviderConfig, model: string, http: HttpClie
                                             | Some "thinking_delta" ->
                                                 match ProviderSse.tryString delta "thinking" with
                                                 | Some text when text.Length > 0 ->
-                                                    emit [ TextReasoningContent text :> AIContent ]
+                                                    emit [ TextReasoningContent text :> AIContent
+                                                           TextContent(text, RawRepresentation = box "thinking") :> AIContent ]
                                                 | _ -> ()
                                             | Some "input_json_delta" ->
                                                 match tools.TryGetValue index, ProviderSse.tryString delta "partial_json" with
@@ -131,15 +139,17 @@ type AnthropicChatClient(provider: ProviderConfig, model: string, http: HttpClie
                                             tools.Remove index |> ignore
                                             let arguments = Dictionary<string, obj>()
                                             let text = buffer.ToString()
+                                            let mutable parsedOk = true
                                             if not (String.IsNullOrWhiteSpace text) then
                                                 try
                                                     match JsonNode.Parse text with
                                                     | :? JsonObject as parsed ->
                                                         for KeyValue(key, value) in parsed do
                                                             arguments[key] <- box value
-                                                    | _ -> ()
-                                                with _ -> ()
-                                            emit [ FunctionCallContent(id, name, arguments) :> AIContent ]
+                                                    | _ -> parsedOk <- false
+                                                with _ -> parsedOk <- false
+                                            if parsedOk then
+                                                emit [ FunctionCallContent(id, name, arguments) :> AIContent ]
                                         | _ -> ()
                                     | "message_delta" ->
                                         match ProviderSse.tryObject node "delta" with
@@ -172,7 +182,13 @@ type AnthropicChatClient(provider: ProviderConfig, model: string, http: HttpClie
                     let closing = ChatResponseUpdate(Nullable ChatRole.Assistant, [| UsageContent usage :> AIContent |])
                     if not (String.IsNullOrEmpty responseId) then closing.ResponseId <- responseId
                     if not (String.IsNullOrEmpty finish) then
-                        closing.FinishReason <- Nullable(ChatFinishReason finish)
+                        let mapped =
+                            match finish with
+                            | "end_turn" -> ChatFinishReason.Stop
+                            | "max_tokens" -> ChatFinishReason.Length
+                            | "tool_use" -> ChatFinishReason.ToolCalls
+                            | other -> ChatFinishReason other
+                        closing.FinishReason <- Nullable mapped
                     channel.Writer.TryWrite closing |> ignore
                     channel.Writer.Complete()
                 with ex -> channel.Writer.Complete ex
@@ -193,8 +209,8 @@ type AnthropicChatClient(provider: ProviderConfig, model: string, http: HttpClie
                 return! updates.ToChatResponseAsync ct
             }
 
-        member _.GetService(serviceType, _) =
-            if serviceType = typeof<AnthropicChatClient> then box () else null
+        member this.GetService(serviceType, _) =
+            if serviceType = typeof<AnthropicChatClient> then box this else null
 
     interface IDisposable with
         // HttpClient 由 ProviderHttp 按 provider 共享，不在这里释放

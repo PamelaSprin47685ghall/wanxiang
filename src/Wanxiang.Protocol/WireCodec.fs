@@ -2,6 +2,7 @@ namespace Wanxiang.Protocol
 
 open System
 open System.Globalization
+open System.Text.Encodings.Web
 open System.Text.Json
 open System.Text.Json.Nodes
 open Wanxiang.Core
@@ -183,7 +184,7 @@ module WireCodec =
             p["beforeCommitId"] <- d.beforeCommitId
             p["items"] <- d.items.DeepClone()
             p["hasMore"] <- d.hasMore
-        | Command _ -> failwith "Command 事件使用 encodeCommand"
+        | Command _ -> invalidOp "Command 事件使用 encodeCommand"
         | ConversationExportRead d ->
             putGuid p "exportId" d.exportId
             putGuid p "threadId" d.conversationId
@@ -323,7 +324,7 @@ module WireCodec =
         let payloadJson = payloadOf ev
         if not (String.IsNullOrEmpty payloadJson) && payloadJson <> "{}" then
             o["payload"] <- JsonNode.Parse(payloadJson).DeepClone()
-        o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General))
+        o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping))
 
     /// 编码客户端写命令（Command 事件专用路径）。
     let encodeCommand (cmd: ClientCommand) : string =
@@ -362,7 +363,7 @@ module WireCodec =
             p["archived"] <- d.archived
         | RegenerateResponse d -> putGuid p "threadId" d.conversationId
         o["payload"] <- p
-        o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General))
+        o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping))
 
     // ---------- 解码 ----------
 
@@ -371,6 +372,10 @@ module WireCodec =
         try
             match JsonNode.Parse jsonText with
             | :? JsonObject as o ->
+                match tryGet o "type" with
+                | None -> Error "missing type"
+                | Some v when v.GetValueKind() <> JsonValueKind.String -> Error "missing type"
+                | _ ->
                 match tryString o "type" with
                 | Some "conversation.create" ->
                     match tryGet o "payload" with
@@ -388,18 +393,21 @@ module WireCodec =
                 | Some "conversation.fork" ->
                     match tryGet o "payload" with
                     | Some (:? JsonObject as p) ->
-                        match tryGuid p "invocationId", tryGuid p "threadId", tryGuid p "parentConversationId" with
-                        | Some inv, Some cid, Some pid ->
-                            let after = match tryUInt64 p "forkAfterId" with Some v -> Some v | None -> None
-                            let cfg =
-                                match tryGet p "config" with
-                                | Some (:? JsonObject as c) -> CommitCodec.configFromJson c
-                                | _ -> SessionConfig.empty
-                            match tryGet p "message" with
-                            | Some msg ->
-                                Ok(ForkConversation {| invocationId = inv; conversationId = cid; parentConversationId = pid; forkAfterId = after; config = cfg; editedMessageJson = msg.DeepClone() |})
-                            | None -> Error "conversation.fork: missing message"
-                        | _ -> Error "conversation.fork: missing invocationId/threadId/parentConversationId"
+                        match tryGuid p "invocationId", tryGuid p "threadId" with
+                        | Some inv, Some cid ->
+                            match tryGuid p "parentThreadId" |> Option.orElse (tryGuid p "parentConversationId") with
+                            | Some pid ->
+                                let after = match tryUInt64 p "forkAfterId" with Some v -> Some v | None -> None
+                                let cfg =
+                                    match tryGet p "config" with
+                                    | Some (:? JsonObject as c) -> CommitCodec.configFromJson c
+                                    | _ -> SessionConfig.empty
+                                match tryGet p "editedMessage" |> Option.orElse (tryGet p "message") with
+                                | Some msg ->
+                                    Ok(ForkConversation {| invocationId = inv; conversationId = cid; parentConversationId = pid; forkAfterId = after; config = cfg; editedMessageJson = msg.DeepClone() |})
+                                | None -> Error "conversation.fork: missing editedMessage"
+                            | None -> Error "conversation.fork: missing parentThreadId"
+                        | _ -> Error "conversation.fork: missing invocationId/threadId"
                     | _ -> Error "conversation.fork: missing payload"
                 | Some "chat.user-message.enqueue" ->
                     match tryGet o "payload" with
@@ -432,7 +440,8 @@ module WireCodec =
                     | Some (:? JsonObject as p) ->
                         match tryGuid p "invocationId", tryGuid p "threadId", tryUInt64 p "messageCommitId" with
                         | Some inv, Some cid, Some mid -> Ok(DeleteMessage {| invocationId = inv; conversationId = cid; messageCommitId = mid |})
-                        | _ -> Error "message.delete: missing invocationId/threadId/messageId"
+                        | Some _, Some _, None -> Error "message.delete: missing messageCommitId"
+                        | _ -> Error "message.delete: missing invocationId/threadId"
                     | _ -> Error "message.delete: missing payload"
                 | Some "conversation.config-update" ->
                     match tryGet o "payload" with

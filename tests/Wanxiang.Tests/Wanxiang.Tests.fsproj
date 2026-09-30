@@ -9,8 +9,10 @@
     <Compile Include="Headless.fs" />
     <Compile Include="HeadlessTests.fs" />
     <Compile Include="Helpers.fs" />
+    <Compile Include="CoreTests.fs" />
     <Compile Include="EventLogTests.fs" />
     <Compile Include="AguiMappingTests.fs" />
+    <Compile Include="AguiTests.fs" />
     <Compile Include="MessageMapTests.fs" />
     <Compile Include="WireAguiTests.fs" />
     <Compile Include="StoreConsistencyTests.fs" />
@@ -20,14 +22,23 @@
     <Compile Include="ForkTests.fs" />
     <Compile Include="SessionAndForkTests.fs" />
     <Compile Include="ServerE2eTests.fs" />
+    <Compile Include="McpTests.fs" />
+    <Compile Include="ServerAppTests.fs" />
+    <Compile Include="ProviderCatalogTests.fs" />
+    <Compile Include="ServerStoreMutationTests.fs" />
+    <Compile Include="ChatOrchestratorTests.fs" />
+    <Compile Include="ServerConnectionsTests.fs" />
     <Compile Include="ConfigTests.fs" />
     <Compile Include="AttachmentTests.fs" />
     <Compile Include="BugfixTests.fs" />
     <Compile Include="CodecTests.fs" />
+    <Compile Include="WireCodecTests.fs" />
     <Compile Include="ProductizationTests.fs" />
     <Compile Include="PolishTests.fs" />
     <Compile Include="MathRenderTests.fs" />
     <Compile Include="NativeTransportTests.fs" />
+    <Compile Include="AnthropicTransportTests.fs" />
+    <Compile Include="AgentCoverageTests.fs" />
     <Compile Include="ScrollLayoutTests.fs" />
     <Compile Include="OperabilityTests.fs" />
     <Compile Include="ExchangeNavTests.fs" />
@@ -58,6 +69,14 @@
     <Compile Include="InteractabilityPolishTests.fs" />
     <Compile Include="InteractabilityPolish8Tests.fs" />
     <Compile Include="DismissFocusTests.fs" />
+    <Compile Include="ClientStateAndWsClientTests.fs" />
+    <Compile Include="UiControllersTests.fs" />
+    <Compile Include="AppShellTests.fs" />
+    <Compile Include="SettingsViewTests.fs" />
+    <Compile Include="UiModelTests.fs" />
+    <Compile Include="DialogsTests.fs" />
+    <Compile Include="MessageCardTests.fs" />
+    <Compile Include="UiPureLogicTests.fs" />
   </ItemGroup>
 
   <!-- 真 KaTeX 生成的 HTML 夹具：公式排版测试不必带一个 JS 引擎 -->
@@ -88,6 +107,7 @@
     <ProjectReference Include="..\..\src\Wanxiang.Server\Wanxiang.Server.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.UI\Wanxiang.UI.fsproj" />
+    <ProjectReference Include="..\..\src\Wanxiang.Client\Wanxiang.Client.fsproj" />
   </ItemGroup>
 
 </Project>

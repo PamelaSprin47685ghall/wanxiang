@@ -110,9 +110,9 @@ type WsClient() =
         }
 
     member this.TrySendAsync(ev: WireEvent) : Task<bool> = this.TrySendTextAsync(WireAgui.encode ev, None)
-    member this.TrySendCommandAsync(cmd: ClientCommand) : Task<bool> = this.TrySendTextAsync(WireCodec.encodeCommand cmd, None)
+    member this.TrySendCommandAsync(cmd: ClientCommand) : Task<bool> = this.TrySendTextAsync(WireAgui.encodeCommand cmd, None)
     member this.TrySendCommandAtGenerationAsync(generation: int, cmd: ClientCommand) : Task<bool> =
-        this.TrySendTextAsync(WireCodec.encodeCommand cmd, Some generation)
+        this.TrySendTextAsync(WireAgui.encodeCommand cmd, Some generation)
     member this.TrySendAtGenerationAsync(generation: int, ev: WireEvent) : Task<bool> =
         this.TrySendTextAsync(WireAgui.encode ev, Some generation)
 
@@ -256,7 +256,7 @@ type ClientState() =
                         let mutable c: System.Text.Json.Nodes.JsonNode = null
                         if o.TryGetPropertyValue("commitId", &c) && c <> null then
                             existing.Add(c.GetValue<uint64>()) |> ignore
-                let prev = JsonArray()
+                let prev = ResizeArray<System.Text.Json.Nodes.JsonNode>()
                 for m in d.items do
                     let commitId =
                         match m with
@@ -336,54 +336,83 @@ type ClientState() =
         | AuthorityCatchUp d ->
             // 慢客户端追赶（决策 32-34）：应用批次中的权威提交，然后推进游标
             let mutable maxApplied = d.fromCursor
-            for line in d.items do
-                match CommitCodec.tryCommitFromJsonLine (line.GetValue<string>()) with
-                | Some commit ->
-                    for ev in commit.events do
-                        match ev with
-                        | AgentMessageRecorded m when conversations.ContainsKey m.conversationId ->
-                            match conversations.TryFind m.conversationId with
-                            | Some v ->
-                                // 按 commitId 精确去重：水位比较不足以防重放
-                                let alreadyApplied =
-                                    v.messages
-                                    |> Seq.exists (fun existing ->
-                                        match existing with
-                                        | :? System.Text.Json.Nodes.JsonObject as o ->
-                                            let mutable c: System.Text.Json.Nodes.JsonNode = null
-                                            o.TryGetPropertyValue("commitId", &c)
-                                            && not (isNull c)
-                                            && c.GetValue<uint64>() = commit.id
-                                        | _ -> false)
-                                if not alreadyApplied then
-                                    let o = System.Text.Json.Nodes.JsonObject()
-                                    o["commitId"] <- commit.id
-                                    o["committedAt"] <- commit.committedAtUtc.UtcDateTime.ToString("o", System.Globalization.CultureInfo.InvariantCulture)
-                                    o["payload"] <- m.payloadJson.DeepClone()
-                                    v.messages.Add o
-                                    v.lastCommitId <- max v.lastCommitId commit.id
-                                    convChanged.Trigger m.conversationId
-                            | _ -> ()
-                        | MessageDeleted m when conversations.ContainsKey m.conversationId ->
-                            match conversations.TryFind m.conversationId with
-                            | Some v ->
-                                let remaining = JsonArray()
-                                for item in v.messages do
-                                    match item with
-                                    | :? System.Text.Json.Nodes.JsonObject as o ->
-                                        let mutable c: System.Text.Json.Nodes.JsonNode = null
-                                        if o.TryGetPropertyValue("commitId", &c) && not (isNull c) && c.GetValue<uint64>() = m.messageCommitId then
-                                            ()
-                                        else
-                                            remaining.Add(item.DeepClone())
-                                    | _ -> remaining.Add(item.DeepClone())
-                                v.messages <- remaining
-                                v.lastCommitId <- max v.lastCommitId commit.id
-                                convChanged.Trigger m.conversationId
+            for item in d.items do
+                match item with
+                | :? System.Text.Json.Nodes.JsonObject as obj ->
+                    let evType = if obj.ContainsKey "type" && obj["type"] <> null then obj["type"].ToString().Trim('"') else ""
+                    if evType = "message.committed" || evType = "chat.message.committed" then
+                        match obj["payload"] with
+                        | :? System.Text.Json.Nodes.JsonObject as p ->
+                            let cidStr = if p.ContainsKey "conversationId" && p["conversationId"] <> null then p["conversationId"].ToString().Trim('"') else ""
+                            match Guid.TryParse cidStr with
+                            | true, cid when conversations.ContainsKey cid ->
+                                let v = conversations[cid]
+                                let msgNode = if p.ContainsKey "message" && p["message"] <> null then p["message"].DeepClone() else obj.DeepClone() :> System.Text.Json.Nodes.JsonNode
+                                v.messages.Add msgNode
+                                convChanged.Trigger cid
                             | _ -> ()
                         | _ -> ()
-                    maxApplied <- max maxApplied commit.id
-                | None -> ()
+                    else
+                        match WireCodec.tryDecode (obj.ToJsonString()) with
+                        | Ok ev -> this.Handle ev
+                        | _ -> ()
+                | _ ->
+                    let commitOpt =
+                        match item with
+                        | :? System.Text.Json.Nodes.JsonValue as jv ->
+                            match jv.TryGetValue<string>() with
+                            | true, s -> CommitCodec.tryCommitFromJsonLine s
+                            | _ -> None
+                        | :? System.Text.Json.Nodes.JsonObject as obj ->
+                            CommitCodec.tryCommitFromJsonLine (obj.ToJsonString())
+                        | _ -> None
+                    match commitOpt with
+                    | Some commit ->
+                        for ev in commit.events do
+                            match ev with
+                            | AgentMessageRecorded m when conversations.ContainsKey m.conversationId ->
+                                match conversations.TryFind m.conversationId with
+                                | Some v ->
+                                    // 按 commitId 精确去重：水位比较不足以防重放
+                                    let alreadyApplied =
+                                        v.messages
+                                        |> Seq.exists (fun existing ->
+                                            match existing with
+                                            | :? System.Text.Json.Nodes.JsonObject as o ->
+                                                let mutable c: System.Text.Json.Nodes.JsonNode = null
+                                                o.TryGetPropertyValue("commitId", &c)
+                                                && not (isNull c)
+                                                && c.GetValue<uint64>() = commit.id
+                                            | _ -> false)
+                                    if not alreadyApplied then
+                                        let o = System.Text.Json.Nodes.JsonObject()
+                                        o["commitId"] <- commit.id
+                                        o["committedAt"] <- commit.committedAtUtc.UtcDateTime.ToString("o", System.Globalization.CultureInfo.InvariantCulture)
+                                        o["payload"] <- m.payloadJson.DeepClone()
+                                        v.messages.Add o
+                                        v.lastCommitId <- max v.lastCommitId commit.id
+                                        convChanged.Trigger m.conversationId
+                                | _ -> ()
+                            | MessageDeleted m when conversations.ContainsKey m.conversationId ->
+                                match conversations.TryFind m.conversationId with
+                                | Some v ->
+                                    let remaining = JsonArray()
+                                    for item in v.messages do
+                                        match item with
+                                        | :? System.Text.Json.Nodes.JsonObject as o ->
+                                            let mutable c: System.Text.Json.Nodes.JsonNode = null
+                                            if o.TryGetPropertyValue("commitId", &c) && not (isNull c) && c.GetValue<uint64>() = m.messageCommitId then
+                                                ()
+                                            else
+                                                remaining.Add(item.DeepClone())
+                                        | _ -> remaining.Add(item.DeepClone())
+                                    v.messages <- remaining
+                                    v.lastCommitId <- max v.lastCommitId commit.id
+                                    convChanged.Trigger m.conversationId
+                                | _ -> ()
+                            | _ -> ()
+                        maxApplied <- max maxApplied commit.id
+                    | None -> ()
             latestCommitId <- max latestCommitId d.toCommitId
             this.AdvanceCursorTo maxApplied
         | GenerationStarted d ->
@@ -398,6 +427,9 @@ type ClientState() =
                 v.runtimeState <- "idle"
                 convChanged.Trigger d.conversationId
             | None -> ()
+        | CursorAdvanced d ->
+            cursor <- max cursor d.id
+            cursorChanged.Trigger cursor
         | _ -> ()
 
     /// 客户端应用了一批事件后推进游标（决策 33）。

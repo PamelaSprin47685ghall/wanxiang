@@ -1,6 +1,7 @@
 module Wanxiang.Tests.CoordinatorTests
 
 open System
+open System.IO
 open Xunit
 open Wanxiang.Core
 open Wanxiang.Store
@@ -148,5 +149,144 @@ let ``test_stale_client_rejected`` () =
         | Rejected (StaleProjection required) -> Assert.Equal(1UL, required)
         | _ -> failwith "expected stale rejection"
         coord.Shutdown()
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``test_coordinator_idempotency_binary_search_branches`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        // 注意：每个命令必须使用独立的 conversationId，避免因重复创建相同会话导致投影失败 (DuplicateConversation)
+        let mkCmd (title: string) =
+            let convId = newConversationId ()
+            let invId = Guid.NewGuid()
+            let cmd = CreateConversation {| invocationId = invId; conversationId = convId; title = title; config = testConfig () |}
+            let canonical = ClientCommand.canonicalPayload cmd
+            let cid = CommandId.compute invId (ClientCommand.commandType cmd) canonical
+            let ch = CommandId.sha256Hex canonical
+            let submit =
+                { events = [ ConversationCreated { conversationId = convId; title = title; config = testConfig () } ]
+                  commandId = Some cid
+                  commandType = Some(ClientCommand.commandType cmd)
+                  commandHash = Some ch
+                  nowUtc = None }
+            cid, ch, submit
+        
+        let cid1, ch1, sub1 = mkCmd "Title1"
+        let cid2, ch2, sub2 = mkCmd "Title2"
+        let cid3, ch3, sub3 = mkCmd "Title3"
+        
+        // 3 条合法提交依次写入：id 1, 2, 3，全部 Committed
+        match coord.Submit sub1 with Committed c -> Assert.Equal(1UL, c.id) | r -> failwithf "sub1 failed: %A" r
+        match coord.Submit sub2 with Committed c -> Assert.Equal(2UL, c.id) | r -> failwithf "sub2 failed: %A" r
+        match coord.Submit sub3 with Committed c -> Assert.Equal(3UL, c.id) | r -> failwithf "sub3 failed: %A" r
+        
+        // 此时 commits 为 [c1; c2; c3]，mid = 1 (c2.id = 2)
+        // 1. 重放 sub1：target=1 < 2，走 hi <- mid - 1 分支
+        match coord.Submit sub1 with
+        | IdempotentReplay c -> Assert.Equal(1UL, c.id)
+        | r -> failwithf "expected IdempotentReplay 1, got %A" r
+        
+        // 2. 重放 sub3：target=3 > 2，走 lo <- mid + 1 分支
+        match coord.Submit sub3 with
+        | IdempotentReplay c -> Assert.Equal(3UL, c.id)
+        | r -> failwithf "expected IdempotentReplay 3, got %A" r
+        
+        coord.Shutdown()
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``test_coordinator_idempotency_record_missing_from_commits_rejected`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        // 构造投影中有 idempotency 记录，但 outcome.commits 列表为空的边界状态
+        let cid = "test-cid-orphan"
+        let ch = "test-hash"
+        let customOutcome =
+            let p = Projection.empty
+            let idemRec: IdemRecord =
+                { commandId = cid
+                  invocationId = Guid.NewGuid()
+                  commandType = "test"
+                  canonicalHash = ch
+                  commitId = 99UL }
+            { projection = { p with idempotency = Map.add cid idemRec p.idempotency }
+              commits = []
+              truncatedFiles = []
+              lastCommitId = 99UL
+              lastDateUtc = DateTime.UtcNow.Date }
+        use coord = new CommitCoordinator(dir, customOutcome, ignore, ignore)
+        let submit =
+            { events = []
+              commandId = Some cid
+              commandType = Some "test"
+              commandHash = Some ch
+              nowUtc = None }
+        // 命中 if commits.Count = 0 then None 以及 72-74 行的 CommandIdRejected Poisoned
+        match coord.Submit submit with
+        | CommandIdRejected (Poisoned msg) ->
+            Assert.Contains("references missing commit", msg)
+        | r -> failwithf "expected CommandIdRejected Poisoned, got %A" r
+        coord.Shutdown()
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``test_coordinator_append_commit_failure_triggers_onTruncated_and_CommitFailed`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let truncated = ResizeArray<Events.Commit * WanxiangError * int64 * string>()
+        let coord = new CommitCoordinator(dir, outcome, ignore, (fun t -> truncated.Add(t)))
+        
+        // 优雅模拟 AppendCommit 失败（避免反射私有字段产生 NullReferenceException）：
+        // JsonSeqWriter 在跨日写入时会调用 openFile 打开次日文件。
+        // 我们提前将次日文件以 FileShare.None 排他占用，当 Coordinator 提交次日事件时，
+        // AppendCommit 中的 openFile 必然抛出 IOException，完美触发协调器的 append 异常处理逻辑（95-100行）。
+        let tomorrow = DateTime.UtcNow.Date.AddDays(1.0)
+        let tomorrowFile = DataPaths.eventFilePath dir tomorrow
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName tomorrowFile) |> ignore
+        use locker = new FileStream(tomorrowFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
+        
+        let convId = newConversationId ()
+        let submit =
+            { events = [ ConversationCreated { conversationId = convId; title = "Tomorrow"; config = testConfig () } ]
+              commandId = None
+              commandType = None
+              commandHash = None
+              nowUtc = Some (DateTimeOffset(tomorrow.AddHours(1.0), TimeSpan.Zero)) }
+        
+        // 命中 CommitCoordinator.fs 95-100 行异常处理
+        match coord.Submit submit with
+        | CommitFailed (Poisoned msg) ->
+            Assert.Contains("append failed", msg)
+            Assert.True(truncated.Count = 1)
+            let (commit, err, off, path) = truncated.[0]
+            Assert.Equal(1UL, commit.id)
+            Assert.Equal(-1L, off)
+            Assert.True(WanxiangError.message err |> fun m -> m.Contains("append failed"))
+        | r -> failwithf "expected CommitFailed, got %A" r
+        
+        coord.Shutdown()
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``test_coordinator_repeated_shutdown_and_idisposable`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        // 覆盖 168-175 行：重复 Shutdown 及 IDisposable.Dispose
+        coord.Shutdown()
+        coord.Shutdown() // 重复调用走 else 分支
+        (coord :> IDisposable).Dispose() // 覆盖显式 IDisposable 实现
     finally
         cleanup dir

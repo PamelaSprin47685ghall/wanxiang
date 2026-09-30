@@ -5,6 +5,7 @@ open System.Text.Json
 open System.Text.Json.Nodes
 open AGUI.Abstractions
 open Wanxiang.Agui
+open Wanxiang.Core
 
 /// WireEvent ⇄ AG-UI 承载适配层。
 ///
@@ -122,6 +123,15 @@ module WireAgui =
     let encode (ev: WireEvent) : string =
         let aguiEv = toAguiEvent ev
         JsonSerializer.Serialize(aguiEv, aguiEv.GetType(), aguiOptions)
+
+    /// 客户端写命令（Command 事件专用路径）：统一以 AG-UI CUSTOM wanxiang.dev/<commandType> 承载，
+    /// value 为完整旧外壳 JSON（{type,payload}）。
+    let encodeCommand (cmd: Wanxiang.Core.ClientCommand) : string =
+        let ce = CustomEvent()
+        ce.Name <- Capabilities.Namespace + ClientCommand.commandType cmd
+        let json = WireCodec.encodeCommand cmd
+        ce.Value <- Nullable(json |> JsonDocument.Parse |> fun d -> d.RootElement.Clone())
+        JsonSerializer.Serialize(ce, ce.GetType(), aguiOptions)
 
     /// 入站：AG-UI JSON 文本 → 语义事件。
     /// 未知 `type` / 未知 CUSTOM `name`：返回 None（**不**是错误——AG-UI 增量安全，

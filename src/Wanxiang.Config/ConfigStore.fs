@@ -48,19 +48,33 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
 
     /// 文件系统通知合并（决策 43：可重置 debounce ~100ms）。
     member _.TriggerReload() =
-        if isNull debounceTimer then
-            debounceTimer <-
-                new Timer(
-                    (fun _ ->
-                        debounceTimer.Dispose()
-                        debounceTimer <- null
-                        reloadFromDisk () |> ignore),
-                    null,
-                    100,
-                    Timeout.Infinite
-                )
-        else
-            debounceTimer.Change(100, Timeout.Infinite) |> ignore
+        lock lockObj (fun () ->
+            if not disposed then
+                if isNull debounceTimer then
+                    let timerRef = ref (null: Timer)
+                    let t =
+                        new Timer(
+                            (fun _ ->
+                                lock lockObj (fun () ->
+                                    if not disposed then
+                                        match !timerRef with
+                                        | null -> ()
+                                        | currentTimer ->
+                                            try currentTimer.Dispose() with _ -> ()
+                                            if obj.ReferenceEquals(debounceTimer, currentTimer) then
+                                                debounceTimer <- null
+                                )
+                                reloadFromDisk () |> ignore),
+                            null,
+                            100,
+                            Timeout.Infinite
+                        )
+                    timerRef := t
+                    debounceTimer <- t
+                else
+                    try debounceTimer.Change(100, Timeout.Infinite) |> ignore
+                    with :? ObjectDisposedException -> ()
+        )
 
     /// 当前生效配置（最后一次成功加载）。
     member _.Current : AppConfig =
@@ -100,11 +114,15 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
     member _.Path = path
 
     member _.Dispose() =
-        if not disposed then
-            disposed <- true
-            watcher.EnableRaisingEvents <- false
-            watcher.Dispose()
-            if not (isNull debounceTimer) then debounceTimer.Dispose()
+        lock lockObj (fun () ->
+            if not disposed then
+                disposed <- true
+                watcher.EnableRaisingEvents <- false
+                watcher.Dispose()
+                if not (isNull debounceTimer) then
+                    try debounceTimer.Dispose() with _ -> ()
+                    debounceTimer <- null
+        )
 
     interface IDisposable with
         member this.Dispose() = this.Dispose()

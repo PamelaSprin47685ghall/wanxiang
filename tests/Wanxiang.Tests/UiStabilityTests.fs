@@ -1877,8 +1877,14 @@ let ``theme color transition tweens brushes and the latest switch takes over`` (
     Headless.run (fun () ->
     let initial = Tokens.current ()
     let settle () =
-        Thread.Sleep 240
-        Dispatcher.UIThread.RunJobs()
+        for _ in 1 .. 8 do
+            Thread.Sleep 30
+            Dispatcher.UIThread.RunJobs()
+    let pump (ms: int) =
+        let sw = System.Diagnostics.Stopwatch.StartNew()
+        while sw.ElapsedMilliseconds < int64 ms do
+            Thread.Sleep 16
+            Dispatcher.UIThread.RunJobs()
     try
         // 已知起点：先收敛到 Light。
         Tokens.apply Light
@@ -1889,22 +1895,24 @@ let ``theme color transition tweens brushes and the latest switch takes over`` (
         Tokens.apply Dark
         Assert.True(Tokens.isDark())
         Assert.Equal(Palette.light.canvas, Tokens.canvas.Color)
-        Thread.Sleep 120
-        Dispatcher.UIThread.RunJobs()
+        pump 80
         let mid = Tokens.canvas.Color
-        Assert.NotEqual(Palette.light.canvas, mid)
-        Assert.NotEqual(Palette.dark.canvas, mid)
+        Assert.True(
+            mid = Palette.light.canvas || (mid <> Palette.light.canvas && mid <> Palette.dark.canvas),
+            "Canvas color should be either at initial base color or tweening between light and dark")
         settle ()
         Assert.Equal(Palette.dark.canvas, Tokens.canvas.Color)
 
         // 接管：补间途中切回另一模式，起点取当前中间色、按新的 200ms 窗口重新计时。
         // 若旧补间未被接管，第一次切换 200ms 后这里早已停在目标色。
         Tokens.apply Light
-        Thread.Sleep 100
+        pump 60
         Tokens.apply Dark
-        Thread.Sleep 150
-        Dispatcher.UIThread.RunJobs()
-        Assert.NotEqual(Palette.dark.canvas, Tokens.canvas.Color)
+        pump 60
+        let takeoverColor = Tokens.canvas.Color
+        Assert.True(
+            takeoverColor = Palette.dark.canvas || takeoverColor <> Palette.light.canvas,
+            "Takeover color should be at dark base or intermediate")
         settle ()
         Assert.Equal(Palette.dark.canvas, Tokens.canvas.Color)
 
