@@ -24,6 +24,7 @@ type private FixtureBackend(html: string) =
 /// 只能靠像素判定：控件的「基线」属性与容器的行度量同源，
 /// 拿它们互相比较是同义反复。`A` 与 `E` 都坐在基线上、都没有下伸部分，
 /// 所以两者墨迹的**最低一行**必须落在同一处。
+[<Trait("Category", "UI")>]
 type Baseline(output: ITestOutputHelper) =
 
     [<Literal>]
@@ -105,6 +106,7 @@ type Baseline(output: ITestOutputHelper) =
 
 // 公式渲染出来的是自绘图形：读屏看到的是一块空白。原式进自动化名与 ToolTip，
 // 听得到、悬停看得见。Kelivo 把 TeX 原文暴露给文本朗读，同一意图的更彻底版本。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``rendered inline math exposes its tex source`` () =
     Headless.run (fun () ->

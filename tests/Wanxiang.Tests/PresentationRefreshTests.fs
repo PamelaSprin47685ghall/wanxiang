@@ -91,6 +91,7 @@ let private renderStreamingCaret () =
     finally
         window.Close()
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``user bubble keeps hairline strong one pixel border in both palettes`` () =
     Headless.run (fun () ->
@@ -118,7 +119,7 @@ let ``user bubble keeps hairline strong one pixel border in both palettes`` () =
             Assert.Equal(Thickness 1.0, bubble.BorderThickness)
             Assert.True(Object.ReferenceEquals(bubble.Background, Tokens.userBubble))
             Assert.Equal(
-                CornerRadius(Tokens.radiusLg, Tokens.radiusLg, Tokens.radiusSm, Tokens.radiusLg),
+                CornerRadius(Spacing.Radius.lg, Spacing.Radius.lg, Spacing.Radius.sm, Spacing.Radius.lg),
                 bubble.CornerRadius)
 
             // 深色：同一实例换色，描边仍是 hairlineStrong 档、仍是 1px、半径不动。
@@ -134,6 +135,7 @@ let ``user bubble keeps hairline strong one pixel border in both palettes`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``streaming caret keeps opacity inside the breath band and pins to max under reduced motion`` () =
     Headless.run (fun () ->
@@ -172,6 +174,7 @@ let ``streaming caret keeps opacity inside the breath band and pins to max under
         MotionPolicy.setReduced false
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``caret breath opacity is a periodic pure function pinned inside the band`` () =
     Headless.run (fun () ->
@@ -217,6 +220,7 @@ let ``caret breath opacity is a periodic pure function pinned inside the band`` 
         Assert.True(abs (a - b) <= 0.05))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``rebuilt streaming caret continues the breath run instead of restarting at peak`` () =
     Headless.run (fun () ->
@@ -277,6 +281,7 @@ let ``rebuilt streaming caret continues the breath run instead of restarting at 
     Assert.True(rebuilt.Opacity < Tokens.opacityCaretBreathMax - 0.1, sprintf "重建光标仍钉在峰值：%f" rebuilt.Opacity)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``code block copy confirmation dips toward fade opacity and keeps the confirmed label`` () =
     Headless.run (fun () ->
@@ -326,6 +331,7 @@ let ``code block copy confirmation dips toward fade opacity and keeps the confir
         MotionPolicy.setReduced false
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``disclosure chevron and copy confirmation ride the shared easeOutCubic`` () =
     Headless.run (fun () ->
@@ -389,6 +395,7 @@ let ``disclosure chevron and copy confirmation ride the shared easeOutCubic`` ()
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``settings appearance grouping sits on surface container with hairline border`` () =
     Headless.run (fun () ->
@@ -422,6 +429,7 @@ let ``settings appearance grouping sits on surface container with hairline borde
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``chat header divider uses the lightest hairline tier`` () =
     Headless.run (fun () ->
@@ -444,6 +452,7 @@ let ``chat header divider uses the lightest hairline tier`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``standard hairline helper stays on the border soft tier`` () =
     Headless.run (fun () ->
@@ -473,6 +482,7 @@ let private assertBorderedDisclosureTransition (control: Control) =
         | _ -> ()
     Assert.Equal(2, brushCount)
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``disclosure headers share one bordered transition`` () =
     Headless.run (fun () ->
@@ -524,6 +534,7 @@ let ``disclosure headers share one bordered transition`` () =
     withHeader "技术细节" (MessageCard.errorCard err (fun () -> ()) None)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``export progress bar is determinate under reduced motion`` () =
     Headless.run (fun () ->

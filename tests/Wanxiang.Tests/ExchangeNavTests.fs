@@ -20,6 +20,7 @@ open Wanxiang.UI
 /// - 锚点语义：第二次「上一条」翻到的是倒数第三轮，而不是重新按当前视口算一次；
 /// - 端点禁用：翻到头不能再翻，按钮槽位保留（宽度不跳）；
 /// - 手动滚动会刷新端点态（无锚点时锚点由视口决定）。
+[<Trait("Category", "UI")>]
 module ExchangeNavTests =
 
     let private approx (a: float) (b: float) = abs (a - b) < 0.5
@@ -105,6 +106,7 @@ module ExchangeNavTests =
         let bottom = top + scroller.Viewport.Height
         card.Bounds.Y >= top - 1.0 && card.Bounds.Y + card.Bounds.Height <= bottom + 1.0
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``首屏贴底后下一条禁用、上一条可用`` () =
         Headless.run (fun () ->
@@ -128,6 +130,7 @@ module ExchangeNavTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``手动滚回顶部后端点禁用互换`` () =
         Headless.run (fun () ->
@@ -149,6 +152,7 @@ module ExchangeNavTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``上一条把上一轮提问完整带进视口`` () =
         Headless.run (fun () ->
@@ -170,6 +174,7 @@ module ExchangeNavTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``连续按上一条沿锚点顺序往回翻`` () =
         Headless.run (fun () ->
@@ -191,6 +196,7 @@ module ExchangeNavTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``只有用户消息算问答边界`` () =
         Headless.run (fun () ->
@@ -204,6 +210,7 @@ module ExchangeNavTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``compact 档收起顶栏跳转按钮`` () =
         Headless.run (fun () ->
@@ -222,6 +229,7 @@ module ExchangeNavTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``跳转清掉未读计数并放下 atBottom`` () =
         Headless.run (fun () ->
@@ -257,6 +265,7 @@ module ExchangeNavTests =
 
     // ---------- 用量角标的缓存命中行 ----------
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``cachedCount 只在有命中时给数`` () =
         Headless.run (fun () ->
@@ -266,6 +275,7 @@ module ExchangeNavTests =
         Assert.Equal(Some 512, GenerationUsage.cachedCount { GenerationUsage.empty with cachedTokens = Some 512 })
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``用量脚注把缓存命中显示出来`` () =
         Headless.run (fun () ->
@@ -317,6 +327,7 @@ module ExchangeNavTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``没有缓存命用量脚注不提缓存`` () =
         Headless.run (fun () ->
@@ -362,6 +373,7 @@ module ExchangeNavTests =
 
     // ---------- 快捷键解析：Ctrl+上 / 下 ----------
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``ctrl+up/down resolve to exchange jumps`` () =
         Headless.run (fun () ->

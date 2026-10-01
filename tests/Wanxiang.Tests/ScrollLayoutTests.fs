@@ -23,6 +23,7 @@ let private extentWith (padding: Thickness) (childMargin: Thickness) =
     window.Close()
     extent
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ScrollViewer 的下内边距计入可滚动范围`` () =
     Headless.run (fun () ->
@@ -33,6 +34,7 @@ let ``ScrollViewer 的下内边距计入可滚动范围`` () =
     Assert.Equal(bare + 200.0, padded)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``内容自身的下边距会计入可滚动范围`` () =
     Headless.run (fun () ->
@@ -41,6 +43,7 @@ let ``内容自身的下边距会计入可滚动范围`` () =
     Assert.Equal(bare + 200.0, margined)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``嵌套 ScrollViewer 与草稿/待发送滚动视口具备右侧安全留白与视觉分层`` () =
     Headless.run (fun () ->

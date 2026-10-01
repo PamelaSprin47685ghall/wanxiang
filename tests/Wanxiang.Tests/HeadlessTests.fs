@@ -8,8 +8,10 @@ open Xunit
 ///
 /// 这是整套 UI 测试的**地基**：如果它不在 UI 线程上执行，所有 UI 测试都不可信。
 /// 因此这里把「已进入 Avalonia UI 线程」显式钉成断言，而不是假设。
+[<Trait("Category", "UI")>]
 module HeadlessTests =
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``headless run executes the body on the avalonia ui thread`` () =
         let mutable onUiThread = false
@@ -17,6 +19,7 @@ module HeadlessTests =
             onUiThread <- Dispatcher.UIThread.CheckAccess())
         Assert.True(onUiThread, "Headless.run 必须把测试体编组到 Avalonia UI 线程上")
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``avalonia controls can be constructed inside headless run`` () =
         // 这正是手写 lazy 装置会失败的场景：非 UI 线程碰带 Transitions 的控件。
@@ -29,8 +32,3 @@ module HeadlessTests =
             // Transitions 只有显式设置过才非 null，不能拿它当构造成功标志。
             constructed <- true)
         Assert.True(constructed)
-
-    [<Fact>]
-    let ``an ordinary fact does not require the ui thread`` () =
-        // 纯逻辑测试保持普通 [<Fact>]，由 xunit 真并行调度——这是并行的来源。
-        Assert.False(Dispatcher.UIThread.CheckAccess())

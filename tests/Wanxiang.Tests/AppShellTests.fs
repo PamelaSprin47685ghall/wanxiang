@@ -12,6 +12,7 @@ open Wanxiang.Core
 open Wanxiang.Protocol
 open Wanxiang.UI
 
+[<Trait("Category", "UI")>]
 module AppShellTests =
 
     let private handleEventMethod =
@@ -79,6 +80,7 @@ module AppShellTests =
     // 1. 主题与偏好变更传播 (Theme & Prefs)
     // ==========================================
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SavePrefs cycles theme and updates tokens and renderer settings`` () =
         Headless.run (fun () ->
@@ -96,6 +98,7 @@ module AppShellTests =
             Assert.True(MarkdownRenderer.DefaultCodeWrap)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleShortcut ToggleTheme cycles through FollowSystem, AlwaysLight and AlwaysDark`` () =
         Headless.run (fun () ->
@@ -130,6 +133,7 @@ module AppShellTests =
     // 2. 侧边栏展开与收起状态折叠 (Sidebar Toggling)
     // ==========================================
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``ToggleSidebar toggles sidebarCollapsed and persists into prefs`` () =
         Headless.run (fun () ->
@@ -146,6 +150,7 @@ module AppShellTests =
             Assert.Equal(initialCollapsed, restoredPrefs.sidebarCollapsed)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleShortcut ToggleSidebar triggers sidebar collapse toggle`` () =
         Headless.run (fun () ->
@@ -166,6 +171,7 @@ module AppShellTests =
     // 3. 快捷键分发逻辑 (Shortcuts Routing)
     // ==========================================
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleShortcut OpenSettings shows settingsHost and hides workspace`` () =
         Headless.run (fun () ->
@@ -193,6 +199,7 @@ module AppShellTests =
             Assert.True(workspace.IsVisible)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleShortcut FocusSearch ensures sidebar visible and focuses search`` () =
         Headless.run (fun () ->
@@ -210,6 +217,7 @@ module AppShellTests =
             Assert.False(updatedPrefs.sidebarCollapsed)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleShortcut StopGeneration when run is generating invokes generation cancellation`` () =
         Headless.run (fun () ->
@@ -227,6 +235,7 @@ module AppShellTests =
             Assert.True(escEvent.Handled)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleShortcut JumpExchange and Scroll dispatches smoothly without errors`` () =
         Headless.run (fun () ->
@@ -260,6 +269,7 @@ module AppShellTests =
     // 4. 断网、重连与状态机流转 (Connection & Protocol Events)
     // ==========================================
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleEvent AuthAccepted transitions authenticated to true and resets connection state`` () =
         Headless.run (fun () ->
@@ -279,6 +289,7 @@ module AppShellTests =
             Assert.Equal(ReconnectBackoff.baseDelayMs, reconnectDelayMs)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleEvent AuthRejected transitions authenticated to false and resets token`` () =
         Headless.run (fun () ->
@@ -297,6 +308,7 @@ module AppShellTests =
             Assert.True(Option.isNone lastToken)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleEvent CatalogSnapshot parses providers and sets catalog`` () =
         Headless.run (fun () ->
@@ -313,6 +325,7 @@ module AppShellTests =
             Assert.True(List.isEmpty catalog.providers)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleEvent GenerationStarted, GenerationDelta, and GenerationFinished flow`` () =
         Headless.run (fun () ->
@@ -360,6 +373,7 @@ module AppShellTests =
             Assert.True(Option.isNone (runs.Get(Some convId).error))
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleEvent GenerationFinished with error preserves error in runs`` () =
         Headless.run (fun () ->
@@ -390,6 +404,7 @@ module AppShellTests =
     // 5. 命令反馈与拒绝处理 (Command Feedback & Rejection)
     // ==========================================
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleEvent CommandCommitted resolves feedback and commits outbox`` () =
         Headless.run (fun () ->
@@ -414,6 +429,7 @@ module AppShellTests =
             Assert.True(Option.isNone (outbox.TryFind invId))
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``HandleEvent CommandRejected marks outbox as rejected and informs feedback`` () =
         Headless.run (fun () ->
@@ -441,6 +457,7 @@ module AppShellTests =
     // 6. 会话选择、邻行计算与可见顺序 (Conversation Selection & Neighbor)
     // ==========================================
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``NeighborExcluding returns next visible neighbor when active conversation is removed`` () =
         Headless.run (fun () ->
@@ -482,6 +499,7 @@ module AppShellTests =
             Assert.True(noNeighbor.IsNone)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SelectConversation switches active conversation and sets composer text from draft`` () =
         Headless.run (fun () ->
@@ -509,6 +527,7 @@ module AppShellTests =
             Assert.Equal("Draft for conv 1", composer.Text)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``ServerError marking missing attachment updates missingAttachments set`` () =
         Headless.run (fun () ->

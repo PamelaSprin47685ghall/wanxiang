@@ -15,6 +15,7 @@ open Avalonia.Media
 open Avalonia.Threading
 open Avalonia.VisualTree
 open Xunit
+open IconPacks.Avalonia.Lucide
 open Wanxiang.Core
 open Wanxiang.UI
 open Wanxiang.Tests
@@ -59,6 +60,7 @@ let private show (content: Control) width height =
     Dispatcher.UIThread.RunJobs()
     window
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``craft metrics form a stable readable hierarchy`` () =
     Headless.run (fun () ->
@@ -71,6 +73,7 @@ let ``craft metrics form a stable readable hierarchy`` () =
     Assert.True(ControlMetrics.sidebarRowMinHeight > ControlMetrics.textButtonMinHeight)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``markdown and primitive controls consume shared craft metrics`` () =
     Headless.run (fun () ->
@@ -96,6 +99,7 @@ let ``markdown and primitive controls consume shared craft metrics`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``reserved contextual actions never change their layout slot`` () =
     Headless.run (fun () ->
@@ -125,6 +129,7 @@ let ``reserved contextual actions never change their layout slot`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``standard input field group keeps label validation and hint in one rhythm`` () =
     Headless.run (fun () ->
@@ -139,11 +144,12 @@ let ``standard input field group keeps label validation and hint in one rhythm``
         Assert.True(obj.ReferenceEquals(Ui.fieldValidationMessage box, panel.Children[2]))
         let hint = Assert.IsType<TextBlock>(panel.Children[3])
         Assert.Equal(ReadingRhythm.captionLineHeight, hint.LineHeight, 3)
-        Assert.Equal(Tokens.space1, hint.Margin.Top, 3)
+        Assert.Equal(Spacing.spaceXs, hint.Margin.Top, 3)
     finally
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``chat reading column relies on avalonia stretch and max width across viewports`` () =
     Headless.run (fun () ->
@@ -218,6 +224,7 @@ let ``navigation controller owns compact and collapsed state transitions`` () =
     let closed = navigation.SetCompactNavigation(false)
     Assert.False closed.compactNavigationOpen
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``main layout controller is the only column projector and survives every matrix boundary`` () =
     Headless.run (fun () ->
@@ -337,6 +344,7 @@ let ``main layout controller is the only column projector and survives every mat
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``shortcut router maps global keys without executing UI effects`` () =
     Headless.run (fun () ->
@@ -349,6 +357,7 @@ let ``shortcut router maps global keys without executing UI effects`` () =
     Assert.Equal(NoShortcut, ShortcutRouter.resolve (event Key.A KeyModifiers.None))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``disabled action surface cannot be invoked through automation`` () =
     Headless.run (fun () ->
@@ -375,6 +384,7 @@ let ``disabled action surface cannot be invoked through automation`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``custom toggle exposes toggle automation pattern and state`` () =
     Headless.run (fun () ->
@@ -394,6 +404,7 @@ let ``custom toggle exposes toggle automation pattern and state`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``field validation is local and does not change geometry`` () =
     Headless.run (fun () ->
@@ -422,6 +433,7 @@ let ``field validation is local and does not change geometry`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``field group shows hint or error but never both`` () =
     Headless.run (fun () ->
@@ -446,6 +458,7 @@ let ``field group shows hint or error but never both`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``composer blocks send while any attachment is uploading`` () =
     Headless.run (fun () ->
@@ -499,6 +512,7 @@ let ``composer blocks send while any attachment is uploading`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``composer send stop state keeps automation name in sync`` () =
     Headless.run (fun () ->
@@ -527,6 +541,7 @@ let ``composer send stop state keeps automation name in sync`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``composer attachment slots stay stable across uploading ready and thirty items`` () =
     Headless.run (fun () ->
@@ -585,6 +600,7 @@ let ``composer attachment slots stay stable across uploading ready and thirty it
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``download buffers cap single transfer and dispose on cap`` () =
     Headless.run (fun () ->
@@ -613,6 +629,7 @@ let ``download buffers cap single transfer and dispose on cap`` () =
     Assert.Equal(0, buffers.PendingCount)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``download buffers reset on repeated begin and clear on disconnect`` () =
     Headless.run (fun () ->
@@ -640,6 +657,7 @@ let ``download buffers reset on repeated begin and clear on disconnect`` () =
     Assert.Equal(Accepted, buffers.Append("cc", Array.zeroCreate 4))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``conversation runs retire ledger is bounded with fifo eviction`` () =
     Headless.run (fun () ->
@@ -662,6 +680,7 @@ let ``conversation runs retire ledger is bounded with fifo eviction`` () =
     Assert.Equal(0, runs.RetiredCount)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``attachment draft uses upload identity so duplicate files stay independent`` () =
     Headless.run (fun () ->
@@ -699,6 +718,7 @@ let ``attachment draft uses upload identity so duplicate files stay independent`
     Assert.Empty draft.Items
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``command feedback tracker resolves exactly once on commit or reject`` () =
     Headless.run (fun () ->
@@ -725,6 +745,7 @@ let ``command feedback tracker resolves exactly once on commit or reject`` () =
     Assert.Equal(1, committed)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``config feedback tracker resolves exactly once and rejects pending UI on disconnect`` () =
     Headless.run (fun () ->
@@ -750,6 +771,7 @@ let ``config feedback tracker resolves exactly once and rejects pending UI on di
     Assert.Equal(2, completions |> List.filter not |> List.length)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``large tool detail is bounded first and can explicitly expand fully`` () =
     Headless.run (fun () ->
@@ -813,6 +835,7 @@ let ``large tool detail is bounded first and can explicitly expand fully`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``dialog is constrained to the live viewport and restores focus`` () =
     Headless.run (fun () ->
@@ -835,15 +858,15 @@ let ``dialog is constrained to the live viewport and restores focus`` () =
         Dispatcher.UIThread.RunJobs()
 
         let dialog = root.Children[2] :?> Border
-        Assert.True(dialog.Width <= root.Bounds.Width - Tokens.space3 * 2.0 + 0.5)
-        Assert.True(dialog.MaxHeight <= root.Bounds.Height - Tokens.space3 * 2.0 + 0.5)
+        Assert.True(dialog.Width <= root.Bounds.Width - Spacing.spaceXl * 2.0 + 0.5)
+        Assert.True(dialog.MaxHeight <= root.Bounds.Height - Spacing.spaceXl * 2.0 + 0.5)
         Assert.True field.IsFocused
 
         window.Width <- 240.0
         window.Height <- 180.0
         Dispatcher.UIThread.RunJobs()
-        Assert.True(dialog.MaxWidth <= root.Bounds.Width - Tokens.space3 * 2.0 + 0.5)
-        Assert.True(dialog.MaxHeight <= root.Bounds.Height - Tokens.space3 * 2.0 + 0.5)
+        Assert.True(dialog.MaxWidth <= root.Bounds.Width - Spacing.spaceXl * 2.0 + 0.5)
+        Assert.True(dialog.MaxHeight <= root.Bounds.Height - Spacing.spaceXl * 2.0 + 0.5)
 
         overlay.CloseDialog()
         Dispatcher.UIThread.RunJobs()
@@ -852,6 +875,7 @@ let ``dialog is constrained to the live viewport and restores focus`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``popup flips and clamps inside the viewport then restores anchor focus`` () =
     Headless.run (fun () ->
@@ -880,21 +904,21 @@ let ``popup flips and clamps inside the viewport then restores anchor focus`` ()
         Dispatcher.UIThread.RunJobs()
 
         let popup = root.Children[4] :?> Border
-        Assert.True(popup.MaxWidth <= root.Bounds.Width - Tokens.space3 * 2.0 + 0.5)
-        Assert.True(popup.MaxHeight <= root.Bounds.Height - Tokens.space3 * 2.0 + 0.5)
-        Assert.True(popup.Margin.Left >= Tokens.space3 - 0.5)
-        Assert.True(popup.Margin.Top >= Tokens.space3 - 0.5)
-        Assert.True(popup.Margin.Left + popup.Bounds.Width <= root.Bounds.Width - Tokens.space3 + 0.5)
-        Assert.True(popup.Margin.Top + popup.Bounds.Height <= root.Bounds.Height - Tokens.space3 + 0.5)
+        Assert.True(popup.MaxWidth <= root.Bounds.Width - Spacing.spaceXl * 2.0 + 0.5)
+        Assert.True(popup.MaxHeight <= root.Bounds.Height - Spacing.spaceXl * 2.0 + 0.5)
+        Assert.True(popup.Margin.Left >= Spacing.spaceXl - 0.5)
+        Assert.True(popup.Margin.Top >= Spacing.spaceXl - 0.5)
+        Assert.True(popup.Margin.Left + popup.Bounds.Width <= root.Bounds.Width - Spacing.spaceXl + 0.5)
+        Assert.True(popup.Margin.Top + popup.Bounds.Height <= root.Bounds.Height - Spacing.spaceXl + 0.5)
         Assert.True first.IsFocused
 
         window.Width <- 240.0
         window.Height <- 160.0
         Dispatcher.UIThread.RunJobs()
-        Assert.True(popup.MaxWidth <= root.Bounds.Width - Tokens.space3 * 2.0 + 0.5)
-        Assert.True(popup.MaxHeight <= root.Bounds.Height - Tokens.space3 * 2.0 + 0.5)
-        Assert.True(popup.Margin.Left >= Tokens.space3 - 0.5)
-        Assert.True(popup.Margin.Top >= Tokens.space3 - 0.5)
+        Assert.True(popup.MaxWidth <= root.Bounds.Width - Spacing.spaceXl * 2.0 + 0.5)
+        Assert.True(popup.MaxHeight <= root.Bounds.Height - Spacing.spaceXl * 2.0 + 0.5)
+        Assert.True(popup.Margin.Left >= Spacing.spaceXl - 0.5)
+        Assert.True(popup.Margin.Top >= Spacing.spaceXl - 0.5)
 
         overlay.ClosePopup()
         Dispatcher.UIThread.RunJobs()
@@ -903,6 +927,7 @@ let ``popup flips and clamps inside the viewport then restores anchor focus`` ()
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``long markdown link has one keyboard stop and remote image states its source`` () =
     Headless.run (fun () ->
@@ -931,6 +956,7 @@ let ``long markdown link has one keyboard stop and remote image states its sourc
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``forty item menu keeps long labels bounded and supports directional focus`` () =
     Headless.run (fun () ->
@@ -980,6 +1006,7 @@ let private message commit text =
         text = text
         commitId = Some commit }
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``history prepend preserves the reader viewport anchor`` () =
     Headless.run (fun () ->
@@ -1033,6 +1060,7 @@ let ``history prepend preserves the reader viewport anchor`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``repeated streaming updates preserve committed card instances`` () =
     Headless.run (fun () ->
@@ -1086,6 +1114,7 @@ let ``repeated streaming updates preserve committed card instances`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``streaming completion keeps the message footnote row geometry constant`` () =
     Headless.run (fun () ->
@@ -1158,6 +1187,7 @@ let private summary id title =
       model = "model"
       lastCommitId = 1UL }
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``changing active sidebar row does not rebuild the conversation list`` () =
     Headless.run (fun () ->
@@ -1203,6 +1233,7 @@ let ``changing active sidebar row does not rebuild the conversation list`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``sidebar keeps a bounded visual tree for 5000 conversations`` () =
     Headless.run (fun () ->
@@ -1254,6 +1285,7 @@ let ``sidebar keeps a bounded visual tree for 5000 conversations`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``sidebar running pin and idle states keep the same title origin`` () =
     Headless.run (fun () ->
@@ -1324,6 +1356,7 @@ let ``sidebar running pin and idle states keep the same title origin`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``sidebar recycles twenty thousand rows through scroll search active and theme changes`` () =
     Headless.run (fun () ->
@@ -1417,6 +1450,7 @@ let ``sidebar recycles twenty thousand rows through scroll search active and the
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``accelerated craft soak covers the long-session action ledger without visual growth`` () =
     Headless.run (fun () ->
@@ -1543,6 +1577,7 @@ let ``accelerated craft soak covers the long-session action ledger without visua
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``long chat title never pushes header actions outside narrow viewport`` () =
     Headless.run (fun () ->
@@ -1589,6 +1624,7 @@ let ``long chat title never pushes header actions outside narrow viewport`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``stop affordance keeps a constant header slot across generation`` () =
     Headless.run (fun () ->
@@ -1677,6 +1713,7 @@ let ``stop affordance keeps a constant header slot across generation`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``desktop 125 and 150 percent scale equivalent viewports keep primary actions in bounds`` () =
     Headless.run (fun () ->
@@ -1743,6 +1780,7 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
             window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``escape precedence closes topmost overlay first and guards pending dialog`` () =
     Headless.run (fun () ->
@@ -1798,6 +1836,7 @@ let ``escape precedence closes topmost overlay first and guards pending dialog``
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``toast stays inside narrow viewport and is keyboard dismissible live content`` () =
     Headless.run (fun () ->
@@ -1816,7 +1855,7 @@ let ``toast stays inside narrow viewport and is keyboard dismissible live conten
         Assert.False toast.Focusable
         Assert.False(toast.IsFocused)
         Assert.Equal(AutomationLiveSetting.Assertive, AutomationProperties.GetLiveSetting(toast))
-        Assert.True(toast.Bounds.Width <= root.Bounds.Width - Tokens.space3 * 2.0 + 0.5)
+        Assert.True(toast.Bounds.Width <= root.Bounds.Width - Spacing.spaceXl * 2.0 + 0.5)
         Assert.True(overlay.HandleEscape())
         // 退场同步移除（Manager 决策：只保留入场淡入）：Escape 消费的当次泵帧后
         // 节点必须已从树中即时消失——异步退场没有可重复验收路径，不采用。
@@ -1826,6 +1865,7 @@ let ``toast stays inside narrow viewport and is keyboard dismissible live conten
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``reduced motion keeps spinner static`` () =
     Headless.run (fun () ->
@@ -1843,6 +1883,7 @@ let ``reduced motion keeps spinner static`` () =
         MotionPolicy.setReduced false
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``motion ledger permits no geometry animation and reduced durations collapse to zero`` () =
     Headless.run (fun () ->
@@ -1856,6 +1897,7 @@ let ``motion ledger permits no geometry animation and reduced durations collapse
     MotionPolicy.setReduced false
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``motion ledger holds semantic business timer tokens`` () =
     Headless.run (fun () ->
@@ -1872,6 +1914,7 @@ let ``motion ledger holds semantic business timer tokens`` () =
     Assert.Equal(200.0, MotionLedger.themeColorTransition.TotalMilliseconds, 3)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``theme color transition tweens brushes and the latest switch takes over`` () =
     Headless.run (fun () ->
@@ -1926,6 +1969,7 @@ let ``theme color transition tweens brushes and the latest switch takes over`` (
         settle ()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``tertiary text keeps readable contrast in both palette modes`` () =
     Headless.run (fun () ->
@@ -1944,6 +1988,7 @@ let ``tertiary text keeps readable contrast in both palette modes`` () =
         Assert.True(contrast palette.textMuted palette.canvas >= 4.5)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``user bubble stays dark in both palettes so its selection overlay is theme independent`` () =
     Headless.run (fun () ->
@@ -1976,6 +2021,7 @@ let ``user bubble stays dark in both palettes so its selection overlay is theme 
         Assert.True(contrast selectionOverlay palette.userBubbleText >= 3.0)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``appearance preference update keeps the same focused control instance`` () =
     Headless.run (fun () ->
@@ -2020,6 +2066,7 @@ let ``appearance preference update keeps the same focused control instance`` () 
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``font size stepper disables the direction that hits the scale boundary`` () =
     Headless.run (fun () ->
@@ -2077,6 +2124,7 @@ let ``font size stepper disables the direction that hits the scale boundary`` ()
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``settings caps content width and centers it while exposing selected navigation status`` () =
     Headless.run (fun () ->
@@ -2134,6 +2182,7 @@ let ``settings caps content width and centers it while exposing selected navigat
 // 服务商编辑器首焦必须落在主输入框：表单首个可聚焦元素是预设下拉（历史行为），
 // 键盘用户打开编辑器的意图就是填字段。Kelivo model_edit_dialog.dart:88 同语义。
 // 断言走自动化名而非对象身份——焦点实现只能落在控件树上，名字即用户所见。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``provider editor opens focus on the primary text field`` () =
     Headless.run (fun () ->
@@ -2181,6 +2230,7 @@ let ``provider editor opens focus on the primary text field`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``provider editor stays pending until authoritative config result`` () =
     Headless.run (fun () ->
@@ -2242,6 +2292,7 @@ let ``provider editor stays pending until authoritative config result`` () =
 
 
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``sidebar empty state separates list loading from confirmed empty and embeds primary actions`` () =
     Headless.run (fun () ->
@@ -2314,6 +2365,7 @@ let ``sidebar empty state separates list loading from confirmed empty and embeds
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``chat header and scroller share one horizontal inset tier`` () =
     Headless.run (fun () ->
@@ -2338,7 +2390,7 @@ let ``chat header and scroller share one horizontal inset tier`` () =
           toggleSidebar = ignore
           focusHome = ignore
           message = messageActions }
-    for width, expected in [ (500.0, Tokens.space6); (800.0, Tokens.space8); (1280.0, Tokens.space12) ] do
+    for width, expected in [ (500.0, Spacing.space4xl); (800.0, Spacing.space6xl); (1280.0, Spacing.space10xl) ] do
         let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
         chat.Build()
         chat.SetConversationChrome true
@@ -2360,6 +2412,7 @@ let ``chat header and scroller share one horizontal inset tier`` () =
             window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``compact chat header drops the generating chip slot while desktop keeps it reserved`` () =
     Headless.run (fun () ->
@@ -2425,6 +2478,7 @@ let ``compact chat header drops the generating chip slot while desktop keeps it 
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``composer inset adapts to width outside compact and stays tight inside compact`` () =
     Headless.run (fun () ->
@@ -2438,7 +2492,7 @@ let ``composer inset adapts to width outside compact and stays tight inside comp
           openModelPicker = ignore
           dropFiles = ignore
           pasteFromClipboard = fun () -> false }
-    for width, expected in [ (800.0, Tokens.space8); (1280.0, Tokens.space12) ] do
+    for width, expected in [ (800.0, Spacing.space6xl); (1280.0, Spacing.space10xl) ] do
         let composer = Composer(actions)
         composer.Build()
         let window = show composer width 220.0
@@ -2450,7 +2504,7 @@ let ``composer inset adapts to width outside compact and stays tight inside comp
             // compact：切到固定收紧边距；切回后恢复宽度档，两条路径不争抢。
             composer.SetCompactMode true
             Dispatcher.UIThread.RunJobs()
-            Assert.Equal(Tokens.space3, composer.Padding.Left, 3)
+            Assert.Equal(Spacing.spaceXl, composer.Padding.Left, 3)
             composer.SetCompactMode false
             Dispatcher.UIThread.RunJobs()
             Assert.Equal(expected, composer.Padding.Left, 3)
@@ -2462,6 +2516,7 @@ let ``composer inset adapts to width outside compact and stays tight inside comp
 // 列表里第二眼就得靠试。与外观主题下拉同一 contract（MenuEntry.markSelected
 // 在选中项右侧画勾）。锁：新建服务商（当前预设 None）展开时恰好零个勾；
 // 选中一个预设后重新展开，恰好一个勾。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``preset dropdown marks exactly the current preset`` () =
     Headless.run (fun () ->
@@ -2518,9 +2573,10 @@ let ``preset dropdown marks exactly the current preset`` () =
             visualControls root
             |> Seq.choose (function
                 | :? Avalonia.Controls.Border as b when not (isNull (AutomationProperties.GetName b)) && AutomationProperties.GetControlTypeOverride(b).HasValue && AutomationProperties.GetControlTypeOverride(b).Value = Avalonia.Automation.Peers.AutomationControlType.MenuItem ->
+                    // 勾图标 = 万象图标（判据集中在 Helpers.isIcon，换实现只改一处）。
                     let checks =
                         visualControls b
-                        |> Seq.choose (function :? Avalonia.Controls.Shapes.Path -> Some () | _ -> None)
+                        |> Seq.filter (fun c -> Helpers.isIcon c)
                         |> Seq.length
                     if checks > 0 then Some(AutomationProperties.GetName b) else None
                 | _ -> None)
@@ -2550,6 +2606,7 @@ let ``preset dropdown marks exactly the current preset`` () =
 // 一改即清，顶部的 assertive 摘要却继续指控已经填好的表单——视觉误导 + 读屏播报旧错。
 // 借 kelivo model_edit_dialog.dart:483-488「onChanged 即清错」的同一时机：
 // 用户动手修正任一字段，摘要立刻收起。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``form error summary clears as soon as the user starts fixing a field`` () =
     Headless.run (fun () ->
@@ -2613,6 +2670,7 @@ let ``form error summary clears as soon as the user starts fixing a field`` () =
 
 // 远程图片占位：隐私策略下不加载外链图片，正文给出占位段 + ToolTip。
 // 读屏此前跳过整块：自动化树上没有名称。名称与 ToolTip 同文（占位说明 + 来源）。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``unloaded remote image placeholder has an automation name`` () =
     Headless.run (fun () ->
@@ -2642,6 +2700,7 @@ let ``unloaded remote image placeholder has an automation name`` () =
 // 长链接切片成多个同 URL 的热区：首段才是一个 Tab stop（可聚焦、有名称）。
 // 后续片段从读屏树摘除（AccessibilityView.Raw）——只挡键盘不够，
 // 读屏仍会抓到无名片段，把一个链接念成碎句。kelivo 用零宽软断行避免同题。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``secondary link chunks stay out of the screen-reader tree`` () =
     Headless.run (fun () ->
@@ -2674,6 +2733,7 @@ let ``secondary link chunks stay out of the screen-reader tree`` () =
 // Avalonia 不会自动迁到相邻键，焦点若停在侧栏行/搜索/归档开关上直接被清 null
 // （对照组：不折叠时再 Apply 同一宽态，焦点寸步不移——见 Assert 前的 reapply），
 // 键盘用户按完快捷键就失焦。归宿与 compact 收起分支同一目标——输入区。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``collapsing the desktop sidebar returns focus to the composer`` () =
     Headless.run (fun () ->

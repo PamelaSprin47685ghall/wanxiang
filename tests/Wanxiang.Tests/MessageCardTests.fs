@@ -13,6 +13,7 @@ open Wanxiang.Core
 open Wanxiang.UI
 open Wanxiang.Tests
 
+[<Trait("Category", "UI")>]
 module MessageCardTests =
 
     let rec private descendants (control: Control) : seq<Control> =
@@ -66,6 +67,7 @@ module MessageCardTests =
             committedAt = Some DateTimeOffset.UtcNow
         }
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``beginBreathRun and breath animation seams calculate correct opacity and phase`` () =
         Headless.run (fun () ->
@@ -97,6 +99,7 @@ module MessageCardTests =
             Assert.InRange(opacity1000, 0.25, 1.0)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``render user message card produces user bubble with focus ring capability`` () =
         Headless.run (fun () ->
@@ -131,6 +134,7 @@ module MessageCardTests =
                 window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``render assistant message card with reasoning produces collapsible reasoning block`` () =
         Headless.run (fun () ->
@@ -171,6 +175,7 @@ module MessageCardTests =
             Assert.True(hasReasoningText, "思考过程内容应当在卡片内呈现")
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``render assistant message with tool calls renders tool card and status`` () =
         Headless.run (fun () ->
@@ -216,6 +221,7 @@ module MessageCardTests =
             Assert.True((!logs |> List.exists (fun log -> log.StartsWith("copyText:"))), "点击复制后应当调用 copyText 回调")
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``render tool call with error highlights error state`` () =
         Headless.run (fun () ->
@@ -246,6 +252,7 @@ module MessageCardTests =
             Assert.True(hasErrorMessage, "工具卡片应当呈现错误详情信息")
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``render assistant message action bar triggers regenerate, copy and editAndFork`` () =
         Headless.run (fun () ->
@@ -326,6 +333,7 @@ module MessageCardTests =
             Assert.Contains("editAndFork", !logs)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``errorCard renders error message, retry button and copy error detail button`` () =
         Headless.run (fun () ->

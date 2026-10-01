@@ -75,20 +75,20 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Background = Brushes.Transparent,
             BorderBrush = Brushes.Transparent,
             BorderThickness = Thickness ControlMetrics.borderWidth,
-            CornerRadius = CornerRadius Tokens.radiusSm,
+            CornerRadius = CornerRadius Spacing.Radius.sm,
             Height = Tokens.iconButton,
             MinHeight = Tokens.iconButton,
             MaxHeight = Tokens.iconButton,
             MinWidth = ControlMetrics.emptyStateTitleMinWidth,
             VerticalAlignment = VerticalAlignment.Center,
-            Padding = Thickness(Tokens.space3, 0.0),
+            Padding = Thickness(Spacing.spaceXl, 0.0),
             Focusable = false,
             Child = titleText)
 
     let generatingChip =
         Border(
             Background = Tokens.accentFaint,
-            CornerRadius = CornerRadius Tokens.radiusPill,
+            CornerRadius = CornerRadius Spacing.Radius.pill,
             Padding = Thickness(ControlMetrics.chipPaddingX, ControlMetrics.chipPaddingY),
             VerticalAlignment = VerticalAlignment.Center,
             IsVisible = true,
@@ -130,7 +130,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             // 末条消息与输入区之间的留白统一由 messagePanel.Margin 承担，底部 Padding 设为 0 避免叠加。
             // 水平留白先落最窄档（shellInset=16，同 horizontalInset 0.0 的取值），
             // 挂树后由 applyHorizontalInsets 按 ChatView 自身宽度实时取档（见 Build）。
-            Padding = Thickness(Tokens.shellInset, Tokens.space5, Tokens.shellInset, 0.0))
+            Padding = Thickness(Tokens.shellInset, Spacing.space3xl, Tokens.shellInset, 0.0))
     let emptyPanel =
         StackPanel(
             Orientation = Orientation.Vertical,
@@ -138,7 +138,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             // reading column 内水平居中，留出下方呼吸留白形成微妙向上视差偏置 (optical bias)
-            Margin = Thickness(Tokens.space4, 0.0, Tokens.space4, Tokens.space8),
+            Margin = Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, Spacing.space6xl),
             MaxWidth = ContentMetrics.emptyStateMaxWidth,
             IsVisible = false)
     let mutable currentPrimaryAction: unit -> unit = ignore
@@ -148,8 +148,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         btn.VerticalAlignment <- VerticalAlignment.Center
         btn.MinWidth <- ControlMetrics.emptyStateActionMinWidth
         btn.Height <- ControlMetrics.emptyStateActionHeight
-        btn.CornerRadius <- CornerRadius Tokens.radiusMd
-        btn.Padding <- Thickness(Tokens.space4, 0.0)
+        btn.CornerRadius <- CornerRadius Spacing.Radius.md
+        btn.Padding <- Thickness(Spacing.space2xl, 0.0)
         btn.Focusable <- true
         btn.IsVisible <- false
         btn
@@ -185,7 +185,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             VerticalAlignment = VerticalAlignment.Center)
     let scrollToBottomIcon = Icons.arrowDown Tokens.textOnAccent
     let scrollToBottomContent =
-        let panel = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        let panel = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
         panel.Children.Add scrollToBottomIcon
         panel.Children.Add scrollToBottomLabel
         panel
@@ -252,7 +252,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         let stopSmoothScroll () =
             smoothScrollTimer |> Option.iter (fun t -> t.Stop())
             smoothScrollTimer <- None
-        let target = max 0.0 (child.Bounds.Y - Tokens.space5)
+        let target = max 0.0 (child.Bounds.Y - Spacing.space3xl)
         if abs (scroller.Offset.Y - target) < 5.0 then
             scroller.Offset <- Vector(scroller.Offset.X, target)
         elif MotionPolicy.isReduced () then
@@ -308,17 +308,17 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 Border(
                     Width = ControlMetrics.chipDotSize,
                     Height = ControlMetrics.chipDotSize,
-                    CornerRadius = CornerRadius Tokens.radiusPill,
+                    CornerRadius = CornerRadius Spacing.Radius.pill,
                     Background = Tokens.accent,
                     VerticalAlignment = VerticalAlignment.Center)
-            let row = Ui.hstack Tokens.space2 [ stateDot :> Control; generatingCaption :> Control ]
+            let row = Ui.hstack Spacing.spaceMd [ stateDot :> Control; generatingCaption :> Control ]
             row
         titleEditShell.Height <- Tokens.iconButton
         titleEditShell.MinHeight <- Tokens.iconButton
         titleEditShell.MaxHeight <- Tokens.iconButton
         titleEditShell.MinWidth <- ControlMetrics.emptyStateTitleMinWidth
-        titleEditShell.Padding <- Thickness(Tokens.space3, 0.0)
-        titleEditShell.CornerRadius <- CornerRadius Tokens.radiusSm
+        titleEditShell.Padding <- Thickness(Spacing.spaceXl, 0.0)
+        titleEditShell.CornerRadius <- CornerRadius Spacing.Radius.sm
         titleEditShell.Background <- Tokens.surface
         titleEditShell.BorderBrush <- Tokens.border
         titleEditShell.BorderThickness <- Thickness ControlMetrics.borderWidth
@@ -345,7 +345,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         elif titleAction.IsFocused then
             titleAction.Background <- Brushes.Transparent
             titleAction.BorderBrush <- Tokens.accent
-            titleAction.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
+            titleAction.BoxShadow <- BoxShadows(BoxShadow(Spread = Spacing.Stroke.thick, Color = Tokens.accent.Color))
             titleText.Foreground <- Tokens.accent
         elif titleAction.IsPointerOver then
             // 悬停只换底色与描边：边框粗细与阴影不变，不向外扩张。
@@ -405,7 +405,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member private this.ApplyHorizontalInsets() =
         let inset = LayoutPolicy.horizontalInset this.Bounds.Width
         headerBar.Padding <- Thickness(inset, 0.0, inset, 0.0)
-        scroller.Padding <- Thickness(inset, Tokens.space5, inset, 0.0)
+        scroller.Padding <- Thickness(inset, Spacing.space3xl, inset, 0.0)
 
     member private this.CommitTitle(restoreFocus: bool) =
         if editingTitle || titleEditShell.IsVisible then
@@ -630,7 +630,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 let border =
                     Border(
                         Height = height,
-                        CornerRadius = CornerRadius Tokens.radiusSm,
+                        CornerRadius = CornerRadius Spacing.Radius.sm,
                         Background = Tokens.borderSoft,
                         Opacity = Tokens.skeletonOpacityBase,
                         HorizontalAlignment = HorizontalAlignment.Stretch)
@@ -648,12 +648,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                     Border(
                         Width = ControlMetrics.skeletonAvatarSize,
                         Height = ControlMetrics.skeletonAvatarSize,
-                        CornerRadius = CornerRadius Tokens.radiusPill,
+                        CornerRadius = CornerRadius Spacing.Radius.pill,
                         Background = Tokens.borderSoft,
                         VerticalAlignment = VerticalAlignment.Top,
-                        Margin = Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space3, 0.0),
+                        Margin = Thickness(0.0, 0.0, Spacing.spaceXl, 0.0),
                         Opacity = Tokens.skeletonOpacityReduced)
-                let lines = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Stretch)
+                let lines = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd, HorizontalAlignment = HorizontalAlignment.Stretch)
                 for (h, w) in lineFractions do
                     lines.Children.Add(makeTextBar h w)
                 let dock = DockPanel(LastChildFill = true, HorizontalAlignment = HorizontalAlignment.Stretch)
@@ -671,7 +671,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                         Background = Tokens.borderSoft,
                         BorderBrush = Tokens.hairlineStrong,
                         BorderThickness = Thickness ControlMetrics.borderWidth,
-                        CornerRadius = CornerRadius(Tokens.radiusLg, Tokens.radiusLg, Tokens.radiusSm, Tokens.radiusLg),
+                        CornerRadius = CornerRadius(Spacing.Radius.lg, Spacing.Radius.lg, Spacing.Radius.sm, Spacing.Radius.lg),
                         Width = 260.0,
                         Height = 40.0,
                         Opacity = Tokens.skeletonOpacityBreathMin,
@@ -680,12 +680,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                     Border(
                         Width = ControlMetrics.skeletonAvatarSize,
                         Height = ControlMetrics.skeletonAvatarSize,
-                        CornerRadius = CornerRadius Tokens.radiusPill,
+                        CornerRadius = CornerRadius Spacing.Radius.pill,
                         Background = Tokens.borderSoft,
                         VerticalAlignment = VerticalAlignment.Top,
-                        Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0),
+                        Margin = Thickness 0.0,
                         Opacity = Tokens.skeletonOpacityBreathMin)
-                let stack = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3, HorizontalAlignment = HorizontalAlignment.Right)
+                let stack = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXl, HorizontalAlignment = HorizontalAlignment.Right)
                 stack.Children.Add bubble
                 stack.Children.Add avatar
                 Avalonia.Automation.AutomationProperties.SetName(stack, "正在加载用户消息")
@@ -864,7 +864,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member private this.UpdateScrollToBottomAppearance() =
         let extent = scroller.Extent.Height
         let viewport = scroller.Viewport.Height
-        scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Tokens.space5, Tokens.space4)
+        scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Spacing.space3xl, Spacing.space2xl)
         if atBottom then
             unreadSinceScrolledUp <- 0
             scrollToBottomButton.IsVisible <- false
@@ -893,7 +893,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                     scrollToBottomButton.MinWidth <- ControlMetrics.scrollToBottomMinWidth
                     scrollToBottomButton.Height <- height
                     scrollToBottomButton.MinHeight <- height
-                    scrollToBottomButton.Padding <- Thickness(Tokens.space3, 0.0, Tokens.space4, 0.0)
+                    scrollToBottomButton.Padding <- Thickness(Spacing.spaceXl, 0.0, Spacing.space2xl, 0.0)
             else
                 scrollToBottomLabel.Text <- "回到最新"
                 scrollToBottomLabel.IsVisible <- false
@@ -1098,15 +1098,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             if (e.Key = Key.F2 || e.Key = Key.Enter) && titleEditable then
                 e.Handled <- true
                 this.BeginTitleEdit())
-        titleAction.PointerEntered.Add(fun _ -> updateTitleActionVisual ())
-        // 按压反馈与 Ui.attachSurfaceFeedback 同一节奏：瞬时 Opacity 脉冲（不进过渡集合），焦点/几何不变。
-        titleAction.PointerPressed.Add(fun _ -> titleAction.Opacity <- Tokens.opacityPressed)
-        titleAction.PointerReleased.Add(fun _ -> titleAction.Opacity <- 1.0)
-        titleAction.PointerExited.Add(fun _ ->
-            titleAction.Opacity <- 1.0
-            updateTitleActionVisual ())
-        titleAction.GotFocus.Add(fun _ -> updateTitleActionVisual ())
-        titleAction.LostFocus.Add(fun _ -> updateTitleActionVisual ())
+        // hover / press / focus 的底色与不透明度交给 Interaction 的原生伪类
+        // （`:pointerover` / `:pressed` / `:focus-visible`）；这里只登记表面。
+        Interaction.surface titleAction Interaction.HoverVariant.plain |> ignore
+        Interaction.reportFocusOrigin titleAction
+        updateTitleActionVisual ()
         titleEditBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
@@ -1114,12 +1110,13 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             elif e.Key = Key.Escape then
                 e.Handled <- true
                 this.CancelTitleEdit())
-        titleEditBox.GotFocus.Add(fun _ ->
-            titleEditShell.BorderBrush <- Tokens.accent
-            titleEditShell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color)))
+        // 焦点环（BoxShadow）交给 Interaction 的 `:focus-within` 伪类——输入框
+        // 聚焦时壳（titleEditShell）才命中，输入框自己不可聚焦。描边色是值，
+        // 仍由事件写。
+        Interaction.surface titleEditShell Interaction.HoverVariant.bordered |> ignore
+        titleEditBox.GotFocus.Add(fun _ -> titleEditShell.BorderBrush <- Tokens.accent)
         titleEditBox.LostFocus.Add(fun _ ->
             titleEditShell.BorderBrush <- Tokens.border
-            titleEditShell.BoxShadow <- BoxShadows()
             if editingTitle then
                 let top = TopLevel.GetTopLevel(this)
                 let newFocus = if isNull top || isNull top.FocusManager then null else top.FocusManager.GetFocusedElement()
@@ -1140,7 +1137,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
         // 顶栏左组不能用横向 StackPanel：它会用无限宽测量标题，长标题不会真正
         // 进入 ellipsis，而是去挤右侧动作。Grid 把标题放进唯一可 shrink 的 Star 列。
-        let leftGroup = Grid(ColumnSpacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        let leftGroup = Grid(ColumnSpacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
         leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
         leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
         leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
@@ -1160,7 +1157,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         // 问答跳转排最后：它不是每次生成都会用的动作，优先级低于停止与分叉。
         let rightGroup =
             Ui.hstack
-                Tokens.space1
+                Spacing.spaceXs
                 [ stopButton :> Control
                   sessionSettingsButton :> Control
                   forkButton :> Control
@@ -1227,7 +1224,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         scrollToBottomButton.IsVisible <- false
         scrollToBottomButton.HorizontalAlignment <- HorizontalAlignment.Right
         scrollToBottomButton.VerticalAlignment <- VerticalAlignment.Bottom
-        scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Tokens.space5, Tokens.space4)
+        scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Spacing.space3xl, Spacing.space2xl)
         let doScrollToBottom () =
             // 键盘激活这条路径：按钮随即因 atBottom 隐藏，而 Avalonia 不会自动
             // 迁走焦点——停在按钮上的焦点直接被清成 null（探针实测），用户接着

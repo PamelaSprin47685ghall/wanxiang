@@ -175,7 +175,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         let contextField = Ui.inputFieldGroup "上下文消息上限" "每次请求最多携带多少条历史，防止长会话撞上模型上限。" contextBox
         let toolRoundsField = Ui.inputFieldGroup "工具调用轮数上限" "模型连续调用工具超过这个轮数就中止本次生成。" toolRoundsBox
         let grid, applyGridLayout =
-            Ui.twoColumnForm Tokens.space4 Tokens.space3 5
+            Ui.twoColumnForm Spacing.space2xl Spacing.spaceXl 5
                 [ temperatureField; topPField; maxTokensField; contextField; toolRoundsField ]
         applyGridLayout ()
         // Ctrl+Enter 提交：Enter/Space 归 Ui.onClick（在 saveButton 上），行级不重复处理，
@@ -183,9 +183,9 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         // 与 SettingsProviders / SettingsTools 表单同一写法。
         let generationForm =
             Ui.vstack
-                Tokens.space6
+                Spacing.space4xl
                 [ Ui.vstack
-                      Tokens.space1
+                      Spacing.spaceXs
                       [ Ui.heading "生成" :> Control
                         Ui.caption "这些是新会话的默认值。单个会话可以在会话设置里单独调整。" :> Control ]
                   :> Control
@@ -193,15 +193,15 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                   // 数值表单、指令框与开关行收进与 Appearance/About 同档的分组面板卡
                   //（面板档 padding (space4, space4) + radiusLg），卡内用 groupDivider 分行，
                   // 与其余设置页共用同一「卡/区」中间层；字段、顺序与保存入口不变。
-                  (Ui.groupingCard (Thickness(Tokens.space4, Tokens.space4))
+                  (Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.space2xl))
                       (Ui.vstack
-                          Tokens.space1
+                          Spacing.spaceXs
                           [ grid :> Control
                             groupDivider () :> Control
                             Ui.controlFieldGroup "默认系统指令" "会作为 system 消息随每次请求发送。" (instructionsBox.Parent :?> Control)
                             groupDivider () :> Control
                             autoTitleRow ])
-                      Tokens.radiusLg) :> Control
+                      Spacing.Radius.lg) :> Control
                   Ui.hairline () :> Control
                   saveButton :> Control ]
         generationForm.KeyDown.Add(fun e ->
@@ -274,7 +274,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         Ui.onClick larger (fun () -> adjust 0.5)
         applyFontBounds ()
         let fontRow =
-            let controls = Ui.hstack Tokens.space2 [ smaller :> Control; fontSizeCaption :> Control; larger :> Control ]
+            let controls = Ui.hstack Spacing.spaceMd [ smaller :> Control; fontSizeCaption :> Control; larger :> Control ]
             // 与 Ui.switchRow 同一行壳（settingsRowShell）：右侧换成了字号调节组；
             // 原手抄的 Border + DockPanel 收回共享原语，几何逐字不变，无开关交互层。
             Ui.settingsRowShell "消息字号" "影响对话正文与代码块。" controls :> Control
@@ -313,24 +313,24 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         syncAppearance prefs
 
         Ui.vstack
-            Tokens.space6
+            Spacing.space4xl
             [ Ui.vstack
-                  Tokens.space1
+                  Spacing.spaceXs
                   [ Ui.heading "外观与交互" :> Control
                     Ui.caption "这些偏好只保存在本机，不会同步到服务端。" :> Control ]
               :> Control
               // 分组面板内边距走面板档 (space4, space4)：比列表行卡 (space4/space3) 更宽松、四角均衡，
               // 用于承载多行/多字段的容器卡；设置四页共用这一小档集合。
-              (Ui.groupingCard (Thickness(Tokens.space4, Tokens.space4))
+              (Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.space2xl))
                   (Ui.vstack
-                      Tokens.space1
+                      Spacing.spaceXs
                       [ Ui.controlFieldGroup "主题" "深色主题是同一套纸感在低光下的版本。" (themeButton :> Control)
                         groupDivider () :> Control
                         fontRow ])
-                  Tokens.radiusLg) :> Control
-              (Ui.groupingCard (Thickness(Tokens.space4, Tokens.space4))
+                  Spacing.Radius.lg) :> Control
+              (Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.space2xl))
                   (Ui.vstack
-                      Tokens.space1
+                      Spacing.spaceXs
                       [ enterRow
                         groupDivider () :> Control
                         collapseRow
@@ -340,7 +340,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                         archivedRow
                         groupDivider () :> Control
                         motionRow ])
-                  Tokens.radiusLg) :> Control ]
+                  Spacing.Radius.lg) :> Control ]
         :> Control
 
     member this.BuildAbout(instanceId: string, serverUrl: string) : Control =
@@ -354,7 +354,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                     Foreground = Tokens.text,
                     TextWrapping = TextWrapping.Wrap,
                     SelectionBrush = Tokens.accentSoft)
-            Ui.hstack Tokens.space3 [ k :> Control; v :> Control ] :> Control
+            Ui.hstack Spacing.spaceXl [ k :> Control; v :> Control ] :> Control
         let platformDesc = if OperatingSystem.IsBrowser() then "WebAssembly (PWA)" else sprintf "Desktop (.NET %s)" (Environment.Version.ToString())
         let osDesc = Environment.OSVersion.ToString()
         let copyDiagButton = Ui.button Ui.Secondary "复制诊断报告" (fun () ->
@@ -384,12 +384,12 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                     |> Async.Start)
         copyDiagButton.HorizontalAlignment <- HorizontalAlignment.Left
         Ui.vstack
-            Tokens.space6
-            [ Ui.vstack Tokens.space1 [ Ui.heading "关于与系统诊断" :> Control ] :> Control
+            Spacing.space4xl
+            [ Ui.vstack Spacing.spaceXs [ Ui.heading "关于与系统诊断" :> Control ] :> Control
               Ui.groupingCard
-                  (Thickness(Tokens.space4, Tokens.space4))
+                  (Thickness(Spacing.space2xl, Spacing.space2xl))
                   (Ui.vstack
-                      Tokens.space2
+                      Spacing.spaceMd
                       [ row "协议版本" (string Constants.ProtocolVersion)
                         row "日志格式版本" (string Constants.FormatVersion)
                         row "客户端平台" platformDesc
@@ -398,24 +398,24 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                         row "连接地址" (if String.IsNullOrWhiteSpace serverUrl then "未连接" else serverUrl)
                         Ui.hairline () :> Control
                         copyDiagButton :> Control ])
-                  Tokens.radiusLg
+                  Spacing.Radius.lg
               :> Control
               Ui.groupingCard
-                  (Thickness(Tokens.space4, Tokens.space4))
+                  (Thickness(Spacing.space2xl, Spacing.space2xl))
                   (Ui.vstack
-                      Tokens.space2
+                      Spacing.spaceMd
                       [ Ui.label "设计与实现" :> Control
                         Ui.caption "万象是独立实现的对等 C/S 聊天客户端：每个实例既是服务端也是客户端，" :> Control
                         Ui.caption "会话以 NDJSON 事件日志为唯一权威，界面只是投影的一个视图。" :> Control ])
-                  Tokens.radiusLg
+                  Spacing.Radius.lg
               :> Control
               Ui.groupingCard
-                  (Thickness(Tokens.space4, Tokens.space4))
+                  (Thickness(Spacing.space2xl, Spacing.space2xl))
                   (Ui.vstack
-                      Tokens.space2
+                      Spacing.spaceMd
                       [ Ui.label "致谢" :> Control
                         Ui.caption "界面思路受 Kelivo 启发，代码与数据模型均为独立实现。" :> Control
                         Ui.caption "内嵌字体 Sarasa Term SC 采用 OFL-1.1 许可。" :> Control ])
-                  Tokens.radiusLg
+                  Spacing.Radius.lg
               :> Control ]
         :> Control

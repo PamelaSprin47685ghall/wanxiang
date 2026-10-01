@@ -80,7 +80,7 @@ type MarkdownRenderer(
             | MdMath(tex, display) ->
                 match MathRender.tryInline (if display then size + 1.0 else size) lh tex with
                 | Some visual ->
-                    visual.Margin <- Thickness(Tokens.space1, 0.0)
+                    visual.Margin <- Thickness(Spacing.spaceXs, 0.0)
                     visual.VerticalAlignment <- VerticalAlignment.Center
                     let container = MathRender.inlineContainer visual
                     container.BaselineAlignment <- BaselineAlignment.Center
@@ -321,7 +321,7 @@ type MarkdownRenderer(
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.codeMuted,
                 VerticalAlignment = VerticalAlignment.Center,
-                LetterSpacing = Tokens.letterSpacingEmphasis)
+                LetterSpacing = Spacing.Tracking.emphasis)
 
         let headerButton (icon: IBrush -> Control) (tip: string) =
             let button = Ui.iconButton icon tip
@@ -425,7 +425,7 @@ type MarkdownRenderer(
         applyWrap ()
 
         let header =
-            let actions = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.compactRowPaddingY, VerticalAlignment = VerticalAlignment.Center)
+            let actions = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXXs, VerticalAlignment = VerticalAlignment.Center)
             actions.Children.Add wrapButton
             actions.Children.Add copyButton
             let dock = DockPanel(LastChildFill = false)
@@ -437,7 +437,7 @@ type MarkdownRenderer(
                 Background = Tokens.codeHeaderBg,
                 BorderBrush = Tokens.codeBorder,
                 BorderThickness = Thickness(0.0, 0.0, 0.0, ControlMetrics.borderWidth),
-                Padding = Thickness(Tokens.blockPaddingX, Tokens.space1, Tokens.space1, Tokens.space1),
+                Padding = Thickness(Tokens.blockPaddingX, Spacing.spaceXs, Spacing.spaceXs, Spacing.spaceXs),
                 Child = dock)
 
         let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
@@ -448,7 +448,7 @@ type MarkdownRenderer(
             let mutable toggleCodeFull: unit -> unit = ignore
             let codeExpand = Ui.button Ui.Ghost "展开全部" (fun () -> toggleCodeFull ())
             codeExpand.HorizontalAlignment <- HorizontalAlignment.Left
-            codeExpand.Margin <- Thickness(Tokens.blockPaddingX, Tokens.space1, 0.0, Tokens.space1)
+            codeExpand.Margin <- Thickness(Tokens.blockPaddingX, Spacing.spaceXs, 0.0, Spacing.spaceXs)
             codeExpand.Cursor <- handCursor
             codeExpand.Focusable <- true
             Avalonia.Automation.AutomationProperties.SetName(codeExpand, "展开全部")
@@ -468,7 +468,7 @@ type MarkdownRenderer(
                 Background = Tokens.codeBg,
                 BorderBrush = Tokens.codeBorder,
                 BorderThickness = Thickness ControlMetrics.borderWidth,
-                CornerRadius = CornerRadius Tokens.radiusMd,
+                CornerRadius = CornerRadius Spacing.Radius.md,
                 ClipToBounds = true,
                 // 与段落同一节奏：只留底外边距一段 paragraphGap。
                 Margin = Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap),
@@ -607,7 +607,7 @@ type MarkdownRenderer(
             Border(
                 BorderBrush = Tokens.hairlineStrong,
                 BorderThickness = Thickness ControlMetrics.borderWidth,
-                CornerRadius = CornerRadius Tokens.radiusMd,
+                CornerRadius = CornerRadius Spacing.Radius.md,
                 ClipToBounds = true,
                 UseLayoutRounding = true,
                 // 与段落同一节奏：只留底外边距一段 paragraphGap，
@@ -659,7 +659,7 @@ type MarkdownRenderer(
                             Foreground = Tokens.textMuted,
                             MinWidth = ReadingRhythm.listMarkerWidth,
                             TextAlignment = TextAlignment.Right,
-                            Margin = Thickness(float depth * ReadingRhythm.listIndentStep, 0.0, Tokens.space2, 0.0),
+                            Margin = Thickness(float depth * ReadingRhythm.listIndentStep, 0.0, Spacing.spaceMd, 0.0),
                             VerticalAlignment = VerticalAlignment.Top)
                         :> Control
                     else
@@ -672,7 +672,7 @@ type MarkdownRenderer(
                                 VerticalAlignment = VerticalAlignment.Center)
                         Border(
                             Width = ReadingRhythm.listMarkerWidth + float depth * ReadingRhythm.listIndentStep,
-                            Padding = Thickness(0.0, 0.0, Tokens.space2, 0.0),
+                            Padding = Thickness(0.0, 0.0, Spacing.spaceMd, 0.0),
                             Margin = Thickness(0.0, fontSize * 0.55, 0.0, 0.0),
                             VerticalAlignment = VerticalAlignment.Top,
                             HorizontalAlignment = HorizontalAlignment.Left,
@@ -696,11 +696,11 @@ type MarkdownRenderer(
                     Border(
                         Width = ControlMetrics.taskBoxSize,
                         Height = ControlMetrics.taskBoxSize,
-                        CornerRadius = CornerRadius Tokens.radiusXs,
+                        CornerRadius = CornerRadius Spacing.Radius.xs,
                         BorderBrush = (if isChecked then Tokens.accent else Tokens.line),
                         BorderThickness = Thickness ControlMetrics.taskBoxBorderWidth,
                         Background = (if isChecked then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush),
-                        Margin = Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space2, 0.0),
+                        Margin = Thickness(0.0, 0.0, Spacing.spaceMd, 0.0),
                         VerticalAlignment = VerticalAlignment.Top)
                 // 读屏用户扫到这个自绘方框时只能读到正文，无法感知任务是否完成。
                 // 补 CheckBox 语义与状态名（textColor 取 textMuted 与正文同源，
@@ -737,17 +737,17 @@ type MarkdownRenderer(
             // 纵向只留一段 paragraphGap，与段落同节奏。
             let quoteMargin =
                 if insideQuote then
-                    Thickness(Tokens.space2, 0.0, 0.0, ReadingRhythm.paragraphGap)
+                    Thickness(Spacing.spaceMd, 0.0, 0.0, ReadingRhythm.paragraphGap)
                 else
                     Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap)
             [ (Ui.groupingCard
-                (Thickness(Tokens.space1, Tokens.space1, Tokens.space1, Tokens.space1))
+                (Thickness(Spacing.spaceXs, Spacing.spaceXs, Spacing.spaceXs, Spacing.spaceXs))
                 (Border(
                     BorderBrush = Tokens.accent,
                     BorderThickness = Thickness(ControlMetrics.quoteEdgeWidth, 0.0, 0.0, 0.0),
-                    Padding = Thickness(Tokens.space2, Tokens.space1, Tokens.space1, Tokens.space1),
+                    Padding = Thickness(Spacing.spaceMd, Spacing.spaceXs, Spacing.spaceXs, Spacing.spaceXs),
                     Child = stack))
-                Tokens.radiusSm
+                Spacing.Radius.sm
                 |> fun card -> card.ClipToBounds <- true; card.Margin <- quoteMargin; card)
               :> Control ]
         | MdCode(language, code) -> [ this.RenderCode(language, code) ]

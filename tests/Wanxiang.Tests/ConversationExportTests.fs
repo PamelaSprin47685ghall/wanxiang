@@ -22,6 +22,7 @@ open Wanxiang.UI
 
 let private flags = BindingFlags.Instance ||| BindingFlags.NonPublic ||| BindingFlags.Public
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``export of an unopened conversation has its own progress view without navigating`` () =
     Headless.run (fun () ->
@@ -69,6 +70,7 @@ let private complete proj (controller: ConversationExportController) query =
     Assert.True(controller.Document.IsSome, sprintf "%A" controller.Status)
     controller.Document.Value
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``export retrieves all 450 messages while normal snapshot still contains only 200`` () =
     Headless.run (fun () ->
@@ -84,6 +86,7 @@ let ``export retrieves all 450 messages while normal snapshot still contains onl
     Assert.Equal<CommitId list>([ 2UL .. 451UL ], document.messages |> List.choose _.commitId)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``later deletion insertion and renaming cannot alter an export already reading`` () =
     Headless.run (fun () ->
@@ -105,6 +108,7 @@ let ``later deletion insertion and renaming cannot alter an export already readi
     Assert.DoesNotContain(document.messages, fun message -> message.text = "不能混入")
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``deletions before export stay hidden even on older pages`` () =
     Headless.run (fun () ->
@@ -116,6 +120,7 @@ let ``deletions before export stay hidden even on older pages`` () =
     Assert.DoesNotContain(document.messages, fun message -> message.commitId = Some 3UL)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``nested fork export preserves its frozen ancestors after parent deletion`` () =
     Headless.run (fun () ->
@@ -136,6 +141,7 @@ let ``nested fork export preserves its frozen ancestors after parent deletion`` 
     Assert.Equal<string list>([ "子分支"; "孙分支" ], document.messages |> List.skip 220 |> List.map _.text)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``empty conversation can be exported as an empty transcript`` () =
     Headless.run (fun () ->
@@ -146,6 +152,7 @@ let ``empty conversation can be exported as an empty transcript`` () =
     Assert.Contains("完整历史", Export.toMarkdown document.title document.messages)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``cancel retry and disconnect cannot expose partial or stale documents`` () =
     Headless.run (fun () ->
@@ -166,6 +173,7 @@ let ``cancel retry and disconnect cannot expose partial or stale documents`` () 
     match controller.Status with ExportFailed _ -> () | other -> failwithf "%A" other
     )
 
+[<Trait("Category", "UI")>]
 [<Theory>]
 [<InlineData("short")>]
 [<InlineData("empty")>]
@@ -189,6 +197,7 @@ let ``invalid export pages never become saveable`` mode =
     match controller.Status with ExportFailed _ -> () | other -> failwithf "%A" other
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``changed watermark or total aborts a multi-page export`` () =
     Headless.run (fun () ->
@@ -204,6 +213,7 @@ let ``changed watermark or total aborts a multi-page export`` () =
         match controller.Status with ExportFailed _ -> () | other -> failwithf "%A" other
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``timeout and size limit stop without offering a partial file`` () =
     Headless.run (fun () ->
@@ -218,6 +228,7 @@ let ``timeout and size limit stop without offering a partial file`` () =
     Assert.True slow.Document.IsNone
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``page byte budget splits large messages without splitting or truncating a message`` () =
     Headless.run (fun () ->
@@ -234,6 +245,7 @@ let ``page byte budget splits large messages without splitting or truncating a m
     Assert.All(document.messages, fun message -> Assert.Equal(text, message.text))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``oversized message fails explicitly rather than returning a shortened message`` () =
     Headless.run (fun () ->
@@ -245,6 +257,7 @@ let ``oversized message fails explicitly rather than returning a shortened messa
     | Ok _ -> failwith "oversized export should fail"
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``missing deleted and future-watermark exports are rejected`` () =
     Headless.run (fun () ->
@@ -257,6 +270,7 @@ let ``missing deleted and future-watermark exports are rejected`` () =
         Assert.True(Result.isError (ServerModel.exportPage source query))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``export wire roundtrips and cannot advance the chat cursor`` () =
     Headless.run (fun () ->
@@ -277,6 +291,7 @@ let ``export wire roundtrips and cannot advance the chat cursor`` () =
     Assert.True(Result.isError (WireCodec.tryDecode(invalid.ToJsonString())))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Markdown keeps orphan tool results timestamps and embedded fences`` () =
     Headless.run (fun () ->
@@ -289,6 +304,7 @@ let ``Markdown keeps orphan tool results timestamps and embedded fences`` () =
     Assert.Contains("2026-09-07", markdown)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``unrenderable messages retain their raw content in export`` () =
     Headless.run (fun () ->
@@ -299,6 +315,7 @@ let ``unrenderable messages retain their raw content in export`` () =
     Assert.Contains("keep-me", Export.toMarkdown document.title document.messages)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``export filenames stay a bounded filename including long emoji titles`` () =
     Headless.run (fun () ->
@@ -313,6 +330,7 @@ let ``export filenames stay a bounded filename including long emoji titles`` () 
     Assert.Equal(baseName, String.replicate (Globalization.StringInfo.ParseCombiningCharacters(baseName).Length) "👩🏽‍💻")
     )
 
+[<Trait("Category", "UI")>]
 [<Theory>]
 [<InlineData(390.0)>]
 [<InlineData(900.0)>]
@@ -384,6 +402,7 @@ let ``export footer arrows move focus between the three buttons`` width =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``export ready state skips the hidden retry slot for arrow navigation`` () =
     Headless.run (fun () ->
@@ -436,6 +455,7 @@ let ``export ready state skips the hidden retry slot for arrow navigation`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Theory>]
 [<InlineData(390.0)>]
 [<InlineData(900.0)>]
@@ -472,6 +492,7 @@ let ``export save action appears only after the last page and fits the window`` 
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``reconnecting the same instance keeps export recovery but changing instance closes it`` () =
     Headless.run (fun () ->
@@ -494,6 +515,7 @@ let ``reconnecting the same instance keeps export recovery but changing instance
     finally overlay.CloseDialog()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``cancel stays in the dialog and offers the retry entry`` () =
     Headless.run (fun () ->
@@ -550,6 +572,7 @@ let ``cancel stays in the dialog and offers the retry entry`` () =
 // 探针实测 focused=<null>）：键盘用户刚按完保存就失焦，随后 Tab/Esc 无处可去。
 // 与方向键「落点必须同时可用」同一条纪律（Show 内 rowButtons 注释）：宿主不可用
 // 时把焦点交回始终可用的关闭键。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``export dialog returns focus to close when the save slot becomes unusable`` () =
     Headless.run (fun () ->

@@ -109,6 +109,7 @@ let private buildSidebar () =
 
 // ── 1. 空态：搜索框 Down 落进空态主按钮 ───────────────────────────────────
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``down in the search box reaches the empty state action`` () =
     Headless.run (fun () ->
@@ -139,6 +140,7 @@ let ``down in the search box reaches the empty state action`` () =
 
 // ── 2. 多选批量操作条左右键 ───────────────────────────────────────────────
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``selection action bar arrows walk the batch buttons`` () =
     Headless.run (fun () ->
@@ -245,6 +247,7 @@ let private userCardAt (chat: ChatView) (round: int) : Control =
     |> Seq.tryFind (fun card -> userCardContains card needle)
     |> Option.defaultWith (fun () -> failwith (sprintf "面板里找不到第 %d 轮提问卡" round))
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``next question anchors on the topmost visible card`` () =
     Headless.run (fun () ->
@@ -260,7 +263,7 @@ let ``next question anchors on the topmost visible card`` () =
         privateKey next Key.Enter |> ignore
         Dispatcher.UIThread.RunJobs()
         // 锚点语义：第一跳后第 2 轮用户卡必须已进入视口顶部
-        // （smoothScrollToCard 的目标 = 卡片 Y - Tokens.space5，落在顶部带一点间距）。
+        // （smoothScrollToCard 的目标 = 卡片 Y - Spacing.space3xl，落在顶部带一点间距）。
         // 旧锚点（视口底端那张）会让这一跳直接从第 1 轮跨到第 3 轮，
         // 断言 offset ≈ 第 2 轮卡片顶部正好钉住这个差别。
         let second = userCardAt chat 2
@@ -279,6 +282,7 @@ let ``next question anchors on the topmost visible card`` () =
 // 批量这条路此前直接漏掉，删完主屏仍留着已删会话的内容，此刻发消息/停止
 // 都撞服务端「会话不存在」。锁三条：含当前→邻位；不含当前→不动；
 // 整列全删→欢迎页（None）。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``batch delete of the active conversation lands on a surviving neighbor`` () =
     Headless.run (fun () ->

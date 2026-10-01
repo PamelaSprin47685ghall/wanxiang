@@ -49,7 +49,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
 
     let contentHost = ContentControl()
     let mutable contentScroll: ScrollViewer option = None
-    let navPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
+    let navPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXs)
     let mutable current = Providers
     let mutable instanceId = ""
     let mutable serverUrl = ""
@@ -200,11 +200,11 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 IsVisible = false)
         let contentGrid = Grid()
         contentGrid.Children.Add accentBar
-        contentGrid.Children.Add(Ui.hstack Tokens.space2 [ glyph; caption :> Control ])
+        contentGrid.Children.Add(Ui.hstack Spacing.spaceMd [ glyph; caption :> Control ])
         let host =
             ActionBorder(
-                Padding = Thickness(Tokens.space3, Tokens.space2),
-                CornerRadius = CornerRadius Tokens.radiusMd,
+                Padding = Thickness(Spacing.spaceXl, Spacing.spaceMd),
+                CornerRadius = CornerRadius Spacing.Radius.md,
                 Background = Brushes.Transparent,
                 Cursor = new Cursor(StandardCursorType.Hand),
                 Focusable = true,
@@ -218,7 +218,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         host.KeyDown.Add(fun e ->
             // Enter/Space 由 Ui.onClick 拥有（选中是幂等的，但双通道无意义）；
             // 选中态靠 Tokens.selected 底 + 标题前景/字重 + 图标不透明度 + 左缘强调条，
-            // 键盘焦点另有 focusRingSpread 外环，两者可区分。
+            // 键盘焦点另有 Stroke.thick 外环 外环，两者可区分。
             if e.Key = Key.Up then
                 e.Handled <- true
                 this.NavigateSection -1
@@ -297,7 +297,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
             Border(
                 Height = Tokens.barHeight,
                 // 头部内边距与导航轴对齐且左右对称：左缘落在导航列内容左缘（nav 横向 space3）上。
-                Padding = Thickness(Tokens.space3, 0.0, Tokens.space3, 0.0),
+                Padding = Thickness(Spacing.spaceXl, 0.0, Spacing.spaceXl, 0.0),
                 BorderBrush = Tokens.hairline,
                 BorderThickness = Thickness(0.0, 0.0, 0.0, ControlMetrics.borderWidth),
                 Child = dock)
@@ -317,7 +317,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         let nav =
             Border(
                 Width = ControlMetrics.settingsNavWidth,
-                Padding = Thickness(Tokens.space3, Tokens.space4),
+                Padding = Thickness(Spacing.spaceXl, Spacing.space2xl),
                 Background = Tokens.surfaceContainer,
                 BorderBrush = Tokens.hairline,
                 BorderThickness = Thickness(0.0, 0.0, ControlMetrics.borderWidth, 0.0),
@@ -329,7 +329,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
 
         let contentFrame =
             Border(
-                Padding = Thickness(Tokens.space8, Tokens.space6, Tokens.space8, Tokens.space10),
+                Padding = Thickness(Spacing.space6xl, Spacing.space4xl, Spacing.space6xl, Spacing.space8xl),
                 Child = contentHost,
                 MaxWidth = ControlMetrics.settingsContentMaxWidth,
                 // 宽屏下内容列居中：MaxWidth 仍封顶 settingsContentMaxWidth，超宽窗口不再右侧留大片空白；
@@ -358,22 +358,22 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                         DockPanel.SetDock(nav, Dock.Top)
                         nav.Width <- Double.NaN
                         nav.Height <- Tokens.barHeight
-                        nav.Padding <- Thickness(Tokens.space3, Tokens.space2)
-                        navPanel.Spacing <- Tokens.space2
+                        nav.Padding <- Thickness(Spacing.spaceXl, Spacing.spaceMd)
+                        navPanel.Spacing <- Spacing.spaceMd
                         nav.BorderThickness <- Thickness(0.0, 0.0, 0.0, ControlMetrics.borderWidth)
                         navPanel.Orientation <- Orientation.Horizontal
                         navScroll.HorizontalScrollBarVisibility <- ScrollBarVisibility.Auto
-                        contentFrame.Padding <- Thickness(Tokens.space4, Tokens.space4, Tokens.space4, Tokens.space8)
+                        contentFrame.Padding <- Thickness(Spacing.space2xl, Spacing.space2xl, Spacing.space2xl, Spacing.space6xl)
                     else
                         DockPanel.SetDock(nav, Dock.Left)
                         nav.Width <- ControlMetrics.settingsNavWidth
                         nav.Height <- Double.NaN
-                        nav.Padding <- Thickness(Tokens.space3, Tokens.space4)
-                        navPanel.Spacing <- Tokens.space1
+                        nav.Padding <- Thickness(Spacing.spaceXl, Spacing.space2xl)
+                        navPanel.Spacing <- Spacing.spaceXs
                         nav.BorderThickness <- Thickness(0.0, 0.0, ControlMetrics.borderWidth, 0.0)
                         navPanel.Orientation <- Orientation.Vertical
                         navScroll.HorizontalScrollBarVisibility <- ScrollBarVisibility.Hidden
-                        contentFrame.Padding <- Thickness(Tokens.space8, Tokens.space6, Tokens.space8, Tokens.space10)
+                        contentFrame.Padding <- Thickness(Spacing.space6xl, Spacing.space4xl, Spacing.space6xl, Spacing.space8xl)
                     // 断点切换会改变 extent 与视口高度：恢复值先按新边界钳制再落位。
                     // 旧写法直接恢复旧 offset，若超过新 extent 上界会被 ScrollViewer 二次钳制，
                     // 用户先看到一次错位又被拉回；在此钳制一次到位即消除这记瞬跳。

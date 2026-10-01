@@ -184,7 +184,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let emptyStateHost =
         Border(
             IsVisible = false,
-            Margin = Thickness(Tokens.space5, Tokens.space8, Tokens.space5, Tokens.space8),
+            Margin = Thickness(Spacing.space3xl, Spacing.space6xl, Spacing.space3xl, Spacing.space6xl),
             VerticalAlignment = VerticalAlignment.Center)
     /// 当前空态种类：只在种类翻转时换卡，同种类内的列表刷新不重建这棵树。
     let mutable currentEmptyVariant: EmptyVariant option = None
@@ -194,15 +194,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let panel =
             StackPanel(
                 Orientation = Orientation.Vertical,
-                Spacing = Tokens.space2,
+                Spacing = Spacing.spaceMd,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = Thickness(0.0, Tokens.space2, 0.0, 0.0),
+                Margin = Thickness(0.0, Spacing.spaceMd, 0.0, 0.0),
                 IsVisible = false)
         for (barHeight, widthFraction) in [ (10.0, 0.85); (10.0, 0.60); (10.0, 0.72) ] do
             let bar =
                 Border(
                     Height = barHeight,
-                    CornerRadius = CornerRadius Tokens.radiusSm,
+                    CornerRadius = CornerRadius Spacing.Radius.sm,
                     Background = Tokens.borderSoft,
                     Opacity = Tokens.skeletonOpacityBase,
                     HorizontalAlignment = HorizontalAlignment.Stretch)
@@ -238,13 +238,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let searchEmptyHintPanel =
         StackPanel(
             Orientation = Orientation.Vertical,
-            Spacing = Tokens.space1,
+            Spacing = Spacing.spaceXs,
             HorizontalAlignment = HorizontalAlignment.Center)
     let searchEmptyHint =
         ActionBorder(
-            CornerRadius = CornerRadius Tokens.radiusMd,
-            Padding = Thickness(Tokens.space4, Tokens.space3),
-            Margin = Thickness(Tokens.space4, Tokens.space8, Tokens.space4, 0.0),
+            CornerRadius = CornerRadius Spacing.Radius.md,
+            Padding = Thickness(Spacing.space2xl, Spacing.spaceXl),
+            Margin = Thickness(Spacing.space2xl, Spacing.space6xl, Spacing.space2xl, 0.0),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Top,
             Background = Brushes.Transparent,
@@ -296,7 +296,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let selectionHeader =
         Border(
             Background = Tokens.surfaceContainer,
-            Padding = Thickness(Tokens.space3, Tokens.space2),
+            Padding = Thickness(Spacing.spaceXl, Spacing.spaceMd),
             IsVisible = false,
             BorderBrush = Tokens.hairline,
             BorderThickness = Thickness(0.0, 0.0, 0.0, ControlMetrics.sidebarDividerWidth))
@@ -311,7 +311,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let selectionActionBar =
         Border(
             Background = Tokens.surface,
-            Padding = Thickness(Tokens.space2, Tokens.space2),
+            Padding = Thickness(Spacing.spaceMd, Spacing.spaceMd),
             IsVisible = false,
             BorderBrush = Tokens.hairline,
             BorderThickness = Thickness(0.0, ControlMetrics.sidebarDividerWidth, 0.0, 0.0))
@@ -342,11 +342,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         searchIcon.VerticalAlignment <- VerticalAlignment.Center
         searchIcon.Width <- Tokens.iconGlyph
         searchIcon.Height <- Tokens.iconGlyph
-        // 图标光学基线与输入文本对齐：只下沉 iconBaselineNudge，不改外尺寸。
-        searchIcon.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space2, 0.0)
+        // 图标光学基线与输入文本对齐：纯垂直居中，不加偏移。
+        searchIcon.Margin <- Thickness(0.0, 0.0, Spacing.spaceMd, 0.0)
         // 清空按钮常驻槽位（Ui.setReservedActionVisible 只切透明度/命中），
         // 左侧留出与搜索图标对称的光学间距，出现时输入框不收缩。
-        clearSearchButton.Margin <- Thickness(Tokens.space2, 0.0, 0.0, 0.0)
+        clearSearchButton.Margin <- Thickness(Spacing.spaceMd, 0.0, 0.0, 0.0)
         clearSearchButton.VerticalAlignment <- VerticalAlignment.Center
         searchBox.VerticalAlignment <- VerticalAlignment.Center
         // 搜索占位符用 muted：比正文弱、比 faint 强，空输入框一眼可辨。
@@ -364,14 +364,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         searchEmptyHint.Child <- searchEmptyHintPanel
         ToolTip.SetTip(searchEmptyHint, "点击清空搜索（Esc）")
         Avalonia.Automation.AutomationProperties.SetName(searchEmptyHint, "未找到匹配会话，点击清空搜索")
-        searchEmptyHint.PointerEntered.Add(fun _ ->
-            searchEmptyHint.Background <- Tokens.hover)
-        searchEmptyHint.PointerExited.Add(fun _ ->
-            searchEmptyHint.Background <- Brushes.Transparent)
-        searchEmptyHint.GotFocus.Add(fun _ ->
-            searchEmptyHint.Background <- Tokens.hover)
-        searchEmptyHint.LostFocus.Add(fun _ ->
-            searchEmptyHint.Background <- Brushes.Transparent)
+        // hover / focus 底色走 Interaction 的原生伪类（`:pointerover` /
+        // `:focus-visible`），不再手写四份副本。
+        Interaction.surface searchEmptyHint Interaction.HoverVariant.plain |> ignore
+        Interaction.reportFocusOrigin searchEmptyHint
         Ui.onClick searchEmptyHint (fun () -> this.ResetSearch true)
         searchEmptyHint.KeyDown.Add(fun e ->
             // Enter/Space 由 Ui.onClick 接管（单次清空）；Escape 必须显式处理，onClick 不覆盖它。
@@ -404,7 +400,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             match column.Children.[0] with
             | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
                 match titleRow.Children.[2] with
-                | :? TextBlock as titleBlock -> titleBlock.FontWeight <- if highlighted then FontWeight.SemiBold else FontWeight.Medium
+                | :? TextBlock as titleBlock -> // 选中态靠 accent 描边与 ItemStatus 表达，不再加一档字重（规范 §3.4：只有 400/500）
+                        titleBlock.FontWeight <- FontWeight.Medium
                 | _ -> ()
             | _ -> ()
         | _ -> ()
@@ -435,7 +432,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     match column.Children.[0] with
                     | :? DockPanel as titleRow when titleRow.Children.Count >= 3 ->
                         match titleRow.Children.[2] with
-                        | :? TextBlock as titleBlock -> titleBlock.FontWeight <- if highlighted then FontWeight.SemiBold else FontWeight.Medium
+                        | :? TextBlock as titleBlock -> // 选中态靠 accent 描边与 ItemStatus 表达，不再加一档字重（规范 §3.4：只有 400/500）
+                        titleBlock.FontWeight <- FontWeight.Medium
                         | _ -> ()
                     | _ -> ()
                 | _ -> ()
@@ -532,7 +530,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         chevronGlyph.Width <- Tokens.iconGlyph
         chevronGlyph.Height <- Tokens.iconGlyph
         chevronGlyph.VerticalAlignment <- VerticalAlignment.Center
-        let leading = Ui.hstack Tokens.space2 [ archiveGlyph; label :> Control ]
+        let leading = Ui.hstack Spacing.spaceMd [ archiveGlyph; label :> Control ]
         leading.VerticalAlignment <- VerticalAlignment.Center
         DockPanel.SetDock(chevronGlyph, Dock.Right)
         let row = DockPanel(LastChildFill = true)
@@ -541,8 +539,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         row.VerticalAlignment <- VerticalAlignment.Center
         let host =
             ActionBorder(
-                Padding = Thickness(Tokens.space3, ControlMetrics.sidebarRowPaddingY),
-                CornerRadius = CornerRadius Tokens.radiusMd,
+                Padding = Thickness(Spacing.spaceXl, ControlMetrics.sidebarRowPaddingY),
+                CornerRadius = CornerRadius Spacing.Radius.md,
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
                 Focusable = true,
@@ -563,15 +561,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         Avalonia.Automation.AutomationProperties.SetRole(host, AutomationRole.Button)
         Avalonia.Automation.AutomationProperties.SetExpanded(host, expanded)
         ToolTip.SetTip(host, accessibleName)
-        host.PointerEntered.Add(fun _ -> host.Background <- Tokens.hover)
-        // 按压反馈与 Ui.attachSurfaceFeedback 同一节奏：瞬时 Opacity 脉冲，不进过渡集合，焦点/几何不变。
-        host.PointerPressed.Add(fun _ -> host.Opacity <- Tokens.opacityPressed)
-        host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
-        host.PointerExited.Add(fun _ ->
-            host.Opacity <- 1.0
-            if not host.IsFocused then host.Background <- Brushes.Transparent)
-        host.GotFocus.Add(fun _ -> host.Background <- Tokens.hover)
-        host.LostFocus.Add(fun _ -> host.Background <- Brushes.Transparent)
+        // hover / focus / pressed 全部由 Interaction 的原生伪类样式负责
+        // （`:pointerover` / `:focus-visible` / `:pressed`），此处只登记表面与
+        // 聚焦来源报告，不再手写副本。
+        Interaction.surface host Interaction.HoverVariant.plain |> ignore
+        Interaction.reportFocusOrigin host
         // Ui.onClick 已接管 Enter/Space；切换会触发 Rebuild 重建本行，
         // Post 回来把焦点还给新行，键盘连按展开/收起不断线。
         Ui.onClick host (fun () ->
@@ -707,13 +701,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center,
                 // 预览左缘与标题文本左缘对齐：缩进恰好是状态槽宽 + 槽间距。
-                Margin = Thickness(ControlMetrics.sidebarStateSlotWidth + Tokens.space2, 0.0, 0.0, 0.0))
+                Margin = Thickness(ControlMetrics.sidebarStateSlotWidth + Spacing.spaceMd, 0.0, 0.0, 0.0))
         let titleRow = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
         let stateSlot =
             Border(
                 Width = ControlMetrics.sidebarStateSlotWidth,
                 Height = ControlMetrics.sidebarStateGlyphSize,
-                Margin = Thickness(0.0, 0.0, Tokens.space2, 0.0),
+                Margin = Thickness(0.0, 0.0, Spacing.spaceMd, 0.0),
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Left)
         this.SetStateSlot(stateSlot, summary)
@@ -741,8 +735,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         column.Children.Add preview
         let host =
             ActionBorder(
-                Padding = Thickness(Tokens.space3, ControlMetrics.sidebarRowPaddingY),
-                CornerRadius = CornerRadius Tokens.radiusMd,
+                Padding = Thickness(Spacing.spaceXl, ControlMetrics.sidebarRowPaddingY),
+                CornerRadius = CornerRadius Spacing.Radius.md,
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
                 BorderThickness = Thickness(ControlMetrics.sidebarSelectedEdgeWidth, 0.0, 0.0, 0.0),
@@ -810,13 +804,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 if isActive || isSelected then Ui.blendOverlay Tokens.selected Tokens.hover
                 else Tokens.hover :> IBrush
             this.ApplyRowActionVisibility moreButton true)
-        // 按压反馈与 Ui.attachSurfaceFeedback 同一节奏：瞬时 Opacity 脉冲（不进过渡集合），
-        // 焦点环、选中左缘与几何一概不动。
-        host.PointerPressed.Add(fun _ -> host.Opacity <- Tokens.opacityPressed)
-        host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
+        // 按压不透明度由 Interaction 的 `:pressed` 伪类负责（瞬时，不进过渡集合）。
+        // 离开仍需还原**行状态底**（选中 / 运行中 / 生成中——业务状态，非 hover），
+        // 走 id + 实时快照，不用渲染期旧 summary。
         host.PointerExited.Add(fun _ ->
-            // 离开先复位按压透明度，再还原 hover 底（走 id + 实时快照，不用渲染期旧 summary）。
-            host.Opacity <- 1.0
             this.ApplyRowState(summary.id, host)
             if not moreButton.IsFocused then this.ApplyRowActionVisibility moreButton false)
         host.GotFocus.Add(fun _ ->
@@ -1361,10 +1352,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 FontSize = Tokens.fontBody,
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
-                LetterSpacing = Tokens.letterSpacingDisplay,
+                LetterSpacing = Spacing.Tracking.display,
                 VerticalAlignment = VerticalAlignment.Center)
-        let brandRow = Ui.hstack Tokens.space2 [ brand; wordmark :> Control ]
-        let leading = Ui.hstack Tokens.space1 [ compactBackButton :> Control; brandRow :> Control ]
+        let brandRow = Ui.hstack Spacing.spaceMd [ brand; wordmark :> Control ]
+        let leading = Ui.hstack Spacing.spaceXs [ compactBackButton :> Control; brandRow :> Control ]
         brandHeader <-
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(leading, Dock.Left)
@@ -1373,7 +1364,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             dock.Children.Add newConversationButton
             Border(
                 Height = Tokens.barHeight,
-                Padding = Thickness(Tokens.space4, 0.0),
+                Padding = Thickness(Spacing.space2xl, 0.0),
                 Child = dock)
 
         searchBox.KeyDown.Add(fun e ->
@@ -1429,23 +1420,19 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let searchArea =
             Border(
                 Background = Tokens.surfaceContainer,
-                Padding = Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space2),
+                Padding = Thickness(Spacing.spaceXl, Spacing.spaceXl, Spacing.spaceXl, Spacing.spaceMd),
                 Child = searchShell)
         let statusRow =
             ActionBorder(
                 Background = Brushes.Transparent,
-                CornerRadius = CornerRadius Tokens.radiusSm,
+                CornerRadius = CornerRadius Spacing.Radius.sm,
                 Cursor = handCursor,
                 Focusable = true,
-                Child = Ui.hstack Tokens.space2 [ statusDot :> Control; statusText :> Control ])
-        // 状态行本身是可点击的重连入口：补上悬停/聚焦底色反馈，补间走共享表面过渡
-        //（减弱动效瞬时到位；命中测试与「点击重连」行为都保持不变）。
-        statusRow.Transitions <- Ui.surfaceTransitions ()
-        statusRow.PointerEntered.Add(fun _ -> statusRow.Background <- Tokens.hover)
-        statusRow.PointerExited.Add(fun _ ->
-            if not statusRow.IsFocused then statusRow.Background <- Brushes.Transparent)
-        statusRow.GotFocus.Add(fun _ -> statusRow.Background <- Tokens.hover)
-        statusRow.LostFocus.Add(fun _ -> statusRow.Background <- Brushes.Transparent)
+                Child = Ui.hstack Spacing.spaceMd [ statusDot :> Control; statusText :> Control ])
+        // 状态行是可点击的重连入口：hover / focus 底色由 Interaction 的原生伪类
+        // 负责（`:pointerover` / `:focus-visible`），命中测试与「点击重连」行为不变。
+        Interaction.surface statusRow Interaction.HoverVariant.plain |> ignore
+        Interaction.reportFocusOrigin statusRow
         ToolTip.SetTip(statusRow, "点击重新连接")
         Avalonia.Automation.AutomationProperties.SetName(statusRow, "重新连接服务器")
         Ui.onClick statusRow (fun () -> actions.reconnect ())
@@ -1457,7 +1444,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             dock.Children.Add settingsButton
             Border(
                 Height = Tokens.barHeight,
-                Padding = Thickness(Tokens.space4, 0.0, Tokens.space4, 0.0),
+                Padding = Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, 0.0),
                 // 页脚是侧栏内部的分隔线，用最轻的 hairline，比外框再退一档。
                 BorderBrush = Tokens.hairline,
                 BorderThickness = Thickness(0.0, ControlMetrics.sidebarDividerWidth, 0.0, 0.0),
@@ -1480,7 +1467,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                                     Background = Brushes.Transparent,
                                     BorderBrush = Tokens.hairline,
                                     BorderThickness = Thickness(0.0, 0.0, 0.0, ControlMetrics.sidebarDividerWidth),
-                                    Padding = Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space1),
+                                    Padding = Thickness(Spacing.spaceXl, Spacing.spaceXl, Spacing.spaceXl, Spacing.spaceXs),
                                     HorizontalAlignment = HorizontalAlignment.Stretch,
                                     Child = header)
                             wrapper :> Control
@@ -1536,7 +1523,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             selectAllButton <-
                 Ui.button Ui.Ghost "全选" (fun () -> this.ToggleSelectAllVisible())
             selectAllButton.Margin <- Thickness 0.0
-            selectAllButton.Padding <- Thickness(Tokens.space3, ControlMetrics.selectButtonPaddingY)
+            selectAllButton.Padding <- Thickness(Spacing.spaceXl, ControlMetrics.selectButtonPaddingY)
             DockPanel.SetDock(cancelButton, Dock.Left)
             DockPanel.SetDock(selectAllButton, Dock.Right)
             dock.Children.Add cancelButton
@@ -1571,7 +1558,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             wireArrows pinButton archiveButton
             wireArrows archiveButton deleteButton
             Ui.hstack
-                Tokens.space2
+                Spacing.spaceMd
                 [ pinButton :> Control; archiveButton :> Control; deleteButton :> Control ]
         let layout = DockPanel()
         DockPanel.SetDock(brandHeader, Dock.Top)

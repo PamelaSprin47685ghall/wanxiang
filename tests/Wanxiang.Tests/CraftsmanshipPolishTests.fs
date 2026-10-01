@@ -27,6 +27,7 @@ open Wanxiang.Tests.Helpers
 // 1. Unicode Safe Slicing
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``PlainText.summarize handles multi-byte emojis without breaking surrogate pairs`` () =
     Headless.run (fun () ->
@@ -56,6 +57,7 @@ let ``PlainText.summarize handles multi-byte emojis without breaking surrogate p
         Assert.Equal(summary, roundtrip)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``MarkdownRenderer.SafeChunk does not slice surrogate pairs into separate chunks`` () =
     Headless.run (fun () ->
@@ -97,6 +99,7 @@ let ``MarkdownRenderer.SafeChunk does not slice surrogate pairs into separate ch
 // 2. Provider Error Copy & Classification
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ProviderFailure.classify accurately formats 5xx HTTP service unavailable errors`` () =
     Headless.run (fun () ->
@@ -115,6 +118,7 @@ let ``ProviderFailure.classify accurately formats 5xx HTTP service unavailable e
         Assert.Equal(expectedMsg, error.message)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ProviderFailure.classify accurately formats network connection failure copy`` () =
     Headless.run (fun () ->
@@ -150,6 +154,7 @@ let ``ProviderFailure.classify accurately formats network connection failure cop
 // 3. Conversation Activity Tracking & Bucket Grouping
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Projection updates lastActivityAtUtc when AgentMessageRecorded event committed`` () =
     Headless.run (fun () ->
@@ -194,6 +199,7 @@ let ``Projection updates lastActivityAtUtc when AgentMessageRecorded event commi
     Assert.Equal(Some 2UL, updatedConv.lastCommitId)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ConversationSummary.bucketOf groups conversations by updatedAt rather than createdAt`` () =
     Headless.run (fun () ->
@@ -232,6 +238,7 @@ let ``ConversationSummary.bucketOf groups conversations by updatedAt rather than
 // 4. ChatView Skeleton Loading State Transitions
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ChatView skeleton loading transitions toggle skeletonPanel and messagePanel visibility`` () =
     Headless.run (fun () ->
@@ -274,6 +281,7 @@ let ``ChatView skeleton loading transitions toggle skeletonPanel and messagePane
 // 5. Composer Drag-and-Drop & Clipboard Paste File Handling Hooks
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Composer handles clipboard paste hook on Ctrl+V`` () =
     Headless.run (fun () ->
@@ -313,6 +321,7 @@ let ``Composer handles clipboard paste hook on Ctrl+V`` () =
     Assert.True(keyArgs.Handled, "Key event should be handled when paste succeeds")
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Composer handles dropFiles hook when files are dropped`` () =
     Headless.run (fun () ->
@@ -361,6 +370,7 @@ let ``Composer handles dropFiles hook when files are dropped`` () =
     Assert.True(dropArgs.Handled)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Composer drag over and drag leave updates visual affordance and resets cleanly`` () =
     Headless.run (fun () ->
@@ -428,6 +438,7 @@ let ``Composer drag over and drag leave updates visual affordance and resets cle
     Assert.Equal("连接已断开，请检查网络", input.PlaceholderText)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ChatView empty state renders balanced optical layout and accessible primary button`` () =
     Headless.run (fun () ->
@@ -488,6 +499,7 @@ let rec private descendants (control: Control) =
         | _ -> ()
     }
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``MarkdownRenderer wide table (>4 columns) wraps in horizontal scroll viewer`` () =
     Headless.run (fun () ->
@@ -536,6 +548,7 @@ let ``MarkdownRenderer wide table (>4 columns) wraps in horizontal scroll viewer
 // 7. ChatView Floating Rhythm & Scroll-to-Bottom Unread Indicator
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ChatView tracks unread messages when scrolled away from bottom`` () =
     Headless.run (fun () ->
@@ -626,6 +639,7 @@ let ``ChatView tracks unread messages when scrolled away from bottom`` () =
 // 判据是同一个 pendingHistoryAnchor：AppShell 派发 HistoryRequest 前置位、
 // HistoryPage 渲染之后清位，因此分页那次渲染里它正好是 Some。
 // kelivo 把内容从上方增长与尾部新增分成两条定位/准入通路，从不相混。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``paging older history does not count as unread messages`` () =
     Headless.run (fun () ->
@@ -707,6 +721,7 @@ let ``paging older history does not count as unread messages`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``SettingsView preserves and restores scroll offset across sections`` () =
     Headless.run (fun () ->
@@ -759,6 +774,7 @@ let ``SettingsView preserves and restores scroll offset across sections`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Sidebar conversation row right click invokes context menu`` () =
     Headless.run (fun () ->
@@ -840,6 +856,7 @@ let ``Sidebar conversation row right click invokes context menu`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Markdown hyperlink responds to Enter and Space key to openLink`` () =
     Headless.run (fun () ->
@@ -871,6 +888,7 @@ let ``Markdown hyperlink responds to Enter and Space key to openLink`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Sidebar search clear button has accessible tooltip and automation properties`` () =
     Headless.run (fun () ->
@@ -907,6 +925,7 @@ let ``Sidebar search clear button has accessible tooltip and automation properti
 // 8. Composer Prompt History & Draft Restoration
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Composer prompt history records submissions and recalls with Up/Down`` () =
     Headless.run (fun () ->
@@ -985,6 +1004,7 @@ let ``Composer prompt history records submissions and recalls with Up/Down`` () 
 // 9. Sidebar Search Keyboard Navigation & Shortcuts
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Sidebar search navigation moves focus and handles escape`` () =
     Headless.run (fun () ->
@@ -1089,6 +1109,7 @@ let ``Sidebar search navigation moves focus and handles escape`` () =
 // 8. Batch 5, 6, 7 Craftsmanship Polish Tests
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``SettingsView supports Up and Down arrow traversal across navigation sections`` () =
     Headless.run (fun () ->
@@ -1178,6 +1199,7 @@ let ``SettingsView supports Up and Down arrow traversal across navigation sectio
 // content must not hair-trigger the danger action (Dialogs.confirm ->
 // confirmWithFocus ... false -> actionRowWithDefault Danger, which skips the
 // row-level Enter/Space confirm for Ui.Danger).
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Dialogs confirm focuses the safe cancel action by default`` () =
     Headless.run (fun () ->
@@ -1234,6 +1256,7 @@ let ``Dialogs confirm focuses the safe cancel action by default`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``MessageCard toolCallCard header toggles argument and result details`` () =
     Headless.run (fun () ->
@@ -1288,6 +1311,7 @@ let ``MessageCard toolCallCard header toggles argument and result details`` () =
 // 9. Batch 2, 3, 4 Craftsmanship Polish Tests
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ChatView header supports F2 to edit title and Escape to cancel`` () =
     Headless.run (fun () ->
@@ -1344,6 +1368,7 @@ let ``ChatView header supports F2 to edit title and Escape to cancel`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Composer restores focus to input when removing last attachment and supports Escape when generating`` () =
     Headless.run (fun () ->
@@ -1385,6 +1410,7 @@ let ``Composer restores focus to input when removing last attachment and support
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ChatView ShowEmpty configures action button accessibility properties`` () =
     Headless.run (fun () ->
@@ -1421,6 +1447,7 @@ let ``ChatView ShowEmpty configures action button accessibility properties`` () 
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Markdown code block copy button confirms visually with check icon and tooltip`` () =
     Headless.run (fun () ->
@@ -1455,6 +1482,7 @@ let ``Markdown code block copy button confirms visually with check icon and tool
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Sidebar conversation row activates on Enter and Space keys`` () =
     Headless.run (fun () ->
@@ -1548,6 +1576,7 @@ let ``Sidebar conversation row activates on Enter and Space keys`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Sidebar row more action stays reachable in compact mode`` () =
     Headless.run (fun () ->
@@ -1651,6 +1680,7 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
 // 10. Composer 拖放入口可发现性（footer 常驻弱提示）
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``Composer footer keeps a persistent drop hint outside compact and folds it inside compact`` () =
     Headless.run (fun () ->
@@ -1684,6 +1714,7 @@ let ``Composer footer keeps a persistent drop hint outside compact and folds it 
     Assert.True(dropHint.IsVisible)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ChatView header title tooltip reflects full title and preserves character ellipsis`` () =
     Headless.run (fun () ->
@@ -1723,6 +1754,7 @@ let ``ChatView header title tooltip reflects full title and preserves character 
 // 超长代码块（>120 行）折叠后底部有「展开全部 / 收起」按钮：文案之外，
 // 展开态还应对无障碍树报成 expander 状态（SetExpanded），读屏据此播音
 // 「已展开 / 已折叠」，不靠按钮名猜。此前只改了名称，读屏听到的仍是错的状态。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``huge code block expand button reports its expanded state`` () =
     Headless.run (fun () ->
@@ -1761,6 +1793,7 @@ let ``huge code block expand button reports its expanded state`` () =
 // kelivo markdown_with_highlight.dart:5877-5950 的任务勾号是 Flutter 原生
 // Checkbox，读屏直接播报勾选态；我们自绘 Border 只有视觉，补 CheckBox 语义
 // 与勾选名（视觉不变）。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``MarkdownRenderer task boxes expose checkbox automation state`` () =
     Headless.run (fun () ->

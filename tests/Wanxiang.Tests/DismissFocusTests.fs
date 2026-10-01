@@ -77,6 +77,7 @@ let private wheelAt (target: Control) (root: Grid) =
     root.RaiseEvent(e)
     e
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``wheel outside an open popup dismisses it without scrolling the content`` () =
     Headless.run (fun () ->
@@ -104,6 +105,7 @@ let ``wheel outside an open popup dismisses it without scrolling the content`` (
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``wheel inside an open popup is left to the popup itself`` () =
     Headless.run (fun () ->
@@ -134,6 +136,7 @@ let ``wheel inside an open popup is left to the popup itself`` () =
 
 // ── 连接对话框：首焦落在第一个还缺内容的字段 ────────────────────────────────
 
+[<Trait("Category", "UI")>]
 [<Theory>]
 [<InlineData("", true, false)>]
 [<InlineData("ws://127.0.0.1:8765/ws", false, true)>]

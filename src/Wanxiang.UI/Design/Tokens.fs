@@ -14,40 +14,6 @@ open Avalonia.Threading
 /// 非画笔量（阴影颜色、字号）由 `Changed` 事件通知重建。
 module Tokens =
 
-    // ---- 间距（4pt 基准）----
-    let space1 = 4.0
-    let space2 = 8.0
-    let space3 = 12.0
-    let space4 = 16.0
-    let space5 = 20.0
-    let space6 = 24.0
-    let space8 = 32.0
-    let space10 = 40.0
-    /// 宽屏水平留白顶档：4pt 基准延伸，供 LayoutPolicy.horizontalInset 的最宽一档。
-    let space12 = 48.0
-
-    /// 紧凑纵向微节奏族："同一行密度"曾散成 1.0 / 2.0 / 3.0 三种裸值
-    ///（tag / chip / 状态 pill、校验消息、字段标签、hint、toggle、披露头等）。
-    /// 三档各自对应真实共享语义，保留三档、不强行压平。除行内边距外，
-    /// tight / compact 两档还充当紧凑堆叠（菜单面板、操作行、紧凑纵向栈）
-    /// 的 mini 垂直间距：
-    /// - tight（1）：单行小控件（tag、chip、pill）的纵向呼吸，以及紧凑
-    ///   堆叠（菜单等紧排纵向栈）的 mini 间距；
-    /// - compact（2）：紧凑行容器的上下内边距，以及紧凑堆叠（操作行、
-    ///   紧凑纵向栈）的 mini 垂直间距；
-    /// - field（3）：字段标签 / 校验行 / hint 这类贴字段的纵向留白。
-    let tightRowPaddingY = 1.0
-    let compactRowPaddingY = 2.0
-    let fieldRowPaddingY = 3.0
-
-    // ---- 圆角 ----
-    let radiusXs = 4.0
-    let radiusSm = 6.0
-    let radiusMd = 9.0
-    let radiusLg = 14.0
-    let radiusXl = 20.0
-    let radiusPill = 999.0
-
     // ---- 字号阶梯 ----
     /// 元信息、角标
     let fontMicro = 10.5
@@ -65,23 +31,6 @@ module Tokens =
     let fontHeading = 19.0
     /// 页面主标题
     let fontDisplay = 25.0
-
-    /// 字距档：0.2–0.8 的裸 letterSpacing 曾散在字段标签、空态标题、区块标签、
-    /// 侧栏测量标签等处。四档各有既有调用点与不同视觉重量，保留四档：
-    /// label（字段标签）→ emphasis（空态标题等强调）→ section（区块标签）
-    /// → display（侧栏测量标签，最宽）。
-    let letterSpacingLabel = 0.3
-    let letterSpacingEmphasis = 0.4
-    let letterSpacingSection = 0.6
-    let letterSpacingDisplay = 0.8
-
-    /// 键盘焦点环的外扩宽度。用外阴影画而不是加边框：
-    /// 改边框粗细会让按钮内容跳一下，而焦点本该是「无位移的提示」。
-    let focusRingSpread = 2.0
-
-    /// 图文基线微调：15~16pt 图标与 14pt 文本在 StackPanel/DockPanel 顶对齐时约 2pt 视差。
-    /// 统一用它代替散落的 Margin(0,2,0,0)，避免“差不多对齐”。
-    let iconBaselineNudge = 2.0
 
     /// 不透明度阶梯：状态表达只切透明度，不改尺寸，避免布局跳动。
     let opacityDisabled = 0.5
@@ -111,8 +60,8 @@ module Tokens =
 
     /// 带框块（代码块、表格）的统一内边距。两者常在同一段回答里前后出现，
     /// 各自取值会让左缘差几个像素，读起来像没对齐的两张卡片。
-    let blockPaddingX = space3
-    let blockPaddingY = space2
+    let blockPaddingX = Spacing.spaceXl
+    let blockPaddingY = Spacing.spaceMd
 
     // ---- 结构尺寸 ----
     let sidebarWidth = 284.0
@@ -122,9 +71,9 @@ module Tokens =
     let readingWidth = 748.0
     let barHeight = 52.0
     let iconButton = 30.0
-    let iconGlyph = 15.0
+    let iconGlyph = Spacing.Glyph.md
     let iconStroke = 1.6
-    let shellInset = space4
+    let shellInset = Spacing.space2xl
 
     // ---- 品牌 ----
     let logoSplash = 76.0

@@ -76,6 +76,7 @@ let private stubActions
       savePrefs = ignore
       toast = fun message tone -> toasts.Add(message, tone) }
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``switch row consumes the shared settings row height and toggle semantics`` () =
     Headless.run (fun () ->
@@ -87,9 +88,10 @@ let ``switch row consumes the shared settings row height and toggle semantics`` 
     write false
     Assert.False(read ())
     Assert.Equal("关闭", AutomationProperties.GetItemStatus(row))
-    Assert.Equal(Tokens.radiusMd, (row :?> Border).CornerRadius.TopLeft, 3)
+    Assert.Equal(Spacing.Radius.md, (row :?> Border).CornerRadius.TopLeft, 3)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``settings row and text area metrics keep single sources`` () =
     Headless.run (fun () ->
@@ -98,6 +100,7 @@ let ``settings row and text area metrics keep single sources`` () =
     Assert.True(ControlMetrics.textAreaLongMinHeight > ControlMetrics.textAreaMinHeight)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``validation feedback with a single error toasts the message and hides the summary`` () =
     Headless.run (fun () ->
@@ -109,6 +112,7 @@ let ``validation feedback with a single error toasts the message and hides the s
     Assert.False(summary.IsVisible)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``validation feedback with multiple errors fills the focusable summary`` () =
     Headless.run (fun () ->
@@ -122,6 +126,7 @@ let ``validation feedback with multiple errors fills the focusable summary`` () 
     Assert.Equal<string list>([ "有 2 处需要修正，请查看表单顶部摘要。" ], List.ofSeq toasts)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``validation feedback with no errors stays silent and hides the summary`` () =
     Headless.run (fun () ->
@@ -134,6 +139,7 @@ let ``validation feedback with no errors stays silent and hides the summary`` ()
     Assert.Equal(0, toasts.Count)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``warning tag tone uses the warning brush while neutral stays muted`` () =
     Headless.run (fun () ->
@@ -147,6 +153,7 @@ let ``warning tag tone uses the warning brush while neutral stays muted`` () =
     Assert.Equal(Tokens.textMuted.Color, ((neutralBorder.Child :?> TextBlock).Foreground :?> SolidColorBrush).Color)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``generation form consumes shared column spacing and text metrics`` () =
     Headless.run (fun () ->
@@ -158,7 +165,7 @@ let ``generation form consumes shared column spacing and text metrics`` () =
         |> Seq.find (function
             | :? Grid as candidate -> candidate.ColumnDefinitions.Count = 2
             | _ -> false)
-    Assert.Equal(Tokens.space4, (grid :?> Grid).ColumnSpacing, 3)
+    Assert.Equal(Spacing.space2xl, (grid :?> Grid).ColumnSpacing, 3)
     let instructionBox =
         descendants built
         |> Seq.tryPick (function
@@ -187,6 +194,7 @@ let ``generation form consumes shared column spacing and text metrics`` () =
 // 别处（切分区、点窗口其它区域），那次编辑既不入库也不提示，切回来被 SetCatalog
 // 的旧值覆盖——静默回滚。kelivo display_settings_page.dart:1736-1755 的 FocusNode
 // listener 失焦即落库。锁：数值框失焦真的触发 updateGeneration。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``editing a generation number and moving away commits it`` () =
     Headless.run (fun () ->
@@ -235,6 +243,7 @@ let ``editing a generation number and moving away commits it`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``generation save button advertises the ctrl enter shortcut`` () =
     Headless.run (fun () ->
@@ -251,6 +260,7 @@ let ``generation save button advertises the ctrl enter shortcut`` () =
     Assert.Equal<string>("保存生成设置 (Ctrl+Enter)", ToolTip.GetTip saveButton :?> string)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``about section drops the misplaced spacer`` () =
     Headless.run (fun () ->
@@ -260,7 +270,7 @@ let ``about section drops the misplaced spacer`` () =
     let misplacedSpacers =
         descendants built
         |> Seq.filter (function
-            | :? Border as border -> border.Height = Tokens.space2
+            | :? Border as border -> border.Height = Spacing.spaceMd
             | _ -> false)
         |> Seq.length
     Assert.Equal(0, misplacedSpacers)
@@ -273,6 +283,7 @@ let ``about section drops the misplaced spacer`` () =
     Assert.True(hairlines >= 1, "关于区应在信息行与操作按钮之间保留一条发丝线")
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``disabled mcp card dims its text while keeping row actions alive`` () =
     Headless.run (fun () ->
@@ -298,6 +309,7 @@ let ``disabled mcp card dims its text while keeping row actions alive`` () =
     Assert.All(rowActionButtons, fun button -> Assert.True(button.IsEnabled && button.IsHitTestVisible))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``missing key reads as warning tag and disabled provider dims its text`` () =
     Headless.run (fun () ->
@@ -341,6 +353,7 @@ let ``missing key reads as warning tag and disabled provider dims its text`` () 
     Assert.All(rowActionButtons, fun button -> Assert.True(button.IsEnabled && button.IsHitTestVisible))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``generation save failure surfaces a failure toast instead of silence`` () =
     Headless.run (fun () ->
@@ -363,6 +376,7 @@ let ``generation save failure surfaces a failure toast instead of silence`` () =
     Assert.Equal("保存生成设置", AutomationProperties.GetName(saveButton))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``settings window title dominates section headings`` () =
     Headless.run (fun () ->
@@ -390,6 +404,7 @@ let ``settings window title dominates section headings`` () =
     Assert.True(windowTitle.FontSize >= Tokens.fontHeading, "窗口标题应达到区块标题档（Ui.heading = fontHeading）")
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``appearance and about consume new metrics tokens and content-tier dividers`` () =
     Headless.run (fun () ->
@@ -423,6 +438,7 @@ let ``appearance and about consume new metrics tokens and content-tier dividers`
     Assert.Equal(0, chromeTierDividers)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``built-in tool row title shares the row-title body font`` () =
     Headless.run (fun () ->
@@ -440,6 +456,7 @@ let ``built-in tool row title shares the row-title body font`` () =
     Assert.Equal(Tokens.fontBody, nameBlock.FontSize, 3)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``generation form fields sit inside a grouping card`` () =
     Headless.run (fun () ->

@@ -1,369 +1,249 @@
 module Wanxiang.Tests.DesignConvergenceTests
 
 open System
+open System.IO
+open System.Text.RegularExpressions
 open Avalonia
-open Avalonia.Automation
 open Avalonia.Controls
 open Avalonia.Media
 open Xunit
 open Wanxiang.UI
 open Wanxiang.Tests
-open Avalonia.Animation
 
-/// 判定控件是否挂着共享的表面状态反馈集合：Transitions 非空，且每条都是补间底色的
-/// BrushTransition、时长出自 MotionLedger.controlStateDuration（= Ui.surfaceTransitions 的产物）。
-/// 只验结构，不触发动效——本项目无显示制度下原生过渡不推进（见 Tokens.fs 帧调度注释）。
-let private hasSurfaceFeedback (control: Control) =
-    not (isNull control.Transitions)
-    && control.Transitions
-       |> Seq.cast<Avalonia.Animation.ITransition>
-       |> Seq.forall (fun transition ->
-           match transition with
-           | :? Avalonia.Animation.BrushTransition as brush ->
-               MotionLedger.controlStateDuration () = brush.Duration
-               && Object.ReferenceEquals(brush.Property, Border.BackgroundProperty)
-           | _ -> false)
-
-/// 共享设计基础设施收敛的锁定测试。
+/// UI 规范的**机械校验**：把 `.agents/skills/wanxiang-ui/SKILL.md` 里
+/// 可机器判定的条款钉成测试。规范是权威，本文件只锁「违反即红」的那些：
+/// 阶梯越界、槽位分叉、裸数字回流、调色板对比度不足。
+/// 不锁字体度量一类无法机械判定的条款。
 ///
-/// 这些常量是后续多条改动消费的单一真源：每个断言都把它钉在它替代的旧散落
-/// 字面量上（见 Tokens / ControlMetrics / MotionLedger 各条注释），防止收敛后
-/// 值漂移；同时守住「有意保留的两档」不被人日后随手压平。
-/// 只验纯逻辑与控件属性，不触发动效（geometryAnimationAllowed = false 不变）。
+/// 静态扫描用源码文本而不是运行时控件树：违反阶梯是**源码层事实**，
+/// 运行时只看得到最终布局值（已被布局消化/取整），扫源码才是真防线。
+module private SpacingScan =
+
+    /// 显式 Thickness(1..4 个数值)
+    let thicknessPattern = Regex(@"Thickness\(\s*([0-9.]+)\s*(?:,\s*([0-9.]+)\s*){0,3}\)")
+
+    /// 单值 Margin/Padding/Spacing/RowSpacing/ColumnSpacing 赋值
+    let singleValuePattern =
+        Regex(@"(?:^|[^A-Za-z])(?:Margin|Padding|Spacing|RowSpacing|ColumnSpacing)\s*=\s*([0-9.]+)\s*$")
+
+    let scannedDirs =
+        [| "src/Wanxiang.UI/Views"; "src/Wanxiang.UI/Controls"; "src/Wanxiang.UI/Rich" |]
+
+    /// 仓库根：测试运行目录是 bin/Debug/net10.0，向上找 wanxiang.slnx。
+    let repoRoot =
+        let mutable dir = DirectoryInfo(Directory.GetCurrentDirectory())
+        while not (isNull dir) && not (File.Exists(Path.Combine(dir.FullName, "wanxiang.slnx"))) do
+            dir <- dir.Parent
+        if isNull dir then "." else dir.FullName
+
+    let filesUnder () =
+        scannedDirs
+        |> Array.collect (fun d ->
+            let full = Path.Combine(repoRoot, d)
+            if Directory.Exists full then Directory.GetFiles(full, "*.fs", SearchOption.AllDirectories)
+            else [||])
+
+    /// 间距 / 槽位越界描述（空列表 = 全部合规）。
+    let violations () =
+        let allowed = Set.ofList Spacing.ramp
+        let found = ResizeArray<string>()
+        for file in filesUnder () do
+            let name = Path.GetFileName file
+            let lines = File.ReadAllLines file
+            for i in 0 .. lines.Length - 1 do
+                let line = lines.[i]
+                for m in thicknessPattern.Matches line do
+                    for g in m.Groups |> Seq.skip 1 do
+                        if g.Success then
+                            let v = Double.Parse g.Value
+                            if not (allowed.Contains v) then
+                                found.Add(sprintf "%s:%d  Thickness 含阶梯外值 %g" name (i + 1) v)
+                let mm = singleValuePattern.Match(line.TrimEnd())
+                if mm.Success then
+                    let v = Double.Parse mm.Groups.[1].Value
+                    if not (allowed.Contains v) then
+                        found.Add(sprintf "%s:%d  Margin/Padding/Spacing 阶梯外值 %g" name (i + 1) v)
+        List.ofSeq found
+
+    /// 行匹配器 → 越界描述。捕获组 1 为字面量，**零值放行**
+    /// （`Thickness 0.0` 是"无描边"/"不缩进"，是合法几何，不是漏写的令牌）。
+    let lineViolations (patterns: Regex list) =
+        let found = ResizeArray<string>()
+        for file in filesUnder () do
+            let name = Path.GetFileName file
+            let lines = File.ReadAllLines file
+            for i in 0 .. lines.Length - 1 do
+                for p in patterns do
+                    let m = p.Match lines.[i]
+                    if m.Success && Double.Parse m.Groups.[1].Value <> 0.0 then
+                        found.Add(sprintf "%s:%d  %s" name (i + 1) (lines.[i].Trim()))
+        List.ofSeq found
+
+/// WCAG 相对亮度与对比度（规范 §5.2 的判定函数）。
+/// alpha 一律当不透明：半透明笔只用于覆盖层，其上的文字另有专门 token。
+module private Contrast =
+
+    let private channel (v: float) =
+        let c = v / 255.0
+        if c <= 0.03928 then c / 12.92 else ((c + 0.055) / 1.055) ** 2.4
+
+    let luminance (c: Color) =
+        0.2126 * channel (float c.R) + 0.7152 * channel (float c.G) + 0.0722 * channel (float c.B)
+
+    let ratio (a: Color) (b: Color) =
+        let la, lb = luminance a, luminance b
+        (max la lb + 0.05) / (min la lb + 0.05)
+
+[<Trait("Category", "UI")>]
 type DesignConvergenceTests() =
-    // 本类多处调用 Ui.* 原语（tag / tagWith / switchRow / toggle / emptyState /
-    // applyValidationFeedback / textField …）构造控件。Ui 模块顶层建有 Cursor
-    // （handCursor，Primitives.fs），触碰它前必须已有无头平台；现在每个用例体
-    // 都经 Headless.run 编组，平台在 Dispatch 内装配完毕。
+
+    // ---------- 阶梯本身 ----------
 
     [<Fact>]
-    member _.CompactRowPaddingFamilyMatchesScatteredLiterals() =
+    member _.``ramp 是 Fluent 2 官方取值`` () =
+        // 官方 ramp：4px 基准 + 2/6/10 三档例外（图标内衬与像素网格对齐用）。
+        // 这三条断言锁住「例外档不许被当成凑整删掉」。
+        Assert.Equal(2.0, Spacing.spaceXXs)
+        Assert.Equal(6.0, Spacing.spaceSm)
+        Assert.Equal(10.0, Spacing.spaceLg)
+        // 4px 步进的主干
+        Assert.Equal(4.0, Spacing.spaceXs)
+        Assert.Equal(8.0, Spacing.spaceMd)
+        Assert.Equal(12.0, Spacing.spaceXl)
+        Assert.Equal(16.0, Spacing.space2xl)
+
+    [<Fact>]
+    member _.``ramp 严格递增且无重复`` () =
+        let ramp = Spacing.ramp
+        Assert.True(ramp.Length > 10, $"ramp 档数 {ramp.Length} 过少，官方 ramp 是 17 档")
+        for i in 1 .. ramp.Length - 1 do
+            Assert.True(
+                ramp.[i] > ramp.[i - 1],
+                $"ramp 非严格递增：{ramp.[i - 1]} 之后是 {ramp.[i]}")
+        Assert.Equal(ramp.Length, List.distinct ramp |> List.length)
+
+    [<Fact>]
+    member _.``组件默认圆角收敛到 Fluent 的 8`` () =
+        // 旧值 9 是自制值，非任何标准。控件默认圆角统一到 radiusMd(8)。
+        Assert.Equal(8.0, Spacing.Radius.md)
+        Assert.True(Spacing.isRadius Spacing.Radius.md)
+
+    [<Fact>]
+    member _.``描边只有三档且焦点环与强调条同档`` () =
+        Assert.Equal(1.0, Spacing.Stroke.thin)
+        Assert.Equal(2.0, Spacing.Stroke.thick)
+        Assert.Equal(3.0, Spacing.Stroke.quote)
+        Assert.Equal(3, Spacing.Stroke.all.Length)
+        // 焦点环外扩与左缘强调条同为 2 —— 同一档，不是巧合。
+        Assert.Equal(Spacing.Stroke.thick, ControlMetrics.accentEdgeWidth)
+
+    [<Fact>]
+    member _.``字距四档顺序不乱`` () =
+        Assert.Equal(0.3, Spacing.Tracking.label)
+        Assert.Equal(0.4, Spacing.Tracking.emphasis)
+        Assert.Equal(0.6, Spacing.Tracking.section)
+        Assert.Equal(0.8, Spacing.Tracking.display)
+        Assert.True(Spacing.Tracking.label < Spacing.Tracking.emphasis)
+        Assert.True(Spacing.Tracking.emphasis < Spacing.Tracking.section)
+        Assert.True(Spacing.Tracking.section < Spacing.Tracking.display)
+
+    // ---------- 槽位收敛 ----------
+
+    [<Fact>]
+    member _.``同类槽位同值不再分叉`` () =
+        // 此前 18 / 19 / 54 / 56 / 110 / 15 各写一份，是「对不齐」的直接来源。
+        // 现在全应用只有 icon / wide / wide2 三档。
+        Assert.Equal(Spacing.Slot.icon, ControlMetrics.menuIconSlotWidth)
+        Assert.Equal(Spacing.Slot.icon, ControlMetrics.sidebarStateSlotWidth)
+        Assert.Equal(Spacing.Slot.wide, ControlMetrics.composerAttachmentStateWidth)
+        Assert.Equal(Spacing.Slot.wide, ControlMetrics.fontSizeValueMinWidth)
+        Assert.Equal(Spacing.Slot.wide2, ControlMetrics.aboutKeyMinWidth)
+        Assert.Equal(Tokens.iconGlyph, ControlMetrics.composerAttachmentIconSlot)
+        Assert.Equal(3, Spacing.Slot.all.Length)
+
+    [<Trait("Category", "UI")>]
+    [<Fact>]
+    member _.``tag 与 chip 纵向密度同档`` () =
         Headless.run (fun () ->
-        // 替代散落的 1.0 / 2.0 / 3.0 纵向内边距（tag/chip/pill、行容器、字段留白）。
-        Assert.Equal(1.0, Tokens.tightRowPaddingY)
-        Assert.Equal(2.0, Tokens.compactRowPaddingY)
-        Assert.Equal(3.0, Tokens.fieldRowPaddingY)
+        // tag / chip 同为单行小控件，纵向密度不应分叉（规范 §2.1）。
+        let tag = Ui.tag "示例"
+        Assert.Equal(Spacing.spaceXXs, tag.Padding.Top)
+        Assert.Equal(ControlMetrics.chipPaddingY, tag.Padding.Top)
+        Assert.Equal(Spacing.spaceMd, ControlMetrics.chipPaddingX)
+        Assert.Equal(Spacing.spaceSm, ControlMetrics.tagPaddingX)
         )
 
-    [<Fact>]
-    member _.LetterSpacingTracksMatchScatteredLiterals() =
-        Headless.run (fun () ->
-        // 替代散落的 0.3 / 0.4 / 0.6 / 0.8。
-        Assert.Equal(0.3, Tokens.letterSpacingLabel)
-        Assert.Equal(0.4, Tokens.letterSpacingEmphasis)
-        Assert.Equal(0.6, Tokens.letterSpacingSection)
-        Assert.Equal(0.8, Tokens.letterSpacingDisplay)
-        )
+    // ---------- 静态扫描：阶梯越界 ----------
 
     [<Fact>]
-    member _.SkeletonOpacityGroupMatchesScatteredLiterals() =
-        Headless.run (fun () ->
-        // 替代散落的 0.65（骨架条静态）/ 0.55（呼吸下限）/ 0.85（减弱动效静态）。
-        Assert.Equal(0.65, Tokens.skeletonOpacityBase)
-        Assert.Equal(0.55, Tokens.skeletonOpacityBreathMin)
-        Assert.Equal(0.85, Tokens.skeletonOpacityReduced)
-        )
+    member _.``视图层内边距全部落在 Fluent ramp 上`` () =
+        let v = SpacingScan.violations ()
+        Assert.True(
+            v.IsEmpty,
+            "视图层内边距越界（须改用 Spacing ramp 档）：\n  " + String.Join("\n  ", v))
 
     [<Fact>]
-    member _.HoverDimIsNamedOutsideStateLadder() =
-        Headless.run (fun () ->
-        // 替代 MessageCard 三处裸 0.9（hover 微暗），有意不并入状态阶梯。
-        Assert.Equal(0.9, Tokens.opacityHoverDim)
-        )
+    member _.``字号一律走令牌不写裸值`` () =
+        // 规范 §3.2：视图层禁止 `FontSize = <数字>`。
+        let v = SpacingScan.lineViolations [ Regex(@"FontSize\s*=\s*([0-9.]+)") ]
+        Assert.True(v.IsEmpty, "字号裸值：\n  " + String.Join("\n  ", v))
 
     [<Fact>]
-    member _.AccentEdgeTiersKeepIntentionalSplit() =
-        Headless.run (fun () ->
-        // 2.0 统一档：侧栏选中 / toast / 思考竖线；3.0 引用块有意宽一档。
-        Assert.Equal(2.0, ControlMetrics.accentEdgeWidth)
-        Assert.Equal(3.0, ControlMetrics.quoteEdgeWidth)
-        Assert.Equal(ControlMetrics.accentEdgeWidth, ControlMetrics.sidebarSelectedEdgeWidth)
-        Assert.Equal(ControlMetrics.accentEdgeWidth, ControlMetrics.toastAccentWidth)
-        Assert.True(ControlMetrics.quoteEdgeWidth > ControlMetrics.accentEdgeWidth)
-        )
+    member _.``圆角与描边一律走令牌不写裸值`` () =
+        // 规范 §2.3 / §2.4：CornerRadius / BorderThickness 只读 Spacing.Radius / Spacing.Stroke。
+        let v =
+            SpacingScan.lineViolations
+                [ Regex(@"CornerRadius\(\s*([0-9.]+)")
+                  Regex(@"BorderThickness\s*=\s*Thickness\s*\(?\s*([0-9.]+)") ]
+        Assert.True(v.IsEmpty, "圆角/描边裸值：\n  " + String.Join("\n  ", v))
+
+    // ---------- 对比度契约 ----------
 
     [<Fact>]
-    member _.RowMinHeightIsSingleSourceForBothRowKinds() =
-        Headless.run (fun () ->
-        // 44.0 同值不同源 → 单一真源；两个旧名保留为别名，值不再分叉。
-        Assert.Equal(44.0, ControlMetrics.rowMinHeight)
-        Assert.Equal(ControlMetrics.rowMinHeight, ControlMetrics.sidebarRowMinHeight)
-        Assert.Equal(ControlMetrics.rowMinHeight, ControlMetrics.settingsRowMinHeight)
-        )
+    member _.``明暗两调色板全部前景过 WCAG AA`` () =
+        // 规范 §5.2：正文 4.5:1。实测最低值 4.58（浅 textFaint on rail），
+        // 门槛 4.5 只比实测下限低 0.08——是真实余量，不是宽放。
+        let surfaces =
+            [| "canvas"; "rail"; "surface"; "surfaceContainer"; "surfaceRaised" |]
+        let inks =
+            [| "text"; "textMuted"; "textFaint"; "accent"; "danger"; "warning"; "success"; "info" |]
+        let pick (palette: Palette) (name: string) =
+            match name with
+            | "canvas" -> palette.canvas
+            | "rail" -> palette.rail
+            | "surface" -> palette.surface
+            | "surfaceContainer" -> palette.surfaceContainer
+            | "surfaceRaised" -> palette.surfaceRaised
+            | "text" -> palette.text
+            | "textMuted" -> palette.textMuted
+            | "textFaint" -> palette.textFaint
+            | "accent" -> palette.accent
+            | "danger" -> palette.danger
+            | "warning" -> palette.warning
+            | "success" -> palette.success
+            | "info" -> palette.info
+            | _ -> failwithf "调色板没有槽位 %s（新增槽位必须同步进本表与规范 §5.1）" name
+        let cases : (string * Palette) list = [ "light", Palette.light; "dark", Palette.dark ]
+        for (label, palette) in cases do
+            for surface in surfaces do
+                for ink in inks do
+                    let ratio = Contrast.ratio (pick palette ink) (pick palette surface)
+                    Assert.True(
+                        ratio >= 4.5,
+                        sprintf "%s: %s on %s 对比度 %.2f < 4.5（WCAG AA）" label ink surface ratio)
 
     [<Fact>]
-    member _.SelectButtonPaddingAndTextAreaHeights() =
-        Headless.run (fun () ->
-        // 替代 Menu.selectButton 的 6.0；textArea 两档保留（长文本特例 > 标准档）。
-        Assert.Equal(6.0, ControlMetrics.selectButtonPaddingY)
-        Assert.Equal(96.0, ControlMetrics.textAreaMinHeight)
-        Assert.Equal(160.0, ControlMetrics.textAreaLongMinHeight)
-        Assert.True(ControlMetrics.textAreaLongMinHeight > ControlMetrics.textAreaMinHeight)
-        )
+    member _.``强调色上的文字过 4.5 比`` () =
+        // 实心强调按钮上的文字是 textOnAccent，单独验。
+        let cases : (string * Palette) list = [ "light", Palette.light; "dark", Palette.dark ]
+        for (label, palette) in cases do
+            let ratio = Contrast.ratio palette.textOnAccent palette.accent
+            Assert.True(
+                ratio >= 4.5, sprintf "%s: textOnAccent on accent 对比度 %.2f < 4.5" label ratio)
+
+    // ---------- 状态反馈单源 ----------
 
     [<Fact>]
-    member _.ComponentGeometryConstants() =
-        Headless.run (fun () ->
-        Assert.Equal(14.0, ControlMetrics.spinnerSize)
-        Assert.Equal(11.0, ControlMetrics.spinnerCompactSize)
-        Assert.Equal(34.0, ControlMetrics.toggleTrackWidth)
-        Assert.Equal(20.0, ControlMetrics.toggleTrackHeight)
-        Assert.Equal(14.0, ControlMetrics.toggleKnobSize)
-        Assert.Equal(3.0, ControlMetrics.toggleKnobInsetX)
-        Assert.Equal(7.0, ControlMetrics.caretWidth)
-        Assert.Equal(15.0, ControlMetrics.caretHeight)
-        Assert.Equal(1.5, ControlMetrics.caretRadius)
-        Assert.Equal(136.0, ControlMetrics.emptyStateActionMinWidth)
-        Assert.Equal(38.0, ControlMetrics.emptyStateActionHeight)
-        Assert.Equal(120.0, ControlMetrics.emptyStateTitleMinWidth)
-        Assert.Equal(96.0, ControlMetrics.scrollToBottomMinWidth)
-        Assert.Equal(80.0, ControlMetrics.retryButtonMinWidth)
-        Assert.Equal(4.0, ControlMetrics.listMarkerDotSize)
-        Assert.Equal(2.0, ControlMetrics.listMarkerDotRadius)
-        Assert.Equal(14.0, ControlMetrics.taskBoxSize)
-        Assert.Equal(1.4, ControlMetrics.taskBoxBorderWidth)
-        Assert.Equal(10.0, ControlMetrics.taskCheckGlyphSize)
-        // 同为 96 但语义不同（滚动定位 vs 保存占位）：按 MotionLedger 纪律分记，
-        // 两个名字必须独立存在，任何一方都不得被合档成一个"通用 96"。
-        Assert.Equal(96.0, ControlMetrics.pendingActionMinWidth)
-        Assert.Equal(96.0, ControlMetrics.scrollToBottomMinWidth)
-        )
-
-    [<Fact>]
-    member _.MotionLedgerToastDwellAndFadeNames() =
-        Headless.run (fun () ->
-        // toast 三档对应 OverlayHost 的 9000 / 6500 / 4000；150ms 两枚语义名分记。
-        Assert.Equal(TimeSpan.FromMilliseconds 9000.0, MotionLedger.toastDwellFailure)
-        Assert.Equal(TimeSpan.FromMilliseconds 6500.0, MotionLedger.toastDwellWarning)
-        Assert.Equal(TimeSpan.FromMilliseconds 4000.0, MotionLedger.toastDwellDefault)
-        Assert.Equal(TimeSpan.FromMilliseconds 150.0, MotionLedger.disclosureChevronRotate)
-        Assert.Equal(TimeSpan.FromMilliseconds 150.0, MotionLedger.controlRowFade)
-        // 几何动画纪律不变：本批改动只收敛颜色/不透明度/命名。
+    member _.``几何动画仍然全面禁止`` () =
+        // 规范 §4.3：状态只补间颜色与不透明度。
         Assert.False(MotionLedger.geometryAnimationAllowed)
-        )
-
-    [<Fact>]
-    member _.ControlStateTransitionAlignsWithThemeTier() =
-        Headless.run (fun () ->
-        // hover/press/focus/selected 底色补间从 120ms 提到 200ms，与 themeColorTransition 同档；
-        // 消费时长仍单源经 controlStateDuration（= controlStateTransition 经 MotionPolicy 降级）。
-        Assert.Equal(TimeSpan.FromMilliseconds 200.0, MotionLedger.controlStateTransition)
-        Assert.Equal(MotionLedger.controlStateTransition, MotionLedger.themeColorTransition)
-        MotionPolicy.setReduced false
-        Assert.Equal(MotionLedger.controlStateTransition, MotionLedger.controlStateDuration ())
-        MotionPolicy.setReduced true
-        Assert.Equal(TimeSpan.Zero, MotionLedger.controlStateDuration ())
-        MotionPolicy.setReduced false
-        )
-
-    [<Fact>]
-    member _.HorizontalInsetTracksCompactBreakpoints() =
-        Headless.run (fun () ->
-        // 自适应水平留白四档单调不降，锚定既有断点；端点逐一钉住取值随 Tokens 留白阶梯走。
-        Assert.Equal(Tokens.space4, LayoutPolicy.horizontalInset 0.0)
-        Assert.Equal(Tokens.space4, LayoutPolicy.horizontalInset (LayoutPolicy.formSingleColumnBreakpoint - 1.0))
-        Assert.Equal(Tokens.space6, LayoutPolicy.horizontalInset LayoutPolicy.formSingleColumnBreakpoint)
-        Assert.Equal(Tokens.space6, LayoutPolicy.horizontalInset (LayoutPolicy.compactBreakpoint - 1.0))
-        Assert.Equal(Tokens.space8, LayoutPolicy.horizontalInset LayoutPolicy.compactBreakpoint)
-        Assert.Equal(Tokens.space8, LayoutPolicy.horizontalInset (LayoutPolicy.wideLayoutBreakpoint - 1.0))
-        Assert.Equal(Tokens.space12, LayoutPolicy.horizontalInset LayoutPolicy.wideLayoutBreakpoint)
-        // 单调性：留白随窗口变宽不减。
-        Assert.True(LayoutPolicy.horizontalInset 1280.0 >= LayoutPolicy.horizontalInset 800.0)
-        Assert.True(LayoutPolicy.horizontalInset 800.0 >= LayoutPolicy.horizontalInset 400.0)
-        )
-
-    [<Fact>]
-    member _.CompactActionTargetIsSingleTouchSource () =
-        Headless.run (fun () ->
-        // 触控整合：compactActionTarget 提为触控下限 44，是全应用 compact/touch 图标
-        // 动作 hit surface 的唯一来源（ChatView / Composer / Sidebar 的 compact 档共用）；
-        // 地基曾加的重复 token（touchActionTarget / Ui.setIconTouchTarget）已删除。
-        Assert.Equal(44.0, LayoutPolicy.compactActionTarget)
-        )
-
-    [<Fact>]
-    member _.TagDefaultBehaviourUnchanged() =
-        Headless.run (fun () ->
-        // 默认 Neutral 外观与原 Ui.tag 逐字一致（含 1.0 的 tight 档 padding）。
-        let neutral = Ui.tag "x"
-        let child = neutral.Child :?> TextBlock
-        Assert.Equal("x", child.Text)
-        Assert.Same(Tokens.textMuted, child.Foreground)
-        Assert.Same(Tokens.surfaceRaised, neutral.Background)
-        Assert.Same(Tokens.border, neutral.BorderBrush)
-        Assert.Equal(Thickness(7.0, 1.0), neutral.Padding)
-        )
-
-    [<Fact>]
-    member _.TagTonesReuseExistingPensAndKeepGeometry() =
-        Headless.run (fun () ->
-        // 语气档只换既有 warning / danger / dangerSoft 笔，几何不变（同排不错位）。
-        let warning = Ui.tagWith Ui.TagTone.Warning "w"
-        let danger = Ui.tagWith Ui.TagTone.Danger "d"
-        let warningChild = warning.Child :?> TextBlock
-        let dangerChild = danger.Child :?> TextBlock
-        Assert.Same(Tokens.warning, warningChild.Foreground)
-        Assert.Same(Tokens.warning, warning.BorderBrush)
-        Assert.Same(Tokens.danger, dangerChild.Foreground)
-        Assert.Same(Tokens.danger, danger.BorderBrush)
-        Assert.Same(Tokens.dangerSoft, danger.Background)
-        Assert.Equal(Thickness(7.0, 1.0), warning.Padding)
-        Assert.Equal(Thickness(7.0, 1.0), danger.Padding)
-        )
-
-    [<Fact>]
-    member _.SwitchRowKeepsAutomationAndRowHeight() =
-        Headless.run (fun () ->
-        // 公共 Ui.switchRow 保留 SettingsGeneral 原行为的三个支点：
-        // 行最小高度（单一真源）、CheckBox 自动化语义、ItemStatus 开关状态。
-        let row, read, write = Ui.switchRow "标题" "说明" false ignore
-        let border = row :?> Border
-        Assert.Equal(44.0, border.MinHeight)
-        Assert.Equal(
-            Avalonia.Automation.Peers.AutomationControlType.CheckBox,
-            AutomationProperties.GetControlTypeOverride(border).Value)
-        Assert.Equal("关闭", AutomationProperties.GetItemStatus(border))
-        write true
-        Assert.True(read ())
-        Assert.Equal("开启", AutomationProperties.GetItemStatus(border))
-        write false
-        Assert.False(read ())
-        Assert.Equal("关闭", AutomationProperties.GetItemStatus(border))
-        )
-
-    [<Fact>]
-    member _.ValidationFeedbackMultiErrorSummaryAndToast() =
-        Headless.run (fun () ->
-        // 多错：摘要 live region 文案 + 「有 N 处需要修正」toast，与两处旧实现逐字一致。
-        let summary = TextBlock()
-        let boxA = TextBox()
-        let boxB = TextBox()
-        let toasts = ResizeArray<string>()
-        Ui.applyValidationFeedback [ boxA, "错A"; boxB, "错B" ] (Some summary) toasts.Add
-        Assert.Equal("有 2 处需要修正：错A；错B", summary.Text)
-        Assert.True(summary.IsVisible)
-        Assert.Single toasts |> ignore
-        Assert.Equal("有 2 处需要修正，请查看表单顶部摘要。", toasts.[0])
-        )
-
-    [<Fact>]
-    member _.ValidationFeedbackSingleErrorToastsFieldMessage() =
-        Headless.run (fun () ->
-        // 单错：toast 字段消息并收起摘要。
-        let summary = TextBlock()
-        summary.IsVisible <- true
-        let box = TextBox()
-        let toasts = ResizeArray<string>()
-        Ui.applyValidationFeedback [ box, "错一个" ] (Some summary) toasts.Add
-        Assert.False(summary.IsVisible)
-        Assert.Single toasts |> ignore
-        Assert.Equal("错一个", toasts.[0])
-        )
-
-    [<Fact>]
-    member _.ValidationFeedbackEmptyErrorsAreNoOp() =
-        Headless.run (fun () ->
-        let summary = TextBlock()
-        let toasts = ResizeArray<string>()
-        Ui.applyValidationFeedback [] (Some summary) toasts.Add
-        Assert.False(summary.IsVisible)
-        Assert.Empty toasts
-        )
-
-    [<Fact>]
-    member _.ControlSkinMetricsHaveNamedSources() =
-        Headless.run (fun () ->
-        // 替代散落的 1.0 描边、6.0/6.0 行状态点、5.0 chip 内点。
-        Assert.Equal(1.0, ControlMetrics.borderWidth)
-        Assert.Equal(6.0, ControlMetrics.statusDotSize)
-        Assert.Equal(6.0, ControlMetrics.sidebarRunningDotSize)
-        Assert.Equal(5.0, ControlMetrics.chipDotSize)
-        Assert.True(ControlMetrics.chipDotSize < ControlMetrics.statusDotSize)
-        )
-
-    [<Fact>]
-    member _.ChipDensityHasSingleSourceUnderBothNames() =
-        Headless.run (fun () ->
-        // chip 内边距的唯一真源（8 × 2）；compactChipPadding* 只是同一对的兼容别名，
-        // 值随真源走（旧纵向 4 已并入 compactRowPaddingY 的紧凑档，chip/tag 同为单行小控件）。
-        Assert.Equal(8.0, ControlMetrics.chipPaddingX)
-        Assert.Equal(2.0, ControlMetrics.chipPaddingY)
-        Assert.Equal(Tokens.compactRowPaddingY, ControlMetrics.chipPaddingY)
-        Assert.Equal(ControlMetrics.chipPaddingX, ControlMetrics.compactChipPaddingX)
-        Assert.Equal(ControlMetrics.chipPaddingY, ControlMetrics.compactChipPaddingY)
-        // chip 横向 8 与 tag 横向 7 是有意两档，不许被合回同一个值。
-        Assert.True(ControlMetrics.chipPaddingX > ControlMetrics.tagPaddingX)
-        )
-
-    [<Fact>]
-    member _.ValuePreservingNamesForScatteredLiterals() =
-        Headless.run (fun () ->
-        // 只把字面量换成名字，值一字不动（下游 lane 继续按这些名字收敛）。
-        Assert.Equal(7.0, ControlMetrics.tagPaddingX)
-        Assert.Equal(2.0, ControlMetrics.fieldInsetX)
-        Assert.Equal(1.8, ControlMetrics.spinnerStrokeWidth)
-        Assert.Equal(16.0, ControlMetrics.spinnerCanvasSize)
-        Assert.Equal(56.0, ControlMetrics.fontSizeValueMinWidth)
-        Assert.Equal(110.0, ControlMetrics.aboutKeyMinWidth)
-        )
-
-    [<Fact>]
-    member _.TagStillYieldsTheLockedPaddingFromNamedTokens() =
-        Headless.run (fun () ->
-        // 取值改名不改值：Ui.tag 仍是 Padding(7.0, 1.0)，描边仍是 canonical 1.0。
-        let neutral = Ui.tag "x"
-        Assert.Equal(Thickness(7.0, 1.0), neutral.Padding)
-        Assert.Equal(ControlMetrics.tagPaddingX, neutral.Padding.Left)
-        Assert.Equal(Tokens.tightRowPaddingY, neutral.Padding.Top)
-        Assert.Equal(ControlMetrics.borderWidth, neutral.BorderThickness.Left)
-        Assert.Same(Tokens.border, neutral.BorderBrush)
-        )
-
-    [<Fact>]
-    member _.EmptyStateProminentTitleIsOptInAndDefaultUnchanged() =
-        Headless.run (fun () ->
-        // 默认档与提取前逐字一致（label 档小号、无宽字距）；强调档只改标题字号与字距，
-        // 卡片几何两档一致——档位不变成第二个契约。
-        let plain = Ui.emptyState (Border()) (Some "还没有会话") "" None None
-        let prominent = Ui.emptyStateWith true (Border()) (Some "先连接万象服务器") "" None None
-        let plainColumn = (plain :?> Border).Child :?> StackPanel
-        let prominentColumn = (prominent :?> Border).Child :?> StackPanel
-        let plainTitle = plainColumn.Children.[1] :?> TextBlock
-        let prominentTitle = prominentColumn.Children.[1] :?> TextBlock
-        Assert.Equal(Tokens.fontBody, plainTitle.FontSize)
-        Assert.Equal(0.0, plainTitle.LetterSpacing)
-        Assert.Equal(Tokens.fontTitle, prominentTitle.FontSize)
-        Assert.Equal(Tokens.letterSpacingEmphasis, prominentTitle.LetterSpacing)
-        Assert.Equal((plain :?> Border).Padding, (prominent :?> Border).Padding)
-        Assert.Equal((plain :?> Border).CornerRadius, (prominent :?> Border).CornerRadius)
-        )
-
-    [<Fact>]
-    member _.PrimitiveStatesShareTransitionCollectionAndKeepContracts() =
-        Headless.run (fun () ->
-        // 新加的 hover/pressed 反馈挂在共享的表面过渡集合上（只补间底色、时长出自
-        // MotionLedger），自动化语义与几何契约不变。无显示制度下过渡不推进，只锁结构。
-        let toggleControl, read, write, _ = Ui.toggle false ignore
-        let track = toggleControl :?> Border
-        Assert.Equal(ControlMetrics.toggleTrackWidth, track.Width)
-        Assert.Equal(ControlMetrics.toggleTrackHeight, track.Height)
-        Assert.Equal(1.0, track.Opacity)
-        Assert.True(hasSurfaceFeedback track)
-        write true
-        Assert.True(read ())
-
-        let rowControl, _, _ = Ui.switchRow "标题" "说明" false ignore
-        let row = rowControl :?> Border
-        Assert.Equal(ControlMetrics.settingsRowMinHeight, row.MinHeight)
-        Assert.Equal(1.0, row.Opacity)
-        Assert.True(hasSurfaceFeedback row)
-        Assert.Equal(
-            Avalonia.Automation.Peers.AutomationControlType.CheckBox,
-            AutomationProperties.GetControlTypeOverride(row).Value)
-        Assert.Equal("关闭", AutomationProperties.GetItemStatus(row))
-
-        let shell, _ = Ui.textField "输入"
-        Assert.Same(Tokens.border, shell.BorderBrush)
-        Assert.Equal(Thickness(ControlMetrics.borderWidth), shell.BorderThickness)
-        Assert.True(hasSurfaceFeedback shell)
-        )

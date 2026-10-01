@@ -26,6 +26,7 @@ open System.Text.Json.Nodes
 /// - 消息右键菜单与 hover 操作条同源同图（chat_message_widget.dart:2015 带 Lucide 图标）：
 ///   MenuEntry 早就带上 icon，唯独 buildMessageContextMenu 把它丢在半路。
 /// 三条都是收敛：不新增能力、不改视觉基调、不动产品契约。
+[<Trait("Category", "UI")>]
 module InteractabilityConvergenceTests =
 
     /// 与 ExchangeNavTests 同构的 ChatView 装配（本文件只锁滚动未读计数）。
@@ -85,6 +86,7 @@ module InteractabilityConvergenceTests =
         |> Seq.filter (fun text -> not (isNull text) && (text.Contains "条新消息"))
         |> Seq.tryHead
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``streaming reply finalizing while scrolled away counts as an unread message`` () =
         Headless.run (fun () ->
@@ -105,6 +107,7 @@ module InteractabilityConvergenceTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``streaming reply finalizing while pinned to the bottom keeps the counter clear`` () =
         Headless.run (fun () ->
@@ -123,6 +126,7 @@ module InteractabilityConvergenceTests =
     /// 右键菜单动作集由 messageMenuEntries 单一产出（hover 按钮共用同一份），
     /// 但 buildMessageContextMenu 过去只取 label/action，icon 被丢在半路：
     /// 同一个动作 hover 上有图、右键里是纯文字。这句锁的就是两端同图。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``message context menu carries the same icons as the hover toolbar`` () =
         Headless.run (fun () ->
@@ -175,6 +179,7 @@ module InteractabilityConvergenceTests =
     /// 停止生成后焦点必须回到输入区。点了按钮却把焦点留在按钮上，
     /// 用户紧接着打的字全喂给按钮——回车还会再触发一次停止/发送。
     /// kelivo chat_input_bar.dart:1010 在 stop 分支同样 requestFocus 回 focusNode。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``stopping generation hands focus back to the input`` () =
         Headless.run (fun () ->
@@ -244,6 +249,7 @@ module InteractabilityConvergenceTests =
     // 空态下点模型芯片：过去固定弹「先选择一个会话。」——而此刻输入区是启用的、
     // 芯片上正亮着默认模型名。kelivo model_select_sheet.dart:216 的选择不依赖已有会话。
     // 这里锁三条：菜单开得出、选中写入草稿暂存位、草稿不走丢（建会话时作为起点）。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``empty state model chip opens the picker and remembers the choice`` () =
         Headless.run (fun () ->

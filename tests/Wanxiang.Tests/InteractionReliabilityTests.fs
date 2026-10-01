@@ -52,6 +52,7 @@ let private stopVisible view =
     let composer = (field view "composer").GetValue view :?> Composer
     controls composer |> Seq.exists (fun c -> AutomationProperties.GetName c = "停止生成")
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``composer retains input when dispatch does not take ownership`` () =
     Headless.run (fun () ->
@@ -68,6 +69,7 @@ let ``composer retains input when dispatch does not take ownership`` () =
     Assert.Equal("这段文字不能丢", text)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``finishing a background conversation does not stop the foreground generation`` () =
     Headless.run (fun () ->
@@ -81,6 +83,7 @@ let ``finishing a background conversation does not stop the foreground generatio
     Assert.True(stopVisible view)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``finishing an old generation does not stop its replacement`` () =
     Headless.run (fun () ->
@@ -94,6 +97,7 @@ let ``finishing an old generation does not stop its replacement`` () =
     Assert.True(stopVisible view)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``late snapshot updates data without taking over navigation`` () =
     Headless.run (fun () ->
@@ -104,6 +108,7 @@ let ``late snapshot updates data without taking over navigation`` () =
     Assert.Equal(Some b, (field view "activeConvId").GetValue(view) :?> Guid option)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``a declined submission leaves the composer editable and intact`` () =
     Headless.run (fun () ->
@@ -126,6 +131,7 @@ let ``a declined submission leaves the composer editable and intact`` () =
     Assert.True input.IsEnabled
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``generation accepts a queued message without turning send into cancel`` () =
     Headless.run (fun () ->
@@ -150,6 +156,7 @@ let ``generation accepts a queued message without turning send into cancel`` () 
     Assert.False stopped
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``switching conversations restores their separate drafts`` () =
     Headless.run (fun () ->
@@ -167,6 +174,7 @@ let ``switching conversations restores their separate drafts`` () =
     Assert.Equal("B 的草稿", composer.Text)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``outbox keeps the exact command and attachment references across a disconnect`` () =
     Headless.run (fun () ->
@@ -192,6 +200,7 @@ let ``outbox keeps the exact command and attachment references across a disconne
     Assert.Equal(0, outbox.Count)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``preparing first message retains its original creation command for retry`` () =
     Headless.run (fun () ->
@@ -208,6 +217,7 @@ let ``preparing first message retains its original creation command for retry`` 
     Assert.True((outbox.TryFind(PendingMessage.invocationId item)).Value.creationConfirmed)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``unacknowledged sends expire but an explicitly queued message does not`` () =
     Headless.run (fun () ->
@@ -220,6 +230,7 @@ let ``unacknowledged sends expire but an explicitly queued message does not`` ()
     Assert.Equal(QueuedMessage, (outbox.TryFind(PendingMessage.invocationId queued)).Value.state)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``drafts and pending messages never cross server identities`` () =
     Headless.run (fun () ->
@@ -232,6 +243,7 @@ let ``drafts and pending messages never cross server identities`` () =
     Assert.Empty(outbox.Items("b", Some id))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``stale deltas and finished snapshots cannot resurrect retired generations`` () =
     Headless.run (fun () ->
@@ -248,6 +260,7 @@ let ``stale deltas and finished snapshots cannot resurrect retired generations``
     Assert.False((runs.Get(Some id)).running)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``configuration failure without a started event is still visible in its own conversation`` () =
     Headless.run (fun () ->
@@ -268,6 +281,7 @@ let ``configuration failure without a started event is still visible in its own 
     Assert.True((runs.Get(Some(Guid.NewGuid()))).error.IsNone)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``snapshot generation identity roundtrips and legacy snapshots remain readable`` () =
     Headless.run (fun () ->
@@ -289,6 +303,7 @@ let ``snapshot generation identity roundtrips and legacy snapshots remain readab
     | other -> failwithf "legacy snapshot rejected: %A" other
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``disconnected command transport reports failure instead of silent success`` () =
     Headless.run (fun () ->
@@ -300,6 +315,7 @@ let ``disconnected command transport reports failure instead of silent success``
     Assert.True(client.ConnectionGeneration > before)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``failed first messages remain reachable after switching away`` () =
     Headless.run (fun () ->
@@ -331,6 +347,7 @@ let ``failed first messages remain reachable after switching away`` () =
     finally window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``selecting an unloaded conversation does not display the previous conversation body`` () =
     Headless.run (fun () ->
@@ -356,6 +373,7 @@ let ``selecting an unloaded conversation does not display the previous conversat
     Assert.Equal("只属于会话 A 的正文", (runs.Get(Some a)).message.Value.text)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``generation ending hands keyboard focus back to the composer`` () =
     Headless.run (fun () ->
@@ -389,6 +407,7 @@ let ``generation ending hands keyboard focus back to the composer`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``top bar stop button hands keyboard focus back to the composer when a run finishes`` () =
     Headless.run (fun () ->
@@ -458,6 +477,7 @@ let ``top bar stop button hands keyboard focus back to the composer when a run f
 /// OpenConversation:520）都在 send 之后无条件把焦点送回输入区（D3/D4），
 /// ForkFrom 此前不在其中：键盘用户在编辑弹窗确认后焦点悬在已关闭的对话框原位
 /// （对话框关掉时其焦点宿主一并消失），得摸鼠标点回输入区。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``forking from a message hands keyboard focus back to the composer`` () =
     Headless.run (fun () ->
@@ -511,6 +531,7 @@ let ``forking from a message hands keyboard focus back to the composer`` () =
 // Track、也没有任何提示：删完 N 个会话界面无反馈，命令被拒时同样无声
 // （CommandRejected 对未 Track 的 id 是空操作），用户以为删掉了，行还在列表里。
 // kelivo side_drawer.dart:752-756 删完即给汇总 snackbar，同一约定。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``batch delete reports what it did instead of staying silent`` () =
     Headless.run (fun () ->
@@ -567,6 +588,7 @@ let ``batch delete reports what it did instead of staying silent`` () =
 // 不可恢复操作（删会话、批量删、删消息、删服务商、删 MCP）都有确认框，
 // 唯独重新生成没有——误点一次，上一轮回复连内容带引用全部消失。
 // kelivo_chat_message_widget.dart:1346-1375 _confirmRegeneration 同一约定。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``regenerate asks before discarding the last reply`` () =
     Headless.run (fun () ->

@@ -177,6 +177,7 @@ let private exchanges (count: int) : MessageView list =
                  text = sprintf "第 %d 轮回答：%s" round (String.replicate 12 "回复内容填充，需要足够高度才能形成滚动范围。")
                  commitId = Some(uint64 (round * 2)) } ]
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``wheel moving either way stops an in-flight smooth scroll`` () =
     Headless.run (fun () ->
@@ -226,6 +227,7 @@ let ``wheel moving either way stops an in-flight smooth scroll`` () =
 
 // ── 2. 服务商表单：单行字段 Enter 被消费 ───────────────────────────────────
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``provider form consumes enter from a single line field`` () =
     Headless.run (fun () ->
@@ -325,6 +327,7 @@ let private buildSidebarForPolish () =
     root.Children.Add sidebar
     root, overlay, sidebar
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``row context menu stays closed while the sidebar is in selection mode`` () =
     Headless.run (fun () ->
@@ -357,6 +360,7 @@ let ``row context menu stays closed while the sidebar is in selection mode`` () 
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``row more button leaves the hit tree in selection mode`` () =
     Headless.run (fun () ->
@@ -379,6 +383,7 @@ let ``row more button leaves the hit tree in selection mode`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``escape in the search box leaves selection mode first`` () =
     Headless.run (fun () ->

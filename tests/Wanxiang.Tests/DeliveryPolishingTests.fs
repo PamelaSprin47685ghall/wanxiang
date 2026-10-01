@@ -23,6 +23,7 @@ open Wanxiang.Tests.Helpers
 open Avalonia.Input
 open Avalonia.Interactivity
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``builtin echo function extracts text from various argument names`` () =
     Headless.run (fun () ->
@@ -46,6 +47,7 @@ let ``builtin echo function extracts text from various argument names`` () =
     Assert.Equal("message-content", string res3)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``builtin file read function extracts path from various argument names with sandbox check`` () =
     Headless.run (fun () ->
@@ -79,6 +81,7 @@ let ``builtin file read function extracts path from various argument names with 
         cleanup dir
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``builtin file list function lists directory entries`` () =
     Headless.run (fun () ->
@@ -101,6 +104,7 @@ let ``builtin file list function lists directory entries`` () =
         cleanup dir
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``builtin time function returns ISO 8601 UTC timestamp`` () =
     Headless.run (fun () ->
@@ -112,6 +116,7 @@ let ``builtin time function returns ISO 8601 UTC timestamp`` () =
     Assert.Equal(TimeSpan.Zero, dt.Offset)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``provider sse preserves indentation according to W3C specification`` () =
     Headless.run (fun () ->
@@ -137,6 +142,7 @@ let ``provider sse preserves indentation according to W3C specification`` () =
     Assert.Equal("        return 42", lines[1])
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``client state updates and removes deleted message in ConversationUpdated`` () =
     Headless.run (fun () ->
@@ -185,6 +191,7 @@ let ``client state updates and removes deleted message in ConversationUpdated`` 
     Assert.Equal(12UL, view2.lastCommitId)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``client state catch up removes deleted message via MessageDeleted event`` () =
     Headless.run (fun () ->
@@ -222,6 +229,7 @@ let ``client state catch up removes deleted message via MessageDeleted event`` (
     Assert.Equal(21UL, state.Conversations[convId].lastCommitId)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``session config topP and thinkingBudget roundtrip in commit codec`` () =
     Headless.run (fun () ->
@@ -248,6 +256,7 @@ let ``session config topP and thinkingBudget roundtrip in commit codec`` () =
     | _ -> failwith "unexpected event type"
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ui button triggers callback on Enter and Space keys`` () =
     Headless.run (fun () ->
@@ -265,6 +274,7 @@ let ``ui button triggers callback on Enter and Space keys`` () =
     Assert.Equal(2, count)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``markdown renderer renders complex markdown with code, tables and math without error`` () =
     Headless.run (fun () ->
@@ -284,6 +294,7 @@ let ``markdown renderer renders complex markdown with code, tables and math with
     Assert.NotNull control
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``message card renders user and assistant with reasoning and tools without error`` () =
     Headless.run (fun () ->
@@ -321,6 +332,7 @@ let ``message card renders user and assistant with reasoning and tools without e
     Assert.NotNull assistantCard
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``conversation summary matches multi word and model search`` () =
     Headless.run (fun () ->
@@ -354,6 +366,7 @@ let ``conversation summary matches multi word and model search`` () =
     Assert.False(ConversationSummary.matches "量子 gpt-4o" summary)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``highlight parseHtml maps nested scopes and diff tokens correctly`` () =
     Headless.run (fun () ->
@@ -372,6 +385,7 @@ let ``highlight parseHtml maps nested scopes and diff tokens correctly`` () =
     Assert.Contains(diffTokens, fun t -> t.kind = CodeDeletion && t.text.Contains("deleted line"))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``textField maintains constant border thickness on focus to prevent layout shift`` () =
     Headless.run (fun () ->
@@ -387,6 +401,7 @@ let ``textField maintains constant border thickness on focus to prevent layout s
     Assert.Equal(1.0, shell.BorderThickness.Top)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``theme mode switching updates palette and dynamic brushes`` () =
     Headless.run (fun () ->
@@ -415,6 +430,7 @@ let ``theme mode switching updates palette and dynamic brushes`` () =
     Assert.Equal(lightCanvas, Tokens.canvas.Color)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``error card toggles technical detail and triggers retry action`` () =
     Headless.run (fun () ->
@@ -429,6 +445,7 @@ let ``error card toggles technical detail and triggers retry action`` () =
     Assert.NotNull card
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``chat view renders a focused empty state without extra actions`` () =
     Headless.run (fun () ->
@@ -455,6 +472,7 @@ let ``chat view renders a focused empty state without extra actions`` () =
     Assert.True(chat.IsVisible)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``composer accepts text without introducing extra send modes`` () =
     Headless.run (fun () ->
@@ -474,6 +492,7 @@ let ``composer accepts text without introducing extra send modes`` () =
     Assert.True(comp.IsVisible)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``message card renders assistant markdown without extra view mode`` () =
     Headless.run (fun () ->
@@ -505,6 +524,7 @@ let ``message card renders assistant markdown without extra view mode`` () =
     Assert.NotNull card
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``main view build mounts a non-empty root visual tree`` () =
     Headless.run (fun () ->

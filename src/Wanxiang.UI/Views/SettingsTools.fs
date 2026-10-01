@@ -17,8 +17,8 @@ open System.Text.RegularExpressions
 /// 因此这里展示的就是模型真正能调用的东西，不是一张手抄的名字表。
 type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
 
-    let builtinPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
-    let mcpPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
+    let builtinPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
+    let mcpPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
     let sandboxNote =
         TextBlock(
             Text = "",
@@ -28,7 +28,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             LineHeight = ReadingRhythm.captionLineHeight)
     let mutable catalog = Catalog.empty
 
-    /// 外壳反馈只切描边颜色与外阴影（focusRingSpread），不动厚度与内边距。
+    /// 外壳反馈只切描边颜色与外阴影（Stroke.thick 外环），不动厚度与内边距。
     /// 错误行只在自己组内与 hint 互换（Ui.fieldGroup），不挤占兄弟。
     let syncShellVisual (box: TextBox) =
         let msg = Ui.fieldValidationMessage box
@@ -38,12 +38,12 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 shell.BorderBrush <- Tokens.danger
                 shell.BoxShadow <-
                     if box.IsFocused then
-                        BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.dangerSoft.Color))
+                        BoxShadows(BoxShadow(Spread = Spacing.Stroke.thick, Color = Tokens.dangerSoft.Color))
                     else
                         BoxShadows()
             elif box.IsFocused then
                 shell.BorderBrush <- Tokens.accent
-                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
+                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Spacing.Stroke.thick, Color = Tokens.accentSoft.Color))
             else
                 shell.BorderBrush <- Tokens.border
                 shell.BoxShadow <- BoxShadows()
@@ -234,7 +234,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             Ui.setButtonPending saveButton pending idleSaveText "正在保存…"
             Ui.setEnabled cancelButton (not pending)
         let buttons =
-            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, HorizontalAlignment = HorizontalAlignment.Right)
             row.Margin <- Thickness 0.0
             row.Children.Add cancelButton
             row.Children.Add saveButton
@@ -255,7 +255,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
 
         let form =
             Ui.vstack
-                Tokens.space3
+                Spacing.spaceXl
                 [ Ui.title (if existing.IsSome then "编辑 MCP 服务器" else "添加 MCP 服务器") :> Control
                   Ui.caption "本地服务器以子进程方式启动（stdio）；远程服务器走 Streamable HTTP。" :> Control
                   errorSummary :> Control
@@ -295,7 +295,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
     member private _.RenderTool(tool: ToolInfo) : Control =
         let icon = if tool.source = "mcp" then Icons.server Tokens.textMuted else Icons.wrench Tokens.textMuted
         icon.VerticalAlignment <- VerticalAlignment.Top
-        icon.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
+        icon.Margin <- Thickness 0.0
         let name =
             TextBlock(
                 Text = tool.label,
@@ -315,13 +315,13 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = ReadingRhythm.captionLineHeight,
-                Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0))
-        let column = Ui.vstack Tokens.tightRowPaddingY [ name :> Control; identifier :> Control; description :> Control ]
-        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)
+                Margin = Thickness 0.0)
+        let column = Ui.vstack Spacing.spaceXXs [ name :> Control; identifier :> Control; description :> Control ]
+        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXl)
         row.Children.Add icon
         row.Children.Add column
         // 列表行卡内边距走行卡档 (space4, space3)：与同页 MCP 行、服务商行同一档。
-        Ui.groupingCard (Thickness(Tokens.space4, Tokens.space3)) row Tokens.radiusMd
+        Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.spaceXl)) row Spacing.Radius.md
         :> Control
 
     member private this.RenderMcp(server: McpInfo) : Control =
@@ -341,7 +341,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         // 已停用卡弱化：只把行文字列的前景转 textMuted（tag 与编辑 / 更多按钮不压暗）。
         // meta 已是 textFaint，无需再降。
         if not server.enabled then name.Foreground <- Tokens.textMuted
-        let titleRow = Ui.hstack Tokens.space2 [ name :> Control ]
+        let titleRow = Ui.hstack Spacing.spaceMd [ name :> Control ]
         titleRow.Children.Add(Ui.tag(sprintf "%d 个工具" toolCount))
         if not server.enabled then titleRow.Children.Add(Ui.tag "已停用")
         let meta =
@@ -350,7 +350,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 FontSize = Tokens.fontMicro,
                 Foreground = Tokens.textFaint,
                 TextTrimming = TextTrimming.CharacterEllipsis)
-        let column = Ui.vstack Tokens.compactRowPaddingY [ titleRow :> Control; meta :> Control ]
+        let column = Ui.vstack Spacing.spaceXXs [ titleRow :> Control; meta :> Control ]
         let editButton = Ui.iconButton Icons.pencil "编辑"
         Ui.onClick editButton (fun () -> this.ShowEditor(Some server))
         let moreButton = Ui.iconButton Icons.more "更多"
@@ -373,12 +373,12 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                   MenuEntry.create "删除" (fun () -> actions.deleteMcp server.id)
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ])
-        let actionsRow = Ui.hstack Tokens.space1 [ editButton :> Control; moreButton :> Control ]
+        let actionsRow = Ui.hstack Spacing.spaceXs [ editButton :> Control; moreButton :> Control ]
         let dock = DockPanel(LastChildFill = true)
         DockPanel.SetDock(actionsRow, Dock.Right)
         dock.Children.Add actionsRow
         dock.Children.Add column
-        Ui.groupingCard (Thickness(Tokens.space4, Tokens.space3)) dock Tokens.radiusMd
+        Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.spaceXl)) dock Spacing.Radius.md
         :> Control
 
     member this.SetCatalog(next: Catalog) =
@@ -415,19 +415,19 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let addButton = Ui.button Ui.Primary "添加 MCP 服务器" (fun () -> this.ShowEditor None)
         addButton.HorizontalAlignment <- HorizontalAlignment.Left
         Ui.vstack
-            Tokens.space6
+            Spacing.space4xl
             [ Ui.vstack
-                  Tokens.space1
+                  Spacing.spaceXs
                   [ Ui.heading "工具与 MCP" :> Control
                     Ui.caption "会话设置里勾选的工具会随请求交给模型。工具清单来自服务端实际发现的结果。" :> Control ]
               :> Control
-              Ui.vstack Tokens.space2 [ Ui.sectionLabel "可用工具" :> Control; builtinPanel :> Control ] :> Control
+              Ui.vstack Spacing.spaceMd [ Ui.sectionLabel "可用工具" :> Control; builtinPanel :> Control ] :> Control
               sandboxNote :> Control
               // 内容分区之间用内容档分隔线（Ui.hairline = borderSoft），与编辑器表单内的分隔线同一档；
               // 窗口 / 导航这类 chrome 分隔才用更轻的 Tokens.hairline。
               Ui.hairline () :> Control
               Ui.vstack
-                  Tokens.space2
+                  Spacing.spaceMd
                   [ Ui.sectionLabel "MCP 服务器" :> Control; addButton :> Control; mcpPanel :> Control ]
               :> Control ]
         :> Control

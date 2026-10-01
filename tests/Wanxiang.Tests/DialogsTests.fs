@@ -13,6 +13,7 @@ open Wanxiang.Core
 open Wanxiang.UI
 open Wanxiang.Tests
 
+[<Trait("Category", "UI")>]
 module DialogsTests =
 
     let rec private descendants (control: Control) : seq<Control> =
@@ -41,6 +42,7 @@ module DialogsTests =
             | :? Border as b when AutomationProperties.GetName(b) = text -> Some b
             | _ -> None)
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``prompt dialog validates input and handles confirm and cancel`` () =
         Headless.run (fun () ->
@@ -118,6 +120,7 @@ module DialogsTests =
             Assert.False(overlay.IsDialogOpen, "合规提交后对话框应当关闭")
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``confirm and confirmWithFocus dialog trigger callbacks correctly`` () =
         Headless.run (fun () ->
@@ -162,6 +165,7 @@ module DialogsTests =
             Assert.False(overlay.IsDialogOpen, "点击确认后对话框应当关闭")
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``editText dialog loads text and submits on confirm`` () =
         Headless.run (fun () ->
@@ -195,6 +199,7 @@ module DialogsTests =
             Assert.False(overlay.IsDialogOpen)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``connect dialog validates pairing code and token connections`` () =
         Headless.run (fun () ->
@@ -269,6 +274,7 @@ module DialogsTests =
             Assert.Equal(Some "123456", pairingCodeSubmitted)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``sessionSettings dialog validates numeric bounds and updates config`` () =
         Headless.run (fun () ->
@@ -372,6 +378,7 @@ module DialogsTests =
             Assert.False(overlay.IsDialogOpen)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``shortcuts dialog displays sections and closes on button click`` () =
         Headless.run (fun () ->

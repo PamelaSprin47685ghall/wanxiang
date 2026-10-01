@@ -10,6 +10,7 @@ open Wanxiang.UI
 open Wanxiang.Tests
 
 /// 流式期间每批 delta 都会重绘一次消息列表。这一组测的是「只有真变了的卡才重建」。
+[<Trait("Category", "UI")>]
 type Incremental(output: ITestOutputHelper) =
 
     let sample =
@@ -69,6 +70,7 @@ type Incremental(output: ITestOutputHelper) =
         view.RenderMessages(messages, streaming, None, fontSize, true, None, Set.empty)
         Dispatcher.UIThread.RunJobs()
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     member _.``重绘时已提交的消息卡被复用而不是重建``() =
         Headless.run (fun () ->
@@ -89,6 +91,7 @@ type Incremental(output: ITestOutputHelper) =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     member _.``追加一条消息只新建一张卡``() =
         Headless.run (fun () ->
@@ -111,6 +114,7 @@ type Incremental(output: ITestOutputHelper) =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     member _.``流式卡每帧都是新的而已提交部分不动``() =
         Headless.run (fun () ->
@@ -135,6 +139,7 @@ type Incremental(output: ITestOutputHelper) =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     member _.``改字号会让全部卡片失效``() =
         Headless.run (fun () ->
@@ -153,6 +158,7 @@ type Incremental(output: ITestOutputHelper) =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     member _.``丢弃缓存后重绘会换成新卡片``() =
         Headless.run (fun () ->
@@ -173,6 +179,7 @@ type Incremental(output: ITestOutputHelper) =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     member _.``长对话的流式刷新代价与消息条数无关``() =
         Headless.run (fun () ->

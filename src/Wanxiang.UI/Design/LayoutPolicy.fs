@@ -48,7 +48,7 @@ module LayoutPolicy =
     let pendingMessagePreviewMaxHeight = 76.0
 
     /// 嵌套滚动容器与外层滚动条之间的安全留白（避免滚动条紧贴或重叠）。
-    let nestedScrollGutter = Tokens.space2
+    let nestedScrollGutter = Spacing.spaceMd
 
     /// Toast 长错误正文的局部阅读高度。
     let toastBodyMaxHeight = 160.0
@@ -70,8 +70,8 @@ module LayoutPolicy =
     /// 故 24/32 的分界统一落在 compactBreakpoint，桌面留白从 720 起。
     /// 纯函数、无副作用；调用方按实时 viewport 宽度取用，不触发布局几何动画。
     let horizontalInset (width: float) : float =
-        if width < formSingleColumnBreakpoint then Tokens.space4
-        elif width < compactBreakpoint then Tokens.space6
-        elif width < wideLayoutBreakpoint then Tokens.space8
-        else Tokens.space12
+        if width < formSingleColumnBreakpoint then Spacing.space2xl
+        elif width < compactBreakpoint then Spacing.space4xl
+        elif width < wideLayoutBreakpoint then Spacing.space6xl
+        else Spacing.space10xl
 

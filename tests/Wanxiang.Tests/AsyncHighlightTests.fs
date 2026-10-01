@@ -26,6 +26,7 @@ let private waitForReady (timeoutMs: int) =
 
 let private kindsOf (tokens: CodeToken list) = tokens |> List.map (fun t -> t.kind)
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``桌面端先给纯文本，后台算完再换成着色版`` () =
     Headless.run (fun () ->
@@ -43,6 +44,7 @@ let ``桌面端先给纯文本，后台算完再换成着色版`` () =
     Assert.Equal(code, highlighted |> List.map (fun t -> t.text) |> String.concat "")
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``流式进行中一次也不调用着色`` () =
     Headless.run (fun () ->
@@ -57,6 +59,7 @@ let ``流式进行中一次也不调用着色`` () =
     Assert.Equal(before, backend.Calls)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``同一段代码只排队一次`` () =
     Headless.run (fun () ->
@@ -71,6 +74,7 @@ let ``同一段代码只排队一次`` () =
     Assert.Equal(1, backend.Calls)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``认不出的语言不进后台队列`` () =
     Headless.run (fun () ->
@@ -82,6 +86,7 @@ let ``认不出的语言不进后台队列`` () =
     Assert.Equal(before, backend.Calls)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``多段代码同时算完只通知一次`` () =
     Headless.run (fun () ->

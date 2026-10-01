@@ -94,7 +94,7 @@ module MessageCard =
         let host =
             StackPanel(
                 Orientation = Orientation.Vertical,
-                Spacing = Tokens.space1,
+                Spacing = Spacing.spaceXs,
                 IsVisible = initiallyVisible)
         host.Children.Add scroller
         host.Children.Add expandButton
@@ -131,13 +131,13 @@ module MessageCard =
     /// 绝不 fire-and-forget 直写后再假装“已复制”。
     let mutable private copyTextSink: (string -> unit) option = None
 
-    /// 图标字形与脚注文本基线对齐：只下沉 iconBaselineNudge，不改按钮外尺寸。
-    let private applyIconBaselineNudge (button: Border) =
+    /// 图标字形与脚注文本基线对齐：纯垂直居中，不加偏移。
+    let private alignIconCentrally (button: Border) =
         match button.Child with
         | null -> ()
         | glyph ->
             glyph.VerticalAlignment <- VerticalAlignment.Center
-            glyph.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
+            glyph.Margin <- Thickness 0.0
 
     let private createCopyButton (copyText: string -> unit) (tipText: string) (accessibleName: string) (getText: unit -> string) : Border =
         let button = Ui.iconButton Icons.copy tipText
@@ -146,7 +146,7 @@ module MessageCard =
         button.Padding <- Thickness 0.0
         button.Cursor <- handCursor
         Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-        applyIconBaselineNudge button
+        alignIconCentrally button
         ToolTip.SetTip(button, tipText)
         Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
         Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
@@ -184,7 +184,7 @@ module MessageCard =
             button.Opacity <- 1.0
             Ui.setIcon button Icons.copy Tokens.textMuted
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-            applyIconBaselineNudge button
+            alignIconCentrally button
             ToolTip.SetTip(button, tipText)
             Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
             Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
@@ -198,7 +198,7 @@ module MessageCard =
                 pulseCopyConfirmation ()
                 Ui.setIcon button Icons.check Tokens.success
                 Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-                applyIconBaselineNudge button
+                alignIconCentrally button
                 ToolTip.SetTip(button, "已复制")
                 Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
                 Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制到剪贴板")
@@ -234,7 +234,7 @@ module MessageCard =
                 LineHeight = ReadingRhythm.secondaryLineHeight (ctx.fontSize - 1.5),
                 SelectionBrush = Tokens.accentSoft)
         let body, setBodyVisible = detailViewport LayoutPolicy.expandedDetailMaxHeight (bodyText :> Control) (not collapsed)
-        body.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
+        body.Margin <- Thickness(0.0, Spacing.spaceMd, 0.0, 0.0)
         let mutable bodyVisible = not collapsed
         let chevronHost =
             Border(
@@ -291,7 +291,7 @@ module MessageCard =
                 durRun.Foreground <- Tokens.textMuted
                 tb.Inlines.Add durRun
             tb
-        let headerRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        let headerRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
         headerRow.Cursor <- handCursor
         headerRow.Children.Add chevronHost
         headerRow.Children.Add caption
@@ -306,8 +306,8 @@ module MessageCard =
         // 无显示测试制度下原生过渡不推进，Opacity 写值必须瞬时可见。
         let header =
             ActionBorder(
-                CornerRadius = CornerRadius Tokens.radiusSm,
-                Padding = Thickness(Tokens.space1, Tokens.fieldRowPaddingY),
+                CornerRadius = CornerRadius Spacing.Radius.sm,
+                Padding = Thickness(Spacing.spaceXs, Spacing.spaceSm),
                 Margin = Thickness 0.0,
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
@@ -344,10 +344,10 @@ module MessageCard =
                 header.BorderBrush <- Brushes.Transparent
                 header.Background <- Brushes.Transparent
                 header.Opacity <- 1.0
-        header.PointerEntered.Add(fun _ -> updateHeaderVisual ())
-        header.PointerExited.Add(fun _ -> updateHeaderVisual ())
-        header.GotFocus.Add(fun _ -> updateHeaderVisual ())
-        header.LostFocus.Add(fun _ -> updateHeaderVisual ())
+        // hover / focus 底色与变暗交给 Interaction 的原生伪类。
+        Interaction.surface header Interaction.HoverVariant.bordered |> ignore
+        Interaction.reportFocusOrigin header
+        updateHeaderVisual ()
         Ui.onClick header toggle
         syncChevron ()
         syncHeaderName ()
@@ -358,15 +358,15 @@ module MessageCard =
         // 左缘强调条（accentEdgeWidth）是「思考过程」的既有 affordance，保留在内层 Border。
         let card =
             Ui.groupingCard
-                (Thickness(Tokens.space1, Tokens.space1, Tokens.space2, Tokens.space1))
+                (Thickness(Spacing.spaceXs, Spacing.spaceXs, Spacing.spaceMd, Spacing.spaceXs))
                 (Border(
                     BorderBrush = Tokens.hairlineStrong,
                     BorderThickness = Thickness(ControlMetrics.accentEdgeWidth, 0.0, 0.0, 0.0),
-                    Padding = Thickness(Tokens.space2, 0.0, 0.0, 0.0),
+                    Padding = Thickness(Spacing.spaceMd, 0.0, 0.0, 0.0),
                     Child = stack))
-                Tokens.radiusMd
+                Spacing.Radius.md
         card.ClipToBounds <- true
-        card.Margin <- Thickness(0.0, 0.0, 0.0, Tokens.space3)
+        card.Margin <- Thickness(0.0, 0.0, 0.0, Spacing.spaceXl)
         card :> Control
 
     /// 工具调用卡片：名称 + 状态 + 参数摘要，展开后看完整参数与结果。
@@ -512,13 +512,14 @@ module MessageCard =
             elif hasError then Icons.alert statusBrush
             else Icons.check statusBrush
         statusGlyph.VerticalAlignment <- VerticalAlignment.Center
-        statusGlyph.Margin <- Thickness(0.0, 0.0, Tokens.space1, 0.0)
+        statusGlyph.Margin <- Thickness(0.0, 0.0, Spacing.spaceXs, 0.0)
         let name =
             TextBlock(
                 Text = call.name,
                 FontFamily = Tokens.monoFontFamily,
                 FontSize = Tokens.fontSmall,
-                FontWeight = FontWeight.SemiBold,
+                // 等宽技术文本用 Medium 即可；SemiBold(600) 越出规范 §3.4 的两档字重。
+                FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
                 VerticalAlignment = VerticalAlignment.Center)
         let statusText =
@@ -533,8 +534,8 @@ module MessageCard =
                 Background = statusBg,
                 BorderBrush = Tokens.borderSoft,
                 BorderThickness = Thickness ControlMetrics.borderWidth,
-                CornerRadius = CornerRadius Tokens.radiusPill,
-                Padding = Thickness(Tokens.space2, Tokens.compactRowPaddingY),
+                CornerRadius = CornerRadius Spacing.Radius.pill,
+                Padding = Thickness(Spacing.spaceMd, Spacing.spaceXXs),
                 Margin = Thickness 0.0,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = statusPillContent)
@@ -550,7 +551,7 @@ module MessageCard =
                 Foreground = Tokens.textMuted,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 IsVisible = not (String.IsNullOrWhiteSpace summaryText),
-                Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0))
+                Margin = Thickness(0.0, Spacing.spaceXs, 0.0, 0.0))
         let errorBanner =
             let errGlyph = Icons.alert Tokens.danger
             errGlyph.VerticalAlignment <- VerticalAlignment.Center
@@ -562,14 +563,14 @@ module MessageCard =
                     Foreground = Tokens.danger,
                     TextWrapping = TextWrapping.Wrap,
                     VerticalAlignment = VerticalAlignment.Center)
-            let bannerContent = Ui.hstack Tokens.space1 [ errGlyph; errText :> Control ]
+            let bannerContent = Ui.hstack Spacing.spaceXs [ errGlyph; errText :> Control ]
             Border(
                 Background = Tokens.dangerSoft,
                 BorderBrush = Tokens.hairline,
                 BorderThickness = Thickness ControlMetrics.borderWidth,
-                CornerRadius = CornerRadius Tokens.radiusSm,
-                Padding = Thickness(Tokens.space2, Tokens.space1),
-                Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
+                CornerRadius = CornerRadius Spacing.Radius.sm,
+                Padding = Thickness(Spacing.spaceMd, Spacing.spaceXs),
+                Margin = Thickness(0.0, Spacing.spaceXs, 0.0, 0.0),
                 IsVisible = hasError,
                 Child = bannerContent)
         let rawPayloadText () =
@@ -578,7 +579,7 @@ module MessageCard =
               | Some res when not (String.IsNullOrWhiteSpace res) -> sprintf "// 结果 (Result)\n%s" res
               | _ -> () ]
             |> String.concat "\n\n"
-        let detailPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
+        let detailPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
         let createDetailSection (label: string) (payload: string) (isError: bool) =
             let header = DockPanel(LastChildFill = false)
             let sectionTitle =
@@ -601,10 +602,10 @@ module MessageCard =
                     Background = Tokens.codeBlockBackground,
                     BorderBrush = Tokens.codeBorder,
                     BorderThickness = Thickness ControlMetrics.borderWidth,
-                    CornerRadius = CornerRadius Tokens.radiusSm,
-                    Padding = Thickness(Tokens.space3, Tokens.space2),
+                    CornerRadius = CornerRadius Spacing.Radius.sm,
+                    Padding = Thickness(Spacing.spaceXl, Spacing.spaceMd),
                     Child = contentText)
-            let section = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
+            let section = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXs)
             section.Children.Add header
             section.Children.Add codeBox
             section
@@ -615,7 +616,7 @@ module MessageCard =
             detailPanel.Children.Add(createDetailSection (if hasError then "执行结果 (异常)" else "执行结果") result hasError)
         | _ -> ()
         let detail, setDetailVisible = detailViewport LayoutPolicy.expandedDetailMaxHeight (detailPanel :> Control) false
-        detail.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
+        detail.Margin <- Thickness(0.0, Spacing.spaceMd, 0.0, 0.0)
         let chevronHost =
             Border(
                 Width = Tokens.iconGlyph,
@@ -626,12 +627,12 @@ module MessageCard =
                 HorizontalAlignment = HorizontalAlignment.Center)
         let toolCopyButton =
             createCopyButton actions.copyText "复制工具参数与结果" (sprintf "复制工具 %s 参数与结果" call.name) rawPayloadText
-        toolCopyButton.Margin <- Thickness(0.0, 0.0, Tokens.space1, 0.0)
+        toolCopyButton.Margin <- Thickness(0.0, 0.0, Spacing.spaceXs, 0.0)
         toolCopyButton.VerticalAlignment <- VerticalAlignment.Center
-        let headerActions = Ui.hstack Tokens.space1 [ toolCopyButton :> Control; chevronHost :> Control ]
+        let headerActions = Ui.hstack Spacing.spaceXs [ toolCopyButton :> Control; chevronHost :> Control ]
         headerActions.VerticalAlignment <- VerticalAlignment.Center
         let headerDock = DockPanel(LastChildFill = false)
-        let left = Ui.hstack Tokens.space2 [ icon; name :> Control; state :> Control ]
+        let left = Ui.hstack Spacing.spaceMd [ icon; name :> Control; state :> Control ]
         DockPanel.SetDock(left, Dock.Left)
         DockPanel.SetDock(headerActions, Dock.Right)
         headerDock.Children.Add left
@@ -644,7 +645,7 @@ module MessageCard =
         // + 同一套悬停（hover 底 + line 描边）/ 焦点（accent 描边）视觉；只动颜色，不改几何。
         let headerRow =
             ActionBorder(
-                CornerRadius = CornerRadius Tokens.radiusSm,
+                CornerRadius = CornerRadius Spacing.Radius.sm,
                 Margin = Thickness 0.0,
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
@@ -660,10 +661,10 @@ module MessageCard =
         let host =
             let card =
                 Ui.groupingCard
-                    (Thickness(Tokens.space3, Tokens.space3))
+                    (Thickness(Spacing.spaceXl, Spacing.spaceXl))
                     stack
-                    Tokens.radiusMd
-            card.Margin <- Thickness(0.0, 0.0, 0.0, Tokens.space3)
+                    Spacing.Radius.md
+            card.Margin <- Thickness(0.0, 0.0, 0.0, Spacing.spaceXl)
             card
         let mutable detailVisible = false
         let toolRotate = RotateTransform(if detailVisible then 90.0 else 0.0)
@@ -731,10 +732,9 @@ module MessageCard =
                 headerRow.BorderBrush <- Brushes.Transparent
                 headerRow.Background <- Brushes.Transparent
                 headerRow.Opacity <- 1.0
-        headerRow.PointerEntered.Add(fun _ -> updateToolHeaderVisual ())
-        headerRow.PointerExited.Add(fun _ -> updateToolHeaderVisual ())
-        headerRow.GotFocus.Add(fun _ -> updateToolHeaderVisual ())
-        headerRow.LostFocus.Add(fun _ -> updateToolHeaderVisual ())
+        Interaction.surface headerRow Interaction.HoverVariant.bordered |> ignore
+        Interaction.reportFocusOrigin headerRow
+        updateToolHeaderVisual ()
         Avalonia.Automation.AutomationProperties.SetName(host, sprintf "工具调用 %s" call.name)
         syncChevron ()
         syncToolName ()
@@ -761,7 +761,7 @@ module MessageCard =
                 FontSize = Tokens.fontMicro,
                 Foreground = Tokens.textFaint,
                 VerticalAlignment = VerticalAlignment.Center)
-        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
         row.Children.Add glyph
         row.Children.Add name
         row.Children.Add meta
@@ -775,9 +775,9 @@ module MessageCard =
                     Background = Tokens.surface,
                     BorderBrush = Tokens.border,
                     BorderThickness = Thickness ControlMetrics.borderWidth,
-                    CornerRadius = CornerRadius Tokens.radiusMd,
-                    Padding = Thickness(Tokens.space3, ControlMetrics.attachmentRowPaddingY),
-                    Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
+                    CornerRadius = CornerRadius Spacing.Radius.md,
+                    Padding = Thickness(Spacing.spaceXl, ControlMetrics.attachmentRowPaddingY),
+                    Margin = Thickness(0.0, Spacing.spaceXs, 0.0, 0.0),
                     HorizontalAlignment = HorizontalAlignment.Left,
                     Child = row)
             else
@@ -785,9 +785,9 @@ module MessageCard =
                     Background = Tokens.surface,
                     BorderBrush = Tokens.border,
                     BorderThickness = Thickness ControlMetrics.borderWidth,
-                    CornerRadius = CornerRadius Tokens.radiusMd,
-                    Padding = Thickness(Tokens.space3, ControlMetrics.attachmentRowPaddingY),
-                    Margin = Thickness(0.0, Tokens.space1, 0.0, 0.0),
+                    CornerRadius = CornerRadius Spacing.Radius.md,
+                    Padding = Thickness(Spacing.spaceXl, ControlMetrics.attachmentRowPaddingY),
+                    Margin = Thickness(0.0, Spacing.spaceXs, 0.0, 0.0),
                     HorizontalAlignment = HorizontalAlignment.Left,
                     Cursor = handCursor,
                     Focusable = true,
@@ -801,8 +801,8 @@ module MessageCard =
             Avalonia.Automation.AutomationProperties.SetName(
                 host,
                 sprintf "%s %s" attachmentTip attachment.fileName)
-            host.PointerEntered.Add(fun _ -> host.Background <- Tokens.surfaceRaised)
-            host.PointerExited.Add(fun _ -> host.Background <- Tokens.surface)
+            // hover 提到抬起面：Interaction 的 raised 变体（surface 上叠 hover overlay）。
+            Interaction.surface host Interaction.HoverVariant.raised |> ignore
             Ui.onClick host (fun () -> actions.downloadAttachment attachment.sha256)
         else
             // 正常附件有悬停提示与读屏名称；丢失态退化为静态条后两者都没有，
@@ -835,7 +835,7 @@ module MessageCard =
         let row =
             StackPanel(
                 Orientation = Orientation.Horizontal,
-                Spacing = Tokens.space1,
+                Spacing = Spacing.spaceXs,
                 Margin = Thickness 0.0,
                 Opacity = idleActionOpacity,
                 Transitions = rowTransitions,
@@ -843,7 +843,7 @@ module MessageCard =
         // 按钮行恒定占位 inlineActionTarget：流式期间 copy / 编辑 / 重生成 / 删除
         // 全部被门控撤下，行若随内容缩成 0，完成瞬间会长回一整行、把消息下方整体
         // 推走。撤按钮只清空槽位内容、不缩槽位本身；完成态自然高度同样由
-        // setSquareTarget 钉在 inlineActionTarget，两态逐像素相等（applyIconBaselineNudge
+        // setSquareTarget 钉在 inlineActionTarget，两态逐像素相等（alignIconCentrally
         // 只下沉按钮内部字形，不改按钮外尺寸）。
         // 不用绝对定位悬浮条：那会压住头像与气泡边角（见上方注释的历史结论）。
         row.MinHeight <- LayoutPolicy.inlineActionTarget
@@ -854,7 +854,7 @@ module MessageCard =
             button.Padding <- Thickness 0.0
             button.Cursor <- handCursor
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-            applyIconBaselineNudge button
+            alignIconCentrally button
             ToolTip.SetTip(button, tip)
             Avalonia.Automation.AutomationProperties.SetName(button, actionName)
             Avalonia.Automation.AutomationProperties.SetHelpText(button, help)
@@ -873,7 +873,7 @@ module MessageCard =
             button.Padding <- Thickness 0.0
             button.Cursor <- handCursor
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-            applyIconBaselineNudge button
+            alignIconCentrally button
             ToolTip.SetTip(button, "复制")
             Avalonia.Automation.AutomationProperties.SetName(button, messageCopyName)
             Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
@@ -911,7 +911,7 @@ module MessageCard =
                 button.Opacity <- 1.0
                 Ui.setIcon button Icons.copy Tokens.textMuted
                 Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-                applyIconBaselineNudge button
+                alignIconCentrally button
                 ToolTip.SetTip(button, "复制")
                 Avalonia.Automation.AutomationProperties.SetName(button, messageCopyName)
                 Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
@@ -921,7 +921,7 @@ module MessageCard =
                 pulseCopyConfirmation ()
                 Ui.setIcon button Icons.check Tokens.success
                 Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-                applyIconBaselineNudge button
+                alignIconCentrally button
                 ToolTip.SetTip(button, "已复制")
                 Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
                 Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制消息正文")
@@ -973,7 +973,7 @@ module MessageCard =
     let errorCard (error: GenerationError) (onRetry: unit -> unit) (copyText: (string -> unit) option) : Control =
         let icon = Icons.alert Tokens.danger
         icon.VerticalAlignment <- VerticalAlignment.Top
-        icon.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
+        icon.Margin <- Thickness 0.0
         let title =
             TextBlock(
                 Text = errorTitle error,
@@ -988,10 +988,10 @@ module MessageCard =
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = ReadingRhythm.helperLineHeight)
-        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.fieldRowPaddingY)
+        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceSm)
         column.Children.Add title
         column.Children.Add hint
-        let topRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)
+        let topRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXl)
         topRow.Children.Add icon
         topRow.Children.Add column
         // 等待建议只跟可重试错误走：不可重试时给秒数等于指错路。
@@ -1008,15 +1008,15 @@ module MessageCard =
         let actionRow =
             StackPanel(
                 Orientation = Orientation.Horizontal,
-                Spacing = Tokens.space2,
-                Margin = Thickness(0.0, Tokens.space3, 0.0, 0.0))
+                Spacing = Spacing.spaceMd,
+                Margin = Thickness(0.0, Spacing.spaceXl, 0.0, 0.0))
         let detailContainer = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         if error.retryable then
             let retryButton = Ui.button Ui.Secondary "重试" onRetry
             retryButton.Focusable <- true
             retryButton.MinWidth <- ControlMetrics.retryButtonMinWidth
             retryButton.Margin <- Thickness 0.0
-            retryButton.Padding <- Thickness(Tokens.space4, ControlMetrics.textButtonPaddingY)
+            retryButton.Padding <- Thickness(Spacing.space2xl, ControlMetrics.textButtonPaddingY)
             retryButton.Cursor <- handCursor
             Avalonia.Automation.AutomationProperties.SetName(retryButton, "重试生成")
             Avalonia.Automation.AutomationProperties.SetHelpText(retryButton, "重新尝试生成")
@@ -1044,14 +1044,14 @@ module MessageCard =
                     Background = Tokens.codeBlockBackground,
                     BorderBrush = Tokens.codeBorder,
                     BorderThickness = Thickness ControlMetrics.borderWidth,
-                    CornerRadius = CornerRadius Tokens.radiusSm,
-                    Padding = Thickness(Tokens.space3, Tokens.space2),
+                    CornerRadius = CornerRadius Spacing.Radius.sm,
+                    Padding = Thickness(Spacing.spaceXl, Spacing.spaceMd),
                     Child = detailText)
-            let detailStack = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
+            let detailStack = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXs)
             detailStack.Children.Add detailHeader
             detailStack.Children.Add codeBox
             let detailHost, setDetailVisible = detailViewport LayoutPolicy.expandedDetailMaxHeight (detailStack :> Control) false
-            detailHost.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
+            detailHost.Margin <- Thickness(0.0, Spacing.spaceMd, 0.0, 0.0)
             let mutable visible = false
             let mutable toggleDetail: unit -> unit = ignore
             // 与思考过程/工具调用同一套 chevron 语法：字形常驻、只转 0°/90°；
@@ -1085,14 +1085,14 @@ module MessageCard =
                     FontWeight = FontWeight.Medium,
                     Foreground = Tokens.textMuted,
                     VerticalAlignment = VerticalAlignment.Center)
-            let detailHeaderRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+            let detailHeaderRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
             detailHeaderRow.Children.Add detailChevronHost
             detailHeaderRow.Children.Add detailCaption
             // 与思考过程 / 工具调用同一共享过渡机制（见 reasoningBlock 头部注释）。
             let detailToggle =
                 ActionBorder(
-                    CornerRadius = CornerRadius Tokens.radiusSm,
-                    Padding = Thickness(Tokens.space1, Tokens.fieldRowPaddingY),
+                    CornerRadius = CornerRadius Spacing.Radius.sm,
+                    Padding = Thickness(Spacing.spaceXs, Spacing.spaceSm),
                     Margin = Thickness 0.0,
                     Background = Brushes.Transparent,
                     BorderBrush = Brushes.Transparent,
@@ -1121,10 +1121,9 @@ module MessageCard =
                     detailToggle.BorderBrush <- Brushes.Transparent
                     detailToggle.Background <- Brushes.Transparent
                     detailToggle.Opacity <- 1.0
-            detailToggle.PointerEntered.Add(fun _ -> updateDetailVisual ())
-            detailToggle.PointerExited.Add(fun _ -> updateDetailVisual ())
-            detailToggle.GotFocus.Add(fun _ -> updateDetailVisual ())
-            detailToggle.LostFocus.Add(fun _ -> updateDetailVisual ())
+            Interaction.surface detailToggle Interaction.HoverVariant.bordered |> ignore
+            Interaction.reportFocusOrigin detailToggle
+            updateDetailVisual ()
             Ui.onClick detailToggle (fun () -> toggleDetail ())
             toggleDetail <- fun () ->
                 visible <- not visible
@@ -1143,10 +1142,10 @@ module MessageCard =
         // 错误卡并到消息内次级卡半径档 radiusMd（此前是 radiusLg）；外框走 Ui.groupingCard。
         let card =
             Ui.groupingCard
-                (Thickness(Tokens.space4, Tokens.space3))
+                (Thickness(Spacing.space2xl, Spacing.spaceXl))
                 cardLayout
-                Tokens.radiusMd
-        card.Margin <- Thickness(0.0, Tokens.space2, 0.0, 0.0)
+                Spacing.Radius.md
+        card.Margin <- Thickness(0.0, Spacing.spaceMd, 0.0, 0.0)
         card.MaxWidth <- Tokens.readingWidth
         card :> Control
 
@@ -1297,7 +1296,7 @@ module MessageCard =
             let panel =
                 StackPanel(
                     Orientation = Orientation.Horizontal,
-                    Spacing = Tokens.space1,
+                    Spacing = Spacing.spaceXs,
                     VerticalAlignment = VerticalAlignment.Center)
             let timeTb =
                 TextBlock(Text = time, FontSize = Tokens.fontMicro, Foreground = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
@@ -1485,7 +1484,7 @@ module MessageCard =
                     Background = Tokens.accent,
                     CornerRadius = CornerRadius ControlMetrics.caretRadius,
                     HorizontalAlignment = HorizontalAlignment.Left,
-                    Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0),
+                    Margin = Thickness 0.0,
                     Opacity = Tokens.opacityCaretBreathMax)
             let mutable breathTimer: DispatcherTimer option = None
             let stopBreath () =
@@ -1516,29 +1515,27 @@ module MessageCard =
 
         let bubble =
             if MessageView.isUser message then
-                // 用户气泡可聚焦：键盘焦点环只用 focusRingSpread 外阴影，不加边框粗细，不抖动排版。
+                // 用户气泡可聚焦：键盘焦点环只用 Stroke.thick 外环 外阴影，不加边框粗细，不抖动排版。
                 let host =
                     Border(
                         // 深色气泡在纸面上靠一道 hairlineStrong 细描边定形：两套主题的
                         // userBubble 都是深底，细边既不抢深色的阅读对比，又给出清晰边缘；
-                        // 半径、内边距与几何一律不动，焦点环仍只走 focusRingSpread 外阴影。
+                        // 半径、内边距与几何一律不动，焦点环仍只走 Stroke.thick 外阴影。
                         Background = Tokens.userBubble,
                         BorderBrush = Tokens.hairlineStrong,
-                        BorderThickness = Thickness 1.0,
-                        CornerRadius = CornerRadius(Tokens.radiusLg, Tokens.radiusLg, Tokens.radiusSm, Tokens.radiusLg),
-                        Padding = Thickness(Tokens.space4, Tokens.space3),
+                        BorderThickness = Thickness Spacing.Stroke.thin,
+                        CornerRadius = CornerRadius(Spacing.Radius.lg, Spacing.Radius.lg, Spacing.Radius.sm, Spacing.Radius.lg),
+                        Padding = Thickness(Spacing.space2xl, Spacing.spaceXl),
                         MaxWidth = LayoutPolicy.userMessageMaxWidth,
                         HorizontalAlignment = HorizontalAlignment.Right,
                         Focusable = true,
                         Child = body)
                 Avalonia.Automation.AutomationProperties.SetName(host, "用户消息")
-                host.GotFocus.Add(fun e ->
-                    match e.NavigationMethod with
-                    | NavigationMethod.Tab
-                    | NavigationMethod.Directional ->
-                        host.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
-                    | _ -> ())
-                host.LostFocus.Add(fun _ -> host.BoxShadow <- BoxShadows())
+                // 焦点环由 Interaction 的原生伪类负责（`:focus-visible` = 键盘导航，
+                // `focus-by-program` = 程序化初始焦点；指针点击不画环）。
+                // 几何、半径、内边距一概不动。
+                Interaction.surface host Interaction.HoverVariant.plain |> ignore
+                Interaction.reportFocusOrigin host
                 host
             else
                 Border(
@@ -1553,10 +1550,10 @@ module MessageCard =
                     Border(
                         Width = Tokens.logoAvatar,
                         Height = Tokens.logoAvatar,
-                        CornerRadius = CornerRadius Tokens.radiusPill,
+                        CornerRadius = CornerRadius Spacing.Radius.pill,
                         Background = Tokens.accentSoft,
                         VerticalAlignment = VerticalAlignment.Top,
-                        Margin = Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0))
+                        Margin = Thickness 0.0)
                 host.Child <-
                     TextBlock(
                         Text = "你",
@@ -1569,12 +1566,12 @@ module MessageCard =
             else
                 let host = ctx.brandAvatar ()
                 host.VerticalAlignment <- VerticalAlignment.Top
-                host.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, 0.0, 0.0)
+                host.Margin <- Thickness 0.0
                 host
 
         let row: Control =
             if MessageView.isUser message then
-                let stack = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space3)
+                let stack = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXl)
                 stack.HorizontalAlignment <- HorizontalAlignment.Right
                 stack.Children.Add bubble
                 stack.Children.Add avatar
@@ -1583,7 +1580,7 @@ module MessageCard =
                 // 助手正文必须铺满阅读列：横向 StackPanel 只会给子元素「期望宽度」，
                 // 于是代码块和表格被压成窄条。用 DockPanel 让头像靠左、气泡填满剩余空间。
                 let dock = DockPanel(LastChildFill = true, HorizontalAlignment = HorizontalAlignment.Stretch)
-                avatar.Margin <- Thickness(0.0, Tokens.iconBaselineNudge, Tokens.space3, 0.0)
+                avatar.Margin <- Thickness(0.0, 0.0, Spacing.spaceXl, 0.0)
                 DockPanel.SetDock(avatar, Dock.Left)
                 dock.Children.Add avatar
                 bubble.Width <- Double.NaN
@@ -1593,7 +1590,7 @@ module MessageCard =
 
         // 脚注行：时间 + 操作按钮，随文档流排在消息下方。
         // 头像占了 26pt 加 12pt 间距，脚注缩进同样的量才能与正文左缘对齐。
-        let gutter = Tokens.logoAvatar + Tokens.space3
+        let gutter = Tokens.logoAvatar + Spacing.spaceXl
         let buttons = actionButtons message ctx actions index
         let metaText =
             if ctx.streaming then None
@@ -1602,18 +1599,18 @@ module MessageCard =
             let line =
                 StackPanel(
                     Orientation = Orientation.Horizontal,
-                    Spacing = Tokens.space2,
+                    Spacing = Spacing.spaceMd,
                     VerticalAlignment = VerticalAlignment.Center)
             if MessageView.isUser message then
                 line.HorizontalAlignment <- HorizontalAlignment.Right
-                line.Margin <- Thickness(0.0, Tokens.space2, gutter, 0.0)
+                line.Margin <- Thickness(0.0, Spacing.spaceMd, gutter, 0.0)
                 match metaText with
                 | Some text -> line.Children.Add text
                 | None -> ()
                 line.Children.Add buttons
             else
                 line.HorizontalAlignment <- HorizontalAlignment.Left
-                line.Margin <- Thickness(gutter, Tokens.space2, 0.0, 0.0)
+                line.Margin <- Thickness(gutter, Spacing.spaceMd, 0.0, 0.0)
                 line.Children.Add buttons
                 match metaText with
                 | Some text -> line.Children.Add text

@@ -44,6 +44,7 @@ module private Fixture =
 
 // ---------------------------------------------------------------- 字族选择
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``数字与运算符用直立的 KaTeX_Main`` () =
     Headless.run (fun () ->
@@ -58,6 +59,7 @@ let ``数字与运算符用直立的 KaTeX_Main`` () =
         Assert.False(System.String.IsNullOrEmpty text)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``变量用斜体的数学字体`` () =
     Headless.run (fun () ->
@@ -73,6 +75,7 @@ let ``变量用斜体的数学字体`` () =
         Assert.Equal(FontStyle.Normal, typeface.Style)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``大型算符取 Size 系列字体`` () =
     Headless.run (fun () ->
@@ -86,6 +89,7 @@ let ``大型算符取 Size 系列字体`` () =
     | None -> failwith "没有找到 ∑ 字形"
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``减号与正负号落在有这些字形的字体上`` () =
     Headless.run (fun () ->
@@ -101,6 +105,7 @@ let ``减号与正负号落在有这些字形的字体上`` () =
 
 // ---------------------------------------------------------------- 居中
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``分子分母与分数线共享同一条中轴`` () =
     Headless.run (fun () ->
@@ -117,6 +122,7 @@ let ``分子分母与分数线共享同一条中轴`` () =
     Assert.True(abs (barCenter - denomCenter) < 1.5, $"分母偏离中轴：分数线 {barCenter}，分母 {denomCenter}")
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``上下限居中于大型算符`` () =
     Headless.run (fun () ->
@@ -143,6 +149,7 @@ let ``上下限居中于大型算符`` () =
 
 // ---------------------------------------------------------------- 根号
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``根号画成 SVG 且保留上方横线`` () =
     Headless.run (fun () ->
@@ -188,6 +195,7 @@ let private inkBounds (control: Control) (pad: float) (size: Size) =
         let ys = inked |> List.map snd
         Some(Rect(Point(float (List.min xs), float (List.min ys)), Point(float (List.max xs), float (List.max ys))))
 
+[<Trait("Category", "UI")>]
 [<Theory>]
 [<InlineData("quadratic", true)>]
 [<InlineData("summation", true)>]

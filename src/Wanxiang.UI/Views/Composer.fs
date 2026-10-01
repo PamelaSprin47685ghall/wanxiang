@@ -46,7 +46,7 @@ type Composer(actions: ComposerActions) as this =
             PlaceholderForeground = Tokens.textMuted,
             FontSize = Tokens.fontReading,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            Padding = Thickness(0.0, Tokens.space1, LayoutPolicy.nestedScrollGutter, Tokens.space1),
+            Padding = Thickness(0.0, Spacing.spaceXs, LayoutPolicy.nestedScrollGutter, Spacing.spaceXs),
             MinHeight = ControlMetrics.composerInputMinHeight,
             MaxHeight = ControlMetrics.composerMaxHeight,
             VerticalContentAlignment = VerticalAlignment.Center)
@@ -54,8 +54,8 @@ type Composer(actions: ComposerActions) as this =
     let attachmentStrip =
         WrapPanel(
             Orientation = Orientation.Horizontal,
-            ItemSpacing = Tokens.space2,
-            LineSpacing = Tokens.space2,
+            ItemSpacing = Spacing.spaceMd,
+            LineSpacing = Spacing.spaceMd,
             Focusable = true)
     let attachmentScroller =
         ScrollViewer(
@@ -65,12 +65,12 @@ type Composer(actions: ComposerActions) as this =
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             AllowAutoHide = true,
             IsVisible = false,
-            Margin = Thickness(0.0, 0.0, LayoutPolicy.nestedScrollGutter, Tokens.space2))
+            Margin = Thickness(0.0, 0.0, LayoutPolicy.nestedScrollGutter, Spacing.spaceMd))
 
     // 几何全由 Ui.iconButtonAccent 固定（发送↔停止只换字形）；此处不再复述尺寸，避免双写漂移。
     let sendButton = Ui.iconButtonAccent Icons.send "发送"
     let queueButton = Ui.iconButton Icons.send "排队发送"
-    let pendingPanel = StackPanel(Spacing = Tokens.space2)
+    let pendingPanel = StackPanel(Spacing = Spacing.spaceMd)
     let pendingScroller =
         ScrollViewer(Content = pendingPanel, MaxHeight = LayoutPolicy.pendingMessagesMaxHeight, IsVisible = false,
                      HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
@@ -80,10 +80,10 @@ type Composer(actions: ComposerActions) as this =
         Border(
             Background = Tokens.surfaceSoft,
             BorderBrush = Tokens.borderSoft,
-            BorderThickness = Thickness 1.0,
-            CornerRadius = CornerRadius Tokens.radiusMd,
-            Padding = Thickness(Tokens.space3, Tokens.space2, Tokens.space2, Tokens.space2),
-            Margin = Thickness(0.0, 0.0, 0.0, Tokens.space2),
+            BorderThickness = Thickness Spacing.Stroke.thin,
+            CornerRadius = CornerRadius Spacing.Radius.md,
+            Padding = Thickness(Spacing.spaceXl, Spacing.spaceMd, Spacing.spaceMd, Spacing.spaceMd),
+            Margin = Thickness(0.0, 0.0, 0.0, Spacing.spaceMd),
             IsVisible = false,
             Child = pendingScroller)
     let mutable pendingKeys: (Guid * DeliveryState * bool * bool) list = []
@@ -99,7 +99,7 @@ type Composer(actions: ComposerActions) as this =
     let modelChip =
         ActionBorder(
             Background = Brushes.Transparent,
-            CornerRadius = CornerRadius Tokens.radiusSm,
+            CornerRadius = CornerRadius Spacing.Radius.sm,
             Padding = Thickness(ControlMetrics.compactChipPaddingX, ControlMetrics.compactChipPaddingY),
             Cursor = new Cursor(StandardCursorType.Hand),
             Focusable = true,
@@ -130,7 +130,7 @@ type Composer(actions: ComposerActions) as this =
         // 左空与模型芯片分开，剩余宽度仍由 fill 的 hintText 承接。
         hint.TextWrapping <- TextWrapping.NoWrap
         hint.TextTrimming <- TextTrimming.CharacterEllipsis
-        hint.Margin <- Thickness(Tokens.space2, 0.0, 0.0, 0.0)
+        hint.Margin <- Thickness(Spacing.spaceMd, 0.0, 0.0, 0.0)
         hint.VerticalAlignment <- VerticalAlignment.Center
         // 纯文本控件补 Name 供读屏读取，与 SetPendingMessages 的 pendingNotice 同一惯例。
         Avalonia.Automation.AutomationProperties.SetName(hint, hint.Text)
@@ -140,14 +140,14 @@ type Composer(actions: ComposerActions) as this =
             Background = Tokens.surface,
             BorderBrush = Tokens.hairline,
             BorderThickness = Thickness ControlMetrics.borderWidth,
-            CornerRadius = CornerRadius Tokens.radiusLg)
+            CornerRadius = CornerRadius Spacing.Radius.lg)
 
     let dropHintBanner =
         Border(
             Background = Tokens.accentFaint,
             BorderBrush = Tokens.accentSoft,
             BorderThickness = Thickness ControlMetrics.borderWidth,
-            CornerRadius = CornerRadius Tokens.radiusLg,
+            CornerRadius = CornerRadius Spacing.Radius.lg,
             IsHitTestVisible = false,
             IsVisible = false)
     let dropHintText =
@@ -175,8 +175,8 @@ type Composer(actions: ComposerActions) as this =
             Background = Tokens.surfaceContainer,
             BorderBrush = Tokens.hairlineStrong,
             BorderThickness = Thickness ControlMetrics.borderWidth,
-            CornerRadius = CornerRadius Tokens.radiusMd,
-            Padding = Thickness(Tokens.space3, Tokens.space2),
+            CornerRadius = CornerRadius Spacing.Radius.md,
+            Padding = Thickness(Spacing.spaceXl, Spacing.spaceMd),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Child = disabledNoticeText,
             Opacity = 1.0,
@@ -222,12 +222,12 @@ type Composer(actions: ComposerActions) as this =
         if isDraggingOver && enabled then
             shell.Background <- Tokens.surface
             shell.BorderBrush <- Tokens.accent
-            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
+            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Spacing.Stroke.thick, Color = Tokens.accent.Color))
             dropHintBanner.IsVisible <- true
         elif input.IsFocused then
             shell.Background <- Tokens.surface
             shell.BorderBrush <- Tokens.accent
-            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
+            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Spacing.Stroke.thick, Color = Tokens.accentSoft.Color))
             dropHintBanner.IsVisible <- false
         else
             shell.Background <- Tokens.surface
@@ -310,7 +310,7 @@ type Composer(actions: ComposerActions) as this =
 
     do
         modelChip.Child <-
-            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1, VerticalAlignment = VerticalAlignment.Center)
+            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXs, VerticalAlignment = VerticalAlignment.Center)
             let glyph = Icons.sparkle Tokens.textFaint
             glyph.VerticalAlignment <- VerticalAlignment.Center
             row.Children.Add glyph
@@ -319,18 +319,13 @@ type Composer(actions: ComposerActions) as this =
             chevron.VerticalAlignment <- VerticalAlignment.Center
             row.Children.Add chevron
             row
-        modelChip.PointerEntered.Add(fun _ -> modelChip.Background <- Tokens.hover)
-        modelChip.PointerExited.Add(fun _ ->
-            if not modelChip.IsFocused then
-                modelChip.Background <- Brushes.Transparent
-                modelChip.BorderBrush <- Tokens.hairline)
-        // V29: 键盘焦点补描边（ActionBorder 自带外环阴影；这里补一条描边色，与悬停底色正交）。
-        modelChip.GotFocus.Add(fun _ ->
-            modelChip.Background <- Tokens.hover
-            modelChip.BorderBrush <- Tokens.accent)
-        modelChip.LostFocus.Add(fun _ ->
-            modelChip.Background <- Brushes.Transparent
-            modelChip.BorderBrush <- Tokens.hairline)
+        // hover 底色交给 Interaction 的 `:pointerover` 伪类（原生、可测）。
+        // 键盘焦点除 :focus-visible 外还要**补一条描边**（ActionBorder 已有外环阴影，
+        // 这里补描边色与悬停底色正交）——描边是「值」不是「状态」，故由事件写值。
+        Interaction.surface modelChip Interaction.HoverVariant.plain |> ignore
+        Interaction.reportFocusOrigin modelChip
+        modelChip.GotFocus.Add(fun _ -> modelChip.BorderBrush <- Tokens.accent)
+        modelChip.LostFocus.Add(fun _ -> modelChip.BorderBrush <- Tokens.hairline)
         Ui.onClick modelChip (fun () -> actions.openModelPicker(modelChip :> Control))
         ToolTip.SetTip(modelChip, "切换本会话使用的模型")
         Avalonia.Automation.AutomationProperties.SetName(modelChip, "切换本会话使用的模型")
@@ -588,7 +583,7 @@ type Composer(actions: ComposerActions) as this =
                                 else
                                     tryFocusInput ()
                         | None -> ()))
-            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space1, VerticalAlignment = VerticalAlignment.Center)
+            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXs, VerticalAlignment = VerticalAlignment.Center)
             row.Children.Add iconSlot
             row.Children.Add name
             row.Children.Add size
@@ -605,7 +600,7 @@ type Composer(actions: ComposerActions) as this =
                 Ui.groupingCard
                     (Thickness(ControlMetrics.compactChipPaddingX, ControlMetrics.compactChipPaddingY))
                     row
-                    Tokens.radiusSm
+                    Spacing.Radius.sm
             // 失败档是「不同描边档」的既有意图：hairlineStrong 比分组卡默认 hairline 高一档，
             // 与 danger 字形配合突出失败态；圆角/内边距/底色仍走共享工厂。
             if attachment.failed then chip.BorderBrush <- Tokens.hairlineStrong
@@ -676,7 +671,7 @@ type Composer(actions: ComposerActions) as this =
             pendingPanel.Children.Clear()
             let current, elsewhere = items |> List.partition (fun item -> activeConversationId = Some item.conversationId)
             for item in current do
-                let body = StackPanel(Spacing = Tokens.space1)
+                let body = StackPanel(Spacing = Spacing.spaceXs)
                 if not (String.IsNullOrEmpty item.text) then
                     body.Children.Add(
                         ScrollViewer(
@@ -703,7 +698,7 @@ type Composer(actions: ComposerActions) as this =
                 // 未确认消息是同级的次级表面：走 Ui.groupingCard 分组卡
                 // （surfaceContainer + 发丝边，比常规 surface+border 卡片轻一档），不抢输入壳层级。
                 pendingPanel.Children.Add(
-                    Ui.groupingCard (Thickness(Tokens.space3, Tokens.space2)) body Tokens.radiusMd)
+                    Ui.groupingCard (Thickness(Spacing.spaceXl, Spacing.spaceMd)) body Spacing.Radius.md)
             // 首条消息创建会话失败时尚无侧栏条目，切走后仍要有找回入口。
             for conversationId, pending in elsewhere |> List.groupBy _.conversationId do
                 let label = sprintf "查看另一个会话的未确认消息（%d 条）" pending.Length
@@ -780,7 +775,7 @@ type Composer(actions: ComposerActions) as this =
     /// 写固定收紧边距，两条路径由 compactMode 分派、不同时生效。
     member private this.ApplyComposerPadding() =
         let inset = LayoutPolicy.horizontalInset this.Bounds.Width
-        this.Padding <- Thickness(inset, Tokens.space4, inset, Tokens.space3)
+        this.Padding <- Thickness(inset, Spacing.space2xl, inset, Spacing.spaceXl)
 
     /// 窄屏只收紧已有控件，不增加第二套输入逻辑：隐藏键盘提示、压缩边距与模型标签。
     member this.SetCompactMode(value: bool) =
@@ -801,11 +796,11 @@ type Composer(actions: ComposerActions) as this =
         this.Padding <-
             if value then
                 // compact 档：固定收紧边距，不随宽度浮动（窄屏省地优先于呼吸感）。
-                Thickness(Tokens.space3, Tokens.space3, Tokens.space3, Tokens.space2)
+                Thickness(Spacing.spaceXl, Spacing.spaceXl, Spacing.spaceXl, Spacing.spaceMd)
             else
                 // 非 compact 档：水平留白随实际宽度取档（桌面 32/48 的呼吸感）。
                 let inset = LayoutPolicy.horizontalInset this.Bounds.Width
-                Thickness(inset, Tokens.space4, inset, Tokens.space3)
+                Thickness(inset, Spacing.space2xl, inset, Spacing.spaceXl)
 
     member _.Focus() = tryFocusInput ()
 
@@ -833,7 +828,7 @@ type Composer(actions: ComposerActions) as this =
         // 是「只有它们有」的全局歧异，按 Chat+Overlays 收敛要求移除。
 
         // attach/queue/send 三个 30px 目标间距 space1→space2：减少误触，呼吸感对齐 footer。
-        let actionRow = Ui.hstack Tokens.space2 [ attachButton :> Control; queueButton :> Control; sendButton :> Control ]
+        let actionRow = Ui.hstack Spacing.spaceMd [ attachButton :> Control; queueButton :> Control; sendButton :> Control ]
         actionRow.VerticalAlignment <- VerticalAlignment.Bottom
 
         let inputRow = DockPanel(LastChildFill = true)
@@ -851,7 +846,7 @@ type Composer(actions: ComposerActions) as this =
         footerRow.Children.Add dropAttachHint
         footerRow.Children.Add hintText
 
-        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
+        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
         column.Children.Add attachmentScroller
         column.Children.Add inputRow
         // 输入壳内的上下分层：最轻档 hairline（Ui.hairline 取 borderSoft，是更上一档的标准分隔）。
@@ -861,8 +856,8 @@ type Composer(actions: ComposerActions) as this =
         let dropOverlayContent =
             Border(
                 Background = Tokens.accentSoft,
-                CornerRadius = CornerRadius Tokens.radiusMd,
-                Padding = Thickness(Tokens.space3, Tokens.space2),
+                CornerRadius = CornerRadius Spacing.Radius.md,
+                Padding = Thickness(Spacing.spaceXl, Spacing.spaceMd),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = dropHintText)
@@ -948,7 +943,7 @@ type Composer(actions: ComposerActions) as this =
         this.AddHandler(DragDrop.DragLeaveEvent, EventHandler<DragEventArgs>(fun _ e -> handleDragLeave e))
         this.AddHandler(DragDrop.DropEvent, EventHandler<DragEventArgs>(fun _ e -> handleDrop e))
 
-        let outer = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2, MaxWidth = Tokens.readingWidth)
+        let outer = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd, MaxWidth = Tokens.readingWidth)
         outer.Children.Add disabledNotice
         outer.Children.Add pendingContainer
         outer.Children.Add shell

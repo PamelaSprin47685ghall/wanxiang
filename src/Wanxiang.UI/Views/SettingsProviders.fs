@@ -30,10 +30,10 @@ type SettingsActions = {
 /// 就能开始对话。密钥永不回显（服务端只下发 hasApiKey）。
 type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
-    let listPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
+    let listPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
     let mutable catalog = Catalog.empty
 
-    /// 外壳反馈只切描边颜色与外阴影（focusRingSpread），不动厚度与内边距。
+    /// 外壳反馈只切描边颜色与外阴影（Stroke.thick 外环），不动厚度与内边距。
     /// 错误行只在自己组内与 hint 互换（Ui.fieldGroup），不挤占兄弟。
     let syncShellVisual (box: TextBox) =
         let msg = Ui.fieldValidationMessage box
@@ -43,12 +43,12 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 shell.BorderBrush <- Tokens.danger
                 shell.BoxShadow <-
                     if box.IsFocused then
-                        BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.dangerSoft.Color))
+                        BoxShadows(BoxShadow(Spread = Spacing.Stroke.thick, Color = Tokens.dangerSoft.Color))
                     else
                         BoxShadows()
             elif box.IsFocused then
                 shell.BorderBrush <- Tokens.accent
-                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color))
+                shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Spacing.Stroke.thick, Color = Tokens.accentSoft.Color))
             else
                 shell.BorderBrush <- Tokens.border
                 shell.BoxShadow <- BoxShadows()
@@ -430,7 +430,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             Ui.setButtonPending saveButton pending idleSaveText "正在保存…"
             Ui.setEnabled cancelButton (not pending)
         let buttons =
-            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, HorizontalAlignment = HorizontalAlignment.Right)
             row.Margin <- Thickness 0.0
             row.Children.Add cancelButton
             row.Children.Add saveButton
@@ -454,7 +454,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
         let form =
             Ui.vstack
-                Tokens.space3
+                Spacing.spaceXl
                 [ Ui.title (if existing.IsSome then "编辑服务商" else "添加服务商") :> Control
                   Ui.controlFieldGroup "预设" "" (presetButton :> Control)
                   kindCaption :> Control
@@ -577,9 +577,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             if not provider.enabled then "已停用", Ui.TagTone.Neutral
             elif configured then "已配置", Ui.TagTone.Neutral
             else "缺少密钥", Ui.TagTone.Warning
-        let titleRow = Ui.hstack Tokens.space2 [ dot :> Control; name :> Control ]
+        let titleRow = Ui.hstack Spacing.spaceMd [ dot :> Control; name :> Control ]
         titleRow.Children.Add(Ui.tagWith stateTone stateLabel)
-        let column = Ui.vstack Tokens.compactRowPaddingY [ titleRow :> Control; meta :> Control ]
+        let column = Ui.vstack Spacing.spaceXXs [ titleRow :> Control; meta :> Control ]
         let editButton = Ui.iconButton Icons.pencil "编辑"
         Ui.onClick editButton (fun () -> this.ShowEditor(Some provider))
         let moreButton = Ui.iconButton Icons.more "更多"
@@ -609,14 +609,14 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                   MenuEntry.create "删除" (fun () -> actions.deleteProvider provider.id)
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ])
-        let actionsRow = Ui.hstack Tokens.space1 [ editButton :> Control; moreButton :> Control ]
+        let actionsRow = Ui.hstack Spacing.spaceXs [ editButton :> Control; moreButton :> Control ]
         let dock = DockPanel(LastChildFill = true)
         DockPanel.SetDock(actionsRow, Dock.Right)
         dock.Children.Add actionsRow
         dock.Children.Add column
         // 列表行卡内边距走行卡档 (space4, space3)：服务商 / MCP / 内置工具等列表单行同一档；
         // 分组面板（外观 / 关于卡）另用更宽松的面板档 (space4, space4)。
-        Ui.groupingCard (Thickness(Tokens.space4, Tokens.space3)) dock Tokens.radiusMd
+        Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.spaceXl)) dock Spacing.Radius.md
         :> Control
 
     member this.SetCatalog(next: Catalog) =
@@ -640,9 +640,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let addButton = Ui.button Ui.Primary "添加服务商" (fun () -> this.ShowEditor None)
         addButton.HorizontalAlignment <- HorizontalAlignment.Left
         Ui.vstack
-            Tokens.space6
+            Spacing.space4xl
             [ Ui.vstack
-                  Tokens.space1
+                  Spacing.spaceXs
                   [ Ui.heading "服务商" :> Control
                     Ui.caption "万象通过服务商原生协议或 OpenAI 兼容接口访问模型。密钥保存在服务端配置里，界面不会回显。" :> Control ]
               :> Control

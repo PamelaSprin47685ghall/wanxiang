@@ -159,7 +159,7 @@ type ConversationExportDialog(
     member _.IsOpen = active
 
     member this.Show() =
-        let buttons = Ui.hstack Tokens.space2 [ closeButton :> Control; retryButton :> Control; saveButton :> Control ]
+        let buttons = Ui.hstack Spacing.spaceMd [ closeButton :> Control; retryButton :> Control; saveButton :> Control ]
         // 三按钮行补左右键导航：其余对话框（Dialogs.fs:48-57、SettingsProviders/Tools 页脚）都有，
         // 导出对话框此前只有 Tab 一条路，桌面端键盘用户按方向键无响应，交互节拍割裂。
         // 连线不按布局顺序写死相邻对，而是「沿行内下一个可见可用键」：重新导出 / 保存
@@ -192,7 +192,7 @@ type ConversationExportDialog(
                     next.Focus(NavigationMethod.Directional) |> ignore
                 | None -> ())
         buttons.HorizontalAlignment <- HorizontalAlignment.Right
-        let content = Ui.vstack Tokens.space3
+        let content = Ui.vstack Spacing.spaceXl
                           [ Ui.title "导出会话" :> Control; Ui.caption initialTitle :> Control
                             status :> Control; progress :> Control
                             // 进度区与说明/操作区之间一条最轻发丝线：上方是实时反馈，

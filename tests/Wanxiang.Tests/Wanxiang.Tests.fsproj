@@ -60,6 +60,7 @@
     <Compile Include="IconCenteringTests.fs" />
     <Compile Include="PresentationRefreshTests.fs" />
     <Compile Include="DesignConvergenceTests.fs" />
+    <Compile Include="StateConvergenceTests.fs" />
     <Compile Include="SearchHighlightTests.fs" />
     <Compile Include="SettingsSurfaceTests.fs" />
     <Compile Include="ConversationPresentationTests.fs" />

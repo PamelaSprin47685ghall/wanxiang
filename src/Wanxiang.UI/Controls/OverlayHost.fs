@@ -26,8 +26,8 @@ type OverlayHost(root: Grid) =
 
     // 对话框 / 浮层 / 提示条统一的视口留白：space4 在小窗口与高 DPI 下仍能保证
     // 卡片边缘与阴影不贴边；fit*ToViewport 与 popup 钳位都以它为唯一依据。
-    let viewportInset = Tokens.space4
-    let popupGap = Tokens.space2
+    let viewportInset = Spacing.space2xl
+    let popupGap = Spacing.spaceMd
 
     let scrim =
         Border(
@@ -42,8 +42,8 @@ type OverlayHost(root: Grid) =
             // 瞬态浮层边缘用最轻 hairline，抬升感交给 shadowDialog，避免重描边。
             BorderBrush = Tokens.hairline,
             BorderThickness = Thickness ControlMetrics.borderWidth,
-            CornerRadius = CornerRadius Tokens.radiusXl,
-            Padding = Thickness Tokens.space6,
+            CornerRadius = CornerRadius Spacing.Radius.xl,
+            Padding = Thickness Spacing.space4xl,
             // Center + Margin 双保险：MaxWidth/MaxHeight 负责钳制，Margin 保证
             // 首次测量前或 bounds 为 0 的过渡帧也不贴边。
             Margin = Thickness viewportInset,
@@ -65,8 +65,8 @@ type OverlayHost(root: Grid) =
             // 与对话框同一套：hairline 描边 + shadowPopup 抬升。
             BorderBrush = Tokens.hairline,
             BorderThickness = Thickness ControlMetrics.borderWidth,
-            CornerRadius = CornerRadius Tokens.radiusLg,
-            Padding = Thickness(Tokens.space1, Tokens.space1),
+            CornerRadius = CornerRadius Spacing.Radius.lg,
+            Padding = Thickness(Spacing.spaceXs, Spacing.spaceXs),
             IsVisible = false,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top)
@@ -74,10 +74,10 @@ type OverlayHost(root: Grid) =
     let toastStack =
         StackPanel(
             Orientation = Orientation.Vertical,
-            Spacing = Tokens.space2,
+            Spacing = Spacing.spaceMd,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = Thickness(Tokens.space6, 0.0, Tokens.space6, Tokens.space8))
+            Margin = Thickness(Spacing.space4xl, 0.0, Spacing.space4xl, Spacing.space6xl))
 
     let mutable onDialogClosed: unit -> unit = id
     // 嵌套对话框栈：后打开的对话框只盖住先打开的，关闭时原样恢复
@@ -255,7 +255,7 @@ type OverlayHost(root: Grid) =
                 child.MaxWidth <- toastStack.MaxWidth
         // 底部已有 space8 外边距：再按视口高度钳住 MaxHeight，
         // 多条堆叠时顶部仍保留 viewportInset，不顶到视口上缘。
-        let height = max 0.0 (root.Bounds.Height - Tokens.space8 - viewportInset)
+        let height = max 0.0 (root.Bounds.Height - Spacing.space6xl - viewportInset)
         if height > 0.0 then
             toastStack.MaxHeight <- height
 
@@ -449,7 +449,7 @@ type OverlayHost(root: Grid) =
                 | Info -> Tokens.info :> IBrush
                 | Failure -> Tokens.danger :> IBrush
             // 语气条只做 2px 的弱提示：不抢正文，用现有不透明度阶梯压暗，无位移、无新 token。
-            let bar = Border(Width = ControlMetrics.toastAccentWidth, CornerRadius = CornerRadius Tokens.radiusPill, Background = accentBrush, Opacity = Tokens.opacitySubtle)
+            let bar = Border(Width = ControlMetrics.toastAccentWidth, CornerRadius = CornerRadius Spacing.Radius.pill, Background = accentBrush, Opacity = Tokens.opacitySubtle)
             let body =
                 TextBlock(
                     Text = message,
@@ -465,7 +465,7 @@ type OverlayHost(root: Grid) =
                     MaxHeight = LayoutPolicy.toastBodyMaxHeight,
                     HorizontalScrollBarVisibility = Primitives.ScrollBarVisibility.Disabled,
                     VerticalScrollBarVisibility = Primitives.ScrollBarVisibility.Auto)
-            let row = Grid(ColumnSpacing = Tokens.space3)
+            let row = Grid(ColumnSpacing = Spacing.spaceXl)
             row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
             row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
             Grid.SetColumn(bar, 0)
@@ -478,9 +478,9 @@ type OverlayHost(root: Grid) =
                     // 提示条归入同一浮层家族：hairline 描边 + shadowPopup 抬升。
                     BorderBrush = Tokens.hairline,
                     BorderThickness = Thickness ControlMetrics.borderWidth,
-                    CornerRadius = CornerRadius Tokens.radiusLg,
+                    CornerRadius = CornerRadius Spacing.Radius.lg,
                     MaxWidth = ContentMetrics.toastMaxWidth,
-                    Padding = Thickness(Tokens.space4, Tokens.space3),
+                    Padding = Thickness(Spacing.space2xl, Spacing.spaceXl),
                     Child = row,
                     // 瞬态提示条不进 Tab 序：读屏经由下面的 live region 公告，键盘关闭走全局 Escape。
                     Focusable = false)

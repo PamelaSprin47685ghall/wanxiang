@@ -55,7 +55,7 @@ module Menu =
                 Foreground = foreground,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis)
-        let left = Grid(ColumnSpacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        let left = Grid(ColumnSpacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
         left.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
         left.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
         Grid.SetColumn(iconSlot, 0)
@@ -79,9 +79,9 @@ module Menu =
                     FontSize = Tokens.fontMicro,
                     Foreground = Tokens.textFaint,
                     VerticalAlignment = VerticalAlignment.Center,
-                    Margin = Thickness(Tokens.space4, 0.0, 0.0, 0.0))
+                    Margin = Thickness(Spacing.space2xl, 0.0, 0.0, 0.0))
             rightSlot.Child <- hint
-        let row = Grid(ColumnSpacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        let row = Grid(ColumnSpacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
         row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
         row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
         Grid.SetColumn(left, 0)
@@ -90,8 +90,8 @@ module Menu =
         row.Children.Add rightSlot
         let host =
             ActionBorder(
-                Padding = Thickness(Tokens.space3, ControlMetrics.menuItemPaddingY),
-                CornerRadius = CornerRadius Tokens.radiusSm,
+                Padding = Thickness(Spacing.spaceXl, ControlMetrics.menuItemPaddingY),
+                CornerRadius = CornerRadius Spacing.Radius.sm,
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
                 Focusable = true,
@@ -108,14 +108,10 @@ module Menu =
         // 危险项（删除会话等）用 dangerSoft 做 hover/focus 底，与常规 hover 拉开差距；
         // 键盘激活（Enter/Space）由 Ui.onClick 统一绑定，Tab 焦点环由 ActionBorder 绘制。
         let hoverBrush: IBrush = if entry.danger then Tokens.dangerSoft :> IBrush else Tokens.hover :> IBrush
-        host.PointerEntered.Add(fun _ -> host.Background <- hoverBrush)
-        host.PointerExited.Add(fun _ -> host.Background <- Brushes.Transparent)
-        host.GotFocus.Add(fun _ -> host.Background <- hoverBrush)
-        host.LostFocus.Add(fun _ -> host.Background <- Brushes.Transparent)
-        // 按压反馈与项目基元按钮同源（Primitives.attachSurfaceFeedback：按下 Opacity←opacityPressed、
-        // 松开 Opacity←1.0）。只写不透明度，不触碰任何几何 / 布局。
-        host.PointerPressed.Add(fun _ -> host.Opacity <- Tokens.opacityPressed)
-        host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
+        // hover / focus 底色走 Interaction 的原生伪类；菜单项是 hover 高亮档。
+        Interaction.surface host Interaction.HoverVariant.plain |> ignore
+        Interaction.reportFocusOrigin host
+        // 按压反馈由 Interaction 的 `:pressed` 伪类负责（不透明度脉冲，不碰几何）。
         Ui.onClick host (fun () ->
             overlay.ClosePopup()
             entry.action ())
@@ -146,7 +142,7 @@ module Menu =
     /// 打开一个菜单。`entries` 为空时不打开。
     let show (overlay: OverlayHost) (anchor: Control) (alignRight: bool) (entries: MenuEntry list) =
         if not (List.isEmpty entries) then
-            let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.tightRowPaddingY)
+            let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXXs)
             for entry in entries do
                 panel.Children.Add(renderEntry overlay entry)
             wireDirectionalNavigation panel
@@ -162,17 +158,17 @@ module Menu =
     let showGrouped (overlay: OverlayHost) (anchor: Control) (alignRight: bool) (groups: (string * MenuEntry list) list) =
         let visible = groups |> List.filter (fun (_, items) -> not (List.isEmpty items))
         if not (List.isEmpty visible) then
-            let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.tightRowPaddingY)
+            let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXXs)
             visible
             |> List.iteri (fun index (groupLabel, items) ->
                 if index > 0 then
                     // 组间分隔与全应用同一拼写：Ui.hairline（borderSoft 标准档），只补分组边距。
                     let divider = Ui.hairline ()
-                    divider.Margin <- Thickness(Tokens.space2, Tokens.space1)
+                    divider.Margin <- Thickness(Spacing.spaceMd, Spacing.spaceXs)
                     panel.Children.Add divider
                 if not (String.IsNullOrWhiteSpace groupLabel) then
                     let header = Ui.sectionLabel groupLabel
-                    header.Margin <- Thickness(Tokens.space3, Tokens.space2, Tokens.space3, Tokens.space1)
+                    header.Margin <- Thickness(Spacing.spaceXl, Spacing.spaceMd, Spacing.spaceXl, Spacing.spaceXs)
                     panel.Children.Add header
                 for entry in items do
                     panel.Children.Add(renderEntry overlay entry))
@@ -202,7 +198,7 @@ module Menu =
                 MaxWidth = 260.0)
         let chevron = Icons.chevronDown Tokens.textFaint
         chevron.VerticalAlignment <- VerticalAlignment.Center
-        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, VerticalAlignment = VerticalAlignment.Center)
+        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
         row.Children.Add caption
         row.Children.Add chevron
         let host =
@@ -211,9 +207,9 @@ module Menu =
                 BorderBrush = Tokens.border,
                 BorderThickness = Thickness ControlMetrics.borderWidth,
                 // 下拉/托盘类控件圆角统一到 radiusLg，与卡片一致。
-                CornerRadius = CornerRadius Tokens.radiusLg,
+                CornerRadius = CornerRadius Spacing.Radius.lg,
                 // 垂直内边距引 ControlMetrics.selectButtonPaddingY（单一来源），水平仍用 space3，不再写裸 6.0。
-                Padding = Thickness(Tokens.space3, ControlMetrics.selectButtonPaddingY),
+                Padding = Thickness(Spacing.spaceXl, ControlMetrics.selectButtonPaddingY),
                 Cursor = handCursor,
                 Focusable = true,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -223,12 +219,9 @@ module Menu =
             Nullable Avalonia.Automation.Peers.AutomationControlType.ComboBox)
         // 悬停只换描边色：与 hover 底色同一时长，走带描边的过渡集合。
         host.Transitions <- Ui.surfaceBorderedTransitions ()
-        host.PointerEntered.Add(fun _ -> host.BorderBrush <- Tokens.line)
-        host.PointerExited.Add(fun _ -> host.BorderBrush <- Tokens.border)
-        // 按压反馈与项目基元按钮同源（Primitives.attachSurfaceFeedback：按下 Opacity←opacityPressed、
-        // 松开 Opacity←1.0）。只写不透明度，不触碰任何几何 / 布局。
-        host.PointerPressed.Add(fun _ -> host.Opacity <- Tokens.opacityPressed)
-        host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
+        // 「描边即状态」档：hover 换描边而非底色（Interaction 的 bordered 变体）。
+        Interaction.surface host Interaction.HoverVariant.bordered |> ignore
+        // 按压反馈由 Interaction 的 `:pressed` 伪类负责。
         let openMenu () = showGrouped overlay (host :> Control) false (optionsOf ())
         Ui.onClick host openMenu
         host.KeyDown.Add(fun e ->

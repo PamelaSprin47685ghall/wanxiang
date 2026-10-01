@@ -22,6 +22,7 @@ let private withButton (act: Border -> unit) =
     finally
         window.Close()
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``键盘导航过来的按钮带焦点环`` () =
     Headless.run (fun () ->
@@ -32,6 +33,7 @@ let ``键盘导航过来的按钮带焦点环`` () =
         Assert.True(button.BoxShadow.Count > 0, "Tab 过去应当出现焦点环"))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``方向键导航同样带焦点环`` () =
     Headless.run (fun () ->
@@ -41,6 +43,7 @@ let ``方向键导航同样带焦点环`` () =
         Assert.True(button.BoxShadow.Count > 0, "方向键导航也该出现焦点环"))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``鼠标点出来的焦点不画环`` () =
     Headless.run (fun () ->
@@ -50,6 +53,7 @@ let ``鼠标点出来的焦点不画环`` () =
         Assert.Equal(0, button.BoxShadow.Count))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``程序化 / 初始焦点同样画焦点环`` () =
     Headless.run (fun () ->
@@ -64,6 +68,7 @@ let ``程序化 / 初始焦点同样画焦点环`` () =
         Assert.True(button.BoxShadow.Count > 0, "程序化焦点也要有焦点环"))
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``对话框初始焦点（裸 Focus）带焦点环`` () =
     Headless.run (fun () ->
@@ -94,6 +99,7 @@ let ``对话框初始焦点（裸 Focus）带焦点环`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``失去焦点后焦点环消失`` () =
     Headless.run (fun () ->
@@ -147,6 +153,7 @@ let private drawerSearchBox (ring: Control[]) =
     ring
     |> Array.find (fun c -> match c with :? TextBox as tb -> tb.PlaceholderText = "搜索会话" | _ -> false)
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``compact 抽屉 Tab 只在侧栏内循环，两端回绕、不漏到背景`` () =
     Headless.run (fun () ->
@@ -206,6 +213,7 @@ let ``compact 抽屉 Tab 只在侧栏内循环，两端回绕、不漏到背景`
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``非 compact 下侧栏不拦截 Tab，桌面态与主区互 Tab 如常`` () =
     Headless.run (fun () ->
@@ -237,6 +245,7 @@ let ``非 compact 下侧栏不拦截 Tab，桌面态与主区互 Tab 如常`` ()
 /// MainView.ApplyResponsiveLayout 是私有方法且依赖完整壳（client/composer/timers），无头测试不整体构造它；
 /// 本用例把「真实状态迁移：NavigationController.ApplyViewport」与「焦点归宿契约：SetCompactMode 投影 + FocusSearch」
 /// 在焦点环现场复现并对齐，并逐条钉住「聚焦进抽屉」的触发条件：仅当抽屉由「未开」翻到「compact 打开」。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``视口自动带开 compact 抽屉时焦点先落抽屉内，背景键盘不可达`` () =
     Headless.run (fun () ->

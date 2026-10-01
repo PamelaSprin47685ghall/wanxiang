@@ -44,7 +44,7 @@ module Dialogs =
             | _ -> confirmLabel
         AutomationProperties.SetHelpText(confirmButton, confirmTip)
         ToolTip.SetTip(confirmButton, confirmTip)
-        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, HorizontalAlignment = HorizontalAlignment.Right)
         let wireArrowNavigation (leftBtn: Border) (rightBtn: Border) =
             leftBtn.KeyDown.Add(fun e ->
                 if e.Key = Key.Right && rightBtn.IsEnabled then
@@ -88,7 +88,7 @@ module Dialogs =
         box.Text <- initial
         let validation = Ui.fieldValidationMessage box
         let helper = Ui.caption "请输入非空内容"
-        helper.Margin <- Thickness(ControlMetrics.fieldInsetX, Tokens.space1, 0.0, 0.0)
+        helper.Margin <- Thickness(ControlMetrics.fieldInsetX, Spacing.spaceXs, 0.0, 0.0)
         helper.IsVisible <- false
         let mutable active = true
         let mutable pending = false
@@ -146,7 +146,7 @@ module Dialogs =
             pending <- value
             Ui.setButtonPending confirmButton value confirmLabel "正在保存…"
             Ui.setEnabled cancelButton (not value)
-        let buttons = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+        let buttons = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, HorizontalAlignment = HorizontalAlignment.Right)
         let wireArrowNavigation (leftBtn: Border) (rightBtn: Border) =
             leftBtn.KeyDown.Add(fun e ->
                 if e.Key = Key.Right && rightBtn.IsEnabled then
@@ -173,7 +173,7 @@ module Dialogs =
                 overlay.CloseDialog())
         let content =
             let fieldBox = Ui.vstack 0.0 [ shell :> Control; validation :> Control; helper :> Control ]
-            Ui.vstack Tokens.space4 [ Ui.title title :> Control; fieldBox :> Control; buttons :> Control ]
+            Ui.vstack Spacing.space2xl [ Ui.title title :> Control; fieldBox :> Control; buttons :> Control ]
         overlay.ShowDialog(content :> Control, 420.0, onClosed = (fun () ->
             // 焦点恢复统一走 OverlayHost 的单记忆路径，这里只标记失活。
             active <- false),
@@ -208,7 +208,7 @@ module Dialogs =
         AutomationProperties.SetHelpText(dangerButton, sprintf "%s · %s" (ToolTip.GetTip dangerButton :?> string) body)
         let content =
             Ui.vstack
-                Tokens.space4
+                Spacing.space2xl
                 [ Ui.title title :> Control
                   message :> Control
                   buttons :> Control ]
@@ -244,7 +244,7 @@ module Dialogs =
                 submit ())
         let content =
             Ui.vstack
-                Tokens.space4
+                Spacing.space2xl
                 [ Ui.title title :> Control
                   Ui.caption "会以你编辑后的内容新建一个分叉会话，原会话保持不变。" :> Control
                   shell :> Control
@@ -274,13 +274,13 @@ module Dialogs =
         codeBox.FontFamily <- Tokens.monoFontFamily
         let codeSectionInner =
             Ui.vstack
-                Tokens.space2
+                Spacing.spaceMd
                 [ Ui.fieldLabel "配对码" :> Control
                   codeShell :> Control
                   Ui.caption "配对码会打印在服务端终端（stderr），5 分钟内有效。" :> Control ]
                 // 配对码区是对话框内的分组表面：surfaceContainer + 最轻发丝边，与主字段区分层。
         let codeSection =
-            Ui.groupingCard (Thickness(Tokens.space3, Tokens.space2)) codeSectionInner Tokens.radiusMd
+            Ui.groupingCard (Thickness(Spacing.spaceXl, Spacing.spaceMd)) codeSectionInner Spacing.Radius.md
         codeSection.IsVisible <- false
 
         let status =
@@ -357,9 +357,9 @@ module Dialogs =
 
         let content =
             Ui.vstack
-                Tokens.space4
+                Spacing.space2xl
                 [ Ui.vstack
-                      Tokens.space1
+                      Spacing.spaceXs
                       [ Ui.title "连接万象服务器" :> Control
                         Ui.caption "服务端负责运行模型、保存会话与管理密钥；客户端只通过 WebSocket 与它通信。" :> Control ]
                   :> Control
@@ -455,7 +455,7 @@ module Dialogs =
         // 这里不再为输入框设隧道 Esc 处理。
 
         let selectedTools = System.Collections.Generic.HashSet<string>(current.tools)
-        let toolsPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space1)
+        let toolsPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXs)
         if List.isEmpty catalog.tools then
             toolsPanel.Children.Add(Ui.caption "服务端当前没有可用工具。")
         else
@@ -472,7 +472,7 @@ module Dialogs =
                         Foreground = Tokens.text,
                         VerticalAlignment = VerticalAlignment.Center)
                 let source = Ui.tag (if tool.source = "mcp" then tool.serverId |> Option.defaultValue "mcp" else "内置")
-                let left = Ui.hstack Tokens.space2 [ caption :> Control; source :> Control ]
+                let left = Ui.hstack Spacing.spaceMd [ caption :> Control; source :> Control ]
                 let row = DockPanel(LastChildFill = true)
                 DockPanel.SetDock(toggle, Dock.Right)
                 row.Children.Add toggle
@@ -537,7 +537,7 @@ module Dialogs =
         let topPColumn = Ui.inputFieldGroup "Top P" "0–1，留空跟随服务端默认" topPBox
         let maxTokensColumn = Ui.inputFieldGroup "最大输出 token" "限制单次回复，留空不限制" maxTokensBox
         let thinkingBudgetColumn = Ui.inputFieldGroup "思维链预算（token）" "0 关闭思维链，留空跟随默认" thinkingBudgetBox
-        let paramGrid, applyParamLayout = Ui.twoColumnForm Tokens.space4 Tokens.space3 4 [ temperatureColumn; topPColumn; maxTokensColumn; thinkingBudgetColumn ]
+        let paramGrid, applyParamLayout = Ui.twoColumnForm Spacing.space2xl Spacing.spaceXl 4 [ temperatureColumn; topPColumn; maxTokensColumn; thinkingBudgetColumn ]
 
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
         AutomationProperties.SetName(cancelButton, "取消")
@@ -552,7 +552,7 @@ module Dialogs =
             pending <- value
             Ui.setButtonPending saveButton value "保存" "正在保存…"
             Ui.setEnabled cancelButton (not value)
-        let footer = StackPanel(Orientation = Orientation.Horizontal, Spacing = Tokens.space2, HorizontalAlignment = HorizontalAlignment.Right)
+        let footer = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, HorizontalAlignment = HorizontalAlignment.Right)
         footer.Children.Add cancelButton
         footer.Children.Add saveButton
         // 页脚加入左右键导航节律：与其他对话框按钮行一致，Left/Right 在两按钮间移动。
@@ -571,17 +571,17 @@ module Dialogs =
                 save ())
         let content =
             Ui.vstack
-                Tokens.space4
-                [ Ui.vstack Tokens.space1 [ Ui.title "会话设置" :> Control; Ui.caption "只影响当前会话，不改服务端默认值。" :> Control ] :> Control
+                Spacing.space2xl
+                [ Ui.vstack Spacing.spaceXs [ Ui.title "会话设置" :> Control; Ui.caption "只影响当前会话，不改服务端默认值。" :> Control ] :> Control
                   errorSummary :> Control
                   Ui.controlFieldGroup "模型" "" (modelButton :> Control)
                   Ui.controlFieldGroup "系统指令" "" (instructionsShell :> Control)
                   paramGrid :> Control
                   Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control
                   Ui.groupingCard
-                      (Thickness(Tokens.space3, Tokens.space2))
-                      (Ui.vstack Tokens.space2 [ Ui.sectionLabel "可用工具" :> Control; toolsPanel :> Control ])
-                      Tokens.radiusMd
+                      (Thickness(Spacing.spaceXl, Spacing.spaceMd))
+                      (Ui.vstack Spacing.spaceMd [ Ui.sectionLabel "可用工具" :> Control; toolsPanel :> Control ])
+                      Spacing.Radius.md
                   :> Control
                   Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control
                   footer :> Control ]
@@ -635,18 +635,18 @@ module Dialogs =
                 "P", "置顶 / 取消置顶当前会话"
                 "F2", "重命名当前会话"
                 "Delete", "删除当前会话（多选模式下批量删除）" ] ]
-        let contentPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space3)
+        let contentPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXl)
         for (category, items) in sections do
             contentPanel.Children.Add(Ui.sectionLabel category :> Control)
             // 键位行间距 space1→space2：快捷键是扫读内容，行距放宽减少视觉粘连。
-            let groupRows = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space2)
+            let groupRows = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
             for (keys, description) in items do
                 // 键位 chip 与其它次级面同一几何：走 Ui.groupingCard；
                 // 纵向密度取 compactRowPaddingY（此前是裸 2.0），不再各写一份。
                 let key =
                     let keyCap =
                         Ui.groupingCard
-                            (Thickness(Tokens.space2, Tokens.compactRowPaddingY))
+                            (Thickness(Spacing.spaceMd, Spacing.spaceXXs))
                             (TextBlock(
                                 Text = keys,
                                 FontSize = Tokens.fontMicro,
@@ -654,7 +654,7 @@ module Dialogs =
                                 FontFamily = Tokens.monoFontFamily,
                                 Foreground = Tokens.textMuted,
                                 HorizontalAlignment = HorizontalAlignment.Center))
-                            Tokens.radiusSm
+                            Spacing.Radius.sm
                     keyCap.MinWidth <- 136.0
                     keyCap
                 let caption =
@@ -663,14 +663,14 @@ module Dialogs =
                         FontSize = Tokens.fontSmall,
                         Foreground = Tokens.text,
                         VerticalAlignment = VerticalAlignment.Center)
-                groupRows.Children.Add(Ui.hstack Tokens.space3 [ key :> Control; caption :> Control ])
+                groupRows.Children.Add(Ui.hstack Spacing.spaceXl [ key :> Control; caption :> Control ])
             contentPanel.Children.Add groupRows
         let closeBtn = Ui.button Ui.Primary "关闭" (fun () -> overlay.CloseDialog())
         AutomationProperties.SetName(closeBtn, "关闭")
         AutomationProperties.SetHelpText(closeBtn, "关闭快捷键帮助 (Esc / Enter)")
         ToolTip.SetTip(closeBtn, "关闭快捷键帮助 (Esc / Enter)")
         closeBtn.HorizontalAlignment <- HorizontalAlignment.Right
-        let content = Ui.vstack Tokens.space4 [ Ui.title "键盘快捷键" :> Control; contentPanel :> Control; closeBtn :> Control ]
+        let content = Ui.vstack Spacing.space2xl [ Ui.title "键盘快捷键" :> Control; contentPanel :> Control; closeBtn :> Control ]
         // 关闭只走按钮级激活（Ui.onClick）与全局 Escape：内容级 Enter 快捷会误关嵌套层，
         // 且与按钮级重复触发两次 CloseDialog。
         let scroller =

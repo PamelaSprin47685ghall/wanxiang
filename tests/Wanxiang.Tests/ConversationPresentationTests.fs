@@ -26,18 +26,20 @@ let private approx (expectedValue: float) (actual: float) = abs (expectedValue -
 
 [<Fact>]
 let edgeWidthTiersKeepAccentAndQuoteDistinct () =
-    Assert.True(approx ControlMetrics.accentEdgeWidth 2.0, "accentEdgeWidth 应收敛到 2.0（思考竖线）")
-    Assert.True(approx ControlMetrics.quoteEdgeWidth 3.0, "quoteEdgeWidth 应收敛到 3.0（引用块左缘）")
-    // 两档有意保留：引用块印刷条比通用强调条宽一档（依据 Metrics.fs 注释）。
+    Assert.True(approx ControlMetrics.accentEdgeWidth Spacing.Stroke.thick, "accentEdgeWidth 应读 Stroke.thick")
+    Assert.True(approx ControlMetrics.quoteEdgeWidth Spacing.Stroke.quote, "quoteEdgeWidth 应读 Stroke.quote")
+    // 两档有意保留：引用块印刷条比通用强调条宽一档（依据 Spacing.Stroke 注释）。
     Assert.True(ControlMetrics.quoteEdgeWidth > ControlMetrics.accentEdgeWidth, "quote 档应宽于 accent 档")
 
 [<Fact>]
-let rowPaddingLadderKeepsTightBelowCompactBelowField () =
-    Assert.True(approx Tokens.tightRowPaddingY 1.0, "tightRowPaddingY 应为 1.0")
-    Assert.True(approx Tokens.compactRowPaddingY 2.0, "compactRowPaddingY 应为 2.0")
-    Assert.True(approx Tokens.fieldRowPaddingY 3.0, "fieldRowPaddingY 应为 3.0")
-    Assert.True(Tokens.tightRowPaddingY < Tokens.compactRowPaddingY, "tight < compact")
-    Assert.True(Tokens.compactRowPaddingY < Tokens.fieldRowPaddingY, "compact < field")
+let rowPaddingLadderFollowsFluentRamp () =
+    // 旧的 tight(1)/compact(2)/field(3) 三档是自制刻度，clean-break 后全部删除。
+    // 现在单行小控件的纵向呼吸统一读 ramp 的 size20(2)，贴字段留白读 size60(6)。
+    Assert.True(approx Spacing.spaceXXs 2.0, "单行小控件纵向内衬应收敛到 ramp 的 size20(2)")
+    Assert.True(approx Spacing.spaceXs 4.0, "紧凑堆叠间距应收敛到 ramp 的 size40(4)")
+    Assert.True(approx Spacing.spaceSm 6.0, "贴字段留白应收敛到 ramp 的 size60(6)")
+    Assert.True(Spacing.spaceXXs < Spacing.spaceXs, "内衬 < 堆叠间距")
+    Assert.True(Spacing.spaceXs < Spacing.spaceSm, "堆叠间距 < 贴字段留白")
 
 [<Fact>]
 let skeletonOpacityTiersOrderedForBaseBreathAndReduced () =
@@ -49,9 +51,9 @@ let skeletonOpacityTiersOrderedForBaseBreathAndReduced () =
 
 [<Fact>]
 let letterSpacingKeepsEmphasisBelowDisplay () =
-    Assert.True(approx Tokens.letterSpacingEmphasis 0.4, "letterSpacingEmphasis 应为 0.4")
-    Assert.True(approx Tokens.letterSpacingDisplay 0.8, "letterSpacingDisplay 应为 0.8")
-    Assert.True(Tokens.letterSpacingEmphasis < Tokens.letterSpacingDisplay, "emphasis < display")
+    Assert.True(approx Spacing.Tracking.emphasis 0.4, "letterSpacingEmphasis 应为 0.4")
+    Assert.True(approx Spacing.Tracking.display 0.8, "letterSpacingDisplay 应为 0.8")
+    Assert.True(Spacing.Tracking.emphasis < Spacing.Tracking.display, "emphasis < display")
 
 [<Fact>]
 let hoverDimStaysSingleDimGrade () =
@@ -91,11 +93,11 @@ let composerShellPaddingSymmetricAndChipFadeUsesNamedLedger () =
 [<Fact>]
 let sidebarFooterPaddingAndDisclosureAndSkeletonConverged () =
     let text = source "src/Wanxiang.UI/Views/Sidebar.fs"
-    Assert.Contains("Thickness(Tokens.space4, 0.0, Tokens.space4, 0.0)", text)
+    Assert.Contains("Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, 0.0)", text)
     Assert.True(occurrenceCount text "ControlMetrics.sidebarRunningDotSize" >= 1, "状态点应引 sidebarRunningDotSize")
     // 分组表头改走共享宽字距原语 Ui.sectionLabelWide（letterSpacingDisplay 收进原语）；词标 wordmark 仍直接引 letterSpacingDisplay。
     Assert.True(occurrenceCount text "Ui.sectionLabelWide" >= 1, "分组表头应改走 Ui.sectionLabelWide 共享原语")
-    Assert.True(occurrenceCount text "Tokens.letterSpacingDisplay" >= 1, "词标字距应引 letterSpacingDisplay")
+    Assert.True(occurrenceCount text "Spacing.Tracking.display" >= 1, "词标字距应引 letterSpacingDisplay")
     Assert.DoesNotContain("header.Foreground <- Tokens.textMuted", text)
     Assert.Contains("Tokens.skeletonOpacityBase", text)
     Assert.DoesNotContain("Opacity = 0.65", text)
@@ -113,9 +115,9 @@ let messageCardMotionHoverGeometryAndDisclosureColorConverged () =
     Assert.True(occurrenceCount text "Tokens.opacityHoverDim" >= 3, "三处 hover 变暗应引 opacityHoverDim")
     Assert.DoesNotContain("Icons.chevronRight Tokens.textFaint", text)
     Assert.Contains("let toolChevronGlyph = Icons.chevronRight Tokens.textMuted", text)
-    Assert.True(occurrenceCount text "Padding = Thickness(Tokens.space1, Tokens.fieldRowPaddingY)" >= 2, "两处披露头纵向内边距应引 fieldRowPaddingY")
-    Assert.Contains("Padding = Thickness(Tokens.space2, Tokens.compactRowPaddingY)", text)
-    Assert.Contains("Spacing = Tokens.fieldRowPaddingY", text)
+    Assert.True(occurrenceCount text "Padding = Thickness(Spacing.spaceXs, Spacing.spaceSm)" >= 2, "两处披露头纵向内边距应引 fieldRowPaddingY")
+    Assert.Contains("Padding = Thickness(Spacing.spaceMd, Spacing.spaceXXs)", text)
+    Assert.Contains("Spacing = Spacing.spaceSm", text)
     Assert.Contains("Thickness(ControlMetrics.accentEdgeWidth, 0.0, 0.0, 0.0)", text)
     Assert.Contains("Ui.spinner ControlMetrics.spinnerSize", text)
     Assert.Contains("Ui.spinner ControlMetrics.spinnerCompactSize", text)
@@ -149,7 +151,7 @@ let markdownQuoteListAndTaskGeometryTokenizedButColumnLadderStaysContentPolicy (
     let text = source "src/Wanxiang.UI/Controls/MarkdownRenderer.fs"
     Assert.Contains("ControlMetrics.quoteEdgeWidth", text)
     Assert.DoesNotContain("Thickness(3.0, 0.0, 0.0, 0.0)", text)
-    Assert.Contains("Tokens.letterSpacingEmphasis", text)
+    Assert.Contains("Spacing.Tracking.emphasis", text)
     Assert.True(occurrenceCount text "ControlMetrics.listMarkerDotSize" >= 2, "列表圆点直径应引 listMarkerDotSize")
     Assert.Contains("ControlMetrics.listMarkerDotRadius", text)
     Assert.True(occurrenceCount text "ControlMetrics.taskBoxSize" >= 2, "任务框尺寸应引 taskBoxSize")

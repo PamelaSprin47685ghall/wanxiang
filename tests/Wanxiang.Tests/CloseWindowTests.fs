@@ -18,6 +18,7 @@ open Wanxiang.UI
 /// - 壳层真的把宿主窗口合上（走 Window.Close，MainWindow.Closing 的几何持久化才跑得到）；
 /// - 键被标记已处理，宿主浏览器不会再拿 Ctrl+W 去解释成自己的关标签语义；
 /// - PWA 没有 Window（决策 48：根视图是 Control）：宿主缺失时安全降级，不抛。
+[<Trait("Category", "UI")>]
 module CloseWindowTests =
 
     let private flags = BindingFlags.Instance ||| BindingFlags.NonPublic ||| BindingFlags.Public
@@ -40,12 +41,14 @@ module CloseWindowTests =
 
     // ---------- 快捷键解析 ----------
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``ctrl w resolves to close window`` () =
         Headless.run (fun () ->
         Assert.Equal(CloseWindow, ShortcutRouter.resolve (keyEvent Key.W KeyModifiers.Control))
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``close window accepts either ctrl or meta`` () =
         Headless.run (fun () ->
@@ -53,6 +56,7 @@ module CloseWindowTests =
         Assert.Equal(CloseWindow, ShortcutRouter.resolve (keyEvent Key.W KeyModifiers.Meta))
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``close window does not steal neighbouring key bindings`` () =
         Headless.run (fun () ->
@@ -70,6 +74,7 @@ module CloseWindowTests =
 
     // ---------- 壳层行为 ----------
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``ctrl w closes the hosting window`` () =
         Headless.run (fun () ->
@@ -81,6 +86,7 @@ module CloseWindowTests =
         Assert.False(window.IsActive, "Ctrl+W 应经 Window.Close 关掉宿主窗口")
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``ctrl w is marked handled so the host cannot act on it twice`` () =
         Headless.run (fun () ->
@@ -93,6 +99,7 @@ module CloseWindowTests =
         Assert.False(window.IsActive, "同一路径也把窗口关掉了")
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``ctrl w without a window host degrades to a no op`` () =
         Headless.run (fun () ->

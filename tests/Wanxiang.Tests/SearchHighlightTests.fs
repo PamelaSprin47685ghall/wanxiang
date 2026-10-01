@@ -171,6 +171,7 @@ let private typeQuery (sidebar: Sidebar) (query: string) (items: ConversationSum
 // 1. 纯分段函数
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``empty query yields one plain segment covering the whole text`` () =
     Headless.run (fun () ->
@@ -179,6 +180,7 @@ let ``empty query yields one plain segment covering the whole text`` () =
     Assert.False(spans |> List.forall _.isMatch)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``whitespace-only query is treated as no query`` () =
     Headless.run (fun () ->
@@ -189,6 +191,7 @@ let ``whitespace-only query is treated as no query`` () =
     Assert.False(spans |> List.forall _.isMatch)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``single term highlights only the matched substring, keeping original casing`` () =
     Headless.run (fun () ->
@@ -198,6 +201,7 @@ let ``single term highlights only the matched substring, keeping original casing
     Assert.Equal<bool list>([ false; true; false ], spans |> List.map _.isMatch)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``segments always reassemble the original text exactly`` () =
     Headless.run (fun () ->
@@ -208,6 +212,7 @@ let ``segments always reassemble the original text exactly`` () =
         Assert.Equal(text, spans |> List.map _.text |> String.concat "")
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``every term that matched the row is highlighted`` () =
     Headless.run (fun () ->
@@ -223,6 +228,7 @@ let ``every term that matched the row is highlighted`` () =
     Assert.Equal<string list>([ "模型"; "选型" ], highlighted)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``adjacent matches cover the whole text without gaps`` () =
     Headless.run (fun () ->
@@ -235,6 +241,7 @@ let ``adjacent matches cover the whole text without gaps`` () =
     Assert.Equal("存储模型", spans |> List.filter _.isMatch |> List.map _.text |> String.concat "")
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``overlapping occurrences of one term are not double counted`` () =
     Headless.run (fun () ->
@@ -245,6 +252,7 @@ let ``overlapping occurrences of one term are not double counted`` () =
     Assert.Equal<int>(2, spans |> List.filter _.isMatch |> List.length)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``a term that does not occur leaves the text unstyled`` () =
     Headless.run (fun () ->
@@ -255,6 +263,7 @@ let ``a term that does not occur leaves the text unstyled`` () =
     Assert.False(spans |> List.forall _.isMatch)
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``terms helper splits on spaces and tabs and drops duplicates`` () =
     Headless.run (fun () ->
@@ -266,6 +275,7 @@ let ``terms helper splits on spaces and tabs and drops duplicates`` () =
 // 2. 真实行渲染（含回收复用）
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``title and preview both highlight while searching`` () =
     Headless.run (fun () ->
@@ -292,6 +302,7 @@ let ``title and preview both highlight while searching`` () =
         window.Close ()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``clearing the query removes every highlight`` () =
     Headless.run (fun () ->
@@ -320,6 +331,7 @@ let ``clearing the query removes every highlight`` () =
         window.Close ()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``recycled rows keep their highlight after a snapshot refresh`` () =
     Headless.run (fun () ->
@@ -354,6 +366,7 @@ let ``recycled rows keep their highlight after a snapshot refresh`` () =
 // 3. 命中色可读性
 // =========================================================================
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``search highlight keeps readable contrast in both palettes`` () =
     Headless.run (fun () ->

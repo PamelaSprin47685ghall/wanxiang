@@ -160,6 +160,7 @@ let private buildSidebar () =
 
 // 进入多选后，同一行的点击不再打开会话，而是切换选中：这是批量模式的核心语义，
 // 也是「误点不会跳走」的保障。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``entering selection mode turns row clicks into selection toggles`` () =
     Headless.run (fun () ->
@@ -188,6 +189,7 @@ let ``entering selection mode turns row clicks into selection toggles`` () =
     )
 
 // 清空最后一项即退出模式：空选择保留操作条会让用户面对无意义的计数。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``deselecting the last item exits selection mode`` () =
     Headless.run (fun () ->
@@ -213,6 +215,7 @@ let ``deselecting the last item exits selection mode`` () =
 // 会话行（Sidebar.fs:860）与搜索框（Sidebar.fs:1383）上的 Esc 都已退多选，
 // 唯独这里漏了——用户 End 滚到底再按 Esc 毫无反应，被困在批量态。
 // kelivo interactive_drawer.dart:399-407 同序：抽屉级返回先问「是不是在多选」。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``escape exits selection mode from the archived toggle row`` () =
     Headless.run (fun () ->
@@ -253,6 +256,7 @@ let ``escape exits selection mode from the archived toggle row`` () =
     )
 
 // 批量置顶/归档按当前选择逐个发命令，Payload 逐条独立可确认。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``batch pin and archive issue one command per selected conversation`` () =
     Headless.run (fun () ->
@@ -271,7 +275,7 @@ let ``batch pin and archive issue one command per selected conversation`` () =
             descendants sidebar
             |> Seq.exists (fun c ->
                 match c with
-                | :? Border as b -> b.IsVisible && b.Padding = Thickness(Tokens.space2, Tokens.space2)
+                | :? Border as b -> b.IsVisible && b.Padding = Thickness(Spacing.spaceMd, Spacing.spaceMd)
                 | _ -> false)
         Assert.True(barVisible, "批量操作条应可见")
         // 从批量条的真实按钮触发（按钮由 Build 时构造，文本即动作名）。
@@ -312,6 +316,7 @@ let ``batch pin and archive issue one command per selected conversation`` () =
 // 批量模式里 Escape 只做退出：在搜索结果中进入多选的用户，Esc 的意图是离开
 // 批量态，而不是被清掉筛选用词。此前有词的守卫让退出失效，Esc 落到普通态的
 // 清词分支——用户丢失筛选条件还没退出多选。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``escape in selection mode exits the mode even with a search query`` () =
     Headless.run (fun () ->
@@ -346,6 +351,7 @@ let ``escape in selection mode exits the mode even with a search query`` () =
 
 // 批量条三个动作键随选中数翻面：0 项时禁用。既有守卫只挡住点击，键盘用户仍能
 // Tab 上去按 Enter 得到静默无反应——按钮的启用态本身就是可操作性的承诺。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``selection action buttons disable themselves while nothing is selected`` () =
     Headless.run (fun () ->
@@ -393,6 +399,7 @@ let ``selection action buttons disable themselves while nothing is selected`` ()
 // Ctrl+M 解析为打开模型选择器：不必先找到左下角芯片，键盘可直接换模型。
 // 选择模式只留「取消 / 全选 / 计数」与底部批量条：品牌行与页脚让位。
 // 侧栏只有 232–420pt 宽，四条常驻条会把列表压成几条——这条不变量锁住空间纪律。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``selection mode gives up the brand header and footer`` () =
     Headless.run (fun () ->
@@ -425,6 +432,7 @@ let ``selection mode gives up the brand header and footer`` () =
 
 // 「多选」入口就在行右键菜单里：桌面用户不必先知道有批量模式。
 // 这里驱动真实菜单项（浮层画在 OverlayHost 上），验证入口 → 进入模式 → 首项选中。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``row context menu offers the selection entry`` () =
     Headless.run (fun () ->
@@ -468,6 +476,7 @@ let ``row context menu offers the selection entry`` () =
         window.Close()
     )
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ctrl+m resolves to the model picker action`` () =
     Headless.run (fun () ->
@@ -481,6 +490,7 @@ let ``ctrl+m resolves to the model picker action`` () =
 
 // 长用户消息折叠在同一 detailViewport contract 上：未超限时不出现展开入口，
 // 超限时才出现，且上限取自 LayoutPolicy 的专用常量（比工具详情更矮）。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``long user messages get a clipped viewport with an expand entry`` () =
     Headless.run (fun () ->
@@ -538,6 +548,7 @@ let ``long user messages get a clipped viewport with an expand entry`` () =
 // 批量键的文案是当前选择的状态，不是固定标签：全选后同一键变成「取消全选」、
 // 全已置顶后变成「取消置顶」。此前两者只在 Build 时算一次，勾选变化后只说旧话，
 // 用户再点会得到与预期相反的动作。锁按钮文本随勾选变化翻转。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``selection buttons rename themselves as the selection changes`` () =
     Headless.run (fun () ->
@@ -570,6 +581,7 @@ let ``selection buttons rename themselves as the selection changes`` () =
 // 发送键与换行键严格互补：Enter 发送模式下 Ctrl+Enter 归换行，Ctrl+Enter 发送模式下
 // 裸 Enter 归换行。此前裸 Enter 发送模式把 Ctrl+Enter 也发出去，用户改行只剩 Shift+Enter
 // 一条路。锁：发送永远只在当前模式被声明的那个键上发生，另一个键不许提交。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``composer sends only on the mode's declared key`` () =
     Headless.run (fun () ->
@@ -625,6 +637,7 @@ let ``composer sends only on the mode's declared key`` () =
 // 从外部切换当前会话（Ctrl+1..9 / 搜索结果 / 新建）后，选中行若在视口外，
 // 侧栏上看不到正在进行的会话。SetActive 只滚屏不抢焦点：焦点归属照旧由调用方决定。
 // 锁：激活的行必须被滚进可视区。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``setting the active conversation scrolls it into view`` () =
     Headless.run (fun () ->
@@ -659,6 +672,7 @@ let ``setting the active conversation scrolls it into view`` () =
 // 置顶键的文案只按「已选项是否全部置顶」判定。此前混入「必须全选可见行」的前提，
 // 于是只挑两个已置顶的会话时键面仍说「置顶」，点下去发出的却是取消置顶——
 // 文案与动作相反，用户要么不敢点，要么点错。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``pin key follows the selected items' pinned state alone`` () =
     Headless.run (fun () ->
@@ -719,6 +733,7 @@ let ``pin key follows the selected items' pinned state alone`` () =
 // 选择计数非 0 而批量载荷为空——行上按 Delete 仍会调 deleteMany，确认框弹出
 // 「选中的 0 个会话」。kelivo 侧栏以 selectedCount > 0 为启用条件
 // （sidebar_selection_bars.dart:186），同一约定。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``batch delete with an empty selection never reaches the batch action`` () =
     Headless.run (fun () ->

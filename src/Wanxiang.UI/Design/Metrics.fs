@@ -31,40 +31,41 @@ module ReadingRhythm =
           | 4 -> 2.0
           | _ -> 1.0
 
-    let paragraphGap = Tokens.space2
-    let listItemGap = Tokens.space1
-    let listBlockGap = Tokens.space2
-    let blockGap = Tokens.space2
+    let paragraphGap = Spacing.spaceMd
+    let listItemGap = Spacing.spaceXs
+    let listBlockGap = Spacing.spaceMd
+    let blockGap = Spacing.spaceMd
 
     let headingBefore (level: int) =
         match level with
-        | 1 -> Tokens.space6
-        | 2 -> Tokens.space5
-        | 3 -> Tokens.space4
-        | _ -> Tokens.space3
+        | 1 -> Spacing.space4xl
+        | 2 -> Spacing.space3xl
+        | 3 -> Spacing.space2xl
+        | _ -> Spacing.spaceXl
 
     let headingAfter (level: int) =
-        if level <= 2 then Tokens.space2 else Tokens.space1
+        if level <= 2 then Spacing.spaceMd else Spacing.spaceXs
 
-    let listIndentStep = Tokens.space4
-    let listMarkerWidth = Tokens.space5
+    let listIndentStep = Spacing.space2xl
+    let listMarkerWidth = Spacing.space3xl
 
 module ControlMetrics =
 
     /// 常规文本按钮用 MinHeight，让 Avalonia 自己处理字体 / scale 后的真实高度。
     let textButtonMinHeight = 34.0
-    let textButtonPaddingY = 7.0
+    let textButtonPaddingY = Spacing.spaceSm
     /// “保存”→“正在保存…”时按钮外框不能扩张，避免 footer 横向跳动。
     let pendingActionMinWidth = 96.0
 
     let textFieldTextMinHeight = 22.0
-    let textFieldPaddingY = Tokens.space2
+    let textFieldPaddingY = Spacing.spaceMd
     /// 字段标签/校验行/hint 的左缘内缩：让说明文字与控件内容左缘对齐而不是贴边框。
-    let fieldInsetX = 2.0
+    let fieldInsetX = Spacing.spaceXXs
 
-    /// 设置页字号值的固定槽宽（SettingsGeneral 原裸 56.0）：「关于」页键名列槽宽（110.0）。
-    let fontSizeValueMinWidth = 56.0
-    let aboutKeyMinWidth = 110.0
+    /// 设置页字号值的固定槽宽与「关于」页键名列槽宽：全部读 Spacing.Slot，
+    /// 不再各处发明 54 / 56 / 110（见 wanxiang-ui skill §2.2）。
+    let fontSizeValueMinWidth = Spacing.Slot.wide
+    let aboutKeyMinWidth = Spacing.Slot.wide2
 
     /// 常规行的最小高度：设置页开关行与侧栏会话行同一行高语义的唯一真源。
     /// 此前 44.0 在 SettingsGeneral 与这里各写一份、同值不同源。
@@ -73,9 +74,10 @@ module ControlMetrics =
     let sidebarRowMinHeight = rowMinHeight
     /// 设置页开关行的最小高度：与侧栏行同一语义，引用 rowMinHeight。
     let settingsRowMinHeight = rowMinHeight
-    let sidebarRowPaddingY = 7.0
+    let sidebarRowPaddingY = Spacing.spaceSm
     let sidebarStatusLineHeight = ReadingRhythm.helperLineHeight
-    let sidebarStateSlotWidth = 19.0
+    /// 行内状态槽宽度：与菜单图标槽同一档（此前 19 与 18 分叉 1px）。
+    let sidebarStateSlotWidth = Spacing.Slot.icon
     let sidebarStateGlyphSize = 11.0
     let sidebarRunningDotSize = 6.0
     /// 行内/分节状态点直径：侧栏运行点、分节状态点同一语义的唯一真源
@@ -85,35 +87,35 @@ module ControlMetrics =
     let chipDotSize = 5.0
     /// 左缘强调条统一档：侧栏选中行、toast、思考竖线共用同一 2.0。
     /// 引用块用更宽的 quoteEdgeWidth（印刷引用条的视觉重量，两档有意保留）。
-    let accentEdgeWidth = 2.0
+    let accentEdgeWidth = Spacing.Stroke.thick
     /// 选中行左缘强调条宽：非色线索，与悬停态区分；统一档见 accentEdgeWidth。
     let sidebarSelectedEdgeWidth = accentEdgeWidth
     /// 引用块左缘强调条：比通用 accentEdgeWidth 宽一档，Markdown 引用的既有意图。
-    let quoteEdgeWidth = 3.0
+    let quoteEdgeWidth = Spacing.Stroke.quote
     /// 侧栏外框/页脚分隔线宽：唯一来源，避免各处自发明 1.0。
-    let sidebarDividerWidth = 1.0
+    let sidebarDividerWidth = Spacing.Stroke.thin
     /// 控件/发丝线描边宽的全应用唯一档：tag、输入壳、按钮、chip、分组卡的 1px
     /// 边框都引用它；此前这些位置各自写 Thickness 1.0 / Height = 1.0。
-    let borderWidth = 1.0
+    let borderWidth = Spacing.Stroke.thin
     /// 行内标题+预览垂直间距：紧凑堆叠是语义，不是“顺手写 0”。
     let sidebarRowContentSpacing = 0.0
 
     let composerInputMinHeight = 30.0
     let composerMaxHeight = 240.0
     let composerInputMaxHeight = 240.0
-    let composerShellPaddingX = Tokens.space3
-    let composerShellPaddingY = Tokens.space2
+    let composerShellPaddingX = Spacing.spaceXl
+    let composerShellPaddingY = Spacing.spaceMd
     let composerAttachmentNameMaxWidth = 160.0
-    let composerAttachmentStateWidth = 54.0
-    let composerAttachmentIconSlot = 15.0
+    let composerAttachmentStateWidth = Spacing.Slot.wide
+    let composerAttachmentIconSlot = Tokens.iconGlyph
     let composerModelMaxWidth = 240.0
     let composerModelCompactMaxWidth = 150.0
 
     /// chip 内边距的唯一真源（横向 8 = space2、纵向 2 = compactRowPaddingY）。
     /// 此前只有 Composer 的 chip 写着 padding、没有语义名；现收敛为一对语义名，
     /// 旧的 compactChipPadding* 降为别名（见下），全应用 chip 只有这一处定义。
-    let chipPaddingX = Tokens.space2
-    let chipPaddingY = Tokens.compactRowPaddingY
+    let chipPaddingX = Spacing.spaceMd
+    let chipPaddingY = Spacing.spaceXXs
 
     /// 兼容别名：仍被 Composer 的附件 chip / 模型 chip 引用，引用同源于上面的
     /// chipPadding*——别名不持有自己的值，只是同一个量的旧名字。
@@ -126,16 +128,16 @@ module ControlMetrics =
 
     /// tag（小标签）的横向内边距：7.0 是它的既有外观值，DesignConvergence
     /// 测试钉住 Padding(7.0, tightRowPaddingY)。chip 横向用更宽的 space2，
-    /// tag 纵向仍是 Tokens.tightRowPaddingY：tag/chip 横向差一档是有意的两档。
-    let tagPaddingX = 7.0
+    /// tag 纵向仍是 Spacing.spaceXXs：tag/chip 横向差一档是有意的两档。
+    let tagPaddingX = Spacing.spaceSm
 
-    let attachmentRowPaddingY = 6.0
+    let attachmentRowPaddingY = Spacing.spaceSm
     let attachmentNameMaxWidth = 260.0
 
     let menuItemMinHeight = 34.0
-    let menuItemPaddingY = 7.0
-    let menuIconSlotWidth = 18.0
-    let menuRightSlotMinWidth = 16.0
+    let menuItemPaddingY = Spacing.spaceSm
+    let menuIconSlotWidth = Spacing.Slot.icon
+    let menuRightSlotMinWidth = Spacing.space2xl
 
     let toastAccentWidth = accentEdgeWidth
 
@@ -144,7 +146,7 @@ module ControlMetrics =
     let settingsContentMaxWidth = 980.0
 
     /// Menu.selectButton 的垂直内边距：只读按钮比菜单项（7）再紧一档的手感。
-    let selectButtonPaddingY = 6.0
+    let selectButtonPaddingY = Spacing.spaceSm
 
     /// 多行输入最小高度：表单指令类文本框的标准档。
     let textAreaMinHeight = 96.0
@@ -197,7 +199,7 @@ module ControlMetrics =
 
 module ContentMetrics =
 
-    let messageGap = Tokens.space6
+    let messageGap = Spacing.space4xl
     let messageEndBreathing = 48.0
     let scrollBottomThreshold = 48.0
     let scrollBottomRevealThreshold = 120.0

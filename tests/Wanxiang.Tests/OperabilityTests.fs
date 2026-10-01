@@ -23,6 +23,7 @@ open Wanxiang.UI
 ///
 /// 刻意不做的：不测菜单的像素位置（那是平台右键的活）；不测 toast 文案——
 /// copyToClipboard 的注释已写明：图标翻转是乐观反馈，toast 才是真实写入结果，两个都在。
+[<Trait("Category", "UI")>]
 module OperabilityTests =
 
     let private makeMessage (role: string) (text: string) (commitId: uint64 option) : MessageView =
@@ -86,6 +87,7 @@ module OperabilityTests =
 
     // ---------- Ctrl+L 聚焦输入框 ----------
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``ctrl+L 解析为聚焦输入框`` () =
         Headless.run (fun () ->
@@ -95,6 +97,7 @@ module OperabilityTests =
         Assert.Equal(ShortcutAction.FocusComposer, resolve Key.L KeyModifiers.Control)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``ctrl+L 不与既有快捷键或输入框快捷键撞车`` () =
         Headless.run (fun () ->
@@ -114,6 +117,7 @@ module OperabilityTests =
     // ---------- 右键菜单 ----------
 
     /// 用户消息：复制 + 编辑并分叉 + 删除。没有「重新生成」——那是助手侧的动作。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``用户消息右键菜单含复制、编辑并分叉、删除`` () =
         Headless.run (fun () ->
@@ -127,6 +131,7 @@ module OperabilityTests =
 
     /// 末条助手消息才带「重新生成」；非末条助手没有——重生成只会影响最后一段回复，
     /// 给中间消息挂一个假入口，点了也是重新生成末尾，纯误导。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``重新生成只见于末条助手消息菜单`` () =
         Headless.run (fun () ->
@@ -141,6 +146,7 @@ module OperabilityTests =
         )
 
     /// 流式进行中没有可提交的东西：半句话拷出去、签一份还没定的稿，全是假入口。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``流式进行中消息没有右键菜单项`` () =
         Headless.run (fun () ->
@@ -151,6 +157,7 @@ module OperabilityTests =
 
     /// 没有 commitId 的消息（尚未落盘的乐观插入、流式临时卡）不能删：
     /// 删除走的是服务端历史，没有 commit 就没有可删的行。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``未落盘消息没有删除项`` () =
         Headless.run (fun () ->
@@ -162,6 +169,7 @@ module OperabilityTests =
 
     /// 菜单项必须真的去调注入的执行体：一条「看起来对」但点了没反应的菜单，
     /// 比没有菜单更糟（用户会以为自己点到别的东西上去了）。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``菜单项点击走注入的动作`` () =
         Headless.run (fun () ->
@@ -176,6 +184,7 @@ module OperabilityTests =
     /// 菜单是「入口」不是「能力」：与 hover 按钮的集合必须一致。
     /// 两边各有各的消失条件（hover 行 vs 菜单项），必须由同一批判定驱动，
     /// 否则早晚长出「左键能删、右键不能」这种割裂。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``菜单项与 hover 按钮的可用集合一致`` () =
         Headless.run (fun () ->
@@ -204,6 +213,7 @@ module OperabilityTests =
     // 思考过程与工具调用 / 错误详情同档：头部带独立复制入口。底部复制只取正文，
     // 思维链此前只能展开后手动拖选——几百字没法精确全选。锁：按下那个按钮，
     // 注入的 copyText 真的被调用，且载荷是整段 reasoning。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``reasoning header copies the whole chain of thought`` () =
         Headless.run (fun () ->
@@ -238,6 +248,7 @@ module OperabilityTests =
     // 用户会把「下载」读成「只能当文件存」。图片条目改用查看/下载措辞，
     // 读屏名与悬停提示同源（同一份字符串，不是两处各写各的）。
     // 锁：卡的自动化名里图片条目报的是「查看或下载图片」，文件条目仍报「下载附件」。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``image attachment row describes its own intent`` () =
         Headless.run (fun () ->
@@ -274,6 +285,7 @@ module OperabilityTests =
 
     // 附件内容丢失后退化成静态条，正常条有悬停提示与读屏名，丢失条两样都没有：
     // 读屏只念得出文件名，用户不知道它已经打不开了。补齐同一份自描述。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``missing attachment row explains that it is unavailable`` () =
         Headless.run (fun () ->
@@ -304,6 +316,7 @@ module OperabilityTests =
 
     // 脚注时刻是紧凑格式（今天只有 HH:mm），精确时刻此前无处可看：
     // 悬停补完整时间戳，读屏取同一份完整文本，不把「14:20」读成一片空白。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``footer timestamp carries the full timestamp for hover and screen readers`` () =
         Headless.run (fun () ->

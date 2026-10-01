@@ -21,6 +21,7 @@ open Wanxiang.UI
 /// - Ctrl+Home / Ctrl+End 解析成两个端点意图（且不与既有快捷键抢键）；
 /// - 两端都落位：到顶 offset = 0，到底 offset = 最大可滚量；
 /// - 端点位移会让「上一条 / 下一条」重新按新视口起算（不能接着半途的锚点跳）。
+[<Trait("Category", "UI")>]
 module EndpointScrollTests =
 
     let private homeFocus = ref 0
@@ -129,6 +130,7 @@ module EndpointScrollTests =
     // 键盘激活「回到最新」后焦点不得掉 null：按钮随 atBottom 隐藏，Avalonia 隐藏
     // 控件会直接清焦点（探针实测 after=<null>），键盘用户接着按 Tab 会从窗口根
     // 部重走。归宿走 AppShell 注入的 focusHome（输入区），与停止键/生成收尾同一条路。
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``keyboard activated scroll to bottom hands focus home`` () =
         Headless.run (fun () ->
@@ -161,6 +163,7 @@ module EndpointScrollTests =
 
     // ---------- 快捷键解析 ----------
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``ctrl home and ctrl end resolve to endpoint scroll intents`` () =
         Headless.run (fun () ->
@@ -171,6 +174,7 @@ module EndpointScrollTests =
         Assert.Equal(ScrollToEnd, ShortcutRouter.resolve (event Key.End KeyModifiers.Control))
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``plain home end and shifted variants stay unbound`` () =
         Headless.run (fun () ->
@@ -182,6 +186,7 @@ module EndpointScrollTests =
         Assert.Equal(NoShortcut, ShortcutRouter.resolve (event Key.Home (KeyModifiers.Control ||| KeyModifiers.Shift)))
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``endpoint keys do not collide with exchange navigation`` () =
         Headless.run (fun () ->
@@ -195,6 +200,7 @@ module EndpointScrollTests =
 
     // ---------- 落位 ----------
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``scroll to beginning lands at offset zero with the first round visible`` () =
         Headless.run (fun () ->
@@ -214,6 +220,7 @@ module EndpointScrollTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``scroll to end lands at the maximum scrollable offset`` () =
         Headless.run (fun () ->
@@ -237,6 +244,7 @@ module EndpointScrollTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``round trip between endpoints is stable`` () =
         Headless.run (fun () ->
@@ -263,6 +271,7 @@ module EndpointScrollTests =
 
     // ---------- 与问答跳转的耦合 ----------
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``scrolling to beginning clears the exchange anchor`` () =
         Headless.run (fun () ->
@@ -301,6 +310,7 @@ module EndpointScrollTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``shortening content while away from the top still recovers`` () =
         Headless.run (fun () ->

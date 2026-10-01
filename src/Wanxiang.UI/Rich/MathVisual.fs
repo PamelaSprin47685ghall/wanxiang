@@ -125,6 +125,6 @@ module MathRender =
             let host =
                 Border(
                     Child = visual,
-                    Padding = Thickness(0.0, Tokens.space2),
+                    Padding = Thickness(0.0, Spacing.spaceMd),
                     HorizontalAlignment = Layout.HorizontalAlignment.Stretch)
             Some(host :> Control)

@@ -125,6 +125,7 @@ let private pressRow (row: Control) (key: Key) (modifiers: KeyModifiers) =
 
 // 行已拿焦点时按 P 直接翻转置顶：此前置顶只有右键菜单一条路，
 // 键盘用户得先唤菜单再找项。与 F2 / Delete 同一约定。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``p key on a focused row toggles pin`` () =
     Headless.run (fun () ->
@@ -159,6 +160,7 @@ let ``p key on a focused row toggles pin`` () =
 
 // P 不带修饰键才归侧栏：Ctrl+P 等组合键是全局快捷键表的领地，
 // 行里吞掉会让全局键位出现不可解释的失效。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``ctrl p on a focused row is left for the global table`` () =
     Headless.run (fun () ->
@@ -182,6 +184,7 @@ let ``ctrl p on a focused row is left for the global table`` () =
 
 // 删的正是正在看的会话时，落到邻行继续，不进空屏。邻位口径必须与
 // FocusAfterDelete 一致，否则键盘用户与主区看到的是两个会话。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``neighbor after delete matches the row focus falls to`` () =
     Headless.run (fun () ->
@@ -216,6 +219,7 @@ let ``neighbor after delete matches the row focus falls to`` () =
 
 // 只剩一条时没有邻位可言：必须给 None，让调用方退回欢迎页，
 // 而不是随便挑一个不存在的会话。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``no neighbor when the list becomes empty`` () =
     Headless.run (fun () ->
@@ -248,6 +252,7 @@ let private focusedControl (window: Window) =
 
 // 打开设置后焦点落在分区导航按钮上：此前 ShowSettings 只切可见性，
 // 焦点悬在已隐藏的 workspace 里，键盘用户按 Tab 前无处可去。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``focus initial lands on a settings section nav button`` () =
     Headless.run (fun () ->
@@ -291,6 +296,7 @@ let ``focus initial lands on a settings section nav button`` () =
 // 落点断言走「ScrollIntoView 把目标行拉进虚拟化窗口」这条同步可见线索
 // （UiStabilityTests 同手法）：一个 20k 会话的列表里，焦点在末行时按 Home/PageUp
 // 必须把首行实现出来；未接线时行永远是末行附近那一窗。
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``page up on a sidebar row scrolls the list to the first item`` () =
     Headless.run (fun () ->

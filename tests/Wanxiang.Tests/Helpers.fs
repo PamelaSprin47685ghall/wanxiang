@@ -45,3 +45,16 @@ let testConfig () =
       extraJson = None }
 
 let newConversationId () = Guid.NewGuid()
+
+/// 判定一个控件是不是万象的图标。
+///
+/// **单一判据**：`Icons` 模块产出的都是原生 `Image`，其 `Source` 是官方
+/// `LucideImageExtension` 返回的 `DrawingImage`（见 `Design/Icons.fs`）。
+///
+/// 测试 MUST 用本函数而不是自己写类型匹配：图标实现换过一次
+/// （自绘 `Path` → 官方 `Path` → 官方 `DrawingImage`），每换一次
+/// 分散在用例里的类型判断就会集体失配。判据集中在这里，换实现只改一处。
+let isIcon (control: Avalonia.Controls.Control) : bool =
+    match control with
+    | :? Avalonia.Controls.Image as image -> image.Source :? Avalonia.Media.DrawingImage
+    | _ -> false

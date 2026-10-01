@@ -8,6 +8,7 @@ open Wanxiang.UI
 open Wanxiang.Tests
 
 /// 病态输入下的渲染代价。模型完全可能吐出这些东西，界面不能因此卡住。
+[<Trait("Category", "UI")>]
 type Pathological(output: ITestOutputHelper) =
 
     let actions: MessageActions =
@@ -32,6 +33,7 @@ type Pathological(output: ITestOutputHelper) =
         Assert.NotNull control
         watch.Elapsed.TotalMilliseconds
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     member _.``报告病态输入的渲染代价``() =
         Headless.run (fun () ->

@@ -11,6 +11,7 @@ open Wanxiang.Tests
 ///
 /// 流式期间每收到一批 delta 就会重绘全部消息，所以这个数字直接等于
 /// 长对话里每个 token 的卡顿量。
+[<Trait("Category", "UI")>]
 type Cost(output: ITestOutputHelper) =
 
     let sampleText =
@@ -46,6 +47,7 @@ type Cost(output: ITestOutputHelper) =
           missingAttachments = Set.empty
           brandAvatar = fun () -> Border() :> Control }
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     member _.``报告整表重建的代价``() =
         Headless.run (fun () ->

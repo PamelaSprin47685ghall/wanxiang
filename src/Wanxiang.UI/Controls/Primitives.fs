@@ -37,29 +37,17 @@ type internal ActionBorder() as this =
     inherit Border()
 
     let mutable invokeAction: unit -> unit = ignore
-    let mutable savedShadow = BoxShadows()
-    let mutable keyboardFocusRing = false
 
-    do
-        // 键盘焦点环：实色 accent 外扩（焦点提示要最高可辨度）。
-        // 输入壳 Ui.textField 是唯一用 accentSoft 的例外——它已有一层实色描边，理由见其注释。
-        this.GotFocus.Add(fun e ->
-            match e.NavigationMethod with
-            // Unspecified 也要画环：对话框初始焦点（OverlayHost.focusFirst、Dialogs 首按钮）
-            // 一律走裸 Focus()——拿到的是 Unspecified。此前它落在 `| _ -> ()`，
-            // 焦点明明在按钮上（Enter 能激活）却没有焦点环，键盘用户看不见焦点在哪。
-            // Pointer 不画：指针点击已有按压/悬停反馈，再画环是视觉噪声。
-            | NavigationMethod.Tab
-            | NavigationMethod.Directional
-            | NavigationMethod.Unspecified ->
-                savedShadow <- this.BoxShadow
-                keyboardFocusRing <- true
-                this.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
-            | _ -> ())
-        this.LostFocus.Add(fun _ ->
-            if keyboardFocusRing then
-                keyboardFocusRing <- false
-                this.BoxShadow <- savedShadow)
+    // 焦点环 / hover / press / disabled 全部由 Interaction 注册的原生伪类样式负责。
+    // 此前这里是手写副本 1/8（GotFocus 按 NavigationMethod 分支改 BoxShadow）；
+    // 规范 §4.1 要求状态视觉 MUST 由伪类驱动，且伪类覆盖了手写会漏的
+    // `:focus-within` 与 `:disabled`。构造时挂上 surface 类即可。
+    //
+    // StyleKeyOverride = typeof<Border> 是**必需的**（实测）：Avalonia 的
+    // `StyleKeyOverride` 默认返回自身类型，于是 `OfType<Border>()` 选不中
+    // `ActionBorder`，所有状态样式静默失配（症状：类名与伪类都在，视觉不变）。
+    // 声明「我就是一个 Border」让状态样式对本类型与原生 Border 一视同仁。
+    override _.StyleKeyOverride = typeof<Border>
 
     member _.SetInvokeAction(action: unit -> unit) = invokeAction <- action
 
@@ -82,26 +70,13 @@ type internal ToggleBorder() as this =
 
     let mutable toggleAction: unit -> unit = ignore
     let mutable value = false
-    let mutable savedShadow = BoxShadows()
-    let mutable keyboardFocusRing = false
 
     let stateOf v = if v then ToggleState.On else ToggleState.Off
 
-    do
-        this.GotFocus.Add(fun e ->
-            match e.NavigationMethod with
-            // 与 ActionBorder 同一约定：Unspecified（程序化/初始焦点）也要画焦点环。
-            | NavigationMethod.Tab
-            | NavigationMethod.Directional
-            | NavigationMethod.Unspecified ->
-                savedShadow <- this.BoxShadow
-                keyboardFocusRing <- true
-                this.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accent.Color))
-            | _ -> ())
-        this.LostFocus.Add(fun _ ->
-            if keyboardFocusRing then
-                keyboardFocusRing <- false
-                this.BoxShadow <- savedShadow)
+    // 焦点环同 ActionBorder：走 Interaction 的 `:focus-visible` 伪类。
+    // 本控件的 on/off 底色是**值**而非状态（value 由调用方写），
+    // 因此它只消费 focus / press / disabled，不消费 hover 底色档。
+    override _.StyleKeyOverride = typeof<Border>
 
     member _.SetToggleAction(action: unit -> unit) = toggleAction <- action
     member _.AutomationValue = value
@@ -147,18 +122,36 @@ module Ui =
                     TextWrapping = TextWrapping.Wrap,
                     LineHeight = ReadingRhythm.validationLineHeight,
                     IsVisible = false,
-                    Margin = Thickness(ControlMetrics.fieldInsetX, Tokens.fieldRowPaddingY, 0.0, 0.0))
+                    Margin = Thickness(ControlMetrics.fieldInsetX, Spacing.spaceSm, 0.0, 0.0))
             validationMessages.Add(box, message)
             // 一旦用户开始修正输入，旧错误就不应继续“指控”当前内容。
             // 如果仍不合法，下一次提交会重新给出准确错误。
-            box.TextChanged.Add(fun _ ->
-                if message.IsVisible then
-                    message.Text <- ""
-                    message.IsVisible <- false
-                    Avalonia.Automation.AutomationProperties.SetHelpText(box, "")
-                    match box.Parent with
-                    | :? Border as shell when not box.IsFocused -> shell.BorderBrush <- Tokens.border
-                    | _ -> ())
+            // 「用户开始修正输入」的判据：**文本真的变了**。
+            //
+            // 少了这个判据有个隐蔽失效：`applyValidationFeedback` 在写入校验提示后
+            // 会 `BringIntoView` + `Focus` 第一个错误字段，Avalonia 在焦点切换 /
+            // 布局重排时会**重放**同一个文本并抛 `TextChanged`——事件被误当成
+            // 「用户开始修改」，于是刚写好的提示被自己清掉。用户看到的是
+            // 「提交了，但什么都没说」。
+            //
+            // 判据用文本变更本身（Avalonia 的 `TextChangedEventArgs` 不带 `NewValue`，
+            // 拿不到「旧值」），因此记录上一次的值来比较。
+            let mutable lastText = box.Text
+            box.PropertyChanged.Add(fun args ->
+                if args.Property = TextBox.TextProperty then
+                    let current = box.Text
+                    let changed = current <> lastText
+                    lastText <- current
+                    if changed && message.IsVisible then
+                        message.Text <- ""
+                        message.IsVisible <- false
+                        Avalonia.Automation.AutomationProperties.SetHelpText(box, "")
+                        // 描边复位走 `setInvalid`（值路径 + 校验态附加属性），
+                        // 不在这里直接写 `BorderBrush`——那会与 Interaction 的状态
+                        // 体系抢同一个属性，且漏掉 `.invalid` 同步。
+                        match box.Parent with
+                        | :? Border as shell -> Interaction.setInvalid shell false
+                        | _ -> ())
             message
 
     let private isInvalid (box: TextBox) =
@@ -202,59 +195,50 @@ module Ui =
     ///
     /// 使用者：文字按钮（所有 ButtonTone）、图标按钮、ToggleBorder、菜单项、输入壳；
     /// 行/tab 式选中底由调用方在本地挂同一集合。描边即状态的表面用 surfaceBorderedTransitions。
+    /// 状态过渡：单一真源在 `Interaction.stateTransitions`。
+    ///
+    /// **保留此名为兼容别名**：调用点此前用它表达「这个表面参与状态反馈」，
+    /// 现在这层含义由 `Interaction.surface` 承担（挂伪类 + 挂过渡一次到位）。
+    /// 新代码 MUST 直接用 `Interaction.surface`。
     let surfaceTransitions () : Avalonia.Animation.Transitions =
-        let background = Avalonia.Animation.BrushTransition()
-        background.Property <- Border.BackgroundProperty
-        background.Duration <- MotionLedger.controlStateDuration ()
-        // 统一缓动：所有经门控的状态底色补间共用 easeOutCubic，收尾手感一致。
-        background.Easing <- MotionPolicy.easeOutCubic
-        let transitions = Avalonia.Animation.Transitions()
-        transitions.Add background
-        transitions
+        Interaction.stateTransitions ()
 
-    /// 与 surfaceTransitions 同一机制、同一时长，另外过渡描边色：
-    /// 供「边框即状态」的表面（下拉选择钮悬停把 border 换成 line）。
+    /// 「描边即状态」的表面的过渡集合：底色 + 描边双补间。
+    ///
+    /// **只有它保留描边补间**，因为它的描边色是 `Tokens.border` / `Tokens.line`
+    /// 这类**永不单独改写**的主题色——hover 只在两者间切一次，补间写到终点即停。
+    ///
+    /// 与 `stateTransitions`（只补底色）的区别不是"哪个好看"，而是
+    /// **哪些属性安全**：凡是要承载**离散状态**（校验红、聚焦实色）的描边，
+    /// MUST NOT 补间——实测补间会改写 `Tokens` 的可变笔实例（切主题时
+    /// 它不再变红）。见 Interaction 模块的实测记录。
     let surfaceBorderedTransitions () : Avalonia.Animation.Transitions =
-        let transitions = surfaceTransitions ()
+        let transitions = Interaction.stateTransitions ()
         let border = Avalonia.Animation.BrushTransition()
         border.Property <- Border.BorderBrushProperty
         border.Duration <- MotionLedger.controlStateDuration ()
-        // 描边补间与底色共用同一条 easeOutCubic。
         border.Easing <- MotionPolicy.easeOutCubic
         transitions.Add border
         transitions
 
-    let private attachSurfaceFeedback (host: Border) (idle: unit -> IBrush) (over: unit -> IBrush) =
-        // hover/press 底色补间统一走 surfaceTransitions（时长出自 MotionLedger，含减弱动效降级）。
-        // 按压的透明度脉冲保持瞬时：setReservedActionVisible / setEnabled 对 Opacity 的写值
-        // 被 UiStabilityTests 精确断言，而本项目的无显示测试制度下 Avalonia 原生过渡
-        // 不会推进；因此 Opacity 不进入任何基控件的过渡集合。
-        host.Transitions <- surfaceTransitions ()
-        let mutable isOver = false
-        let refresh () = host.Background <- (if isOver then over () else idle ())
-        host.PointerEntered.Add(fun _ ->
-            isOver <- true
-            refresh ())
-        host.PointerExited.Add(fun _ ->
-            isOver <- false
-            host.Opacity <- 1.0
-            refresh ())
-        host.PointerPressed.Add(fun _ -> host.Opacity <- Tokens.opacityPressed)
-        host.PointerReleased.Add(fun _ -> host.Opacity <- 1.0)
-        refresh ()
+    /// 把一个可交互表面接进统一状态体系：挂 `surface` 类名 + 状态过渡。
+    ///
+    /// hover / press / focus / disabled 的视觉全部由 `Interaction` 注册的
+    /// Avalonia 原生伪类样式接管，**MUST NOT** 再手写 PointerEntered /
+    /// GotFocus 去改颜色或阴影（规范 §4.1）。
+    ///
+    /// `idle` / `over` 保留是为了让「每种 surface 各自的 hover 底色」仍可表达——
+    /// 但它们现在只用于**配色**（写死进一个额外的类名由样式表查表），
+    /// 不再由指针事件驱动。
+    let private attachSurfaceFeedback (host: Border) (idle: unit -> IBrush) (hoverVariant: string) =
+        host.Background <- idle ()
+        Interaction.surface host hoverVariant |> ignore
+        Interaction.reportFocusOrigin host
 
-    /// 把半透明 overlay 笔拂按 alpha 叠到 base 笔拂上（Avalonia 无原生画笔叠加）。
-    /// 全应用唯一的混合实现：SidebarHelpers 里的同名私有副本已删除，统一走这里。
-    /// 非实色输入退回 base；现有调用点传的都是实色 token。
+    /// 把半透明 overlay 笔拂按 alpha 叠到 base 笔拂上。
+    /// 实现收敛到 `Interaction.blendOver`（hover 底色属于状态体系的一部分）。
     let blendOverlay (baseBrush: IBrush) (overlayBrush: IBrush) : IBrush =
-        match baseBrush, overlayBrush with
-        | (:? SolidColorBrush as b), (:? SolidColorBrush as o) ->
-            let blend (bc: byte) (oc: byte) (alpha: byte) =
-                byte (int bc + (int oc - int bc) * int alpha / 255)
-            let a = o.Color.A
-            SolidColorBrush(Color.FromArgb(b.Color.A, blend b.Color.R o.Color.R a, blend b.Color.G o.Color.G a, blend b.Color.B o.Color.B a))
-            :> IBrush
-        | _ -> baseBrush
+        Interaction.blendOver baseBrush overlayBrush
 
     // ---------- 文字 ----------
 
@@ -275,8 +259,8 @@ module Ui =
             FontSize = Tokens.fontMicro,
             FontWeight = FontWeight.Medium,
             Foreground = Tokens.textFaint,
-            Margin = Thickness(ControlMetrics.fieldInsetX, 0.0, 0.0, Tokens.fieldRowPaddingY),
-            LetterSpacing = Tokens.letterSpacingLabel)
+            Margin = Thickness(ControlMetrics.fieldInsetX, 0.0, 0.0, Spacing.spaceSm),
+            LetterSpacing = Spacing.Tracking.label)
 
     /// 表单字段的统一垂直结构：label → control → validation → hint。
     /// 这里只组合 Avalonia 原生控件，不接管测量/校验状态；调用方仍拥有字段本身。
@@ -287,7 +271,7 @@ module Ui =
         validation |> Option.iter column.Children.Add
         if not (String.IsNullOrWhiteSpace hint) then
             let note = caption hint
-            note.Margin <- Thickness(ControlMetrics.fieldInsetX, Tokens.space1, 0.0, 0.0)
+            note.Margin <- Thickness(ControlMetrics.fieldInsetX, Spacing.spaceXs, 0.0, 0.0)
             match validation with
             | Some error ->
                 note.IsVisible <- not error.IsVisible
@@ -304,7 +288,7 @@ module Ui =
             FontSize = Tokens.fontMicro,
             FontWeight = FontWeight.Medium,
             Foreground = Tokens.textFaint,
-            LetterSpacing = Tokens.letterSpacingSection)
+            LetterSpacing = Spacing.Tracking.section)
 
     /// 分节标签的宽字距档：Sidebar 的分组表头此前在本地把 Ui.sectionLabel 的返回
     /// 实例覆盖成 textMuted + letterSpacingDisplay（两处手改同一型文本）。该外观
@@ -316,7 +300,7 @@ module Ui =
             FontSize = Tokens.fontMicro,
             FontWeight = FontWeight.Medium,
             Foreground = Tokens.textMuted,
-            LetterSpacing = Tokens.letterSpacingDisplay)
+            LetterSpacing = Spacing.Tracking.display)
 
     let heading (text: string) : TextBlock =
         TextBlock(Text = text, FontSize = Tokens.fontHeading, FontWeight = FontWeight.Medium, Foreground = Tokens.text)
@@ -346,7 +330,7 @@ module Ui =
 
     /// 分组卡：暖纸中间容器（surfaceContainer）+ 最轻发丝线 + 圆角 + 调用方内边距。
     /// Settings* / Dialogs / Composer 里「次级表面」分组容器的唯一来源；
-    /// 外部分组传 Tokens.radiusLg，内层小卡传 Tokens.radiusMd。
+    /// 外部分组传 Spacing.Radius.lg，内层小卡传 Spacing.Radius.md。
     /// 只覆盖这一种几何：描边档不同或无描边的容器不在此列，当地保留。
     let groupingCard (padding: Thickness) (child: Control) (radius: float) : Border =
         Border(
@@ -380,10 +364,10 @@ module Ui =
                     FontSize = Tokens.fontTitle,
                     Foreground = Tokens.text,
                     HorizontalAlignment = HorizontalAlignment.Center,
-                    LetterSpacing = Tokens.letterSpacingEmphasis)
+                    LetterSpacing = Spacing.Tracking.emphasis)
             else
                 label text
-        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Tokens.space3)
+        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXl)
         column.Children.Add logo
         match title with
         | Some text -> column.Children.Add(titleOf text)
@@ -395,7 +379,7 @@ module Ui =
         match action with
         | Some button -> column.Children.Add button
         | None -> ()
-        groupingCard (Thickness(Tokens.space6, Tokens.space6)) column Tokens.radiusLg :> Control
+        groupingCard (Thickness(Spacing.space4xl, Spacing.space4xl)) column Spacing.Radius.lg :> Control
 
     /// 默认空态：标题档与提取前的 Ui.emptyState 逐字一致（现有调用点无需改动）。
     let emptyState (logo: Control) (title: string option) (hint: string) (extra: Control option) (action: Border option) : Control =
@@ -420,7 +404,7 @@ module Ui =
     /// 带语气的小标签。Neutral 行为与原 Ui.tag 逐字一致；语气只换描边/文字/底色笔，
     /// 几何不变，同排标签不会因语气不同而错位。
     ///
-    /// 密度说明：tag 横纵分别是 tagPaddingX（7）与 Tokens.tightRowPaddingY（1）；
+    /// 密度说明：tag 横纵分别是 tagPaddingX（7）与 Spacing.spaceXXs（1）；
     /// 与 chip 用的 ControlMetrics.chipPadding*（8 × 2）是两档，因为它们服务的是不同
     /// 控件形态（静态小标签 vs 可装状态点的行内 chip），各自有语义名，不合档。
     let tagWith (tone: TagTone) (text: string) : Border =
@@ -429,8 +413,8 @@ module Ui =
             Background = background,
             BorderBrush = stroke,
             BorderThickness = Thickness ControlMetrics.borderWidth,
-            CornerRadius = CornerRadius Tokens.radiusSm,
-            Padding = Thickness(ControlMetrics.tagPaddingX, Tokens.tightRowPaddingY),
+            CornerRadius = CornerRadius Spacing.Radius.sm,
+            Padding = Thickness(ControlMetrics.tagPaddingX, Spacing.spaceXXs),
             VerticalAlignment = VerticalAlignment.Center,
             Child =
                 TextBlock(
@@ -517,7 +501,7 @@ module Ui =
                 Height = Tokens.iconButton,
                 MinWidth = Tokens.iconButton,
                 MinHeight = Tokens.iconButton,
-                CornerRadius = CornerRadius Tokens.radiusMd,
+                CornerRadius = CornerRadius Spacing.Radius.md,
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
                 Focusable = true,
@@ -527,7 +511,8 @@ module Ui =
         glyph.HorizontalAlignment <- HorizontalAlignment.Center
         glyph.VerticalAlignment <- VerticalAlignment.Center
         host.Child <- glyph
-        attachSurfaceFeedback host (fun () -> Brushes.Transparent :> IBrush) (fun () -> Tokens.hover :> IBrush)
+        attachSurfaceFeedback host (fun () -> Brushes.Transparent :> IBrush) Interaction.HoverVariant.plain
+
         if not (String.IsNullOrWhiteSpace tip) then
             ToolTip.SetTip(host, tip)
             Avalonia.Automation.AutomationProperties.SetName(host, tip)
@@ -541,7 +526,7 @@ module Ui =
                 Height = Tokens.iconButton,
                 MinWidth = Tokens.iconButton,
                 MinHeight = Tokens.iconButton,
-                CornerRadius = CornerRadius Tokens.radiusPill,
+                CornerRadius = CornerRadius Spacing.Radius.pill,
                 Background = Tokens.accent,
                 Cursor = handCursor,
                 Focusable = true,
@@ -550,7 +535,7 @@ module Ui =
         glyph.HorizontalAlignment <- HorizontalAlignment.Center
         glyph.VerticalAlignment <- VerticalAlignment.Center
         host.Child <- glyph
-        attachSurfaceFeedback host (fun () -> Tokens.accent :> IBrush) (fun () -> Tokens.accentHover :> IBrush)
+        attachSurfaceFeedback host (fun () -> Tokens.accent :> IBrush) Interaction.HoverVariant.accent
         if not (String.IsNullOrWhiteSpace tip) then
             ToolTip.SetTip(host, tip)
             Avalonia.Automation.AutomationProperties.SetName(host, tip)
@@ -592,20 +577,22 @@ module Ui =
 
     // ---------- 文字按钮 ----------
 
+    /// 文字按钮的配色档：底色 / 文字色 / 描边色。
+    /// hover 底色**不在这里**——它由 `Interaction` 的变体样式表统一决定。
     let private toneBrushes (tone: ButtonTone) =
         match tone with
-        | Primary -> Tokens.accent :> IBrush, Tokens.textOnAccent :> IBrush, null, Tokens.accentHover :> IBrush
-        | Secondary -> Tokens.surface :> IBrush, Tokens.text :> IBrush, Tokens.border :> IBrush, blendOverlay Tokens.surface Tokens.hover
-        | Ghost -> Brushes.Transparent :> IBrush, Tokens.textMuted :> IBrush, null, Tokens.hover :> IBrush
-        | ButtonTone.Danger -> Tokens.dangerSoft :> IBrush, Tokens.danger :> IBrush, null, blendOverlay Tokens.dangerSoft Tokens.hover
+        | Primary -> Tokens.accent :> IBrush, Tokens.textOnAccent :> IBrush, null
+        | Secondary -> Tokens.surface :> IBrush, Tokens.text :> IBrush, Tokens.border :> IBrush
+        | Ghost -> Brushes.Transparent :> IBrush, Tokens.textMuted :> IBrush, null
+        | ButtonTone.Danger -> Tokens.dangerSoft :> IBrush, Tokens.danger :> IBrush, null
 
     /// 文字按钮。`onClick` 直接绑定，避免调用方重复处理指针事件。
     let button (tone: ButtonTone) (text: string) (action: unit -> unit) : Border =
-        let bg, fg, stroke, hoverBg = toneBrushes tone
+        let bg, fg, stroke = toneBrushes tone
         let host =
             ActionBorder(
-                CornerRadius = CornerRadius Tokens.radiusMd,
-                Padding = Thickness(Tokens.space4, ControlMetrics.textButtonPaddingY),
+                CornerRadius = CornerRadius Spacing.Radius.md,
+                Padding = Thickness(Spacing.space2xl, ControlMetrics.textButtonPaddingY),
                 Background = bg,
                 BorderBrush = stroke,
                 BorderThickness = (if isNull stroke then Thickness 0.0 else Thickness ControlMetrics.borderWidth),
@@ -621,7 +608,13 @@ module Ui =
                         Foreground = fg,
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center))
-        attachSurfaceFeedback host (fun () -> bg) (fun () -> hoverBg)
+        let hoverVariant =
+            match tone with
+            | Primary -> Interaction.HoverVariant.accent
+            | Secondary -> Interaction.HoverVariant.raised
+            | ButtonTone.Danger -> Interaction.HoverVariant.danger
+            | Ghost -> Interaction.HoverVariant.plain
+        attachSurfaceFeedback host (fun () -> bg) hoverVariant
         onClick host action
         Avalonia.Automation.AutomationProperties.SetName(host, text)
         host
@@ -663,27 +656,33 @@ module Ui =
                 BorderBrush = Tokens.border,
                 BorderThickness = Thickness ControlMetrics.borderWidth,
                 // 输入/托盘类控件圆角统一到 radiusLg，与卡片一致。
-                CornerRadius = CornerRadius Tokens.radiusLg,
-                Padding = Thickness(Tokens.space3, ControlMetrics.textFieldPaddingY),
+                CornerRadius = CornerRadius Spacing.Radius.lg,
+                Padding = Thickness(Spacing.spaceXl, ControlMetrics.textFieldPaddingY),
                 Child = box)
-        // 输入壳挂状态反馈过渡：焦点/校验描边保持瞬时切换（焦点环纪律），
-        // 底色状态（后续 lane 若引入 hover/selected 底）自动补间。
-        shell.Transitions <- surfaceTransitions ()
-        // 输入壳焦点环为什么是 accentSoft 而不是 accent：聚焦时壳的 1px 描边已换成实色
-        // accent，外扩环若再用 accent 就是双重实色，重量压过输入内容本身；accentSoft 外环
-        // + 实色描边给出的焦点语义已足够清晰。可聚焦控件（ActionBorder/ToggleBorder）
-        // 没有这层描边，焦点环直接用实色 accent。
-        // hover：只把底色从 surface 提亮到 hover 档（与其它可交互表面的同一语言），
-        // 描边/焦点环/几何一概不动——输入壳的 1px 描边在聚焦时已经承担状态语义。
-        shell.PointerEntered.Add(fun _ ->
-            if not box.IsFocused then shell.Background <- Tokens.hover)
-        shell.PointerExited.Add(fun _ -> shell.Background <- Tokens.surface)
+        // 输入壳的**焦点**由内层 TextBox 持有，因此焦点环走 `:focus-within`
+        // ——Avalonia 原生伪类（容器内任一子控件聚焦即命中），不手写 GotFocus。
+        // 描边色随焦点/校验变化，这属于**值**不是状态（校验态无法用伪类表达），
+        // 因此保留事件订阅，但只改描边笔色，不碰阴影。
+        Interaction.surface shell Interaction.HoverVariant.raised
+        shell.Classes.Add "focus-soft" |> ignore
+        // 焦点环为什么是 accentSoft 而不是 accent：聚焦时壳的 1px 描边已换成实色
+        // accent（值订阅负责），外扩环若再用 accent 就是双重实色，重量压过输入内容。
+        // 可聚焦控件（ActionBorder/ToggleBorder）没有这层描边，直接用实色 accent。
+        // `:focus-within` 由 Avalonia 自行维护——伪类**只能由控件自己增删**
+        // （框架守卫：手工 Set 抛 "may only be removed by the control itself"）。
+        // 描边色走**值**而非样式（实测：Setter 里的 Tokens 可变笔会被冻结，
+        // 见 Interaction 模块「描边色不进样式表」）。聚焦 / 校验两档在
+        // Interaction.setFocusedStroke 一处仲裁，调用点不自己判优先级。
         box.GotFocus.Add(fun _ ->
-            shell.BorderBrush <- Tokens.accent
-            shell.BoxShadow <- BoxShadows(BoxShadow(Spread = Tokens.focusRingSpread, Color = Tokens.accentSoft.Color)))
+            match box.Parent with
+            | :? Border as shell ->
+                Interaction.setFocusedStroke shell true (Interaction.isInvalid shell)
+            | _ -> ())
         box.LostFocus.Add(fun _ ->
-            shell.BorderBrush <- if isInvalid box then Tokens.danger else Tokens.border
-            shell.BoxShadow <- BoxShadows())
+            match box.Parent with
+            | :? Border as shell ->
+                Interaction.setFocusedStroke shell false (Interaction.isInvalid shell)
+            | _ -> ())
         shell, box
 
     /// 为任意输入框创建/取得字段级错误行。调用方把它放在对应 field group 内即可。
@@ -695,7 +694,8 @@ module Ui =
         validation.Text <- message
         validation.IsVisible <- not (String.IsNullOrWhiteSpace message)
         match box.Parent with
-        | :? Border as shell when not box.IsFocused -> shell.BorderBrush <- Tokens.danger
+        | :? Border as shell ->
+            Interaction.setInvalid shell true
         | _ -> ()
         Avalonia.Automation.AutomationProperties.SetHelpText(box, message)
 
@@ -704,7 +704,8 @@ module Ui =
         validation.Text <- ""
         validation.IsVisible <- false
         match box.Parent with
-        | :? Border as shell when not box.IsFocused -> shell.BorderBrush <- Tokens.border
+        | :? Border as shell ->
+            Interaction.setInvalid shell false
         | _ -> ()
         Avalonia.Automation.AutomationProperties.SetHelpText(box, "")
 
@@ -756,14 +757,14 @@ module Ui =
             Border(
                 Width = ControlMetrics.toggleKnobSize,
                 Height = ControlMetrics.toggleKnobSize,
-                CornerRadius = CornerRadius Tokens.radiusPill,
+                CornerRadius = CornerRadius Spacing.Radius.pill,
                 Background = Tokens.surfaceRaised,
                 VerticalAlignment = VerticalAlignment.Center)
         let track =
             ToggleBorder(
                 Width = ControlMetrics.toggleTrackWidth,
                 Height = ControlMetrics.toggleTrackHeight,
-                CornerRadius = CornerRadius Tokens.radiusPill,
+                CornerRadius = CornerRadius Spacing.Radius.pill,
                 Background = Tokens.line,
                 Padding = Thickness(ControlMetrics.toggleKnobInsetX, 0.0),
                 Cursor = handCursor,
@@ -781,18 +782,9 @@ module Ui =
             render ()
             onChanged value
         track.SetToggleAction flip
-        // hover：本控件没有独立「表面」层，hover 直接作用在 track 底色上——
-        // 关闭态 line → hover 提亮一档，开启态保持 accent（accent 已是实色，再叠 hover 会更糊）。
-        // 只改颜色（仍走上面的 BrushTransition，时长出自 MotionLedger），不碰几何。
-        // 离开时回到当前值的底色（re-render 而不是写 line：on 态离开不该退到 line）。
-        track.PointerEntered.Add(fun _ ->
-            if not value then track.Background <- Tokens.hover)
-        track.PointerExited.Add(fun _ -> render ())
-        // 按压：与 attachSurfaceFeedback 同一节奏——瞬时 Opacity 脉冲，不进过渡集合
-        //（本项目无显示测试制度下 Avalonia 原生过渡不推进，UiStabilityTests 已钉这一纪律）。
-        track.PointerPressed.Add(fun _ -> track.Opacity <- Tokens.opacityPressed)
+        // 点击激活：只处理行为，视觉由 `:pressed` 伪类负责。
+        // 键盘激活仍走 KeyDown（Enter/Space）——`:pressed` 不覆盖键盘。
         track.PointerReleased.Add(fun e ->
-            track.Opacity <- 1.0
             if e.InitialPressMouseButton = MouseButton.Left then
                 e.Handled <- true
                 flip ())
@@ -849,7 +841,7 @@ module Ui =
     /// 行容器按需另套：Ui.switchRow 套 ActionBorder 交互层，Ui.settingsRowShell
     /// 套静态 Border 行壳。字号行此前手抄的 DockPanel 即此结构。
     let settingsRowContent (title: string) (hint: string) (right: Control) : DockPanel =
-        let column = vstack Tokens.space1 [ label title :> Control; caption hint :> Control ]
+        let column = vstack Spacing.spaceXs [ label title :> Control; caption hint :> Control ]
         let dock = DockPanel(LastChildFill = true)
         DockPanel.SetDock(right, Dock.Right)
         dock.Children.Add right
@@ -863,7 +855,7 @@ module Ui =
     /// Border + DockPanel（几何逐字保留），供自定义右侧控件的设置行共用。
     let settingsRowShell (title: string) (hint: string) (right: Control) : Border =
         Border(
-            Padding = Thickness(Tokens.space2, Tokens.space2),
+            Padding = Thickness(Spacing.spaceMd, Spacing.spaceMd),
             MinHeight = ControlMetrics.settingsRowMinHeight,
             Child = settingsRowContent title hint right)
 
@@ -884,32 +876,21 @@ module Ui =
         let dock = settingsRowContent title hint toggle
         let row =
             ActionBorder(
-                Padding = Thickness(Tokens.space2, Tokens.space2),
-                CornerRadius = CornerRadius Tokens.radiusMd,
+                Padding = Thickness(Spacing.spaceMd, Spacing.spaceMd),
+                CornerRadius = CornerRadius Spacing.Radius.md,
                 Background = Brushes.Transparent,
                 Cursor = handCursor,
                 Focusable = true,
                 MinHeight = ControlMetrics.settingsRowMinHeight,
                 Child = dock)
-        row.Transitions <- surfaceTransitions ()
+        Interaction.surface row Interaction.HoverVariant.plain |> ignore
         Avalonia.Automation.AutomationProperties.SetName(row, title)
         Avalonia.Automation.AutomationProperties.SetHelpText(row, hint)
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             row,
             Nullable Avalonia.Automation.Peers.AutomationControlType.CheckBox)
-        let updateRowBackground () =
-            row.Background <- if row.IsPointerOver || row.IsFocused then Tokens.hover :> IBrush else Brushes.Transparent :> IBrush
-        row.PointerEntered.Add(fun _ -> updateRowBackground ())
-        row.PointerExited.Add(fun _ ->
-            row.Opacity <- 1.0
-            updateRowBackground ())
-        row.PointerPressed.Add(fun _ -> row.Opacity <- Tokens.opacityPressed)
-        row.PointerReleased.Add(fun _ -> row.Opacity <- 1.0)
-        row.GotFocus.Add(fun _ -> updateRowBackground ())
-        row.LostFocus.Add(fun _ -> updateRowBackground ())
         let toggleAndRefresh () =
             flip ()
-            updateRowBackground ()
             let currentState = if read () then "开启" else "关闭"
             Avalonia.Automation.AutomationProperties.SetItemStatus(row, currentState)
         Avalonia.Automation.AutomationProperties.SetItemStatus(row, if initial then "开启" else "关闭")

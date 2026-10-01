@@ -1590,16 +1590,10 @@ type MainView() as this =
                 Cursor = new Cursor(StandardCursorType.SizeWestEast),
                 IsVisible = not initialNavigation.sidebarCollapsed)
         Avalonia.Automation.AutomationProperties.SetName(sidebarSplitter, "调整侧边栏宽度")
-        // splitter 悬停/聚焦底色反馈并入共享表面过渡（减弱动效瞬时到位；拖动行为不变）。
-        sidebarSplitter.Transitions <- Ui.surfaceTransitions ()
-        sidebarSplitter.PointerEntered.Add(fun _ -> sidebarSplitter.Background <- Tokens.hover)
-        sidebarSplitter.PointerExited.Add(fun _ ->
-            sidebarSplitter.Background <-
-                if sidebarSplitter.IsFocused then Tokens.accentFaint :> IBrush else Brushes.Transparent :> IBrush)
-        sidebarSplitter.GotFocus.Add(fun _ -> sidebarSplitter.Background <- Tokens.accentFaint)
-        sidebarSplitter.LostFocus.Add(fun _ ->
-            sidebarSplitter.Background <-
-                if sidebarSplitter.IsPointerOver then Tokens.hover :> IBrush else Brushes.Transparent :> IBrush)
+        // splitter 悬停/聚焦底色交给 Interaction 的原生伪类
+        // （`:pointerover` / `:focus-visible`），拖动行为不变。
+        Interaction.surface sidebarSplitter Interaction.HoverVariant.plain |> ignore
+        Interaction.reportFocusOrigin sidebarSplitter
         sidebarSplitter.DragCompleted.Add(fun _ ->
             let nav = navigation.State
             if not nav.compactMode && not nav.sidebarCollapsed then

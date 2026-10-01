@@ -14,6 +14,7 @@ open Xunit
 open Wanxiang.Core
 open Wanxiang.UI
 
+[<Trait("Category", "UI")>]
 module SettingsViewTests =
 
     let rec private descendants (control: Control) =
@@ -108,6 +109,7 @@ module SettingsViewTests =
     // 1. SettingsTools: 表单校验、正则与 MCP 载荷生成
     // ==========================================
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsTools mcpPayload constructs complete and compliant JsonObject`` () =
         Headless.run (fun () ->
@@ -136,6 +138,7 @@ module SettingsViewTests =
             Assert.False(payload2["enabled"].GetValue<bool>())
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsTools ShowEditor validates id, command/url, timeout and saves valid config`` () =
         Headless.run (fun () ->
@@ -239,6 +242,7 @@ module SettingsViewTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsTools SetCatalog renders tool list, mcp list and sandbox notes`` () =
         Headless.run (fun () ->
@@ -317,6 +321,7 @@ module SettingsViewTests =
     // 2. SettingsProviders: 供应商校验、Loopback、BaseUrl 缺省与模型增删改
     // ==========================================
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsProviders isLoopbackUrl identifies local and loopback addresses`` () =
         Headless.run (fun () ->
@@ -336,6 +341,7 @@ module SettingsViewTests =
             Assert.False(isLoopback null)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsProviders providerPayload constructs correct JsonObject`` () =
         Headless.run (fun () ->
@@ -367,6 +373,7 @@ module SettingsViewTests =
             Assert.Equal(3, payload["maxRetries"].GetValue<int>())
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsProviders ShowEditor validates required fields and default model existence`` () =
         Headless.run (fun () ->
@@ -447,6 +454,7 @@ module SettingsViewTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsProviders applyPreset updates endpoint, models and tracks divergence to custom`` () =
         Headless.run (fun () ->
@@ -498,6 +506,7 @@ module SettingsViewTests =
     // 3. SettingsGeneral: 生成参数校验、外观主题/字号与系统诊断
     // ==========================================
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsGeneral pure parse and formatting helpers behave correctly`` () =
         Headless.run (fun () ->
@@ -525,6 +534,7 @@ module SettingsViewTests =
             Assert.True(Option.isNone (parseIntOpt ""))
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsGeneral SaveGenerationCore validates numeric ranges and generates payload`` () =
         Headless.run (fun () ->
@@ -663,6 +673,7 @@ module SettingsViewTests =
             Assert.True(nullPayload["instructions"] = null)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsGeneral BuildAppearance adjusts fontScale within bounds and updates prefs`` () =
         Headless.run (fun () ->
@@ -697,6 +708,7 @@ module SettingsViewTests =
             Assert.True(largerBtn.IsEnabled)
         )
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsGeneral BuildAbout formats system diagnostics with version and platform`` () =
         Headless.run (fun () ->
@@ -722,6 +734,7 @@ module SettingsViewTests =
     // 4. SettingsView: 分区导航、缓存失效与滚动位置
     // ==========================================
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``SettingsView navigates sections, remembers scroll positions and invalidates cache`` () =
         Headless.run (fun () ->
