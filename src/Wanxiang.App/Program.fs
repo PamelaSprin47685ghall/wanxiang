@@ -77,126 +77,6 @@ module Cli =
         | s when not (String.IsNullOrWhiteSpace s) -> s
         | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".config", "wanxiang")
 
-module Doctor =
-
-    type Diagnosis = {
-        mutable configOk: bool
-        mutable configErrors: string list
-        mutable lockOk: bool
-        mutable lockError: string
-        mutable replayOk: bool
-        mutable replayError: string
-        mutable portOk: bool
-        mutable portError: string
-        mutable attachmentsOk: bool
-        mutable attachmentsMissing: string list
-    }
-
-    let private portInUse (listen: string) : bool =
-        try
-            let parts = listen.Split ':'
-            if parts.Length <> 2 then false
-            else
-                let host = parts[0]
-                let port = int parts[1]
-                use client = new TcpClient()
-                let ar = client.BeginConnect(host, port, null, null)
-                ar.AsyncWaitHandle.WaitOne 300 |> ignore
-                client.EndConnect ar |> ignore
-                true
-        with _ ->
-            false
-
-    /// 只读诊断（决策 51：doctor 默认严格只读，不修复）。
-    let run (configPath: string, dataDir: string) : Diagnosis =
-        let d =
-            { configOk = false
-              configErrors = []
-              lockOk = false
-              lockError = ""
-              replayOk = false
-              replayError = ""
-              portOk = true
-              portError = ""
-              attachmentsOk = true
-              attachmentsMissing = [] }
-        // 配置
-        if File.Exists configPath then
-            match TomlCodec.tryParse (File.ReadAllText configPath) with
-            | Ok cfg ->
-                d.configOk <- true
-                d.portOk <- not (portInUse cfg.listen)
-                if not d.portOk then d.portError <- sprintf "port %s already in use" cfg.listen
-            | Error errs -> d.configErrors <- errs
-        else
-            d.configErrors <- [ sprintf "config file not found: %s" configPath ]
-        // 数据锁
-        match DataLock.Acquire dataDir with
-        | Ok l ->
-            d.lockOk <- true
-            (l :> IDisposable).Dispose()
-        | Error e -> d.lockError <- e
-        // 事件日志只认 RFC 7464 .jsonseq；发现其它格式（如 .ndjson）即明确报错，
-        // 绝不静默忽略——用户需要自己归档或移除。
-        let unrecognizedLogs =
-            try
-                System.IO.Directory.GetFiles(Wanxiang.Store.DataPaths.eventsDir dataDir, "*.ndjson")
-            with _ -> [||]
-        if unrecognizedLogs.Length > 0 then
-            d.replayOk <- false
-            d.replayError <-
-                sprintf
-                    "found %d unrecognized .ndjson log(s). The event log format is RFC 7464 .jsonseq. Archive or remove: %s"
-                    unrecognizedLogs.Length
-                    (String.Join(", ", unrecognizedLogs |> Array.map System.IO.Path.GetFileName))
-        // 只读检查（算法 R）；有无法识别的日志时跳过（上面已给出明确报错）
-        if unrecognizedLogs.Length = 0 then
-            match Replay.inspect dataDir with
-            | Healthy outcome ->
-                d.replayOk <- true
-                // Q179：附件引用可达性检查（只读报告，不修复）
-                try
-                    let store = new Wanxiang.Server.AttachmentStore(dataDir, 1024L)
-                    try
-                        let missing = System.Collections.Generic.HashSet<string>()
-                        for conv in Projection.conversationList outcome.projection do
-                            for m in Projection.effectiveMessages outcome.projection conv do
-                                for (sha, _, _, _) in Wanxiang.Server.ServerModel.attachmentRefsOf m.payloadJson do
-                                    if not (store.Exists sha) then
-                                        missing.Add(sha) |> ignore
-                        d.attachmentsMissing <- missing |> Seq.toList
-                        d.attachmentsOk <- List.isEmpty d.attachmentsMissing
-                    finally
-                        store.Dispose()
-                with _ -> ()
-            | RepairRequired (outcome, plan) ->
-                d.replayOk <- false
-                d.replayError <-
-                    sprintf
-                        "damaged log at %s (%s); valid prefix through commit %d. Run `wanxiang doctor --fix` to repair (a recovery bundle will be created first)."
-                        plan.damage.file
-                        plan.damage.reason
-                        outcome.lastCommitId
-            | UnsupportedFormat msg -> d.replayError <- msg
-            | Unreadable msg -> d.replayError <- msg
-        d
-
-    let print (d: Diagnosis) : unit =
-        let mutable ok = true
-        let report (name: string) (pass: bool) (detail: string) =
-            if pass then
-                eprintfn "%-12s OK" name
-            else
-                ok <- false
-                eprintfn "%-12s FAIL: %s" name detail
-        report "config" d.configOk (String.concat "; " d.configErrors)
-        report "data-lock" d.lockOk d.lockError
-        report "log-replay" d.replayOk d.replayError
-        report "listen-port" d.portOk d.portError
-        report "attachments" d.attachmentsOk (sprintf "%d referenced blob(s) missing" (List.length d.attachmentsMissing))
-        eprintfn "overall: %s" (if ok then "PASS" else "FAIL")
-        if not ok then exit 1
-
 module Program =
 
     /// info 日志统一走 Wanxiang.Server.Stderr（结构化 JSON Lines + 已知密钥脱敏，决策 41/198）。
@@ -280,8 +160,8 @@ module Program =
                         eprintfn "support bundle failed: %s" e
                         exit 1
                 | None -> ()
-                let d = Doctor.run (configPath, dataDir)
-                Doctor.print d
+                let d = Wanxiang.Server.Doctor.run (configPath, dataDir)
+                Wanxiang.Server.Doctor.print d
                 exit 0
 
             // 启动前先执行 doctor/fix（决策 51 第二问：先检查修复，再启动组件）。

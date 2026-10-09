@@ -104,39 +104,38 @@ module SupportBundle =
     let create (dataDir: string) (configPath: string) (outPath: string) : Result<string, string> =
         try
             Directory.CreateDirectory outPath |> ignore
-            // diagnosis.json：只读 doctor 结果（复用 Doctor 逻辑——但 Doctor 在 App 项目，
-            // 此处内联最小诊断：配置可解析 + 日志 inspect 结论 + 锁状态）
+            // diagnosis.json：只读 doctor 结果（O-003：Doctor 是诊断单一权威）
             let diag = JsonObject()
             diag["createdAt"] <- DateTimeOffset.UtcNow.UtcDateTime.ToString("o")
             diag["dataDir"] <- dataDir
-            // 配置可解析性
-            if File.Exists configPath then
-                match TomlCodec.tryParse (File.ReadAllText configPath) with
-                | Ok cfg -> diag["configOk"] <- true; diag["listen"] <- cfg.listen
-                | Error errs -> diag["configOk"] <- false; diag["configErrors"] <- JsonArray([| for e in errs -> JsonNode.op_Implicit e |])
-            else
-                diag["configOk"] <- false
-                diag["configErrors"] <- JsonArray([| JsonNode.op_Implicit (sprintf "config file not found: %s" configPath) |])
-            // 日志 inspect 结论
-            match Replay.inspect dataDir with
-            | Healthy o ->
-                diag["logStatus"] <- "healthy"
-                diag["lastCommitId"] <- o.lastCommitId
-                diag["conversations"] <- Projection.conversationList o.projection |> List.length
-            | RepairRequired (o, plan) ->
-                diag["logStatus"] <- "repair-required"
-                diag["lastCommitId"] <- o.lastCommitId
-                diag["damageFile"] <- plan.damage.file
-                diag["damageOffset"] <- plan.damage.byteOffset
-                diag["reason"] <- plan.damage.reason
-            | UnsupportedFormat msg -> diag["logStatus"] <- "unsupported-format"; diag["message"] <- msg
-            | Unreadable msg -> diag["logStatus"] <- "unreadable"; diag["message"] <- msg
-            // 数据锁状态（不持有——doctor --bundle 只读）
-            match DataLock.Acquire dataDir with
-            | Ok l ->
-                diag["lockOk"] <- true
-                (l :> IDisposable).Dispose()
-            | Error e -> diag["lockOk"] <- false; diag["lockError"] <- e
+            let diagnosis = Doctor.run (configPath, dataDir)
+            diag["configOk"] <- diagnosis.checks |> List.exists (fun c -> c.name = "config" && c.ok)
+            diag["configErrors"] <- JsonArray([| for e in diagnosis.configErrors -> JsonNode.op_Implicit e |])
+            let logStatus =
+                match Replay.inspect dataDir with
+                | Healthy _ -> "healthy"
+                | RepairRequired (o, plan) ->
+                    diag["lastCommitId"] <- o.lastCommitId
+                    diag["damageFile"] <- plan.damage.file
+                    diag["damageOffset"] <- plan.damage.byteOffset
+                    diag["reason"] <- plan.damage.reason
+                    "repair-required"
+                | UnsupportedFormat msg ->
+                    diag["message"] <- msg
+                    "unsupported-format"
+                | Unreadable msg ->
+                    diag["message"] <- msg
+                    "unreadable"
+            diag["logStatus"] <- logStatus
+            diag["lockOk"] <- diagnosis.checks |> List.exists (fun c -> c.name = "data-lock" && c.ok)
+            let checksArr = JsonArray()
+            for c in diagnosis.checks do
+                let co = JsonObject()
+                co["name"] <- c.name
+                co["ok"] <- c.ok
+                co["detail"] <- c.detail
+                checksArr.Add(co :> JsonNode)
+            diag["checks"] <- checksArr
             writeJson (Path.Combine(outPath, "diagnosis.json")) diag
             // versions.json
             writeJson (Path.Combine(outPath, "versions.json")) (versionsJson ())

@@ -11,9 +11,10 @@
 
   <ItemGroup>
     <Compile Include="Stderr.fs" />
-    <Compile Include="SupportBundle.fs" />
     <Compile Include="ServerModel.fs" />
     <Compile Include="AttachmentStore.fs" />
+    <Compile Include="Doctor.fs" />
+    <Compile Include="SupportBundle.fs" />
     <Compile Include="ProviderCatalog.fs" />
     <Compile Include="ConfigMutation.fs" />
     <Compile Include="GenerationContext.fs" />

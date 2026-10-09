@@ -18,7 +18,7 @@ open Wanxiang.Tests.Helpers
 
 /// 端到端：启动真实 ServerApp + ClientWebSocket。
 /// 验证 P0-1 修复：观察快照 → cursor.advanced → 写命令不再被 stale-projection 拒绝。
-module private E2e =
+module internal E2e =
 
     type ServerHandle(port: int, token: string, ?providerUrl: string, ?initialCommits: Events.Commit list) =
         let dir = tempDir ()
@@ -208,7 +208,7 @@ module private E2e =
         send ws auth ct
         ws
 
-let private pickPort () =
+let internal pickPort () =
     let listener = new Net.Sockets.TcpListener(Net.IPAddress.Loopback, 0)
     listener.Start()
     let port = (listener.LocalEndpoint :?> Net.IPEndPoint).Port

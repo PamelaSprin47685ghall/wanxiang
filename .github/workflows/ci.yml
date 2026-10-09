@@ -1,0 +1,61 @@
+name: wanxiang-ci
+
+# AGENTS.md §24 CI 分级：
+#   每个 PR：build + unit + contract + compatibility-current + format/lint
+#   merge 到 main 后：integration + recovery + crash-matrix
+# 本 workflow：PR 与 main 均运行 PR 级门禁；main 额外运行集成/恢复/崩溃矩阵。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pr-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          # 与 global.json 一致：MTP 原生测试运行器
+          cache: true
+
+      - name: Restore
+        run: dotnet restore wanxiang.slnx
+
+      - name: Build (Release, warnings-as-errors)
+        run: dotnet build wanxiang.slnx -c Release --no-restore --verbosity minimal
+
+      - name: Format gate (dotnet format --verify-no-changes)
+        run: dotnet format wanxiang.slnx --verify-no-changes --verbosity minimal
+
+      - name: UI trait gate (漏打或多打都退出码非 0)
+        run: python3 tools/tag_ui_tests.py --check
+
+      - name: Unit + contract + compatibility (non-UI)
+        run: ./run-tests.sh --no-ui
+
+      - name: UI tests (process-level parallel)
+        run: ./run-tests.sh --ui-only -j 8
+
+  main-gate:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: pr-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          cache: true
+
+      - name: Build (Release)
+        run: dotnet build wanxiang.slnx -c Release --verbosity minimal
+
+      - name: Integration + recovery + crash matrix (non-UI)
+        run: ./run-tests.sh --no-ui
