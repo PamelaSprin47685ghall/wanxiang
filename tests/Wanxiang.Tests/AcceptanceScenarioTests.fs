@@ -26,7 +26,6 @@ module AcceptanceScenario =
         let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
         let convId = newConversationId ()
         let path = DataPaths.eventFilePath dir day
-        Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
         use fs = new BufferedStream(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None), 1 <<< 20)
         let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "scenario-a"; config = testConfig () } ]
         let b1 = Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1)
@@ -180,3 +179,141 @@ module AcceptanceScenario =
             Assert.Contains("commandType", names)
         finally
             Wanxiang.Server.Stderr.clearSecrets ()
+
+    // -------------------------------------------------------------------------
+    // 场景 C：人工修复（§31 场景 C）——损坏 → doctor --fix 等价链 → recovery
+    // bundle → 哈希有效 → 截尾修复 → 复查 PASS。整条链机器化验收。
+    // -------------------------------------------------------------------------
+
+    [<Fact>]
+    let ``场景C：损坏 → 修复 → bundle 哈希有效 → 复查 PASS 全链`` () =
+        let dir = tempDir ()
+        try
+            DataPaths.ensureDataDirs dir
+            let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+            let path = DataPaths.eventFilePath dir day
+            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+            let convId = newConversationId ()
+            // 2 条有效提交 + 半条损坏记录（模拟崩溃残余）
+            let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "scenario-c"; config = testConfig () } ]
+            let c2 = Events.Commit.create 2UL (DateTimeOffset(day.AddHours 1.0)) [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "你好" } ]
+            let frames = [ c1; c2 ] |> List.map (fun c -> Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c)) |> Array.concat
+            let tail = Text.Encoding.UTF8.GetBytes("\u001E{\"formatVersion\":2,\"commitId\":\"3\",\"brok")
+            File.WriteAllBytes(path, Array.append frames tail)
+
+            // 1) 只读检查报告损坏（算法 R：不修改文件）
+            let bytesBefore = File.ReadAllBytes path
+            let plan =
+                match Replay.inspect dir with
+                | RepairRequired (outcome, p) ->
+                    Assert.Equal(2UL, outcome.lastCommitId) // 有效水位 = 前缀 2
+                    p
+                | other -> failwithf "expected RepairRequired, got %A" other
+            Assert.Equal<byte[]>(bytesBefore, File.ReadAllBytes path)
+
+            // 2) 建立 recovery bundle（算法 B：复制 + SHA-256 + manifest）
+            let bundleDir =
+                match Wanxiang.Store.RecoveryBundle.create dir plan with
+                | Ok d -> d
+                | Error e -> failwithf "bundle failed: %s" e
+            Assert.True(File.Exists(Path.Combine(bundleDir, "manifest.json")))
+            Assert.True(File.Exists(Path.Combine(bundleDir, "diagnosis.json")))
+            // bundle 内原文件副本与磁盘一致（B6：任一哈希不相等则终止）
+            let originalCopy = Path.Combine(bundleDir, "original", Path.GetFileName path)
+            Assert.True(File.Exists originalCopy)
+            Assert.Equal<byte[]>(bytesBefore, File.ReadAllBytes originalCopy)
+            // manifest 记录损坏现场 + 计划动作（§8.1 字段清单）
+            let manifest = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(bundleDir, "manifest.json")))
+            let files = manifest["files"].AsArray()
+            Assert.Equal(1, files.Count)
+            let file0 = files[0]
+            let action0 = manifest["plannedActions"][0]
+            Assert.Equal(path, file0["path"].GetValue<string>())
+            Assert.Equal(64, file0["sha256"].GetValue<string>().Length)
+            Assert.Equal("truncate", action0["action"].GetValue<string>())
+            Assert.Equal(plan.damage.byteOffset, action0["offset"].GetValue<int64>())
+
+            // 3) 执行修复（截尾路径）
+            match Wanxiang.Store.Repair.repair dir plan with
+            | Ok _ -> ()
+            | Error e -> failwithf "repair failed: %s" e
+
+            // 4) 复查：Healthy，投影 = 有效前缀（2 条提交），bundle 证据仍在
+            match Replay.inspect dir with
+            | Healthy outcome ->
+                Assert.Equal(2UL, outcome.projection.latestCommitId)
+                Assert.True(outcome.projection.conversations.ContainsKey convId)
+            | other -> failwithf "expected Healthy after fix, got %A" other
+            Assert.True(Directory.Exists bundleDir, "recovery bundle must be preserved after repair")
+        finally
+            cleanup dir
+
+    // -------------------------------------------------------------------------
+    // 场景 D：快照损坏变体（§31 场景 D）——最新快照损坏 → 回退上一有效快照，
+    // 原始日志不受影响，启动投影与完整重放一致。
+    // -------------------------------------------------------------------------
+
+    [<Fact>]
+    let ``场景D：最新快照损坏 → 回退上一有效快照启动`` () =
+        let dir = tempDir ()
+        try
+            DataPaths.ensureDataDirs dir
+            let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+            let convId = newConversationId ()
+            // 3 条提交：1 会话 + 2 消息。分步落盘，每步 replay 得到真实前缀投影再快照
+            let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "scenario-d"; config = testConfig () } ]
+            let c2 = Events.Commit.create 2UL (DateTimeOffset(day.AddHours 1.0)) [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m1" } ]
+            let c3 = Events.Commit.create 3UL (DateTimeOffset(day.AddHours 2.0)) [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m2" } ]
+            let path = DataPaths.eventFilePath dir day
+            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+            let len1 = int64 (Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1)).Length
+            // 步骤 1：只写 c1 → 快照 1（through commit 1）
+            File.WriteAllBytes(path, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1))
+            let proj1 = (replayOutcome dir).projection
+            Assert.Equal(1UL, proj1.latestCommitId)
+            match Snapshot.write dir proj1 (Some "2026-08-01.jsonseq") len1 with
+            | Ok _ -> ()
+            | Error e -> failwith e
+            // 步骤 2：追加 c2 → 快照 2（through commit 2，随后被破坏）
+            let len2 = len1 + int64 (Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c2)).Length
+            File.AppendAllBytes(path, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c2))
+            let proj2 = (replayOutcome dir).projection
+            Assert.Equal(2UL, proj2.latestCommitId)
+            match Snapshot.write dir proj2 (Some "2026-08-01.jsonseq") len2 with
+            | Ok _ -> ()
+            | Error e -> failwith e
+            // 步骤 3：追加 c3 → 完整重放投影（最终真相）
+            File.AppendAllBytes(path, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c3))
+            let full = replayOutcome dir
+            Assert.Equal(3UL, full.projection.latestCommitId)
+            // 日志字节快照（场景 D：原始日志不受影响）
+            let logBefore = File.ReadAllBytes path
+            // 破坏最新快照（改 checksum 字段名 → 校验失败）
+            let snapDir = Path.Combine(dir, "snapshots")
+            let latest = Directory.GetFiles(snapDir, "projection-*.snapshot") |> Array.sortDescending |> Array.head
+            let text = File.ReadAllText latest
+            let tampered = text.Replace("\"checksum\"", "\"checksumX\"", StringComparison.Ordinal)
+            Assert.NotEqual<string>(text, tampered)
+            File.WriteAllText(latest, tampered)
+
+            // findLatest 必须忽略损坏的最新快照，回退到上一有效快照（L8/L9）
+            match Snapshot.findLatest dir with
+            | SnapshotStartup.SnapshotUsed info ->
+                Assert.Equal(1UL, info.throughCommitId) // 回退到快照 1
+                // 从快照 1 启动：重放 commit 2、3，投影与完整重放一致
+                match Replay.inspectFrom
+                          dir
+                          { projection = info.projection
+                            throughCommitId = info.throughCommitId
+                            throughFile = info.throughFile
+                            throughOffset = info.throughOffset } with
+                | Healthy outcome ->
+                    Assert.Equal(3UL, outcome.projection.latestCommitId)
+                    Assert.Equal(projectionFingerprint full.projection, projectionFingerprint outcome.projection)
+                | other -> failwithf "snapshot fallback startup not healthy: %A" other
+            | SnapshotStartup.SnapshotCorrupt _ -> failwith "must fall back to previous valid snapshot"
+            | other -> failwithf "expected SnapshotUsed, got %A" other
+            // 原始日志未受影响（场景 D：快照损坏不得导致原始日志损坏）
+            Assert.Equal<byte[]>(logBefore, File.ReadAllBytes path)
+        finally
+            cleanup dir

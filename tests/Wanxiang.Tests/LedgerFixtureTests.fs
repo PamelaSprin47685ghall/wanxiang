@@ -71,6 +71,26 @@ module LedgerFixture =
                 Assert.Equal(2, Projection.conversationList outcome.projection |> List.length)
                 // 跨 UTC 日期文件 id 连续（1,2,3）
                 Assert.Equal(3, outcome.commits.Length)
+                // 场景 E：投影内容与固定输入的确定性投影一致（黄金样本输入固定 → 投影固定）
+                // 会话 1：固定 convId，标题「黄金样本」，含 1 条用户消息「你好，万象！」
+                let conv1 = Guid.Parse "11111111-2222-3333-4444-555555555555"
+                match Projection.tryConversation outcome.projection conv1 with
+                | Some c ->
+                    Assert.Equal("黄金样本", c.title)
+                    Assert.Equal(Some 2UL, c.lastCommitId)
+                    // 消息内容（AG-UI 消息载荷）
+                    Assert.Equal(1, c.messages.Length)
+                    let payload = c.messages.[0].payloadJson
+                    let contents = payload["contents"]
+                    let first = contents[0]
+                    let text = first["text"].GetValue<string>()
+                    Assert.Equal("你好，万象！", text)
+                | None -> failwith "golden conversation 1 missing from projection"
+                // 会话 2：次日会话，固定 convId
+                let conv2 = Guid.Parse "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                match Projection.tryConversation outcome.projection conv2 with
+                | Some c -> Assert.Equal("次日会话", c.title)
+                | None -> failwith "golden conversation 2 missing from projection"
             | _ -> failwith "current fixture must be healthy"
         finally
             cleanup dir
