@@ -918,3 +918,72 @@ let ``e2e wsclient sends command through agui custom carrier and server commits`
             client.Disconnect()
     finally
         handle.Dispose()
+
+/// S-001 / STOP-1：日志损坏时正常启动进入**只读降级模式**——
+/// 以最长有效前缀启动（历史可读），但写命令被明确拒绝（command.rejected），
+/// 且**绝不自动截尾/删除**损坏文件（修复只能由 doctor --fix 显式执行）。
+[<Fact>]
+let ``e2e damaged log starts read-only degraded and rejects writes without touching files`` () =
+    let port = pickPort ()
+    let token = Auth.generateToken ()
+    let dir = tempDir ()
+    let configPath = Path.Combine(dir, "config.toml")
+    try
+        let convId = Guid.NewGuid()
+        let cfg =
+            { AppConfig.defaults (Guid.NewGuid()) with
+                listen = sprintf "127.0.0.1:%d" port
+                authClients =
+                    [ { tokenHash = Auth.hashToken token
+                        name = "e2e-degraded"
+                        createdAtUtc = DateTimeOffset.UtcNow
+                        lastSeenUtc = None
+                        revoked = false } ] }
+        File.WriteAllText(configPath, TomlCodec.serialize cfg)
+        // 预写：一条有效提交 + 尾部半条损坏记录（模拟崩溃残余）
+        DataPaths.ensureDataDirs dir
+        let path = DataPaths.eventFilePath dir DateTime.UtcNow
+        let c1 = Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ]
+        let frame = Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1)
+        File.WriteAllBytes(path, Array.append frame (Text.Encoding.UTF8.GetBytes "\u001E{\"formatVersion\":2,\"commitId\":\"2\",\"broken"))
+        let bytesBefore = File.ReadAllBytes path
+
+        let app = new Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
+        app.Start(false)
+        try
+            use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
+            let ws = E2e.conn port token cts.Token
+            E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
+            // 历史可读：observe 会话 → 快照含 id=1 的会话
+            let obs = JsonObject()
+            obs["type"] <- "conversation.observe"
+            let op = JsonObject()
+            op["threadId"] <- convId.ToString("D")
+            obs["payload"] <- op
+            E2e.send ws obs cts.Token
+            let snap = E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "conversation.snapshot")
+            Assert.NotNull snap
+            // 写命令被拒绝（command.rejected）
+            let cmd = JsonObject()
+            cmd["type"] <- "conversation.create"
+            let cp = JsonObject()
+            cp["invocationId"] <- Guid.NewGuid().ToString("D")
+            cp["threadId"] <- Guid.NewGuid().ToString("D")
+            cp["title"] <- "should-be-rejected"
+            cp["config"] <- JsonObject()
+            cmd["payload"] <- cp
+            E2e.send ws cmd cts.Token
+            let rejected = E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "command.rejected")
+            let code = ((rejected["payload"].AsObject())["code"]).GetValue<string>()
+            Assert.Equal("poisoned", (code: string))
+            ws.Dispose()
+        finally
+            (app :> IDisposable).Dispose()
+        // 启动 + 运行全程未触碰损坏文件：字节不变（STOP-1：无证据的破坏性修复被禁止）
+        Assert.Equal<byte[]>(bytesBefore, File.ReadAllBytes path)
+        // 只读检查仍报告 RepairRequired（修复未执行）
+        match Replay.inspect dir with
+        | RepairRequired _ -> ()
+        | _ -> failwith "expected repair required after degraded startup"
+    finally
+        cleanup dir

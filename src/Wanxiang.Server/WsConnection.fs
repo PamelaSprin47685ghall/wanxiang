@@ -23,11 +23,11 @@ type CommandExecutionResult =
     | CommandIdempotent of commitId: CommitId
     | CommandFailed of WanxiangError
 
-/// 握手状态机（决策 55/69/70）：握手先于认证；认证前只接受认证/配对事件。
-/// 未收到 Hello 或认证完成前收到业务事件 → 视为协议违规关闭。
+/// 握手状态机（决策 55/69/70 现行决议 + ADR-001 方案 B）：版本协商完全 in-band，
+/// 无 Hello 握手事件。认证前只接受认证/配对事件；收到业务事件 → 视为协议违规关闭。
+/// `Hello`/`UpgradeRequired` 事件仍被解码（兼容旧客户端），但不改变状态。
 type HandshakeState =
     | NotStarted
-    | HelloSeen
     | Authenticated
 
 /// 连接状态与处理循环。
@@ -253,6 +253,13 @@ type WsConnection(
                                     if ws.State = WebSocketState.Open then
                                         do! ws.SendAsync(ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, ct)
                                 with e ->
+                                    // O-001：发送失败必须留下诊断证据（R6：不允许无证据继续运行）。
+                                    // 连接已不可用，标记关闭；异常与连接 id 写入 stderr，不输出 token/密钥。
+                                    Stderr.write
+                                        "ws-send-failed"
+                                        [ "connectionId", connectionId
+                                          "message", e.Message
+                                          "exception", e ]
                                     closed <- true
                             else
                                 more <- false
@@ -319,7 +326,7 @@ type WsConnection(
             | AuthPresent d ->
                 // 连接即认证：未认证的任何前置状态一视同仁，直接认证。
                 match handshakeState with
-                | NotStarted | HelloSeen ->
+                | NotStarted ->
                     match this.TryAuthenticate d.token with
                     | Some client ->
                         lock cursorLock (fun () ->
@@ -341,7 +348,7 @@ type WsConnection(
             | PairingRequested d ->
                 match handshakeState with
                 | Authenticated -> () // 已认证：配对无意义，忽略
-                | NotStarted | HelloSeen ->
+                | NotStarted ->
                     if not pairingRequested then
                         let now = DateTimeOffset.UtcNow
                         if failureTracker.IsFrozen(now, remoteAddress) then
@@ -355,7 +362,7 @@ type WsConnection(
             | PairingAttempted d ->
                 match handshakeState with
                 | Authenticated -> ()
-                | NotStarted | HelloSeen ->
+                | NotStarted ->
                     if pairingRequested then
                         let now = DateTimeOffset.UtcNow
                         if failureTracker.IsFrozen(now, remoteAddress) then

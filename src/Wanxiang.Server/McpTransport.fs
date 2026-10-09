@@ -74,8 +74,11 @@ type McpStdioTransport(config: McpServerConfig, onLog: string -> unit) =
                                     | true, tcs -> tcs.TrySetResult o |> ignore
                                     | _ -> ()
                             | _ -> ()
-                        with _ -> ()
-            with _ -> ()
+                        with e ->
+                            onLog(sprintf "[mcp:%s] malformed response line dropped: %s" config.id e.Message)
+            with e ->
+                // O-001：子进程读取循环异常必须留下证据（R6）。进程随后退出，在途调用会失败。
+                onLog(sprintf "[mcp:%s] stderr read loop failed: %s" config.id e.Message)
             // 子进程退出：在途调用结束为失败结果（决策 97：不自动重放）
             for kv in pending do
                 kv.Value.TrySetResult(McpJson.errorNode "MCP 进程已退出") |> ignore
@@ -198,7 +201,9 @@ type McpStdioTransport(config: McpServerConfig, onLog: string -> unit) =
                 notif["method"] <- method
                 if paramsObj.Count > 0 then notif["params"] <- paramsObj
                 writeLine notif
-            with _ -> ()
+            with e ->
+                // O-001：通知发送失败（如子进程已退出）必须留下证据，不得静默。
+                onLog(sprintf "[mcp:%s] notify %s failed: %s" config.id method e.Message)
 
         member _.Pending = pending.Count
 
@@ -332,7 +337,14 @@ type McpHttpTransport(config: McpServerConfig, endpoint: string, onLog: string -
             envelope["jsonrpc"] <- "2.0"
             envelope["method"] <- method
             if paramsObj.Count > 0 then envelope["params"] <- paramsObj
-            this.Post(envelope, 5000, CancellationToken.None) |> ignore
+            // O-001：HTTP 通知失败不得静默——记录到 onLog（不抛给调用方）。
+            task {
+                let! r = this.Post(envelope, 5000, CancellationToken.None)
+                if not (isNull r) && not (isNull r["error"]) then
+                    onLog(sprintf "[mcp:%s] notify %s failed: %s" config.id method (r["error"].ToJsonString()))
+            }
+            |> fun t -> (t :> System.Threading.Tasks.Task).ContinueWith((fun (t: System.Threading.Tasks.Task) -> t.Exception |> ignore), System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted)
+            |> ignore
 
         member _.Pending = inFlight
 

@@ -7,6 +7,14 @@ open Wanxiang.Core
 open Wanxiang.Store
 open Wanxiang.Tests.Helpers
 
+/// 断言 inspect 返回 RepairRequired 并取出 (outcome, plan)。
+let private repairRequired (dir: string) : ReplayOutcome * RepairPlan =
+    match Replay.inspect dir with
+    | Healthy _ -> failwith "expected repair required"
+    | RepairRequired (o, p) -> o, p
+    | UnsupportedFormat msg -> failwith msg
+    | Unreadable msg -> failwith msg
+
 /// 存储层一致性回归测试（本次修复）：
 /// - 幂等检查下沉到单写者：同 commandId 在 plan 之后/提交之前再次 Submit 不重复记账（决策 13/15）
 /// - 排队消息重试窗口（DrainQueue 竞态）不再重复提交
@@ -18,7 +26,7 @@ let ``单写者内部幂等：同 commandId 再次 Submit 返回原提交且不�
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
         let convId = newConversationId ()
         let invId = Guid.NewGuid()
@@ -43,7 +51,7 @@ let ``单写者内部幂等：同 commandId 再次 Submit 返回原提交且不�
         // 只有一条提交
         Assert.Equal(1UL, coord.Projection.latestCommitId)
         coord.Shutdown()
-        let outcome2 = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome2 = replayOutcome dir
         Assert.Equal(1UL, outcome2.lastCommitId)
     finally
         cleanup dir
@@ -53,7 +61,7 @@ let ``单写者内部幂等：同 commandId 不同载荷返回冲突`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
         let convId = newConversationId ()
         let invId = Guid.NewGuid()
@@ -82,7 +90,7 @@ let ``排队消息重试窗口：DrainQueue 清空后同 invocationId 不重复�
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         let committed = ResizeArray<Events.Commit>()
         use coord = new CommitCoordinator(dir, outcome, committed.Add, (fun _ -> ()))
         let convId = newConversationId ()
@@ -128,19 +136,12 @@ let ``停机跨天（中间日期无日志）正常恢复不损坏`` () =
         File.AppendAllText(p1, CommitCodec.commitToJsonLine c1 |> Wanxiang.Core.Ledger.Frame.encode |> System.Text.Encoding.UTF8.GetString)
         File.AppendAllText(p3, CommitCodec.commitToJsonLine c2 + "\n")
         // id 连续（1,2）且日期不降序：08-02 无日志是正常停机，不应报告损坏
-        match Replay.replay dir false with
-        | Ok outcome ->
-            Assert.Equal(2UL, outcome.lastCommitId)
-            Assert.Equal(2, Projection.conversationList outcome.projection |> List.length)
-        | Error e -> failwith e
-        // fix 模式同样不删除任何文件
-        match Replay.replay dir true with
-        | Ok outcome ->
-            Assert.Equal(2UL, outcome.lastCommitId)
-            Assert.Empty outcome.truncatedFiles
-            Assert.True(File.Exists p1)
-            Assert.True(File.Exists p3)
-        | Error e -> failwith e
+        let outcome = replayOutcome dir
+        Assert.Equal(2UL, outcome.lastCommitId)
+        Assert.Equal(2, Projection.conversationList outcome.projection |> List.length)
+        // 健康日志：inspect 不删除任何文件
+        Assert.True(File.Exists p1)
+        Assert.True(File.Exists p3)
     finally
         cleanup dir
 
@@ -155,15 +156,15 @@ let ``CRLF 行截尾偏移精确：损坏行前完整行不被截坏`` () =
         // 第一行用 \r\n 结尾（模拟外部编辑），第二行损坏
         File.WriteAllText(path, CommitCodec.commitToJsonLine c1 + "\r\n")
         File.AppendAllText(path, "broken-line-without-newline")
-        match Replay.replay dir true with
-        | Ok outcome ->
-            Assert.Equal(1UL, outcome.lastCommitId)
-            Assert.Contains(path, outcome.truncatedFiles)
+        let outcome, plan = repairRequired dir
+        Assert.Equal(1UL, outcome.lastCommitId)
+        Assert.Contains(path, plan.damage.file)
+        match Repair.repair dir plan with
         | Error e -> failwith e
-        // 修复后重新 replay：第一条仍是完整有效行
-        match Replay.replay dir false with
-        | Ok outcome2 -> Assert.Equal(1UL, outcome2.lastCommitId)
-        | Error e -> failwith e
+        | Ok truncated -> Assert.Contains(path, truncated)
+        // 修复后重新检查：第一条仍是完整有效行
+        let outcome2 = replayOutcome dir
+        Assert.Equal(1UL, outcome2.lastCommitId)
         // 文件必须以 \n 结尾（截尾落在 \r\n 之后）
         let bytes = File.ReadAllBytes path
         Assert.True(bytes.Length > 0 && bytes[bytes.Length - 1] = byte '\n')
@@ -175,7 +176,7 @@ let ``换日切换文件后继续写入且 id 连续`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
         let convId = newConversationId ()
         // 用相对日期（今天 23:59:59 → 明天 00:00:01，显式 UTC）而非写死日期，避免时钟回退与时区隐式转换误判
@@ -201,7 +202,7 @@ let ``换日切换文件后继续写入且 id 连续`` () =
         Assert.True(File.Exists(DataPaths.eventFilePath dir (todayUtc.AddDays(1.0))))
         coord.Shutdown()
         // 重启重放
-        let outcome2 = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome2 = replayOutcome dir
         Assert.Equal(2UL, outcome2.lastCommitId)
     finally
         cleanup dir
@@ -227,21 +228,19 @@ let ``replay 正确解码含中文的日志行`` () =
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
         File.AppendAllText(path, CommitCodec.commitToJsonLine c1 + "\n")
         File.AppendAllText(path, CommitCodec.commitToJsonLine c2 + "\n")
-        match Replay.replay dir false with
-        | Ok outcome ->
-            Assert.Equal(2UL, outcome.lastCommitId)
-            let conv = Projection.conversationList outcome.projection |> List.head
-            // 标题中文不丢失
-            Assert.Equal("会话标题中文", conv.title)
-            // 消息 payload 中文不丢失（读取 contents[0].text 字段）
-            let msg = conv.messages.Head
-            match msg.payloadJson with
-            | :? System.Text.Json.Nodes.JsonObject as o ->
-                let contents = (o["contents"]).AsArray()
-                let text = (contents[0]["text"]).GetValue<string>()
-                Assert.Equal("你好，万象！这是中文消息。", text)
-            | _ -> failwith "unexpected payload shape"
-        | Error e -> failwith e
+        let outcome = replayOutcome dir
+        Assert.Equal(2UL, outcome.lastCommitId)
+        let conv = Projection.conversationList outcome.projection |> List.head
+        // 标题中文不丢失
+        Assert.Equal("会话标题中文", conv.title)
+        // 消息 payload 中文不丢失（读取 contents[0].text 字段）
+        let msg = conv.messages.Head
+        match msg.payloadJson with
+        | :? System.Text.Json.Nodes.JsonObject as o ->
+            let contents = (o["contents"]).AsArray()
+            let text = (contents[0]["text"]).GetValue<string>()
+            Assert.Equal("你好，万象！这是中文消息。", text)
+        | _ -> failwith "unexpected payload shape"
     finally
         cleanup dir
 
@@ -265,17 +264,15 @@ let ``replay 遇非法 UTF-8 序列触发截尾`` () =
             fs.WriteByte 0xFEuy
             fs.WriteByte 10uy // \n
             fs.Flush()
-        match Replay.replay dir false with
-        | Ok _ -> failwith "should have reported invalid utf8"
-        | Error e ->
-            // 可能命中 unparseable（JSON 层）或 invalid UTF-8（解码层），两者都是"损坏→截尾"语义
-            Assert.True(e.Contains("UTF-8") || e.Contains("unparseable"), e)
-        // fix 模式截尾：保留 id=1
-        match Replay.replay dir true with
-        | Ok outcome ->
-            Assert.Equal(1UL, outcome.lastCommitId)
-            Assert.Contains(path, outcome.truncatedFiles)
+        let outcome, plan = repairRequired dir
+        // 可能命中 unparseable（JSON 层）或 invalid UTF-8（解码层），两者都是"损坏→截尾"语义
+        Assert.True(plan.damage.reason.Contains("UTF-8") || plan.damage.reason.Contains("unparseable"), plan.damage.reason)
+        // 修复截尾：保留 id=1
+        match Repair.repair dir plan with
         | Error e -> failwith e
+        | Ok truncated ->
+            Assert.Equal(1UL, outcome.lastCommitId)
+            Assert.Contains(path, truncated)
     finally
         cleanup dir
 
@@ -295,20 +292,25 @@ let ``replay fix deletes invalid-named file and all later files`` () =
         Directory.CreateDirectory(Path.GetDirectoryName p1) |> ignore
         File.WriteAllText(badPath, "garbage\n")
         File.AppendAllText(p1, CommitCodec.commitToJsonLine c1 |> Wanxiang.Core.Ledger.Frame.encode |> System.Text.Encoding.UTF8.GetString)
-        // fix 模式：删除非法文件自身（offset=0 无可保留）并级联删除其后所有文件
-        match Replay.replay dir true with
-        | Ok outcome ->
-            // badPath 在最前，扫描 stop 早于 p1 → 本次投影为空
-            Assert.Equal(0UL, outcome.lastCommitId)
+        // 只读检查发现损坏；修复：删除非法文件自身（offset=0 无可保留）并级联删除其后所有文件
+        let outcome, plan = repairRequired dir
+        // badPath 在最前，扫描 stop 早于 p1 → 本次投影为空
+        Assert.Equal(0UL, outcome.lastCommitId)
+        Assert.Contains(badPath, plan.affectedFiles)
+        Assert.Contains(p1, plan.affectedFiles)
+        // 修复前文件仍在（只读检查不动文件）
+        Assert.True(File.Exists badPath)
+        Assert.True(File.Exists p1)
+        match Repair.repair dir plan with
+        | Error e -> failwith e
+        | Ok _ ->
             // 非法文件自身被删除（避免每次启动 fix 重复命中并写 stderr）
             Assert.False(File.Exists badPath)
             // 决策 9：损坏点之后的所有日期文件一并删除（不保留，否则 id 冲突链）
             Assert.False(File.Exists p1)
-        | Error e -> failwith e
-        // 再次 replay：目录已清空，从空日志正常启动（fix 幂等）
-        match Replay.replay dir false with
-        | Ok outcome2 -> Assert.Equal(0UL, outcome2.lastCommitId)
-        | Error e -> failwith e
+        // 再次检查：目录已清空，从空日志正常启动（fix 幂等）
+        let outcome2 = replayOutcome dir
+        Assert.Equal(0UL, outcome2.lastCommitId)
     finally
         cleanup dir
 
@@ -354,11 +356,9 @@ let ``JsonSeqWriter 跨日提交自动 Flush 旧文件并切换新日期文件``
         Assert.True(File.Exists path1)
         Assert.True(File.Exists path2)
         // 两个文件回放正常
-        match Replay.replay dir false with
-        | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(2UL, outcome.lastCommitId)
-            Assert.Equal(2, outcome.commits.Length)
+        let outcome = replayOutcome dir
+        Assert.Equal(2UL, outcome.lastCommitId)
+        Assert.Equal(2, outcome.commits.Length)
     finally
         cleanup dir
 
@@ -405,7 +405,7 @@ let ``CommitCoordinator CommitsAfter 二分查找覆盖边界条件`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
@@ -435,7 +435,7 @@ let ``CommitCoordinator 提交非法事件触发 ApplyFailed 截尾并复用 com
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         let truncated = ResizeArray<Events.Commit * WanxiangError * int64 * string>()
         use coord = new CommitCoordinator(dir, outcome, ignore, (fun t -> truncated.Add(t)))
         let badSubmit =
@@ -469,7 +469,7 @@ let ``CommitCoordinator 正常 Dispose 释放 writer 且不抛出`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         let coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "Test"; config = testConfig () } ] |> ignore

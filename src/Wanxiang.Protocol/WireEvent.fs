@@ -34,6 +34,8 @@ module ConversationExportLimits =
 /// C→S 与 S→C 使用同一外壳；权限差异由事件类型决定。
 type WireEvent =
     // ---- 握手与认证 ----
+    // ADR-001 方案 B：Hello/UpgradeRequired 无生产发送路径（版本协商 in-band）。
+    // 保留变体仅为兼容 reader——旧客户端/旧服务端仍可能发送；接收方忽略，不改变状态。
     | Hello of {| protocol: string; version: int; instanceId: string option |}
     | UpgradeRequired of {| serverVersion: int; clientVersion: int |}
     | AuthPresent of {| token: string |}

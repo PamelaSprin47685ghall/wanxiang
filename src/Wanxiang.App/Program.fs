@@ -145,10 +145,10 @@ module Doctor =
                     "found %d unrecognized .ndjson log(s). The event log format is RFC 7464 .jsonseq. Archive or remove: %s"
                     unrecognizedLogs.Length
                     (String.Join(", ", unrecognizedLogs |> Array.map System.IO.Path.GetFileName))
-        // replay（只读，不修复）；有无法识别的日志时跳过（上面已给出明确报错）
+        // 只读检查（算法 R）；有无法识别的日志时跳过（上面已给出明确报错）
         if unrecognizedLogs.Length = 0 then
-            match Replay.replay dataDir false with
-            | Ok outcome ->
+            match Replay.inspect dataDir with
+            | Healthy outcome ->
                 d.replayOk <- true
                 // Q179：附件引用可达性检查（只读报告，不修复）
                 try
@@ -165,7 +165,16 @@ module Doctor =
                     finally
                         store.Dispose()
                 with _ -> ()
-            | Error e -> d.replayError <- e
+            | RepairRequired (outcome, plan) ->
+                d.replayOk <- false
+                d.replayError <-
+                    sprintf
+                        "damaged log at %s (%s); valid prefix through commit %d. Run `wanxiang doctor --fix` to repair (a recovery bundle will be created first)."
+                        plan.damage.file
+                        plan.damage.reason
+                        outcome.lastCommitId
+            | UnsupportedFormat msg -> d.replayError <- msg
+            | Unreadable msg -> d.replayError <- msg
         d
 
     let print (d: Diagnosis) : unit =
@@ -230,16 +239,28 @@ module Program =
                         eprintfn "data directory locked: %s" e
                         exit 1
                     | Ok lockHandle ->
+                        // 修复前先只读检查（算法 R）；Healthy 无需修复。
+                        // 修复前建立证据包（算法 B）：复制受影响文件 + SHA-256 + manifest。
+                        // 只有证据包建立成功才允许执行修复（S-002 / R1）。
                         let result =
-                            match Replay.replay dataDir true with
-                            | Ok outcome ->
-                                for f in outcome.truncatedFiles do
-                                    logInfo(sprintf "truncated %s" f)
-                                Ok()
-                            | Error e -> Error e
+                            match Replay.inspect dataDir with
+                            | Healthy _ -> Ok []
+                            | RepairRequired (_, plan) ->
+                                match Wanxiang.Store.RecoveryBundle.create dataDir plan with
+                                | Error e -> Error e
+                                | Ok bundle ->
+                                    logInfo(sprintf "recovery bundle created at %s" bundle)
+                                    match Repair.repair dataDir plan with
+                                    | Ok truncatedFiles ->
+                                        for f in truncatedFiles do
+                                            logInfo(sprintf "truncated %s" f)
+                                        Ok truncatedFiles
+                                    | Error e -> Error e
+                            | UnsupportedFormat msg -> Error msg
+                            | Unreadable msg -> Error msg
                         (lockHandle :> IDisposable).Dispose()
                         match result with
-                        | Ok () -> ()
+                        | Ok _ -> ()
                         | Error e ->
                             eprintfn "fix failed: %s" e
                             exit 1
@@ -260,18 +281,26 @@ module Program =
                         | Error e ->
                             eprintfn "data directory locked: %s" e
                             exit 1
-                    // 决策 51 第一问：正常 server 启动仍按既定规则自动截尾（决策 8-10/9：
-                    // 截断损坏文件、删除损坏点之后所有日期文件、从最后有效 id+1 继续写入），
-                    // 不需要 --fix 开关放行——fix 只决定 doctor 模式（0000 vs 0001）的只读/修复语义。
-                    // 截尾本身失败（文件不可写等阻断性问题）才拒绝启动（fix=false 亦然）。
+                    // S-001 / STOP-1：正常启动**只读检查**（算法 R），不再自动截尾/删除。
+                    // Healthy → 正常启动；RepairRequired → 以最长有效前缀启动**只读降级模式**，
+                    // 禁止一切永久写入，提示运行 doctor --fix（修复会先建立证据包）。
+                    // 只有 UnsupportedFormat / Unreadable 这类阻断性问题才拒绝启动。
                     let outcome =
-                        match Replay.replay dataDir true with
-                        | Ok o ->
-                            for f in o.truncatedFiles do
-                                logInfo(sprintf "startup recovery truncated %s" f)
+                        match Replay.inspect dataDir with
+                        | Healthy o -> Some o
+                        | RepairRequired (o, plan) ->
+                            logInfo(
+                                sprintf
+                                    "event log damaged at %s (%s); starting read-only degraded mode (valid through commit %d). Run `wanxiang doctor --fix` to repair."
+                                    plan.damage.file
+                                    plan.damage.reason
+                                    o.lastCommitId)
                             Some o
-                        | Error e ->
-                            eprintfn "log damaged and recovery failed: %s" e
+                        | UnsupportedFormat msg ->
+                            eprintfn "unsupported event log format: %s" msg
+                            exit 1
+                        | Unreadable msg ->
+                            eprintfn "event log not readable: %s" msg
                             exit 1
                     match lockHandle with
                     | Some l -> (l :> IDisposable).Dispose()

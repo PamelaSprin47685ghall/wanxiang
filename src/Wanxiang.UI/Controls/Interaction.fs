@@ -112,7 +112,7 @@ module Interaction =
 
     /// 设置校验态并应用描边。**MUST** 用它而不是直接写 `BorderBrush`。
     let setInvalid (control: Border) (invalid: bool) =
-        control.SetValue(invalidProperty, invalid)
+        control.SetValue(invalidProperty, invalid) |> ignore
         syncInvalid control
         control.BorderBrush <- (if invalid then Tokens.danger else Tokens.border)
 

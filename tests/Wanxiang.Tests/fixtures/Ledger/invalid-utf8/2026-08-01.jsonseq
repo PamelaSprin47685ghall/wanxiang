@@ -1,0 +1,2 @@
+{"formatVersion":1,"id":"1","bootId":"00000000-0000-0000-0000-000000000000","source":"wanxiang","committedAtUtc":"2026-08-01T10:00:00.000Z","events":[{"type":"conversation.created","version":1,"data":{"conversationId":"11111111-2222-3333-4444-555555555555","title":"\u9EC4\u91D1\u6837\u672C","config":{"provider":"openai","model":"test-model"}}}]}
+{"formatVersion":1,"id":"2","committedAtUtc":"2026-08-01T12:00:00Z","events":[]}ÿþ

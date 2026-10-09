@@ -10,6 +10,7 @@
     <Compile Include="DataLock.fs" />
     <Compile Include="JsonSeqWriter.fs" />
     <Compile Include="Replay.fs" />
+    <Compile Include="RecoveryBundle.fs" />
     <Compile Include="CommitCoordinator.fs" />
   </ItemGroup>
 

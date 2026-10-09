@@ -347,7 +347,7 @@ type ClientState() =
                             match Guid.TryParse cidStr with
                             | true, cid when conversations.ContainsKey cid ->
                                 let v = conversations[cid]
-                                let msgNode = if p.ContainsKey "message" && p["message"] <> null then p["message"].DeepClone() else obj.DeepClone() :> System.Text.Json.Nodes.JsonNode
+                                let msgNode = if p.ContainsKey "message" && p["message"] <> null then p["message"].DeepClone() else obj.DeepClone()
                                 v.messages.Add msgNode
                                 convChanged.Trigger cid
                             | _ -> ()

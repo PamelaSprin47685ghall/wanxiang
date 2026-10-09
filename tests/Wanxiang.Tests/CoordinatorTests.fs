@@ -12,7 +12,7 @@ let ``test_cursor_catch_up_commits_replayed`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         let result = coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "同步"; config = testConfig () } ]
@@ -28,7 +28,7 @@ let ``test_cursor_catch_up_commits_replayed`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         let committed = ResizeArray<Events.Commit>()
         let truncated = ResizeArray<Events.Commit * WanxiangError>()
         use coord = new CommitCoordinator(dir, outcome, committed.Add, (fun (c, e, _, _) -> truncated.Add(c, e)))
@@ -59,7 +59,7 @@ let ``test_truncate_and_reuse_id`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         let truncated = ResizeArray<Events.Commit * WanxiangError>()
         use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun (c, e, _, _) -> truncated.Add(c, e)))
         // 事件引用不存在的会话 → 投影失败 → 截尾
@@ -83,7 +83,7 @@ let ``test_truncate_and_reuse_id`` () =
         | _ -> failwith "expected commit with reused id"
         // 重启后日志只有一条有效记录
         coord.Shutdown()
-        let outcome2 = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome2 = replayOutcome dir
         Assert.Equal(1UL, outcome2.lastCommitId)
         Assert.Equal(1, Projection.conversationList outcome2.projection |> List.length)
     finally
@@ -94,7 +94,7 @@ let ``test_command_idempotency`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
         let convId = newConversationId ()
         let invId = Guid.NewGuid()
@@ -133,7 +133,7 @@ let ``test_stale_client_rejected`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
         let convId = newConversationId ()
         let r =
@@ -157,7 +157,7 @@ let ``test_coordinator_idempotency_binary_search_branches`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         // 注意：每个命令必须使用独立的 conversationId，避免因重复创建相同会话导致投影失败 (DuplicateConversation)
         let mkCmd (title: string) =
@@ -241,7 +241,7 @@ let ``test_coordinator_append_commit_failure_triggers_onTruncated_and_CommitFail
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         let truncated = ResizeArray<Events.Commit * WanxiangError * int64 * string>()
         let coord = new CommitCoordinator(dir, outcome, ignore, (fun t -> truncated.Add(t)))
         
@@ -282,7 +282,7 @@ let ``test_coordinator_repeated_shutdown_and_idisposable`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         let coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         // 覆盖 168-175 行：重复 Shutdown 及 IDisposable.Dispose
         coord.Shutdown()

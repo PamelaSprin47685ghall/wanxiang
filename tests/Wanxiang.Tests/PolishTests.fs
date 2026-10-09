@@ -171,7 +171,7 @@ let ``a live fork keeps attachments owned by its deleted parent`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
         let parent = newConversationId ()
         let sha = String('a', 64)
@@ -202,7 +202,7 @@ let ``attachments of a fully deleted conversation become unreferenced`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         let sha = String('b', 64)
@@ -221,7 +221,7 @@ let ``a tombstoned message still protects its attachment`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         let sha = String('c', 64)
@@ -245,7 +245,7 @@ let ``messages carry their commit timestamp through the projection`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         let before = DateTimeOffset.UtcNow.AddSeconds -5.0
@@ -265,7 +265,7 @@ let ``snapshot items expose committedAt so the client can show a time`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
@@ -290,7 +290,7 @@ let ``committed timestamps survive a restart replay`` () =
         DataPaths.ensureDataDirs dir
         let convId = newConversationId ()
         let recorded =
-            let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+            let outcome = replayOutcome dir
             use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
             coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
             |> ignore
@@ -298,7 +298,7 @@ let ``committed timestamps survive a restart replay`` () =
             |> ignore
             let conv = Projection.tryConversation coordinator.Projection convId |> Option.get
             (Projection.effectiveMessages coordinator.Projection conv |> List.exactlyOne).committedAtUtc
-        let replayed = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let replayed = replayOutcome dir
         use reopened = new CommitCoordinator(dir, replayed, ignore, ignore)
         let conv = Projection.tryConversation reopened.Projection convId |> Option.get
         let restored = (Projection.effectiveMessages reopened.Projection conv |> List.exactlyOne).committedAtUtc

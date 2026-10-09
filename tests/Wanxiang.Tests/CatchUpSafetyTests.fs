@@ -16,7 +16,7 @@ let ``coordinator survives broadcast work in onCommitted callback`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         // onCommitted：模拟 BroadcastCommit 的非阻塞广播工作（真实路径：ConnectionRegistry.BroadcastCommit
         // 只做 TrySend，不读取投影/不 PostAndReply；catch-up 已由 WsConnection 调度到独立 Task）
         let committed = ResizeArray<Events.Commit>()
@@ -47,7 +47,7 @@ let ``concurrent submits keep ids strictly contiguous`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         // 先建会话（并发提交会以会话不存在失败——先建立）
@@ -77,7 +77,7 @@ let ``CommitsAfter returns commits after cursor in ascending order`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore

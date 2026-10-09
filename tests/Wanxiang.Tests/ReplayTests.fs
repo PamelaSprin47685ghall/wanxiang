@@ -7,6 +7,22 @@ open Wanxiang.Core
 open Wanxiang.Store
 open Wanxiang.Tests.Helpers
 
+/// 断言 inspect 返回 Healthy 并取出 outcome。
+let private healthy (dir: string) : ReplayOutcome =
+    match Replay.inspect dir with
+    | Healthy o -> o
+    | RepairRequired _ -> failwith "expected healthy"
+    | UnsupportedFormat msg -> failwith msg
+    | Unreadable msg -> failwith msg
+
+/// 断言 inspect 返回 RepairRequired 并取出 (outcome, plan)。
+let private repairRequired (dir: string) : ReplayOutcome * RepairPlan =
+    match Replay.inspect dir with
+    | Healthy _ -> failwith "expected repair required"
+    | RepairRequired (o, p) -> o, p
+    | UnsupportedFormat msg -> failwith msg
+    | Unreadable msg -> failwith msg
+
 [<Fact>]
 let ``test_replay_tail_truncate`` () =
     let dir = tempDir ()
@@ -24,13 +40,11 @@ let ``test_replay_tail_truncate`` () =
         File.AppendAllText(path, CommitCodec.commitToJsonLine commit1 + "\n")
         File.AppendAllText(path, CommitCodec.commitToJsonLine commit2 + "\n")
 
-        match Replay.replay dir false with
-        | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(2UL, outcome.lastCommitId)
-            Assert.Equal(1, Projection.conversationList outcome.projection |> List.length)
-            let conv = Projection.conversationList outcome.projection |> List.head
-            Assert.Equal(1, conv.messages.Length)
+        let outcome = healthy dir
+        Assert.Equal(2UL, outcome.lastCommitId)
+        Assert.Equal(1, Projection.conversationList outcome.projection |> List.length)
+        let conv = Projection.conversationList outcome.projection |> List.head
+        Assert.Equal(1, conv.messages.Length)
     finally
         cleanup dir
 
@@ -44,15 +58,20 @@ let ``test_replay_id_gap`` () =
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
         File.AppendAllText(path, CommitCodec.commitToJsonLine c1 + "\n")
         File.AppendAllText(path, """{"formatVersion":1,"id":2,"broken""")
-        match Replay.replay dir true with
+        let outcome, plan = repairRequired dir
+        Assert.Equal(1UL, outcome.lastCommitId)
+        Assert.True(plan.affectedFiles |> List.exists (fun f -> f = path))
+        Assert.Contains(path, plan.damage.file)
+        // 只读检查绝不修改文件：原文件字节不变
+        Assert.Contains("broken", File.ReadAllText path)
+        // 显式修复：截尾到有效前缀
+        match Repair.repair dir plan with
         | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(1UL, outcome.lastCommitId)
-            Assert.True(outcome.truncatedFiles |> List.exists (fun f -> f = path))
-            // 文件已被截断：重新 replay 应无损坏
-            match Replay.replay dir false with
-            | Ok outcome2 -> Assert.Equal(1UL, outcome2.lastCommitId)
-            | Error e -> failwith e
+        | Ok truncated ->
+            Assert.Contains(path, truncated)
+        // 修复后重新检查应健康
+        let outcome2 = healthy dir
+        Assert.Equal(1UL, outcome2.lastCommitId)
     finally
         cleanup dir
 
@@ -67,9 +86,8 @@ let ``id 空洞触发截尾`` () =
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
         File.AppendAllText(path, CommitCodec.commitToJsonLine c1 + "\n")
         File.AppendAllText(path, CommitCodec.commitToJsonLine c3 + "\n")
-        match Replay.replay dir true with
-        | Error e -> failwith e
-        | Ok outcome -> Assert.Equal(1UL, outcome.lastCommitId)
+        let outcome, _ = repairRequired dir
+        Assert.Equal(1UL, outcome.lastCommitId)
     finally
         cleanup dir
 
@@ -88,11 +106,9 @@ let ``跨 UTC 日期文件按序重放且 id 不归零`` () =
         Directory.CreateDirectory(Path.GetDirectoryName p2) |> ignore
         File.AppendAllText(p1, CommitCodec.commitToJsonLine c1 + "\n")
         File.AppendAllText(p2, CommitCodec.commitToJsonLine c2 + "\n")
-        match Replay.replay dir false with
-        | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(2UL, outcome.lastCommitId)
-            Assert.Equal(2, Projection.conversationList outcome.projection |> List.length)
+        let outcome = healthy dir
+        Assert.Equal(2UL, outcome.lastCommitId)
+        Assert.Equal(2, Projection.conversationList outcome.projection |> List.length)
     finally
         cleanup dir
 
@@ -106,11 +122,11 @@ let ``doctor 只读模式不修改损坏日志`` () =
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
         File.AppendAllText(path, CommitCodec.commitToJsonLine c1 + "\n")
         File.AppendAllText(path, "garbage\n")
-        match Replay.replay dir false with
-        | Ok _ -> failwith "should have reported damage"
-        | Error e -> Assert.Contains("damaged", e)
+        let _, plan = repairRequired dir
         // 文件未被修改
         Assert.Contains("garbage", File.ReadAllText path)
+        // 损坏点定位
+        Assert.Contains(path, plan.damage.file)
     finally
         cleanup dir
 
@@ -118,12 +134,10 @@ let ``doctor 只读模式不修改损坏日志`` () =
 let ``test_replay_nonexistent_events_dir`` () =
     let dir = Path.Combine(Path.GetTempPath(), "wanxiang-nonexistent-" + Guid.NewGuid().ToString("N"))
     try
-        match Replay.replay dir false with
-        | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(0UL, outcome.lastCommitId)
-            Assert.Empty outcome.commits
-            Assert.Empty outcome.truncatedFiles
+        let outcome = healthy dir
+        Assert.Equal(0UL, outcome.lastCommitId)
+        Assert.Empty outcome.commits
+        Assert.Empty outcome.truncatedFiles
     finally
         cleanup dir
 
@@ -132,11 +146,9 @@ let ``test_replay_empty_events_dir`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        match Replay.replay dir false with
-        | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(0UL, outcome.lastCommitId)
-            Assert.Empty outcome.commits
+        let outcome = healthy dir
+        Assert.Equal(0UL, outcome.lastCommitId)
+        Assert.Empty outcome.commits
     finally
         cleanup dir
 
@@ -149,11 +161,9 @@ let ``test_replay_zero_byte_event_file`` () =
         let path = DataPaths.eventFilePath dir day
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
         File.WriteAllBytes(path, [||])
-        match Replay.replay dir false with
-        | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(0UL, outcome.lastCommitId)
-            Assert.Empty outcome.commits
+        let outcome = healthy dir
+        Assert.Equal(0UL, outcome.lastCommitId)
+        Assert.Empty outcome.commits
     finally
         cleanup dir
 
@@ -164,9 +174,8 @@ let ``test_replay_unparseable_filename_fix_false`` () =
         DataPaths.ensureDataDirs dir
         let badPath = Path.Combine(DataPaths.eventsDir dir, "not-a-date.jsonseq")
         File.WriteAllText(badPath, "some content")
-        match Replay.replay dir false with
-        | Ok _ -> failwith "expected unparseable file name error"
-        | Error e -> Assert.Contains("damaged log at", e)
+        let _, plan = repairRequired dir
+        Assert.Contains(badPath, plan.damage.file)
     finally
         cleanup dir
 
@@ -180,13 +189,19 @@ let ``test_replay_unparseable_filename_fix_true_deletes_file_and_later`` () =
         let laterPath = DataPaths.eventFilePath dir laterDay
         File.WriteAllText(badPath, "invalid")
         File.WriteAllText(laterPath, "later")
-        match Replay.replay dir true with
+        let _, plan = repairRequired dir
+        Assert.Contains(badPath, plan.affectedFiles)
+        Assert.Contains(laterPath, plan.affectedFiles)
+        // 修复前文件仍在（只读检查不动文件）
+        Assert.True(File.Exists badPath)
+        Assert.True(File.Exists laterPath)
+        match Repair.repair dir plan with
         | Error e -> failwith e
-        | Ok outcome ->
+        | Ok truncated ->
             Assert.False(File.Exists badPath)
             Assert.False(File.Exists laterPath)
-            Assert.Contains(badPath, outcome.truncatedFiles)
-            Assert.Contains(laterPath, outcome.truncatedFiles)
+            Assert.Contains(badPath, truncated)
+            Assert.Contains(laterPath, truncated)
     finally
         cleanup dir
 
@@ -203,9 +218,8 @@ let ``test_replay_projection_apply_error_fix_false`` () =
         let line = CommitCodec.commitToJsonLine c1
         let frame = Wanxiang.Core.Ledger.Frame.encode line
         File.WriteAllBytes(path, frame)
-        match Replay.replay dir false with
-        | Ok _ -> failwith "expected projection apply failure"
-        | Error e -> Assert.Contains("damaged log at", e)
+        let _, plan = repairRequired dir
+        Assert.Contains(path, plan.damage.file)
     finally
         cleanup dir
 
@@ -224,12 +238,14 @@ let ``test_replay_projection_apply_error_fix_true_truncates_at_commit`` () =
         let frame2 = Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c2)
         File.WriteAllBytes(path, Array.append frame1 frame2)
 
-        match Replay.replay dir true with
+        let outcome, plan = repairRequired dir
+        Assert.Equal(1UL, outcome.lastCommitId)
+        Assert.Single outcome.commits |> ignore
+        Assert.Contains(path, plan.damage.file)
+        match Repair.repair dir plan with
         | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(1UL, outcome.lastCommitId)
-            Assert.Single outcome.commits |> ignore
-            Assert.Contains(path, outcome.truncatedFiles)
+        | Ok truncated ->
+            Assert.Contains(path, truncated)
             // 文件长度被截断到 frame1 之后
             Assert.Equal(int64 frame1.Length, FileInfo(path).Length)
     finally
@@ -249,9 +265,8 @@ let ``test_replay_commit_id_gap_fix_false`` () =
         let frame3 = Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c3)
         File.WriteAllBytes(path, Array.append frame1 frame3)
 
-        match Replay.replay dir false with
-        | Ok _ -> failwith "expected commit id gap error"
-        | Error e -> Assert.Contains("damaged log at", e)
+        let _, plan = repairRequired dir
+        Assert.Contains(path, plan.damage.file)
     finally
         cleanup dir
 
@@ -269,12 +284,13 @@ let ``test_replay_commit_id_gap_fix_true_truncates_at_gap`` () =
         let frame3 = Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c3)
         File.WriteAllBytes(path, Array.append frame1 frame3)
 
-        match Replay.replay dir true with
+        let outcome, plan = repairRequired dir
+        Assert.Equal(1UL, outcome.lastCommitId)
+        Assert.Single outcome.commits |> ignore
+        match Repair.repair dir plan with
         | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(1UL, outcome.lastCommitId)
-            Assert.Single outcome.commits |> ignore
-            Assert.Equal(int64 frame1.Length, FileInfo(path).Length)
+        | Ok _ -> ()
+        Assert.Equal(int64 frame1.Length, FileInfo(path).Length)
     finally
         cleanup dir
 
@@ -299,11 +315,9 @@ let ``test_replay_consecutive_rs_and_whitespace_records`` () =
         ms.Write(payload, 0, payload.Length)
         File.WriteAllBytes(path, ms.ToArray())
 
-        match Replay.replay dir false with
-        | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(1UL, outcome.lastCommitId)
-            Assert.Single outcome.commits |> ignore
+        let outcome = healthy dir
+        Assert.Equal(1UL, outcome.lastCommitId)
+        Assert.Single outcome.commits |> ignore
     finally
         cleanup dir
 
@@ -324,11 +338,9 @@ let ``test_replay_crlf_record_ending`` () =
         ms.Write(payload, 0, payload.Length)
         File.WriteAllBytes(path, ms.ToArray())
 
-        match Replay.replay dir false with
-        | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(1UL, outcome.lastCommitId)
-            Assert.Single outcome.commits |> ignore
+        let outcome = healthy dir
+        Assert.Equal(1UL, outcome.lastCommitId)
+        Assert.Single outcome.commits |> ignore
     finally
         cleanup dir
 
@@ -349,11 +361,9 @@ let ``test_replay_record_without_lf_at_eof_parsed`` () =
         ms.Write(payload, 0, payload.Length)
         File.WriteAllBytes(path, ms.ToArray())
 
-        match Replay.replay dir false with
-        | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(1UL, outcome.lastCommitId)
-            Assert.Single outcome.commits |> ignore
+        let outcome = healthy dir
+        Assert.Equal(1UL, outcome.lastCommitId)
+        Assert.Single outcome.commits |> ignore
     finally
         cleanup dir
 
@@ -367,12 +377,13 @@ let ``test_replay_damage_at_offset_zero_deletes_file_in_fix`` () =
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
         // 第一条记录就是坏 JSON，offset 0L 损坏
         File.WriteAllBytes(path, [| 0x1Euy; byte '{'; byte 'x'; byte '\n' |])
-        match Replay.replay dir true with
+        let outcome, plan = repairRequired dir
+        Assert.Equal(0UL, outcome.lastCommitId)
+        match Repair.repair dir plan with
         | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(0UL, outcome.lastCommitId)
+        | Ok truncated ->
             Assert.Equal(0L, FileInfo(path).Length)
-            Assert.Contains(path, outcome.truncatedFiles)
+            Assert.Contains(path, truncated)
     finally
         cleanup dir
 
@@ -396,13 +407,16 @@ let ``test_replay_fix_deletes_damaged_file_and_cascades_to_all_later_date_files`
         let badFrame = [| 0x1Euy; byte '{'; byte 'b'; byte 'a'; byte 'd'; byte '\n' |]
         File.WriteAllBytes(p2, Array.append frame2 badFrame)
         File.WriteAllBytes(p3, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c3))
-        match Replay.replay dir true with
+        let outcome, plan = repairRequired dir
+        Assert.Equal(2UL, outcome.lastCommitId)
+        Assert.Contains(p2, plan.affectedFiles)
+        Assert.Contains(p3, plan.affectedFiles)
+        match Repair.repair dir plan with
         | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(2UL, outcome.lastCommitId)
-            Assert.Contains(p2, outcome.truncatedFiles)
+        | Ok truncated ->
+            Assert.Contains(p2, truncated)
             Assert.Equal(int64 frame2.Length, FileInfo(p2).Length)
-            Assert.Contains(p3, outcome.truncatedFiles)
+            Assert.Contains(p3, truncated)
             Assert.False(File.Exists p3)
     finally
         cleanup dir
@@ -426,11 +440,12 @@ let ``test_replay_record_without_lf_followed_immediately_by_new_rs_triggers_trun
         let extra = System.Text.Encoding.UTF8.GetBytes "{\"extra\":true}\n"
         ms.Write(extra, 0, extra.Length)
         File.WriteAllBytes(p, ms.ToArray())
-        match Replay.replay dir true with
+        let outcome, plan = repairRequired dir
+        Assert.Equal(1UL, outcome.lastCommitId)
+        match Repair.repair dir plan with
         | Error e -> failwith e
-        | Ok outcome ->
-            Assert.Equal(1UL, outcome.lastCommitId)
-            Assert.Contains(p, outcome.truncatedFiles)
+        | Ok truncated ->
+            Assert.Contains(p, truncated)
             Assert.Equal(int64 frame1.Length, FileInfo(p).Length)
     finally
         cleanup dir
@@ -450,12 +465,74 @@ let ``test_replay_truncation_failure_returns_error`` () =
         // 必因缺少写权限抛出 UnauthorizedAccessException，走 truncateFile 的 with e -> false 分支！
         try File.SetUnixFileMode(p, UnixFileMode.UserRead) with _ -> ()
         try
-            match Replay.replay dir true with
+            let _, plan = repairRequired dir
+            match Repair.repair dir plan with
             | Ok _ -> failwith "expected error because file truncation should fail"
             | Error e ->
-                Assert.Contains("and truncation failed", e)
+                Assert.Contains("truncation failed", e)
         finally
             // 恢复写权限，确保 cleanup 能顺利删除临时目录与文件
             try File.SetUnixFileMode(p, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``inspect 绝不修改文件（含级联删除候选）`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let day1 = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+        let day2 = DateTime(2026, 8, 2, 0, 0, 0, DateTimeKind.Utc)
+        let p1 = DataPaths.eventFilePath dir day1
+        let p2 = DataPaths.eventFilePath dir day2
+        Directory.CreateDirectory(Path.GetDirectoryName p1) |> ignore
+        let c1 = Events.Commit.create 1UL (DateTimeOffset(day1)) [ ConversationCreated { conversationId = newConversationId (); title = "A"; config = testConfig () } ]
+        let c2 = Events.Commit.create 2UL (DateTimeOffset(day2)) [ ConversationCreated { conversationId = newConversationId (); title = "B"; config = testConfig () } ]
+        File.WriteAllBytes(p1, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1))
+        File.WriteAllBytes(p2, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c2))
+        // 在 p2 尾部追加坏记录 → p2 是损坏点，p2 自身会被截尾
+        File.AppendAllText(p2, "garbage-no-lf")
+        let bytesBefore1 = File.ReadAllBytes p1
+        let bytesBefore2 = File.ReadAllBytes p2
+        let _, plan = repairRequired dir
+        Assert.Contains(p2, plan.damage.file)
+        // 只读检查后文件字节完全不变
+        Assert.Equal<byte[]>(bytesBefore1, File.ReadAllBytes p1)
+        Assert.Equal<byte[]>(bytesBefore2, File.ReadAllBytes p2)
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``recovery bundle 建立后修复才执行（算法 B）`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let day1 = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+        let day2 = DateTime(2026, 8, 2, 0, 0, 0, DateTimeKind.Utc)
+        let p1 = DataPaths.eventFilePath dir day1
+        let p2 = DataPaths.eventFilePath dir day2
+        Directory.CreateDirectory(Path.GetDirectoryName p1) |> ignore
+        let c1 = Events.Commit.create 1UL (DateTimeOffset(day1)) [ ConversationCreated { conversationId = newConversationId (); title = "A"; config = testConfig () } ]
+        let c2 = Events.Commit.create 2UL (DateTimeOffset(day2)) [ ConversationCreated { conversationId = newConversationId (); title = "B"; config = testConfig () } ]
+        File.WriteAllBytes(p1, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1))
+        File.WriteAllBytes(p2, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c2))
+        File.AppendAllText(p2, "garbage-no-lf")
+        let _, plan = repairRequired dir
+        // 建立证据包
+        match RecoveryBundle.create dir plan with
+        | Error e -> failwith e
+        | Ok bundleDir ->
+            Assert.True(File.Exists(Path.Combine(bundleDir, "manifest.json")))
+            Assert.True(File.Exists(Path.Combine(bundleDir, "diagnosis.json")))
+            // original/ 含全部受影响文件
+            for f in plan.affectedFiles do
+                Assert.True(File.Exists(Path.Combine(bundleDir, "original", Path.GetFileName f)), sprintf "missing backup of %s" f)
+        // 修复
+        match Repair.repair dir plan with
+        | Error e -> failwith e
+        | Ok truncated -> Assert.NotEmpty truncated
+        // 修复后健康
+        let outcome = healthy dir
+        Assert.Equal(2UL, outcome.lastCommitId)
     finally
         cleanup dir

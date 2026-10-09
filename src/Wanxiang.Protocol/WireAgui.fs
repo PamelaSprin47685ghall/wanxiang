@@ -160,6 +160,9 @@ module WireAgui =
                     match WireCodec.tryDecode (wrapped.ToJsonString()) with
                     | Ok ev -> Ok(Some ev)
                     | Error e -> Error(sprintf "custom %s: %s" wireType e)
+                | _ ->
+                    // CUSTOM value 不是对象（数组/裸值）：无法承载语义事件，忽略并告警（增量安全）。
+                    Ok None
         | ParsedEvent.Known (aguiEv: BaseEvent) ->
             // 标准 AG-UI 面反向映射回语义事件
             match aguiEv with

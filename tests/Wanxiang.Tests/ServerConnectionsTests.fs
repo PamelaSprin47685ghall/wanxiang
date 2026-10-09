@@ -35,10 +35,10 @@ module ServerConnectionsTests =
     [<Fact>]
     let ``HandshakeState variants can be constructed and transitioned`` () =
         let s0 = NotStarted
-        let s1 = HelloSeen
-        let s2 = Authenticated
-        match s0, s1, s2 with
-        | NotStarted, HelloSeen, Authenticated -> ()
+        let s1 = Authenticated
+        // ADR-001 方案 B：HelloSeen 已删除（版本 in-band，无握手事件）
+        match s0, s1 with
+        | NotStarted, Authenticated -> ()
         | _ -> Assert.Fail("HandshakeState pattern match failed")
 
     [<Fact>]

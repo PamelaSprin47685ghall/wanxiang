@@ -1,5 +1,10 @@
 namespace Wanxiang.Agent
 
+// FS3511：`task {}` 内 `use!` + 异步枚举器 + 可变累加器组合无法静态编译状态机，
+// 编译器回退到动态实现。这是 F# task CE 的已知限制，不是代码缺陷；动态实现仅略慢，
+// 且本函数是流式热路径，重构风险大于收益（Q-001 局部豁免，非全局 NoWarn）。
+#nowarn "3511"
+
 open System
 open System.Collections.Generic
 open System.Net.Http

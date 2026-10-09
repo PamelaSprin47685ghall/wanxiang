@@ -34,7 +34,7 @@ type SubmitResult =
 /// 命中时返回 IdempotentReplay，不追加事件。
 type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Events.Commit -> unit, onTruncated: Events.Commit * WanxiangError * int64 * string -> unit) =
 
-    let writer = JsonSeqWriter(dataDir, outcome.lastDateUtc)
+    let writer = new JsonSeqWriter(dataDir, outcome.lastDateUtc)
 
     // 以下状态只在 mailbox 处理线程内访问
     let mutable projection: Projection = outcome.projection
@@ -43,7 +43,7 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
     let commits = System.Collections.Generic.List<Events.Commit>(outcome.commits)
     let mutable stopped = false
 
-    let mailbox = MailboxProcessor.Start(fun inbox ->
+    let mailbox = new MailboxProcessor<_>(fun inbox ->
         let doSubmit (submit: CommitSubmit) : SubmitResult =
             // 幂等下沉检查（决策 13/15）：同一 commandId 已提交过则直接返回原提交，不追加事件。
             // 与 CommandEngine.plan 的检查互补，覆盖 plan 之后、此处之前的并发窗口。
@@ -146,6 +146,7 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
                     reply.Reply()
             }
         loop ())
+    do mailbox.Start()
 
     /// 提交一条规划好的命令事件集（同步等待结果）。
     member _.Submit(submit: CommitSubmit) : SubmitResult =

@@ -5,12 +5,13 @@ open System.IO
 open System.Text
 open Wanxiang.Core
 
-/// 启动 replay 结果。
+/// 启动 replay 结果（只读检查与修复共用）。
 type ReplayOutcome = {
     projection: Projection
-    /// 启动 replay 读取到的所有有效提交，按全局 id 升序保存，供连接 catch-up 读取。
+    /// 重放读取到的所有有效提交，按全局 id 升序保存，供连接 catch-up 读取。
     commits: Events.Commit list
-    /// 被静默截尾/删除的文件列表（诊断用；stderr 由调用方负责记录）
+    /// 被修复（截尾/删除）的文件列表（诊断用；stderr 由调用方负责记录）。
+    /// 只读检查（Inspect）恒为空。
     truncatedFiles: string list
     /// 最后有效提交 id
     lastCommitId: CommitId
@@ -18,50 +19,81 @@ type ReplayOutcome = {
     lastDateUtc: DateTime
 }
 
-/// 启动 replay：完整重放全部 NDJSON，构建内存投影。
+/// 日志损坏点（只读检查产物；不携带修改动作）。
+type Damage = {
+    /// 损坏所在文件完整路径
+    file: string
+    /// 损坏字节偏移（有效前缀末尾；文件内）
+    byteOffset: int64
+    reason: string
+}
+
+/// 修复计划：只读检查发现的损坏点 + 建议动作。
+/// 由 `Repair.repair` 消费；`RepairRequired` 分支不得自行修改任何文件。
+type RepairPlan = {
+    damage: Damage
+    /// 修复会修改/删除的全部文件的完整路径（供修复前备份证据）。
+    affectedFiles: string list
+}
+
+/// 只读检查结论（算法 R：Read-Only Recovery）。
+/// Inspect 绝不修改、绝不删除任何文件。
+type InspectResult =
+    /// 日志健康：可直接启动。
+    | Healthy of ReplayOutcome
+    /// 发现损坏：需要显式修复（doctor --fix）后才能正常写入。
+    /// outcome 是**最长有效前缀**的投影；启动方必须进入只读降级模式。
+    | RepairRequired of ReplayOutcome * RepairPlan
+    /// 未知/不支持的格式版本：拒绝启动写服务，保留所有数据。
+    | UnsupportedFormat of string
+    /// 数据目录不可读（权限/IO 等阻断性问题）：拒绝启动写服务，保留所有数据。
+    | Unreadable of string
+
+/// 启动 replay：完整重放全部 .jsonseq，构建内存投影。
 /// 损坏规则（决策 8/10）：JSON 无法解析、id 不连续、缺字段、未知事件类型、事件无法反序列化、
-/// 结构性不变量失败、投影失败、日期文件缺失 —— 均视为损坏点，静默截尾（保留最长有效前缀，删除后续文件）。
+/// 结构性不变量失败、投影失败、日期文件缺失 —— 均视为损坏点。
 /// 决策 7：按文件名日期排序逐行重放，检查 id 严格连续，并检测日期文件缺失（防止静默断层）。
+///
+/// 整改（S-001，2026-10-10）：**检查与修复分离**。
+/// - `Replay.inspect`：只读。发现损坏返回 `RepairRequired`，不修改文件。
+/// - `Repair.repair`：显式修复（doctor --fix 持锁后调用）。修复前由调用方建立证据包。
+/// - 正常启动**不再**自动截尾/删除；损坏时进入只读降级模式（STOP-1）。
 module Replay =
 
-    type private Damage =
-        | DamageAt of file: string * byteOffset: int64 * reason: string
-
-    let private truncateFile (path: string) (offset: int64) : unit =
-        use fs = new FileStream(path, FileMode.Open, FileAccess.Write)
-        fs.SetLength offset
-
-    /// 重放数据目录中的全部事件日志。
-    /// fix=false（doctor 只读）：不修改文件，仅在发现损坏时报告第一个损坏点。
-    let replay (dataDir: string) (fix: bool) : Result<ReplayOutcome, string> =
+    /// 重放数据目录中的全部事件日志（只读，算法 R 的 R1–R12）。
+    /// 不创建目录（空数据目录由协调器/写入路径负责）；不修改任何文件。
+    /// 返回 Healthy 或 RepairRequired（携带最长有效前缀投影与修复计划）。
+    let inspect (dataDir: string) : InspectResult =
         let eventsDir = DataPaths.eventsDir dataDir
-        // 空数据目录：确保目录结构存在（协调器随后会写入）
-        Directory.CreateDirectory eventsDir |> ignore
         if not (Directory.Exists eventsDir) then
-            Ok { projection = Projection.empty
-                 commits = []
-                 truncatedFiles = []
-                 lastCommitId = 0UL
-                 lastDateUtc = DateTime.UtcNow.Date }
+            Healthy { projection = Projection.empty
+                      commits = []
+                      truncatedFiles = []
+                      lastCommitId = 0UL
+                      lastDateUtc = DateTime.UtcNow.Date }
         else
-            let files =
-                Directory.GetFiles(eventsDir, "*.jsonseq")
-                |> Array.map (fun p -> Path.GetFileName p, p)
-                |> Array.sortBy fst
-                |> Array.toList
+            let filesResult =
+                try
+                    Directory.GetFiles(eventsDir, "*.jsonseq")
+                    |> Array.map (fun p -> Path.GetFileName p, p)
+                    |> Array.sortBy fst
+                    |> Array.toList
+                    |> Ok
+                with e -> Error(sprintf "cannot list %s: %s" eventsDir e.Message)
 
-            if List.isEmpty files then
-                Ok { projection = Projection.empty
-                     commits = []
-                     truncatedFiles = []
-                     lastCommitId = 0UL
-                     lastDateUtc = DateTime.UtcNow.Date }
-            else
+            match filesResult with
+            | Error msg -> Unreadable msg
+            | Ok [] ->
+                Healthy { projection = Projection.empty
+                          commits = []
+                          truncatedFiles = []
+                          lastCommitId = 0UL
+                          lastDateUtc = DateTime.UtcNow.Date }
+            | Ok files ->
                 let mutable projection = Projection.empty
                 let mutable commits: Events.Commit list = []
                 let mutable expectedId = 1UL
                 let mutable lastDate = DateTime.UtcNow.Date
-                let mutable truncatedPaths: string list = []
                 let mutable stop = false
                 let mutable currentDamage: Damage option = None
 
@@ -73,13 +105,16 @@ module Replay =
                         match CommitCodec.tryCommitFromJsonLine record with
                         | None ->
                             currentDamage <-
-                                Some(DamageAt(path, 0L, sprintf "record %d: unparseable commit" recordNumber))
+                                Some { file = path
+                                       byteOffset = 0L
+                                       reason = sprintf "record %d: unparseable commit" recordNumber }
                             false
                         | Some commit ->
                             if commit.id <> expectedId then
                                 currentDamage <-
-                                    Some
-                                        (DamageAt(path, 0L, sprintf "record %d: id %d out of order; expected %d" recordNumber commit.id expectedId))
+                                    Some { file = path
+                                           byteOffset = 0L
+                                           reason = sprintf "record %d: id %d out of order; expected %d" recordNumber commit.id expectedId }
                                 false
                             else
                                 match Projection.applyCommit projection commit with
@@ -92,8 +127,9 @@ module Replay =
                                     true
                                 | Error err ->
                                     currentDamage <-
-                                        Some
-                                            (DamageAt(path, 0L, sprintf "record %d: projection failed: %s" recordNumber (WanxiangError.message err)))
+                                        Some { file = path
+                                               byteOffset = 0L
+                                               reason = sprintf "record %d: projection failed: %s" recordNumber (WanxiangError.message err) }
                                     false
 
                 // 逐字节扫描单个文件，按 RFC 7464 分帧：记录 = RS(0x1E) + JSON + LF(0x0A)。
@@ -119,7 +155,9 @@ module Replay =
                                 (UTF8Encoding(false, true)).GetString(raw)
                             with :? System.Text.DecoderFallbackException ->
                                 currentDamage <-
-                                    Some(DamageAt(path, recordStartOffset, sprintf "record %d: invalid UTF-8 sequence" (recordNumber + 1)))
+                                    Some { file = path
+                                           byteOffset = recordStartOffset
+                                           reason = sprintf "record %d: invalid UTF-8 sequence" (recordNumber + 1) }
                                 ""
                         recordNumber <- recordNumber + 1
                         if currentDamage.IsSome then false
@@ -164,9 +202,9 @@ module Replay =
                         // 用 processLine 设置的详细 reason；这里补上精确字节偏移
                         let reason =
                             match currentDamage with
-                            | Some (DamageAt(_, _, r)) -> r
+                            | Some d -> d.reason
                             | None -> sprintf "file %s record %d" name recordNumber
-                        currentDamage <- Some(DamageAt(path, bytesRead, reason))
+                        currentDamage <- Some { file = path; byteOffset = bytesRead; reason = reason }
                         stop <- true
                         false
                     else
@@ -177,9 +215,14 @@ module Replay =
                         match DataPaths.tryParseEventFileName name with
                         | None ->
                             // 文件名非法：视为损坏点（该文件之后的全部丢弃）
-                            currentDamage <- Some(DamageAt(path, 0L, sprintf "invalid event file name %s" name))
+                            currentDamage <- Some { file = path; byteOffset = 0L; reason = sprintf "invalid event file name %s" name }
                             stop <- true
-                        | Some _ -> scanFile name path |> ignore
+                        | Some _ ->
+                            try
+                                scanFile name path |> ignore
+                            with e ->
+                                currentDamage <- Some { file = path; byteOffset = 0L; reason = sprintf "cannot read file: %s" e.Message }
+                                stop <- true
 
                 // 决策 7：文件日期单调性检查——NDJSON 只在"有提交的日子"生成文件，
                 // 停机跨天（8-01 用、8-05 再用）是正常场景，中间日期无文件不是损坏。
@@ -191,86 +234,126 @@ module Replay =
                         match ds with
                         | d1 :: d2 :: rest when d2 < d1 ->
                             // 降序损坏：d1（更晚日期）已完整重放，d2 是回退点。
-                            // 不能按日期 deleteAfter d2（会误删已重放的 d1 及更晚文件）；
-                            // 只能截空/删除 d2 自身，其后的 id 连续性由 expectedId 检测兜底。
+                            // 不能按日期 deleteAfter d2（会误删已重放的 d1 及更晚文件）。
                             currentDamage <-
-                                Some
-                                    (DamageAt(files |> List.tryFind (fun (n, _) -> DataPaths.tryParseEventFileName n = Some d2) |> Option.map snd |> Option.defaultValue (DataPaths.eventFilePath dataDir d2),
-                                         0L,
-                                         sprintf "event file date regression: %s after %s" (DataPaths.eventFileName d2) (DataPaths.eventFileName d1)))
+                                Some { file = files |> List.tryFind (fun (n, _) -> DataPaths.tryParseEventFileName n = Some d2) |> Option.map snd |> Option.defaultValue (DataPaths.eventFilePath dataDir d2)
+                                       byteOffset = 0L
+                                       reason = sprintf "event file date regression: %s after %s" (DataPaths.eventFileName d2) (DataPaths.eventFileName d1) }
                             false
                         | _ :: rest -> checkDateOrder rest
                         | [] -> true
                     if not (checkDateOrder dates) then stop <- true
 
-                // 处理损坏：截尾当前文件 + 删除后续文件（fix=true），或仅报告（fix=false）
                 match currentDamage with
                 | None ->
-                    Ok { projection = projection
-                         commits = List.rev commits
-                         truncatedFiles = []
-                         lastCommitId = projection.latestCommitId
-                         lastDateUtc = lastDate }
-                | Some (DamageAt(path, offset, reason)) ->
-                    let fileDate = DataPaths.tryParseEventFileName (Path.GetFileName path)
-                    let deleteAfter (date: DateTime) =
-                        for (name, p) in files do
-                            match DataPaths.tryParseEventFileName name with
-                            | Some d when d > date ->
-                                try
-                                    File.Delete p
-                                    truncatedPaths <- p :: truncatedPaths
-                                with _ -> ()
-                            | _ -> ()
+                    Healthy { projection = projection
+                              commits = List.rev commits
+                              truncatedFiles = []
+                              lastCommitId = projection.latestCommitId
+                              lastDateUtc = lastDate }
+                | Some damage ->
+                    // 计算修复会触碰的全部文件（截尾目标 + 其后按日期/字典序级联删除的候选），
+                    // 供修复前建立证据包（算法 B）。只读阶段不执行任何动作。
+                    let affected =
+                        let fileDate = DataPaths.tryParseEventFileName (Path.GetFileName damage.file)
+                        let isDateRegression = damage.reason.StartsWith "event file date regression"
+                        match fileDate with
+                        | Some d when not isDateRegression ->
+                            damage.file
+                            :: (files
+                                |> List.choose (fun (n, p) ->
+                                    match DataPaths.tryParseEventFileName n with
+                                    | Some dd when dd > d -> Some p
+                                    | _ -> None))
+                        | _ ->
+                            // 非法文件名或降序损坏点：字典序在该文件之后的全部文件
+                            let index = files |> List.tryFindIndex (fun (n, _) -> n = Path.GetFileName damage.file)
+                            match index with
+                            | Some i when i >= 0 -> damage.file :: (files |> List.skip (i + 1) |> List.map snd)
+                            | _ -> [ damage.file ]
+                    RepairRequired(
+                        { projection = projection
+                          commits = List.rev commits
+                          truncatedFiles = []
+                          lastCommitId = projection.latestCommitId
+                          lastDateUtc = lastDate },
+                        { damage = damage
+                          affectedFiles = affected }
+                    )
 
-                    if fix then
-                        // 截尾目标文件：若文件不存在（如日期 gap 指向缺失文件），无需截尾，直接删除更晚文件
-                        let truncated =
-                            if File.Exists path then
-                                try
-                                    truncateFile path offset
-                                    true
-                                with e ->
-                                    false
-                            else
-                                true
-                        if truncated then
-                            // 降序损坏（date regression）：d1 已完整重放，只删 d2 自身，绝不按日期级联
-                            // （deleteAfter 会误删已重放的更晚文件）；其后 id 空洞由 expectedId 兜底。
-                            let isDateRegression = reason.StartsWith "event file date regression"
-                            match fileDate with
-                            | Some d when not isDateRegression -> deleteAfter d
-                            | None ->
-                                // 非法文件名：按重放顺序（字典序）删除该文件之后的所有文件（决策 9）。
-                                // 若不级联，损坏点之后的合法文件保留在磁盘，而 lastCommitId 停在损坏点之前，
-                                // 运行期从 lastCommitId+1 重新分配 id 会与保留文件中的旧 id 冲突，
-                                // 下次启动重放按 id 连续性截尾 → 运行期写入的新数据被静默丢弃，且 fix 不幂等。
-                                let index = files |> List.tryFindIndex (fun (n, _) -> n = Path.GetFileName path)
-                                match index with
-                                | Some i when i >= 0 ->
-                                    for (_, p) in files |> List.skip (i + 1) do
-                                        try
-                                            File.Delete p
-                                            truncatedPaths <- p :: truncatedPaths
-                                        with _ -> ()
-                                | _ -> ()
-                            | Some _ -> ()
-                            // 非法文件名（无日期）或降序损坏点，且 offset=0（无可保留内容）：删除文件自身，
-                            // 避免每次启动 fix 重复命中并写 stderr（合法日期文件的截空行为不受影响）
-                            if offset = 0L && (fileDate.IsNone || isDateRegression) then
-                                // 先记录再删除（诊断告知 fix 处理了该文件）
-                                if File.Exists path then truncatedPaths <- path :: truncatedPaths
-                                try
-                                    File.Delete path
-                                with _ -> ()
-                            elif File.Exists path then
-                                truncatedPaths <- path :: truncatedPaths
-                            Ok { projection = projection
-                                 commits = List.rev commits
-                                 truncatedFiles = truncatedPaths
-                                 lastCommitId = projection.latestCommitId
-                                 lastDateUtc = lastDate }
-                        else
-                            Error(sprintf "damaged log at %s (%s) and truncation failed" path reason)
-                    else
-                        Error(sprintf "damaged log at %s (%s); fix not enabled" path reason)
+/// 显式修复（算法：截尾 + 级联删除）。**必须**在持锁后调用，且修复前应已建立证据包。
+/// 本模块只执行确定性修复（决策 51/120）：截断损坏点、移除更晚日志内容。
+module Repair =
+
+    let private truncateFile (path: string) (offset: int64) : unit =
+        use fs = new FileStream(path, FileMode.Open, FileAccess.Write)
+        fs.SetLength offset
+
+    /// 执行修复计划：截尾损坏文件 + 删除损坏点之后的所有文件。
+    /// 返回被修改（截尾/删除）的文件完整路径列表（供 stderr 忠实记录）。
+    /// 任一截尾失败即返回 Error（不部分成功静默继续）。
+    let repair (dataDir: string) (plan: RepairPlan) : Result<string list, string> =
+        let files =
+            try
+                Directory.GetFiles(DataPaths.eventsDir dataDir, "*.jsonseq")
+                |> Array.map (fun p -> Path.GetFileName p, p)
+                |> Array.sortBy fst
+                |> Array.toList
+            with e -> raise (IOException(sprintf "cannot list events dir: %s" e.Message))
+        let damage = plan.damage
+        let path = damage.file
+        let fileDate = DataPaths.tryParseEventFileName (Path.GetFileName path)
+        let isDateRegression = damage.reason.StartsWith "event file date regression"
+        let truncatedPaths = System.Collections.Generic.List<string>()
+
+        // 截尾目标文件：若文件不存在（如日期 gap 指向缺失文件），无需截尾，直接删除更晚文件
+        let truncated =
+            if File.Exists path then
+                try
+                    truncateFile path damage.byteOffset
+                    true
+                with _ -> false
+            else
+                true
+
+        if not truncated then
+            Error(sprintf "damaged log at %s (%s) and truncation failed" path damage.reason)
+        else
+            // 降序损坏（date regression）：d1 已完整重放，只删 d2 自身，绝不按日期级联
+            // （deleteAfter 会误删已重放的更晚文件）；其后 id 空洞由 expectedId 兜底。
+            match fileDate with
+            | Some d when not isDateRegression ->
+                for (_, p) in files do
+                    match DataPaths.tryParseEventFileName (Path.GetFileName p) with
+                    | Some dd when dd > d ->
+                        try
+                            File.Delete p
+                            truncatedPaths.Add p
+                        with _ -> ()
+                    | _ -> ()
+            | None ->
+                // 非法文件名：按重放顺序（字典序）删除该文件之后的所有文件（决策 9）。
+                // 若不级联，损坏点之后的合法文件保留在磁盘，而 lastCommitId 停在损坏点之前，
+                // 运行期从 lastCommitId+1 重新分配 id 会与保留文件中的旧 id 冲突，
+                // 下次启动重放按 id 连续性截尾 → 运行期写入的新数据被静默丢弃，且 fix 不幂等。
+                let index = files |> List.tryFindIndex (fun (n, _) -> n = Path.GetFileName path)
+                match index with
+                | Some i when i >= 0 ->
+                    for (_, p) in files |> List.skip (i + 1) do
+                        try
+                            File.Delete p
+                            truncatedPaths.Add p
+                        with _ -> ()
+                | _ -> ()
+            | Some _ -> ()
+            // 非法文件名（无日期）或降序损坏点，且 offset=0（无可保留内容）：删除文件自身，
+            // 避免每次启动 fix 重复命中并写 stderr（合法日期文件的截空行为不受影响）
+            if damage.byteOffset = 0L && (fileDate.IsNone || isDateRegression) then
+                // 先记录再删除（诊断告知 fix 处理了该文件）
+                if File.Exists path then truncatedPaths.Add path
+                try
+                    File.Delete path
+                with _ -> ()
+            elif File.Exists path then
+                truncatedPaths.Add path
+            Ok(List.ofSeq truncatedPaths)

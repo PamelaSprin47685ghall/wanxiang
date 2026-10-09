@@ -401,16 +401,16 @@ type MainView() as this =
         async {
             try
                 let! epoch = connecting |> Async.AwaitTask
-                let! helloSent = client.TrySendAtGenerationAsync(epoch, Hello {| protocol = "wanxiang"; version = Constants.ProtocolVersion; instanceId = None |}) |> Async.AwaitTask
-                if helloSent then
-                    match token with
-                    | Some value ->
-                        let! _ = client.TrySendAtGenerationAsync(epoch, AuthPresent {| token = value |}) |> Async.AwaitTask
+                // ADR-001 方案 B：版本协商完全 in-band（AG-UI RUN_STARTED.protocolVersion），
+                // 客户端不再发送 Hello 握手事件；连接后第一个动作即认证。
+                match token with
+                | Some value ->
+                    let! _ = client.TrySendAtGenerationAsync(epoch, AuthPresent {| token = value |}) |> Async.AwaitTask
+                    ()
+                | None ->
+                    if usePairing then
+                        let! _ = client.TrySendAtGenerationAsync(epoch, PairingRequested {| clientName = Some CredentialStore.clientName |}) |> Async.AwaitTask
                         ()
-                    | None ->
-                        if usePairing then
-                            let! _ = client.TrySendAtGenerationAsync(epoch, PairingRequested {| clientName = Some CredentialStore.clientName |}) |> Async.AwaitTask
-                            ()
                 Dispatcher.UIThread.Post(fun () ->
                     if attempt = connectAttempt && not authenticated then sidebar.SetConnection(false, "正在连接"))
             with ex ->
@@ -1038,7 +1038,9 @@ type MainView() as this =
 
     member private this.HandleEvent(ev: WireEvent) =
         match ev with
-        | Hello _ -> ()
+        // ADR-001 方案 B：Hello/UpgradeRequired 无生产路径（版本 in-band）。
+        // 保留匹配分支仅为兼容 reader（旧服务端可能发送）；不改变任何状态。
+        | Hello _ | UpgradeRequired _ -> ()
         | AuthAccepted d ->
             if instanceId <> "" && instanceId <> d.instanceId then
                 if exportDialog |> Option.exists (fun dialog -> dialog.IsOpen) then overlay.CloseDialog()
@@ -1083,8 +1085,6 @@ type MainView() as this =
             // 失败只报一次：连接对话框内联呈现原因（紧邻重连入口），不再叠 toast。
             setConnectStatus (sprintf "连接已断开：%s" d.reason)
             this.Render()
-        | UpgradeRequired d ->
-            toast (sprintf "协议版本不匹配：服务端 %d，客户端 %d。请更新其中一端。" d.serverVersion d.clientVersion) Failure
         | PairingStarted _ -> setConnectStatus "配对码已打印到服务端终端，请输入后提交。"
         | PairingSucceeded d ->
             lastToken <- Some d.token

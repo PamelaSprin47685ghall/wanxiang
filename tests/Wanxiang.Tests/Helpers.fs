@@ -46,6 +46,14 @@ let testConfig () =
 
 let newConversationId () = Guid.NewGuid()
 
+/// 只读检查并断言健康，返回 outcome（S-001：检查与修复分离后，测试统一走 inspect）。
+let replayOutcome (dir: string) : Wanxiang.Store.ReplayOutcome =
+    match Wanxiang.Store.Replay.inspect dir with
+    | Wanxiang.Store.Healthy o -> o
+    | Wanxiang.Store.RepairRequired (_, _) -> failwith "expected healthy log"
+    | Wanxiang.Store.UnsupportedFormat msg -> failwith msg
+    | Wanxiang.Store.Unreadable msg -> failwith msg
+
 /// 判定一个控件是不是万象的图标。
 ///
 /// **单一判据**：`Icons` 模块产出的都是原生 `Image`，其 `Source` 是官方

@@ -36,20 +36,48 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         | Error e -> failwith e
         | Ok _ -> ()
 
-    let replayOutcome =
+    /// 只读检查结论。损坏（RepairRequired）时进入只读降级模式：投影可用，但拒绝一切永久写入。
+    /// 正常启动**不再**自动截尾/删除（S-001 / STOP-1）；修复只能由 doctor --fix 显式执行。
+    let inspectResult =
         match startupOutcome with
-        | Some outcome -> outcome
+        | Some outcome -> Healthy outcome
         | None ->
             match lockHandle with
             | Error e -> failwith e
-            | Ok _ ->
-                // 锁由 lockHandle 全程持有（不能 use 释放）；replay 在锁内执行
-                match Replay.replay dataDir fix with
-                | Ok outcome ->
-                    for f in outcome.truncatedFiles do
-                        Stderr.replayTruncated f "truncated during startup"
-                    outcome
-                | Error e -> failwith e
+            | Ok _ -> Replay.inspect dataDir
+
+    let replayOutcome =
+        match inspectResult with
+        | Healthy outcome -> outcome
+        | RepairRequired (outcome, _) ->
+            // 只读降级模式：以最长有效前缀启动，禁止写入（STOP-1）。
+            outcome
+        | UnsupportedFormat msg -> failwith msg
+        | Unreadable msg -> failwith msg
+
+    /// 只读降级标记：日志损坏但以有效前缀启动时，拒绝一切永久写入（S-001）。
+    /// 客户端仍可 observe/读取历史；写命令返回明确错误。
+    let readOnlyDegraded =
+        match inspectResult with
+        | RepairRequired _ -> true
+        | _ -> false
+
+    do
+        // 只读降级模式必须留下明确诊断（R6：不允许无证据继续运行）。
+        match inspectResult with
+        | RepairRequired (outcome, plan) ->
+            Stderr.write
+                "read-only-degraded"
+                [ "file", plan.damage.file
+                  "offset", plan.damage.byteOffset
+                  "reason", plan.damage.reason
+                  "validThroughCommitId", outcome.lastCommitId
+                  "action", "run `wanxiang doctor --fix` to repair (creates recovery bundle first)" ]
+        | _ -> ()
+
+    let rejectWrite (err: string) : CommandExecutionResult =
+        Stderr.write "read-only-degraded-write-rejected" [ "message", err ]
+        CommandExecutionResult.CommandFailed(Poisoned err)
 
     let mutable configStore: ConfigStore option = None
     let mutable coordinator: CommitCoordinator option = None
@@ -98,7 +126,9 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                     | None -> ()
             | None -> ()
             rebuildFailureTracker cfg
-        with _ -> ()
+        with e ->
+            // O-001：吊销令牌/重建限流器失败是 DEGRADED——记录证据，不阻断配置生效。
+            Stderr.write "config-reload-revoke-failed" [ "message", e.Message ]
         // 配置变了必须告诉客户端：否则设置界面看到的服务商列表、
         // 会话里的模型选择器都会停留在旧数据上（历史上这个事件从未被发出）。
         // 只发信号，不塞目录——工具发现可能要连 MCP 服务器，
@@ -107,12 +137,15 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             match registry with
             | Some reg -> reg.BroadcastToAll(ConfigChanged {| reason = "reloaded" |})
             | None -> ()
-        with _ -> ()
+        with e ->
+            // O-001：广播 config-changed 失败是 DEGRADED——客户端下次连接仍会拿到新配置。
+            Stderr.write "config-reload-broadcast-failed" [ "message", e.Message ]
 
     let onConfigRejected (errs: string) =
         Stderr.write "config-rejected" [ "errors", errs ]
 
-    let executeCommand (clientCursor: CommitId) (cmd: ClientCommand) : CommandExecutionResult =
+    // 类内 let 绑定恒为私有；此处仅为可读性拆分（S-001 只读降级分支）。
+    let executePlanned (clientCursor: CommitId) (cmd: ClientCommand) : CommandExecutionResult =
         let coord =
             match coordinator with
             | Some c -> c
@@ -195,6 +228,13 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         with e ->
             Stderr.write "execute-command-error" [ "message", e.ToString() ]
             CommandExecutionResult.CommandFailed(Poisoned e.Message)
+
+    let executeCommand (clientCursor: CommitId) (cmd: ClientCommand) : CommandExecutionResult =
+        // 只读降级模式：拒绝一切永久写入（S-001 / STOP-1）。读取与观察不受影响。
+        if readOnlyDegraded then
+            rejectWrite "server is in read-only degraded mode (event log damaged); run `wanxiang doctor --fix` to repair"
+        else
+            executePlanned clientCursor cmd
 
     // P3-2：MCP 子进程 stderr 转发前对已知密钥值做精确替换（Q164）。
     let mcpLog (msg: string) = logInfo msg // Stderr.info 内部统一 redact（Q164）

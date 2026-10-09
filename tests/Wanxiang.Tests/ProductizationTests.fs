@@ -422,7 +422,7 @@ let ``regenerate is rejected when the last message is the user's`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
@@ -441,7 +441,7 @@ let ``pin and archive flags are projected and survive replay`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         let convId = newConversationId ()
         (using (new CommitCoordinator(dir, outcome, ignore, ignore)) (fun coordinator ->
             coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
@@ -452,7 +452,7 @@ let ``pin and archive flags are projected and survive replay`` () =
             let conv = Projection.tryConversation coordinator.Projection convId |> Option.get
             Assert.True conv.pinned
             Assert.False conv.archived))
-        let replayed = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let replayed = replayOutcome dir
         use reopened = new CommitCoordinator(dir, replayed, ignore, ignore)
         let conv = Projection.tryConversation reopened.Projection convId |> Option.get
         Assert.True conv.pinned
@@ -464,7 +464,7 @@ let ``pinned conversations sort ahead of more recent ones`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        let outcome = Replay.replay dir false |> function Ok o -> o | Error e -> failwith e
+        let outcome = replayOutcome dir
         use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
         let older = newConversationId ()
         let newer = newConversationId ()
