@@ -9,6 +9,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # 定期分级（§24）：large-history + soak 每周跑一次（不进 PR gate）
+    - cron: "0 4 * * 0"
 
 jobs:
   pr-gate:
@@ -59,3 +62,21 @@ jobs:
 
       - name: Integration + recovery + crash matrix (non-UI)
         run: ./run-tests.sh --no-ui
+
+  large-history-gate:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          cache: true
+
+      - name: Build (Release)
+        run: dotnet build wanxiang.slnx -c Release --verbosity minimal
+
+      - name: Large-history perf + soak (10^5/10^6 commits, 3x300 ops)
+        run: ./run-tests.sh --no-ui --large-history

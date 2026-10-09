@@ -106,3 +106,56 @@ let ``unknown event type decodes to an error`` () =
             Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(node, d.payloadJson))
         | _ -> failwith "wrong event"
     | None -> failwith "decode failed"
+
+// ---------- T-006：CommandId 纯函数契约 ----------
+
+[<Fact>]
+let ``same invocationId + same payload => same commandId (idempotent retry)`` () =
+    let inv = Guid.NewGuid()
+    let payload = Wanxiang.Core.Ledger.Jcs.canonicalize """{"b":2,"a":{"c":1}}"""
+    let id1 = CommandId.compute inv "chat.user-message.enqueue" payload
+    let id2 = CommandId.compute inv "chat.user-message.enqueue" payload
+    Assert.Equal(id1, id2)
+
+[<Fact>]
+let ``different invocationId => different commandId`` () =
+    let payload = Wanxiang.Core.Ledger.Jcs.canonicalize """{"b":2,"a":{"c":1}}"""
+    let id1 = CommandId.compute (Guid.NewGuid()) "chat.user-message.enqueue" payload
+    let id2 = CommandId.compute (Guid.NewGuid()) "chat.user-message.enqueue" payload
+    Assert.NotEqual<string>(id1, id2)
+
+[<Fact>]
+let ``different commandType => different commandId`` () =
+    let inv = Guid.NewGuid()
+    let payload = Wanxiang.Core.Ledger.Jcs.canonicalize """{"b":2,"a":{"c":1}}"""
+    let id1 = CommandId.compute inv "chat.user-message.enqueue" payload
+    let id2 = CommandId.compute inv "conversation.rename" payload
+    Assert.NotEqual<string>(id1, id2)
+
+[<Fact>]
+let ``commandId is stable base64url (no padding, no + or /)`` () =
+    let inv = Guid.Parse "11111111-1111-1111-1111-111111111111"
+    let id = CommandId.compute inv "test.cmd" """{"a":1}"""
+    // base64url 字符集 + 无填充
+    Assert.DoesNotContain("+", id)
+    Assert.DoesNotContain("/", id)
+    Assert.DoesNotContain("=", id)
+    Assert.Equal(43, id.Length) // SHA-256 → 32 bytes → base64url 43 chars（无填充）
+
+[<Fact>]
+let ``sha256Hex is lowercase hex and deterministic`` () =
+    let h1 = CommandId.sha256Hex "wanxiang"
+    let h2 = CommandId.sha256Hex "wanxiang"
+    Assert.Equal(h1, h2)
+    Assert.Equal(64, h1.Length)
+    Assert.All(h1.ToCharArray(), fun c -> Assert.True(System.Char.IsAsciiHexDigitLower c))
+
+// ---------- T-006：RFC 8785 golden vectors ----------
+
+[<Fact>]
+let ``RFC 8785 canonical form golden vectors`` () =
+    // RFC 8785：对象键按码点排序、数组保持顺序、空白不影响
+    Assert.Equal("""{"a":1,"b":2}""", Wanxiang.Core.Ledger.Jcs.canonicalize """{"b":2,"a":1}""")
+    Assert.Equal("""{"arr":[1,2,3],"obj":{"x":true}}""", Wanxiang.Core.Ledger.Jcs.canonicalize """{"obj":{"x":true},"arr":[1,2,3]}""")
+    Assert.Equal("""{"a":1}""", Wanxiang.Core.Ledger.Jcs.canonicalize """{ "a" : 1 }""")
+    Assert.Equal("""{"s":"a\nb"}""", Wanxiang.Core.Ledger.Jcs.canonicalize """{"s":"a\nb"}""")

@@ -27,7 +27,3 @@ module Jcs =
         |> SHA256.HashData
         |> Convert.ToHexString
         |> fun s -> s.ToLowerInvariant()
-
-    /// 容错版：非法输入返回 None（不抛）。
-    let trySha256Hex (json: string) : string option =
-        try Some(sha256Hex json) with _ -> None

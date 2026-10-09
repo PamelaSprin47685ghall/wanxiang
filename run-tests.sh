@@ -26,6 +26,7 @@
 #   ./run-tests.sh --ui-only    # 只跑 UI
 #   ./run-tests.sh --no-ui      # 只跑非 UI
 #   ./run-tests.sh --no-build   # 跳过构建
+#   ./run-tests.sh --large-history  # 额外跑 LargeHistory 分级（默认排除；§24 定期分级）
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -36,12 +37,14 @@ BIN="$OUT/Wanxiang.Tests"
 JOBS=$(nproc 2>/dev/null || echo 4)
 MODE=all
 BUILD=1
+LARGE_HISTORY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -j) JOBS="$2"; shift 2 ;;
     --ui-only) MODE=ui; shift ;;
     --no-ui) MODE=noui; shift ;;
     --no-build) BUILD=0; shift ;;
+    --large-history) LARGE_HISTORY=1; shift ;;
     *) shift ;;
   esac
 done
@@ -103,7 +106,12 @@ fi
 
 if [ "$MODE" != "ui" ]; then
   echo "非 UI：单进程内线程级并行" >&2
-  ./Wanxiang.Tests -trait- "Category=UI" > "$TMP/noui.out" 2>&1
+  # 默认排除 LargeHistory 分级（§24：10^5/10^6 定期跑，不进 PR gate）
+  ARGS=(-trait- "Category=UI")
+  if [ "$LARGE_HISTORY" = "0" ]; then
+    ARGS+=(-trait- "Category=LargeHistory")
+  fi
+  ./Wanxiang.Tests "${ARGS[@]}" > "$TMP/noui.out" 2>&1
   grep -E "Total:|^\s+Wanxiang.*\[FAIL\]" "$TMP/noui.out" || true
   grep -qE "Failed: 0," "$TMP/noui.out" || FAILED=1
 fi

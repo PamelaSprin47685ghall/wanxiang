@@ -32,6 +32,7 @@
     <Compile Include="N1CompatTests.fs" />
     <Compile Include="SoakTests.fs" />
     <Compile Include="PerformanceBaselineTests.fs" />
+    <Compile Include="AcceptanceScenarioTests.fs" />
     <Compile Include="McpTests.fs" />
     <Compile Include="ServerAppTests.fs" />
     <Compile Include="ProviderCatalogTests.fs" />

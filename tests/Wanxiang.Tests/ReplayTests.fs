@@ -469,7 +469,9 @@ let ``test_replay_truncation_failure_returns_error`` () =
             match Repair.repair dir plan with
             | Ok _ -> failwith "expected error because file truncation should fail"
             | Error e ->
-                Assert.Contains("truncation failed", e)
+                // O-004：截尾失败必须带文件路径 + 偏移 + 原因（不再吞异常）
+                Assert.Contains("cannot truncate", e)
+                Assert.Contains("2026-08-01.jsonseq", e)
         finally
             // 恢复写权限，确保 cleanup 能顺利删除临时目录与文件
             try File.SetUnixFileMode(p, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
@@ -534,5 +536,29 @@ let ``recovery bundle 建立后修复才执行（算法 B）`` () =
         // 修复后健康
         let outcome = healthy dir
         Assert.Equal(2UL, outcome.lastCommitId)
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``repair 级联删除失败必须返回 Error（不静默继续）`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        // 非法文件名（无日期）→ offset=0 时删除文件自身（决策 9 删除路径）
+        let badPath = Path.Combine(DataPaths.eventsDir dir, "2026-08-01-bad.jsonseq")
+        let laterDay = DateTime(2026, 8, 2, 0, 0, 0, DateTimeKind.Utc)
+        let laterPath = DataPaths.eventFilePath dir laterDay
+        File.WriteAllText(badPath, "invalid")
+        File.WriteAllText(laterPath, "later")
+        let _, plan = repairRequired dir
+        // O-004：删除失败必须返回 Error（不再吞异常静默继续）。
+        // 用只读 events 目录模拟删除失败（File.Delete 抛 UnauthorizedAccessException）。
+        try
+            File.SetUnixFileMode(DataPaths.eventsDir dir, UnixFileMode.UserRead ||| UnixFileMode.UserExecute)
+            match Repair.repair dir plan with
+            | Ok _ -> failwith "expected error because file deletion should fail"
+            | Error e -> Assert.Contains("cannot delete", e)
+        finally
+            try File.SetUnixFileMode(DataPaths.eventsDir dir, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute) with _ -> ()
     finally
         cleanup dir

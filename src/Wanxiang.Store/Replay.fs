@@ -392,6 +392,7 @@ module Repair =
         let fileDate = DataPaths.tryParseEventFileName (Path.GetFileName path)
         let isDateRegression = damage.reason.StartsWith "event file date regression"
         let truncatedPaths = System.Collections.Generic.List<string>()
+        let mutable deleteError: string option = None
 
         // 截尾目标文件：若文件不存在（如日期 gap 指向缺失文件），无需截尾，直接删除更晚文件
         let truncated =
@@ -399,13 +400,13 @@ module Repair =
                 try
                     truncateFile path damage.byteOffset
                     true
-                with _ -> false
+                with e ->
+                    deleteError <- Some(sprintf "cannot truncate %s at offset %d: %s" path damage.byteOffset e.Message)
+                    false
             else
                 true
 
-        if not truncated then
-            Error(sprintf "damaged log at %s (%s) and truncation failed" path damage.reason)
-        else
+        if truncated then
             // 降序损坏（date regression）：d1 已完整重放，只删 d2 自身，绝不按日期级联
             // （deleteAfter 会误删已重放的更晚文件）；其后 id 空洞由 expectedId 兜底。
             match fileDate with
@@ -413,10 +414,12 @@ module Repair =
                 for (_, p) in files do
                     match DataPaths.tryParseEventFileName (Path.GetFileName p) with
                     | Some dd when dd > d ->
-                        try
-                            File.Delete p
-                            truncatedPaths.Add p
-                        with _ -> ()
+                        if deleteError.IsNone then
+                            try
+                                File.Delete p
+                                truncatedPaths.Add p
+                            with e ->
+                                deleteError <- Some(sprintf "cannot delete %s after damage point: %s" p e.Message)
                     | _ -> ()
             | None ->
                 // 非法文件名：按重放顺序（字典序）删除该文件之后的所有文件（决策 9）。
@@ -427,10 +430,12 @@ module Repair =
                 match index with
                 | Some i when i >= 0 ->
                     for (_, p) in files |> List.skip (i + 1) do
-                        try
-                            File.Delete p
-                            truncatedPaths.Add p
-                        with _ -> ()
+                        if deleteError.IsNone then
+                            try
+                                File.Delete p
+                                truncatedPaths.Add p
+                            with e ->
+                                deleteError <- Some(sprintf "cannot delete %s (after invalid file name): %s" p e.Message)
                 | _ -> ()
             | Some _ -> ()
             // 非法文件名（无日期）或降序损坏点，且 offset=0（无可保留内容）：删除文件自身，
@@ -438,9 +443,13 @@ module Repair =
             if damage.byteOffset = 0L && (fileDate.IsNone || isDateRegression) then
                 // 先记录再删除（诊断告知 fix 处理了该文件）
                 if File.Exists path then truncatedPaths.Add path
-                try
-                    File.Delete path
-                with _ -> ()
+                if deleteError.IsNone then
+                    try
+                        File.Delete path
+                    with e ->
+                        deleteError <- Some(sprintf "cannot delete damaged file %s: %s" path e.Message)
             elif File.Exists path then
                 truncatedPaths.Add path
-            Ok(List.ofSeq truncatedPaths)
+        match deleteError with
+        | Some err -> Error(err)
+        | None -> Ok(List.ofSeq truncatedPaths)

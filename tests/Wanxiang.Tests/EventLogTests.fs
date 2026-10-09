@@ -183,5 +183,7 @@ module EventLogTests =
         Assert.Equal(Jcs.sha256Hex """{"b":"2","a":"1"}""", Jcs.sha256Hex """{"a":"1","b":"2"}""")
 
     [<Fact>]
-    let ``tolerant hashing returns none instead of throwing on garbage`` () =
-        Assert.True(Jcs.trySha256Hex "not json" |> Option.isNone)
+    let ``hashing garbage throws (no silent None: canonicalization failure must not be swallowed)`` () =
+        // O-004：trySha256Hex 已删除——校验失败必须显式抛异常，不允许静默返回 None
+        //（R6：不允许无证据继续运行）。调用方要么处理异常，要么保证输入合法。
+        Assert.ThrowsAny<exn>(fun () -> Jcs.sha256Hex "not json" |> ignore)

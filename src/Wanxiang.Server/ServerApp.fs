@@ -34,7 +34,11 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         // 锁获取失败（另一实例已持锁）→ 启动失败，绝不静默无锁运行（决策 105）
         match lockHandle with
         | Error e -> failwith e
-        | Ok _ -> ()
+        | Ok l ->
+            // R6：PID 写失败是 DEGRADED（锁排他性不依赖 PID 内容），必须留下证据
+            match l.PidWarning with
+            | Some w -> Stderr.write "data-lock-pid-warning" [ "message", w ]
+            | None -> ()
 
     /// 只读检查结论。损坏（RepairRequired）时进入只读降级模式：投影可用，但拒绝一切永久写入。
     /// 正常启动**不再**自动截尾/删除（S-001 / STOP-1）；修复只能由 doctor --fix 显式执行。
@@ -182,7 +186,13 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             | Rejected e ->
                 // Q145：commandId 冲突（同 commandId 不同载荷）视为严重错误，写 stderr
                 match e with
-                | CommandIdConflict _ -> Stderr.write "command-id-conflict" [ "commandType", ClientCommand.commandType cmd ]
+                | CommandIdConflict _ ->
+                    // O-005：关联 ID 统一命名（§18）——invocationId/conversationId 必须可追溯
+                    Stderr.write
+                        "command-id-conflict"
+                        [ "commandType", ClientCommand.commandType cmd
+                          "invocationId", ClientCommand.invocationId cmd
+                          "conversationId", ClientCommand.conversationId cmd ]
                 | _ -> ()
                 CommandExecutionResult.CommandFailed e
             | PlanResult.IdempotentReplay cid -> CommandExecutionResult.CommandIdempotent cid
@@ -219,14 +229,25 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                     | SubmitResult.IdempotentReplay c -> CommandExecutionResult.CommandIdempotent c.id
                     | SubmitResult.CommandIdRejected e ->
                         // Q145：同 commandId 不同 payload 的冲突（或幂等记录异常）走专用 stderr 事件
-                        Stderr.write "command-id-conflict" [ "commandType", ClientCommand.commandType cmd; "message", WanxiangError.message e ]
+                        Stderr.write
+                            "command-id-conflict"
+                            [ "commandType", ClientCommand.commandType cmd
+                              "invocationId", ClientCommand.invocationId cmd
+                              "conversationId", ClientCommand.conversationId cmd
+                              "message", WanxiangError.message e ]
                         CommandExecutionResult.CommandFailed e
                     | SubmitResult.TruncatedAndReused (_, err) ->
                         // 仅剩运行时投影失败截尾路径；stderr 已由协调器 onTruncated 忠实记录（决策 40）
                         CommandExecutionResult.CommandFailed err
                     | SubmitResult.CommitFailed e -> CommandExecutionResult.CommandFailed e
         with e ->
-            Stderr.write "execute-command-error" [ "message", e.ToString() ]
+            // O-005：未知执行异常必须带关联 ID（§18），否则无法从日志定位到具体命令
+            Stderr.write
+                "execute-command-error"
+                [ "commandType", ClientCommand.commandType cmd
+                  "invocationId", ClientCommand.invocationId cmd
+                  "conversationId", ClientCommand.conversationId cmd
+                  "message", e.ToString() ]
             CommandExecutionResult.CommandFailed(Poisoned e.Message)
 
     let executeCommand (clientCursor: CommitId) (cmd: ClientCommand) : CommandExecutionResult =

@@ -32,7 +32,8 @@ module PerformanceBaseline =
         let convId = newConversationId ()
         let path = DataPaths.eventFilePath dir day
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
-        use fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None)
+        // 10 万级小写入：直接 FileStream.Write 是系统调用瓶颈，用 BufferedStream 聚合
+        use fs = new BufferedStream(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None), 1 <<< 20)
         let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "perf"; config = testConfig () } ]
         let b1 = Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1)
         fs.Write(b1, 0, b1.Length)
@@ -130,5 +131,32 @@ module PerformanceBaseline =
             // 10^4 条消息的投影应远小于 256 MiB（宽松上界防回归）
             Assert.True(heapBefore < 256L * 1024L * 1024L, sprintf "heap before %d" heapBefore)
             Assert.True(heapAfter < 256L * 1024L * 1024L, sprintf "heap after %d" heapAfter)
+        finally
+            cleanup dir
+
+    // -------------------------------------------------------------------------
+    // Large-history 分级（§24：定期运行，不进 PR gate）
+    // -------------------------------------------------------------------------
+
+    [<Fact>]
+    [<Trait("Category", "LargeHistory")>]
+    // 实测基线（2026-10-10，本机）：10^5 纯 inspect（不含 seed 装置）~102s。
+    // 这是当前实现的真实冷启动成本——正是快照要解决的问题（§12：第一版只优化启动）。
+    // 上界 150s：宽松余量覆盖 CI 机器差异，防 flaky。
+    let ``10^5 commits：冷启动重放 < 150s`` () =
+        let dir = seedLog 100000
+        try
+            let _, elapsed = timed (fun () -> Replay.inspect dir)
+            Assert.True(elapsed < TimeSpan.FromSeconds 150.0, sprintf "cold start took %A" elapsed)
+        finally
+            cleanup dir
+
+    [<Fact(Skip = "10^6 生成+重放 >300s，CI 不可行；保留为手动基准（§21.6），待第二版 compaction 后重新评估")>]
+    [<Trait("Category", "LargeHistory")>]
+    let ``10^6 commits：冷启动重放 < 300s（手动基准）`` () =
+        let dir = seedLog 1000000
+        try
+            let _, elapsed = timed (fun () -> Replay.inspect dir)
+            Assert.True(elapsed < TimeSpan.FromSeconds 300.0, sprintf "cold start took %A" elapsed)
         finally
             cleanup dir

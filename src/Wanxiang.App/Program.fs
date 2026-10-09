@@ -123,6 +123,9 @@ module Program =
                         eprintfn "data directory locked: %s" e
                         exit 1
                     | Ok lockHandle ->
+                        match lockHandle.PidWarning with
+                        | Some w -> logInfo(sprintf "warning: %s" w)
+                        | None -> ()
                         // 修复前先只读检查（算法 R）；Healthy 无需修复。
                         // 修复前建立证据包（算法 B）：复制受影响文件 + SHA-256 + manifest。
                         // 只有证据包建立成功才允许执行修复（S-002 / R1）。
@@ -173,7 +176,11 @@ module Program =
                 else
                     let lockHandle =
                         match DataLock.Acquire dataDir with
-                        | Ok l -> Some l
+                        | Ok l ->
+                            match l.PidWarning with
+                            | Some w -> logInfo(sprintf "warning: %s" w)
+                            | None -> ()
+                            Some l
                         | Error e ->
                             eprintfn "data directory locked: %s" e
                             exit 1
