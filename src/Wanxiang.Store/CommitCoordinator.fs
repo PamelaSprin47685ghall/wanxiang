@@ -1,6 +1,7 @@
 namespace Wanxiang.Store
 
 open System
+open System.IO
 open Wanxiang.Core
 
 /// 提交请求（由 Server 层规划后送入单写者）。
@@ -99,16 +100,39 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
             if offsetBefore < 0L then
                 CommitFailed(Poisoned "append failed")
             else
+                // T-002 故障注入：AfterFlushBeforeProjection（记录已落盘，投影未应用）
+                if FaultInjector.tryFail FaultInjector.StorageFaultPoint.AfterFlushBeforeProjection then
+                    // 模拟「落盘成功但投影前崩溃」：截尾该行复用 id（决策 40 语义）
+                    try
+                        writer.TruncateTo offsetBefore
+                        onTruncated(
+                            commit,
+                            Poisoned "injected fault: AfterFlushBeforeProjection",
+                            offsetBefore,
+                            writer.CurrentFilePath)
+                        TruncatedAndReused(commit, Poisoned "injected fault: AfterFlushBeforeProjection")
+                    with _ ->
+                        CommitFailed(Poisoned "injected fault: AfterFlushBeforeProjection (truncate failed)")
+                else
                 match Projection.applyCommit projection commit with
                 | Ok newProj ->
                     projection <- newProj
                     commits.Add commit
                     nextId <- nextId + 1UL
+                    // T-002 故障注入：AfterProjectionBeforePublish（投影已应用，发布前失败）
+                    if FaultInjector.tryFail FaultInjector.StorageFaultPoint.AfterProjectionBeforePublish then
+                        // 投影已更新但对外未发布：返回失败，但投影状态已前进。
+                        // 调用方（ServerApp）会看到 CommitFailed；下次提交 id 已 +1（与日志一致）。
+                        CommitFailed(Poisoned "injected fault: AfterProjectionBeforePublish")
+                    else
                     onCommitted commit
                     Committed commit
                 | Error err ->
                     // 决策 40：运行时投影失败 -> 截掉尾行、复用 id；stderr 忠实记录（调用方处理）
                     try
+                        // T-002 故障注入：DuringTruncate（截尾失败 → poison）
+                        if FaultInjector.tryFail FaultInjector.StorageFaultPoint.DuringTruncate then
+                            raise (IOException "injected fault: DuringTruncate")
                         writer.TruncateTo offsetBefore
                         onTruncated(commit, err, offsetBefore, writer.CurrentFilePath)
                         TruncatedAndReused(commit, err)
@@ -141,6 +165,9 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
                             lo <- mid + 1
                     reply.Reply([ for i = idx to commits.Count - 1 do commits[i] ])
                     return! loop ()
+                | GetCurrentFile reply ->
+                    reply.Reply(writer.CurrentFileName, writer.Position)
+                    return! loop ()
                 | FlushAndStop reply ->
                     writer.Dispose()
                     reply.Reply()
@@ -164,6 +191,10 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
     member _.CommitsAfter(cursor: CommitId) : Events.Commit list =
         mailbox.PostAndReply(fun ch -> GetCommitsAfter(cursor, ch))
 
+    /// 当前打开的日志文件名与字节长度（快照锚点用；mailbox 线程内读取保证与写入串行）。
+    member _.CurrentFileAnchor() : string * int64 =
+        mailbox.PostAndReply(GetCurrentFile)
+
     /// 优雅关闭：排空提交队列、flush、释放日志流。
     member this.Shutdown() : unit =
         if not stopped then
@@ -179,4 +210,5 @@ and private CoordinatorMessage =
     | Submit of CommitSubmit * AsyncReplyChannel<SubmitResult>
     | GetProjection of AsyncReplyChannel<Projection>
     | GetCommitsAfter of CommitId * AsyncReplyChannel<Events.Commit list>
+    | GetCurrentFile of AsyncReplyChannel<string * int64>
     | FlushAndStop of AsyncReplyChannel<unit>

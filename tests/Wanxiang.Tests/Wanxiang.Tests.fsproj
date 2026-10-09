@@ -19,6 +19,9 @@
     <Compile Include="WireAguiTests.fs" />
     <Compile Include="StoreConsistencyTests.fs" />
     <Compile Include="ReplayTests.fs" />
+    <Compile Include="SnapshotTests.fs" />
+    <Compile Include="CrashMatrixTests.fs" />
+    <Compile Include="SupportBundleTests.fs" />
     <Compile Include="CoordinatorTests.fs" />
     <Compile Include="CatchUpSafetyTests.fs" />
     <Compile Include="ForkTests.fs" />

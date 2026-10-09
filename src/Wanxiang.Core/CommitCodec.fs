@@ -285,3 +285,15 @@ module CommitCodec =
                 | _ -> None
             | _ -> None
         with _ -> None
+
+    /// 检测「外壳格式版本」字段（不完整解析；供 Replay 区分损坏与未来版本）。
+    /// 返回 Some v 当且仅当顶层是对象且 formatVersion 是数字；否则 None。
+    let tryShellFormatVersion (line: string) : int option =
+        try
+            match JsonNode.Parse line with
+            | :? JsonObject as o ->
+                match tryGet o "formatVersion" with
+                | Some v -> tryGetInt v
+                | None -> None
+            | _ -> None
+        with _ -> None

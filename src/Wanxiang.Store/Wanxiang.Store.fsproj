@@ -8,9 +8,11 @@
   <ItemGroup>
     <Compile Include="DataPaths.fs" />
     <Compile Include="DataLock.fs" />
+    <Compile Include="FaultInjector.fs" />
     <Compile Include="JsonSeqWriter.fs" />
     <Compile Include="Replay.fs" />
     <Compile Include="RecoveryBundle.fs" />
+    <Compile Include="Snapshot.fs" />
     <Compile Include="CommitCoordinator.fs" />
   </ItemGroup>
 

@@ -39,7 +39,8 @@ module RecoveryBundle =
             Directory.CreateDirectory originalDir |> ignore
             let manifest = JsonObject()
             manifest["applicationVersion"] <- "wanxiang"
-            manifest["formatVersion"] <- Wanxiang.Core.Ledger.Record.FormatVersion
+            // P-002：格式唯一权威 = CommitCodec + Constants.FormatVersion（Ledger.Record 重复定义已删除）
+            manifest["formatVersion"] <- Wanxiang.Core.Constants.FormatVersion
             manifest["createdAt"] <- DateTimeOffset.UtcNow.UtcDateTime.ToString("o")
             manifest["damageFile"] <- plan.damage.file
             manifest["damageOffset"] <- plan.damage.byteOffset

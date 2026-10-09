@@ -9,8 +9,6 @@
     <Compile Include="Types.fs" />
     <Compile Include="Ledger\Jcs.fs" />
     <Compile Include="Ledger\Frame.fs" />
-    <Compile Include="Ledger\Record.fs" />
-    <Compile Include="Ledger\Recovery.fs" />
     <Compile Include="PlainText.fs" />
     <Compile Include="CommandId.fs" />
     <Compile Include="SessionConfig.fs" />

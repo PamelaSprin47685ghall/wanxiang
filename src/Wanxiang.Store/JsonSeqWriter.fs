@@ -32,10 +32,18 @@ type JsonSeqWriter(dataDir: string, initialDateUtc: DateTime) =
     /// 当前打开的日志文件路径（截尾 stderr 诊断用）。
     member _.CurrentFilePath : string = DataPaths.eventFilePath dataDir currentDate
 
+    /// 当前打开的日志文件名（快照锚点用）。
+    member _.CurrentFileName : string = DataPaths.eventFileName currentDate
+
     /// 写入一条提交（完整一行 + 换行）并 flush。
     /// 返回写前偏移，供运行时截尾复用 id。
     /// 换日语义（决策 109）：日志日期不得回退——时钟回拨时保持最后持久化日期文件。
     member _.AppendCommit(commit: Events.Commit) : int64 =
+        // T-002 故障注入：BeforeOpen / BeforeAppend
+        if FaultInjector.tryFail FaultInjector.StorageFaultPoint.BeforeOpen then
+            raise (IOException "injected fault: BeforeOpen")
+        if FaultInjector.tryFail FaultInjector.StorageFaultPoint.BeforeAppend then
+            raise (IOException "injected fault: BeforeAppend")
         let nowUtc = commit.committedAtUtc.UtcDateTime.Date
         if nowUtc > currentDate then
             // 先打开新文件成功，再释放旧流；打开失败时保持旧流可用，避免当日全部写入不可恢复
@@ -47,8 +55,14 @@ type JsonSeqWriter(dataDir: string, initialDateUtc: DateTime) =
         let offsetBefore = stream.Length
         // 一条提交 = 一条 RFC 7464 记录（RS + JSON 对象 + LF）。
         let bytes = CommitCodec.commitToJsonLine commit |> Frame.encode
+        // T-002 故障注入：DuringAppend（写一半抛异常——由下方 with 回滚偏移）
+        if FaultInjector.tryFail FaultInjector.StorageFaultPoint.DuringAppend then
+            raise (IOException "injected fault: DuringAppend")
         try
             stream.Write(bytes, 0, bytes.Length)
+            // T-002 故障注入：AfterAppendBeforeFlush（记录已写页缓存，flush 未执行）
+            if FaultInjector.tryFail FaultInjector.StorageFaultPoint.AfterAppendBeforeFlush then
+                raise (IOException "injected fault: AfterAppendBeforeFlush")
             stream.Flush()
             offsetBefore
         with e ->

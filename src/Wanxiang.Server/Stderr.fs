@@ -18,6 +18,11 @@ module Stderr =
     let mutable private sortedSecrets: string list = []
     /// 独立锁对象（不随 secretValues 赋值漂移）
     let private secretLock = obj()
+    /// 最近错误事件环形缓冲（O-002：support bundle 的 recent-errors.jsonl 来源）。
+    /// 只保留结构化事件（不含 info）；上限 200 条，防无界增长（R5）。
+    let private recentErrors = System.Collections.Generic.Queue<string>()
+    let private recentErrorsLock = obj()
+    let private recentErrorsLimit = 200
 
     let private rebuildSorted () =
         sortedSecrets <- secretValues |> List.sortByDescending (fun x -> x.Length)
@@ -69,7 +74,13 @@ module Stderr =
                 o[sprintf "%s.stack" k] <- redact (e.ToString())
             | null -> o[k] <- null
             | other -> o[k] <- redact (string other)
-        eprintfn "%s" (o.ToJsonString options)
+        let line = o.ToJsonString options
+        // O-002：记录最近错误（环形缓冲，上限 200；供 support bundle 收集）
+        lock recentErrorsLock (fun () ->
+            recentErrors.Enqueue line
+            while recentErrors.Count > recentErrorsLimit do
+                recentErrors.Dequeue() |> ignore)
+        eprintfn "%s" line
 
     let info (message: string) =
         let o = JsonObject()
@@ -96,3 +107,7 @@ module Stderr =
     /// 启动截尾记录。
     let replayTruncated (file: string) (reason: string) =
         write "jsonseq-replay-truncated" [ "phase", "startup-replay"; "file", file; "reason", reason ]
+
+    /// 最近错误事件 JSONL（support bundle 用；已按注册密钥脱敏）。空则返回 []。
+    let recentErrorLines () : string list =
+        lock recentErrorsLock (fun () -> recentErrors |> Seq.toList)

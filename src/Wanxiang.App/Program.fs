@@ -22,6 +22,7 @@ module Cli =
         fix: bool option
         config: string option
         data: string option
+        bundle: string option
     }
 
     let defaults =
@@ -30,7 +31,8 @@ module Cli =
           pwa = None
           fix = None
           config = None
-          data = None }
+          data = None
+          bundle = None }
 
     let parseBool (s: string) : bool option =
         match s.ToLowerInvariant() with
@@ -38,7 +40,7 @@ module Cli =
         | "false" | "0" | "no" | "off" -> Some false
         | _ -> None
 
-    /// 解析命令行。支持 --server=true/false、--client、--pwa、--fix、--config <path>、--data <dir>。
+    /// 解析命令行。支持 --server=true/false、--client、--pwa、--fix、--config <path>、--data <dir>、--bundle <path>。
     let parse (argv: string array) : CliOptions =
         let mutable o = defaults
         let mutable i = 0
@@ -60,8 +62,10 @@ module Cli =
             elif arg = "--pwa" then o <- { o with pwa = Some true }
             elif arg = "--fix" then o <- { o with fix = Some true }
             elif arg.StartsWith "--fix=" then o <- { o with fix = parseBool (arg.Substring "--fix=".Length) }
+            elif arg.StartsWith "--bundle=" then o <- { o with bundle = Some(arg.Substring "--bundle=".Length) }
+            elif arg = "--bundle" then o <- { o with bundle = Some(takeValue ()) }
             elif arg = "--help" || arg = "-h" then
-                eprintfn "usage: wanxiang [--server=true|false] [--client=true|false] [--pwa=true|false] [--fix] [--config <path>] [--data <dir>]"
+                eprintfn "usage: wanxiang [--server=true|false] [--client=true|false] [--pwa=true|false] [--fix] [--config <path>] [--data <dir>] [--bundle <path>]"
                 exit 0
             else
                 failwithf "unknown argument: %s" arg
@@ -264,6 +268,18 @@ module Program =
                         | Error e ->
                             eprintfn "fix failed: %s" e
                             exit 1
+                // O-002：`doctor --bundle <path>` 生成 support bundle（默认只收集元数据，
+                // 禁止 apiKey/token/完整用户消息/完整附件）。
+                // 先建 bundle（配置损坏/日志损坏正是最需要诊断的时候——不能因为诊断失败而不产出证据），
+                // 再跑只读 doctor 并打印。
+                match cli.bundle with
+                | Some bundlePath ->
+                    match Wanxiang.Server.SupportBundle.create dataDir configPath bundlePath with
+                    | Ok dir -> logInfo(sprintf "support bundle written to %s" dir)
+                    | Error e ->
+                        eprintfn "support bundle failed: %s" e
+                        exit 1
+                | None -> ()
                 let d = Doctor.run (configPath, dataDir)
                 Doctor.print d
                 exit 0
@@ -285,8 +301,35 @@ module Program =
                     // Healthy → 正常启动；RepairRequired → 以最长有效前缀启动**只读降级模式**，
                     // 禁止一切永久写入，提示运行 doctor --fix（修复会先建立证据包）。
                     // 只有 UnsupportedFormat / Unreadable 这类阻断性问题才拒绝启动。
+                    // S-003 / STOP-2（算法 L）：优先从快照启动——最新有效快照作为投影基线，
+                    // 只重放 throughCommitId 之后的日志；快照损坏/超前则回退完整重放（L8/L9）。
+                    let inspectStartup () =
+                        match Wanxiang.Store.Snapshot.findLatest dataDir with
+                        | Wanxiang.Store.SnapshotStartup.NoSnapshot ->
+                            logInfo "no snapshot; full replay"
+                            Replay.inspect dataDir
+                        | Wanxiang.Store.SnapshotStartup.SnapshotUsed info ->
+                            logInfo(
+                                sprintf
+                                    "snapshot %d loaded (created %s); replaying from commit %d"
+                                    info.throughCommitId
+                                    (info.createdAtUtc.UtcDateTime.ToString("o"))
+                                    (info.throughCommitId + 1UL))
+                            Replay.inspectFrom
+                                dataDir
+                                { projection = info.projection
+                                  throughCommitId = info.throughCommitId
+                                  throughFile = info.throughFile
+                                  throughOffset = info.throughOffset }
+                        | Wanxiang.Store.SnapshotStartup.SnapshotCorrupt reasons ->
+                            logInfo(sprintf "snapshot corrupt (%s); falling back to full replay" (String.concat "; " reasons))
+                            Replay.inspect dataDir
+                        | Wanxiang.Store.SnapshotStartup.SnapshotStale reason ->
+                            logInfo(sprintf "snapshot stale (%s); falling back to full replay" reason)
+                            Replay.inspect dataDir
+
                     let outcome =
-                        match Replay.inspect dataDir with
+                        match inspectStartup () with
                         | Healthy o -> Some o
                         | RepairRequired (o, plan) ->
                             logInfo(

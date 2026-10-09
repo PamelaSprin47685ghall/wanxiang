@@ -60,17 +60,35 @@ type InspectResult =
 /// - 正常启动**不再**自动截尾/删除；损坏时进入只读降级模式（STOP-1）。
 module Replay =
 
+    /// 快照续播基线（算法 L7）：投影 + 已重放到的提交水位 + 锚点文件/偏移。
+    type SnapshotBase = {
+        projection: Projection
+        throughCommitId: CommitId
+        throughFile: string option
+        throughOffset: int64
+    }
+
     /// 重放数据目录中的全部事件日志（只读，算法 R 的 R1–R12）。
     /// 不创建目录（空数据目录由协调器/写入路径负责）；不修改任何文件。
     /// 返回 Healthy 或 RepairRequired（携带最长有效前缀投影与修复计划）。
-    let inspect (dataDir: string) : InspectResult =
+    /// `base_`：快照启动（算法 L7）——以快照投影为基线，从 throughCommitId+1 续播；
+    /// None = 完整重放（expectedId 从 1 起）。
+    let inspectFrom (dataDir: string) (base_: SnapshotBase) : InspectResult =
+        let startFrom = Some base_
+        let baseProjection, baseCommitId, baseFile, baseOffset =
+            match startFrom with
+            | Some b -> b.projection, b.throughCommitId, b.throughFile, b.throughOffset
+            | None -> Projection.empty, 0UL, None, 0L
         let eventsDir = DataPaths.eventsDir dataDir
         if not (Directory.Exists eventsDir) then
-            Healthy { projection = Projection.empty
+            Healthy { projection = baseProjection
                       commits = []
                       truncatedFiles = []
-                      lastCommitId = 0UL
-                      lastDateUtc = DateTime.UtcNow.Date }
+                      lastCommitId = baseCommitId
+                      lastDateUtc =
+                        match startFrom with
+                        | Some _ -> DateTime.UtcNow.Date
+                        | None -> DateTime.UtcNow.Date }
         else
             let filesResult =
                 try
@@ -84,24 +102,45 @@ module Replay =
             match filesResult with
             | Error msg -> Unreadable msg
             | Ok [] ->
-                Healthy { projection = Projection.empty
+                Healthy { projection = baseProjection
                           commits = []
                           truncatedFiles = []
-                          lastCommitId = 0UL
+                          lastCommitId = baseCommitId
                           lastDateUtc = DateTime.UtcNow.Date }
             | Ok files ->
-                let mutable projection = Projection.empty
+                let mutable projection = baseProjection
                 let mutable commits: Events.Commit list = []
-                let mutable expectedId = 1UL
+                let mutable expectedId = baseCommitId + 1UL
                 let mutable lastDate = DateTime.UtcNow.Date
                 let mutable stop = false
                 let mutable currentDamage: Damage option = None
+                // 场景 F（N-1）：未来格式版本 → UnsupportedFormat（拒绝启动写服务，保留数据）
+                let mutable futureFormat: string option = None
 
                 let processRecord (path: string) (recordNumber: int) (record: string) : bool =
                     // 一条 RFC 7464 记录（已剥去 RS/LF）
                     if String.IsNullOrWhiteSpace record then
                         true
                     else
+                        // 未来格式版本：外壳可识别但版本未知——绝不截尾（R3：不猜格式）。
+                        // 与「损坏」区分：损坏是当前格式内的非法内容（可修复），
+                        // 未来版本是当前实现无法理解的格式（必须保留数据并拒绝启动）。
+                        let shellVersion = CommitCodec.tryShellFormatVersion record
+                        let isFuture =
+                            match shellVersion with
+                            | Some v when v <> Constants.FormatVersion -> true
+                            | _ -> false
+                        if isFuture then
+                            futureFormat <-
+                                Some(
+                                    sprintf
+                                        "record %d in %s: formatVersion %d not supported (expected %d)"
+                                        recordNumber
+                                        path
+                                        shellVersion.Value
+                                        Constants.FormatVersion)
+                            false
+                        else
                         match CommitCodec.tryCommitFromJsonLine record with
                         | None ->
                             currentDamage <-
@@ -135,16 +174,20 @@ module Replay =
                 // 逐字节扫描单个文件，按 RFC 7464 分帧：记录 = RS(0x1E) + JSON + LF(0x0A)。
                 // 保留偏移语义：损坏记录回退到该记录的 RS 起点（= 有效前缀末尾）。
                 // 返回 true 表示文件完整处理；false 表示发现损坏。
-                let scanFile (name: string) (path: string) : bool =
+                // startOffset > 0 表示快照续播（算法 L7）：从该字节起扫描，跳过已折叠进快照的前缀。
+                let scanFileFrom (name: string) (path: string) (startOffset: int64) : bool =
                     use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
                     let buf = Array.zeroCreate<byte> (64 * 1024)
                     // 当前记录字节缓冲（RS 到 LF 之间，含 LF；不含 RS）
                     let recBytes = new System.IO.MemoryStream()
+                    // 快照续播：recordNumber/bytesRead 从锚点起算（诊断偏移相对锚点）
                     let mutable recordNumber = 0
-                    let mutable bytesRead = 0L
-                    let mutable recordStartOffset = 0L
+                    let mutable bytesRead = startOffset
+                    let mutable recordStartOffset = startOffset
                     let mutable recordOk = true
                     let mutable eof = false
+                    if startOffset > 0L then
+                        fs.Seek(startOffset, SeekOrigin.Begin) |> ignore
                     let flushRecord (terminated: bool) : bool =
                         // 解码当前记录并交给 processRecord；terminated=false 表示尾部无 LF（截断）
                         let raw = recBytes.ToArray()
@@ -210,6 +253,21 @@ module Replay =
                     else
                         true
 
+                // 快照启动（算法 L7）：跳过 throughFile 及其之前的文件（已折叠进快照投影），
+                // 从 throughFile 的 throughOffset 字节续播。throughFile 为 None（快照无文件锚点）
+                // 时从第一个文件开始，但 expectedId 已从 throughCommitId+1 起，id 连续性仍受校验。
+                let skipBeforeFile =
+                    match baseFile with
+                    | Some f ->
+                        match DataPaths.tryParseEventFileName f with
+                        | Some d -> Some d
+                        | None -> None
+                    | None -> None
+                let resumeFile = baseFile
+                let resumeOffset = baseOffset
+
+                let scanFile (name: string) (path: string) : bool = scanFileFrom name path 0L
+
                 for (name, path) in files do
                     if not stop then
                         match DataPaths.tryParseEventFileName name with
@@ -218,11 +276,26 @@ module Replay =
                             currentDamage <- Some { file = path; byteOffset = 0L; reason = sprintf "invalid event file name %s" name }
                             stop <- true
                         | Some _ ->
-                            try
-                                scanFile name path |> ignore
-                            with e ->
-                                currentDamage <- Some { file = path; byteOffset = 0L; reason = sprintf "cannot read file: %s" e.Message }
-                                stop <- true
+                            // 快照锚点文件：从 throughOffset 续播（跳过已折叠进快照的字节）
+                            let skipFile =
+                                match skipBeforeFile, DataPaths.tryParseEventFileName name with
+                                | Some anchor, Some thisDate -> thisDate < anchor
+                                | _ -> false
+                            if skipFile then
+                                () // 已折叠进快照
+                            else
+                                let isResume =
+                                    match resumeFile with
+                                    | Some rf -> name = rf
+                                    | None -> false
+                                try
+                                    if isResume && resumeOffset > 0L then
+                                        scanFileFrom name path resumeOffset |> ignore
+                                    else
+                                        scanFile name path |> ignore
+                                with e ->
+                                    currentDamage <- Some { file = path; byteOffset = 0L; reason = sprintf "cannot read file: %s" e.Message }
+                                    stop <- true
 
                 // 决策 7：文件日期单调性检查——NDJSON 只在"有提交的日子"生成文件，
                 // 停机跨天（8-01 用、8-05 再用）是正常场景，中间日期无文件不是损坏。
@@ -244,6 +317,10 @@ module Replay =
                         | [] -> true
                     if not (checkDateOrder dates) then stop <- true
 
+                // 场景 F：未来格式版本优先于损坏报告——绝不截尾未知格式（R3）。
+                match futureFormat with
+                | Some msg -> UnsupportedFormat msg
+                | None ->
                 match currentDamage with
                 | None ->
                     Healthy { projection = projection
@@ -280,6 +357,16 @@ module Replay =
                         { damage = damage
                           affectedFiles = affected }
                     )
+
+    /// 完整重放（无快照基线）：expectedId 从 1 起，重放全部日志。
+    /// 等价于 `inspectFrom dataDir { projection = Projection.empty; throughCommitId = 0UL; throughFile = None; throughOffset = 0L }`。
+    let inspect (dataDir: string) : InspectResult =
+        inspectFrom
+            dataDir
+            { projection = Projection.empty
+              throughCommitId = 0UL
+              throughFile = None
+              throughOffset = 0L }
 
 /// 显式修复（算法：截尾 + 级联删除）。**必须**在持锁后调用，且修复前应已建立证据包。
 /// 本模块只执行确定性修复（决策 51/120）：截断损坏点、移除更晚日志内容。

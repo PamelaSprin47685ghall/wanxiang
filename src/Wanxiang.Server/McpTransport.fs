@@ -23,6 +23,10 @@ type IMcpTransport =
 
 module McpJson =
 
+    /// MCP 协议版本（单一权威，P-002；version-authority.md 钉住）。
+    [<Literal>]
+    let ProtocolVersion = "2025-06-18"
+
     let errorNode (message: string) : JsonNode =
         let o = JsonObject()
         let e = JsonObject()
@@ -32,7 +36,7 @@ module McpJson =
 
     let initializeParams () : JsonObject =
         let p = JsonObject()
-        p["protocolVersion"] <- "2025-06-18"
+        p["protocolVersion"] <- ProtocolVersion
         let caps = JsonObject()
         caps["roots"] <- JsonObject()
         p["capabilities"] <- caps

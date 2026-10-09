@@ -448,7 +448,23 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             with _ -> ()
             try
                 match coordinator with
-                | Some c -> c.Shutdown()
+                | Some c ->
+                    // S-003 / 算法 S：优雅关闭时冻结快照（只读降级模式不写——日志损坏时
+                    // 快照会固化损坏前的投影，掩盖需要修复的事实；且降级模式禁止一切永久写入）。
+                    // 快照**不删除任何事件日志**（第一版只优化启动）。
+                    if not readOnlyDegraded then
+                        try
+                            // 先取锚点（writer 仍打开），再 Shutdown 释放流，最后写快照
+                            let fileName, fileLen = c.CurrentFileAnchor()
+                            let proj = c.Projection
+                            c.Shutdown()
+                            match Wanxiang.Store.Snapshot.write dataDir proj (Some fileName) fileLen with
+                            | Ok path -> logInfo(sprintf "snapshot written to %s" path)
+                            | Error e -> Stderr.write "snapshot-write-failed" [ "message", e ]
+                        with e ->
+                            Stderr.write "snapshot-write-failed" [ "message", e.Message ]
+                    else
+                        c.Shutdown()
                 | None -> ()
             with _ -> ()
             try

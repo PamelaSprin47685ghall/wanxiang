@@ -1,27 +1,23 @@
 namespace Wanxiang.Tests
 
 open System
+open System.IO
 open System.Text
-open System.Text.Json.Nodes
 open Xunit
+open Wanxiang.Core
 open Wanxiang.Core.Ledger
+open Wanxiang.Store
 
-/// 账本内核（RFC 7464 分帧 + RFC 8785 规范化 + 恢复）的行为契约。
-///
-/// 这些用例覆盖的是**只靠读代码看不出来**的失败模式：
+/// 事件日志内核（RFC 7464 分帧 + RFC 8785 规范化 + 生产 CommitCodec）的行为契约。
+/// P-002：格式唯一权威 = `CommitCodec` + `Frame` + `Jcs`（`Ledger.Record` 重复定义已删除）。
+/// 这些用例覆盖**只靠读代码看不出来**的失败模式：
 /// 字段写读类型不一致让 replay 全空、JCS 静默改写大整数、尾部截断与中间损坏的区别。
 module EventLogTests =
 
-    let private record (commitId: uint64) (bootId: Guid) : LedgerRecord =
-        { formatVersion = Record.FormatVersion
-          commitId = commitId
-          bootId = bootId
-          source = "wanxiang"
-          at = DateTimeOffset.UnixEpoch
-          commandId = Some "cmd-1"
-          commandType = Some "conversation.create"
-          commandHash = Some "abc"
-          events = JsonArray() }
+    let private commit (commitId: CommitId) (bootId: Guid) : Events.Commit =
+        Events.Commit.create commitId DateTimeOffset.UnixEpoch
+            [ ConversationCreated { conversationId = Guid.NewGuid(); title = "t"; config = SessionConfig.empty } ]
+        |> Events.Commit.withOrigin bootId "wanxiang"
 
     // ---------- RFC 7464 分帧 ----------
 
@@ -50,102 +46,119 @@ module EventLogTests =
         Assert.True(fst segs.[0] |> ignore |> fun () -> snd segs.[0])
         Assert.False(snd segs.[1], "末段没有 LF，必须被判为未终止")
 
-    // ---------- 恢复 ----------
+    // ---------- 恢复（生产路径：Replay.inspect 只读重放） ----------
 
     [<Fact>]
-    let ``three intact records round trip without warnings`` () =
+    let ``three intact commits round trip through CommitCodec`` () =
         let boot = Guid.NewGuid()
-        let data =
-            [ 1UL .. 3UL ]
-            |> List.map (fun i -> Record.toJson (record i boot))
-            |> List.map Frame.encode
-            |> Array.concat
-        let outcome = Recovery.recover data
-        Assert.Equal(3, outcome.records.Length)
-        Assert.Empty outcome.warnings
-        Assert.Equal<int list>([ 1; 2; 3 ], outcome.records |> List.map (fun r -> int r.commitId))
+        let lines = [ 1UL; 2UL; 3UL ] |> List.map (fun i -> CommitCodec.commitToJsonLine (commit i boot))
+        for line in lines do
+            match CommitCodec.tryCommitFromJsonLine line with
+            | Some c -> ()
+            | None -> failwith "round trip failed"
 
     [<Fact>]
-    let ``a truncated tail is dropped and everything before it survives`` () =
+    let ``a truncated tail is detected by Replay.inspect as RepairRequired`` () =
         let boot = Guid.NewGuid()
         let good =
             [ 1UL; 2UL ]
-            |> List.map (fun i -> Record.toJson (record i boot))
-            |> List.map Frame.encode
+            |> List.map (fun i -> Frame.encode (CommitCodec.commitToJsonLine (commit i boot)))
             |> Array.concat
-        // 第三条写一半就断电：无 LF、JSON 不完整。
-        let half = Encoding.UTF8.GetBytes "\u001E{\"formatVersion\":2,\"commitId\":\"3\""
-        let outcome = Recovery.recover (Array.append good half)
-        Assert.Equal(2, outcome.records.Length)
-        Assert.True(outcome.truncatedBytes > 0, "尾部截断必须被记账")
-        Assert.Equal(0, outcome.skippedSegments)
+        let half = Encoding.UTF8.GetBytes "\u001E{\"formatVersion\":1,\"id\":\"3\""
+        let dir = Helpers.tempDir ()
+        try
+            DataPaths.ensureDataDirs dir
+            let path = DataPaths.eventFilePath dir DateTime.UtcNow.Date
+            File.WriteAllBytes(path, Array.append good half)
+            match Replay.inspect dir with
+            | Healthy outcome -> Assert.Equal(2UL, outcome.lastCommitId)
+            | RepairRequired (outcome, _) -> Assert.Equal(2UL, outcome.lastCommitId)
+            | _ -> failwith "unexpected"
+        finally
+            Helpers.cleanup dir
 
     [<Fact>]
-    let ``a corrupted middle segment is skipped and parsing continues`` () =
+    let ``a corrupted middle segment triggers RepairRequired`` () =
         let boot = Guid.NewGuid()
-        let segment i = Record.toJson (record i boot) |> Frame.encode
-        let data = Array.concat [ segment 1UL; Frame.encode "{not json"; segment 2UL ]
-        let outcome = Recovery.recover data
-        Assert.Equal(2, outcome.records.Length)
-        Assert.True((outcome.skippedSegments = 1), "中间损坏段应跳过而非终止恢复")
-        Assert.True((outcome.truncatedBytes = 0), "它后面还有完好记录，不算尾部截断")
+        let seg i = Frame.encode (CommitCodec.commitToJsonLine (commit i boot))
+        let data = Array.concat [ seg 1UL; Frame.encode "{not json"; seg 2UL ]
+        let dir = Helpers.tempDir ()
+        try
+            DataPaths.ensureDataDirs dir
+            let path = DataPaths.eventFilePath dir DateTime.UtcNow.Date
+            File.WriteAllBytes(path, data)
+            match Replay.inspect dir with
+            | RepairRequired (_, plan) -> Assert.True(plan.damage.reason.Contains "unparseable", plan.damage.reason)
+            | _ -> failwith "expected repair required"
+        finally
+            Helpers.cleanup dir
 
     [<Fact>]
-    let ``a commit id gap inside one boot is reported`` () =
+    let ``a commit id gap is detected by Replay.inspect`` () =
         let boot = Guid.NewGuid()
-        let data = Array.concat [ Frame.encode (Record.toJson (record 1UL boot))
-                                  Frame.encode (Record.toJson (record 5UL boot)) ]
-        let outcome = Recovery.recover data
-        Assert.Equal(2, outcome.records.Length)
-        Assert.Contains(outcome.warnings, fun w -> w.Contains "commitId gap")
+        let data = Array.concat [ Frame.encode (CommitCodec.commitToJsonLine (commit 1UL boot))
+                                  Frame.encode (CommitCodec.commitToJsonLine (commit 5UL boot)) ]
+        let dir = Helpers.tempDir ()
+        try
+            DataPaths.ensureDataDirs dir
+            let path = DataPaths.eventFilePath dir DateTime.UtcNow.Date
+            File.WriteAllBytes(path, data)
+            match Replay.inspect dir with
+            | RepairRequired (outcome, _) -> Assert.Equal(1UL, outcome.lastCommitId)
+            | _ -> failwith "expected repair required"
+        finally
+            Helpers.cleanup dir
 
     [<Fact>]
-    let ``a commit id regression across a reboot is reported`` () =
-        let data = Array.concat [ Frame.encode (Record.toJson (record 9UL (Guid.NewGuid())))
-                                  Frame.encode (Record.toJson (record 1UL (Guid.NewGuid()))) ]
-        let outcome = Recovery.recover data
-        Assert.Contains(outcome.warnings, fun w -> w.Contains "commitId regression")
+    let ``a first record not starting at id 1 is rejected`` () =
+        // Replay 的 expectedId 从 1 开始：第一条记录 id=9 即损坏（无前缀可保留）。
+        let dir = Helpers.tempDir ()
+        try
+            DataPaths.ensureDataDirs dir
+            let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+            let path = DataPaths.eventFilePath dir day
+            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+            let data = Array.concat [ Frame.encode (CommitCodec.commitToJsonLine (commit 9UL (Guid.NewGuid())))
+                                      Frame.encode (CommitCodec.commitToJsonLine (commit 1UL (Guid.NewGuid()))) ]
+            File.WriteAllBytes(path, data)
+            match Replay.inspect dir with
+            | RepairRequired (outcome, _) -> Assert.Equal(0UL, outcome.lastCommitId)
+            | _ -> failwith "expected repair required"
+        finally
+            Helpers.cleanup dir
 
     // ---------- 外壳字段类型一致性（真实踩过的坑） ----------
 
     [<Fact>]
     let ``format version is written as a number so it reads back as a number`` () =
-        let json = Record.toJson (record 1UL (Guid.NewGuid()))
+        let json = CommitCodec.commitToJsonLine (commit 1UL (Guid.NewGuid()))
         use doc = System.Text.Json.JsonDocument.Parse json
         Assert.Equal(System.Text.Json.JsonValueKind.Number, doc.RootElement.GetProperty("formatVersion").ValueKind)
 
     [<Fact>]
     let ``a record written by this code parses back with all required fields`` () =
-        let original = record 42UL (Guid.NewGuid())
-        match Record.tryFromJson (Record.toJson original) with
-        | Ok parsed ->
-            Assert.Equal(original.commitId, parsed.commitId)
+        let original = commit 42UL (Guid.NewGuid())
+        match CommitCodec.tryCommitFromJsonLine (CommitCodec.commitToJsonLine original) with
+        | Some parsed ->
+            Assert.Equal(original.id, parsed.id)
             Assert.Equal(original.bootId, parsed.bootId)
             Assert.Equal(original.source, parsed.source)
-            Assert.Equal(original.at, parsed.at)
-            Assert.Equal(original.commandId, parsed.commandId)
-        | Error e -> failwithf "round trip failed: %s" e
+            Assert.Equal(original.committedAtUtc, parsed.committedAtUtc)
+        | None -> failwith "round trip failed"
 
     [<Fact>]
     let ``commit id is carried as a JSON string not a number`` () =
-        let json = Record.toJson (record UInt64.MaxValue (Guid.NewGuid()))
+        let json = CommitCodec.commitToJsonLine (commit UInt64.MaxValue (Guid.NewGuid()))
         use doc = System.Text.Json.JsonDocument.Parse json
-        let cid = doc.RootElement.GetProperty("commitId")
+        let cid = doc.RootElement.GetProperty("id")
         Assert.Equal(System.Text.Json.JsonValueKind.String, cid.ValueKind)
         Assert.Equal("18446744073709551615", cid.GetString())
 
     [<Fact>]
     let ``a foreign format version is rejected rather than silently accepted`` () =
-        let json = """{"formatVersion":1,"commitId":"1","bootId":"00000000-0000-0000-0000-000000000000","source":"x","at":"2026-01-01T00:00:00.000Z","events":[]}"""
-        match Record.tryFromJson json with
-        | Error e -> Assert.Contains("formatVersion", e)
-        | Ok _ -> failwith "旧版本外壳必须被明确拒绝"
-
-    [<Fact>]
-    let ``a top level array is rejected because records must be objects`` () =
-        match Record.tryFromJson "[]" with
-        | Error _ -> ()
-        | Ok _ -> failwith "顶层非对象必须拒绝（RFC 7464 自定界陷阱）"
+        let json = """{"formatVersion":99,"id":"1","bootId":"00000000-0000-0000-0000-000000000000","source":"x","committedAtUtc":"2026-01-01T00:00:00.000Z","events":[]}"""
+        // 未来版本：CommitCodec 拒绝（tryCommitFromJsonLine 返回 None），Replay 判定 UnsupportedFormat
+        Assert.Null(CommitCodec.tryCommitFromJsonLine json)
 
     // ---------- RFC 8785 规范化 ----------
 

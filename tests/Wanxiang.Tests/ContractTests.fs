@@ -1,6 +1,7 @@
 module Wanxiang.Tests.ContractTests
 
 open System
+open System.IO
 open Xunit
 open Wanxiang.Agui
 open Wanxiang.Config
@@ -26,11 +27,17 @@ module VersionAuthority =
         Assert.Equal(Constants.FormatVersion, parsed.Value.formatVersion)
 
     [<Fact>]
-    let ``Ledger.Record 是同一逻辑格式的重复定义（结论 C），版本不同步即红`` () =
-        // 两个外壳字段语义一一对应，但版本号与字段名不同——这是 P-001 记录的重复定义。
-        // 本断言钉住现状：任何一边漂移都会让「差异」章节失实。
-        Assert.Equal(2, Record.FormatVersion)
-        Assert.NotEqual(Constants.FormatVersion, Record.FormatVersion)
+    let ``P-002：Ledger.Record 重复定义已删除，格式唯一权威是 CommitCodec + Constants`` () =
+        // 结论 C 已执行：Record.fs / Recovery.fs 从生产与测试中删除。
+        // 唯一外壳版本 = Constants.FormatVersion（CommitCodec 编码/解码同一常量）。
+        Assert.Equal(1, Constants.FormatVersion)
+        // 编码入口与解码入口读同一常量（R3：一个版本常量、一个编码入口、一个解码入口）
+        let commit = Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = Guid.NewGuid(); title = "v"; config = SessionConfig.empty } ]
+        let line = CommitCodec.commitToJsonLine commit
+        Assert.Contains(sprintf "\"formatVersion\":%d" Constants.FormatVersion, line)
+        let parsed = CommitCodec.tryCommitFromJsonLine line
+        Assert.True parsed.IsSome
+        Assert.Equal(Constants.FormatVersion, parsed.Value.formatVersion)
 
     [<Fact>]
     let ``配置版本常量唯一且 TomlCodec 拒绝未知版本`` () =
@@ -45,9 +52,16 @@ module VersionAuthority =
         Assert.Equal("1.0", Capabilities.ProtocolVersion)
 
     [<Fact>]
-    let ``协议版本常量与客户端 Hello 载荷一致`` () =
-        // 客户端仍发送 Hello{version=Constants.ProtocolVersion}；服务端不校验（in-band）。
-        // 见 docs/adr/ADR-001-wire-version-negotiation.md。本断言钉住常量本身。
+    let ``MCP 协议版本常量（单一权威）`` () =
+        Assert.Equal("2025-06-18", Wanxiang.Server.McpJson.ProtocolVersion)
+        // initializeParams 必须携带同一常量（P-002：一个版本只定义一次）
+        let p = Wanxiang.Server.McpJson.initializeParams ()
+        Assert.Equal("2025-06-18", p["protocolVersion"].GetValue<string>())
+
+    [<Fact>]
+    let ``协议版本常量（诊断展示用；线上版本 in-band）`` () =
+        // ADR-001 方案 B：客户端不再发送 Hello，线上版本协商 in-band（AG-UI protocolVersion）。
+        // Constants.ProtocolVersion 仅用于诊断展示（SettingsGeneral）。本断言钉住常量本身。
         Assert.Equal(1, Constants.ProtocolVersion)
 
     [<Fact>]
@@ -60,3 +74,59 @@ module VersionAuthority =
     [<Fact>]
     let ``事件级版本常量`` () =
         Assert.Equal(1, Constants.EventVersion1)
+
+    /// 场景 F（N-1）：未来版本数据 → 明确报告 unsupported format，不修改任何文件。
+    [<Fact>]
+    let ``未来 formatVersion 触发 UnsupportedFormat 且不修改文件`` () =
+        let dir = Wanxiang.Tests.Helpers.tempDir ()
+        try
+            Wanxiang.Store.DataPaths.ensureDataDirs dir
+            let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+            let path = Wanxiang.Store.DataPaths.eventFilePath dir day
+            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+            // 未来版本外壳（formatVersion=99），结构完整
+            // 注意：三引号字符串是 raw（\u 不转义）；用普通字符串 + 显式 RS/LF 字节
+            let future =
+                "\u001e"
+                + """{"formatVersion":99,"id":"1","bootId":"00000000-0000-0000-0000-000000000000","source":"x","committedAtUtc":"2026-08-01T00:00:00.000Z","events":[]}"""
+                + "\u000a"
+            File.WriteAllText(path, future)
+            let bytesBefore = File.ReadAllBytes path
+            match Wanxiang.Store.Replay.inspect dir with
+            | Wanxiang.Store.UnsupportedFormat msg ->
+                Assert.Contains("99", msg)
+                Assert.Contains("not supported", msg)
+            | other -> failwithf "expected UnsupportedFormat, got %A" other
+            // 文件未被修改（R2 / 场景 F：不修改任何文件）
+            Assert.Equal<byte[]>(bytesBefore, File.ReadAllBytes path)
+        finally
+            Wanxiang.Tests.Helpers.cleanup dir
+
+    /// 场景 F 变体：未来版本出现在后续文件，同样 UnsupportedFormat 且不级联。
+    [<Fact>]
+    let ``未来 formatVersion 在后续文件同样拒绝且保留全部数据`` () =
+        let dir = Wanxiang.Tests.Helpers.tempDir ()
+        try
+            Wanxiang.Store.DataPaths.ensureDataDirs dir
+            let day1 = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+            let day2 = DateTime(2026, 8, 2, 0, 0, 0, DateTimeKind.Utc)
+            // 正常 v1 记录
+            let commit =
+                Events.Commit.create 1UL (DateTimeOffset(day1))
+                    [ ConversationCreated { conversationId = Guid.NewGuid(); title = "v"; config = SessionConfig.empty } ]
+            let p1 = Wanxiang.Store.DataPaths.eventFilePath dir day1
+            let p2 = Wanxiang.Store.DataPaths.eventFilePath dir day2
+            Directory.CreateDirectory(Path.GetDirectoryName p1) |> ignore
+            File.WriteAllBytes(p1, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine commit))
+            // 次日文件是未来版本
+            File.WriteAllText(p2, "\u001e" + """{"formatVersion":99,"id":"2","events":[]}""" + "\u000a")
+            let bytes1 = File.ReadAllBytes p1
+            let bytes2 = File.ReadAllBytes p2
+            match Wanxiang.Store.Replay.inspect dir with
+            | Wanxiang.Store.UnsupportedFormat _ -> ()
+            | other -> failwithf "expected UnsupportedFormat, got %A" other
+            // 两个文件都未被修改（不级联删除）
+            Assert.Equal<byte[]>(bytes1, File.ReadAllBytes p1)
+            Assert.Equal<byte[]>(bytes2, File.ReadAllBytes p2)
+        finally
+            Wanxiang.Tests.Helpers.cleanup dir
