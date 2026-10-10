@@ -111,13 +111,25 @@ module PerformanceBaseline =
             cleanup dir
 
     [<Fact>]
-    let ``catch-up 延迟：10^4 commits 中段游标 < 100ms`` () =
+    let ``catch-up 延迟：10^4 commits 分页单批（64 条/批，真实路径）< 100ms`` () =
         let dir = seedLog 10000
         try
             let outcome = replayOutcome dir
             use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
-            let _, elapsed = timed (fun () -> coord.CommitsAfter(5000UL))
-            Assert.True(elapsed < TimeSpan.FromMilliseconds 100.0, sprintf "catch-up took %A" elapsed)
+            // S-005：catch-up 已分页（§13/§22 单批 64 条）。真实路径每批
+            // CommitsAfter(cursor, 64)，不再全量拷贝剩余。此处测分页单批延迟。
+            let _, elapsed = timed (fun () -> coord.CommitsAfter(5000UL, 64) |> ignore)
+            Assert.True(elapsed < TimeSpan.FromMilliseconds 100.0, sprintf "paged catch-up batch took %A" elapsed)
+            // 分页遍历 10^4 条（156 批）总延迟也应远小于全量拷贝路径
+            let sw = System.Diagnostics.Stopwatch.StartNew()
+            let mutable cursor = 5000UL
+            let mutable total = 0
+            while total < 5000 do
+                let batch = coord.CommitsAfter(cursor, 64)
+                total <- total + batch.Length
+                if not (List.isEmpty batch) then cursor <- (List.last batch).id
+            sw.Stop()
+            Assert.True(sw.Elapsed < TimeSpan.FromSeconds 2.0, sprintf "paged traversal took %A" sw.Elapsed)
         finally
             cleanup dir
 
