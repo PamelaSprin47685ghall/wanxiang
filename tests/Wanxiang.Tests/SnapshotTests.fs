@@ -356,3 +356,50 @@ module Snapshot =
             | other -> failwithf "findLatest %A" other
         finally
             cleanup dir
+
+    [<Fact>]
+    let ``v2 快照 commits 字段解码失败时拒绝加载（不静默回退）`` () =
+        // 场景 F 精神：v2 快照声明有 commits 字段但内容非法（如被截断/篡改）→
+        // tryLoad 必须显式拒绝（Error "snapshot commits decode failed"），
+        // 不能把 None 当 v1 静默回退（那会掩盖损坏并让 catch-up 缺历史）。
+        let dir = tempDir ()
+        try
+            DataPaths.ensureDataDirs dir
+            let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+            let convId = Guid.NewGuid()
+            let path = DataPaths.eventFilePath dir day
+            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+            let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "bad"; config = SessionConfig.empty } ]
+            let c2 = Events.Commit.create 2UL (DateTimeOffset(day.AddMinutes 1.0)) [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m" } ]
+            File.WriteAllBytes(path, [ c1; c2 ] |> List.map (fun c -> Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c)) |> Array.concat)
+            let proj2 =
+                let mutable p = Projection.empty
+                for c in [ c1; c2 ] do
+                    p <- match Projection.applyCommit p c with Ok p -> p | Error e -> failwithf "apply %A" e
+                p
+            let offset2 =
+                int64 (Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1)).Length
+                + int64 (Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c2)).Length
+            let snapPath =
+                match Snapshot.write dir proj2 (Some(Path.GetFileName path)) offset2 [ c1; c2 ] with
+                | Ok p -> p
+                | Error e -> failwithf "write %s" e
+            // 篡改：commits[0] 换成非法对象（缺 id/type 字段），重算 checksum
+            let v2 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText snapPath).AsObject()
+            let commitsArr = v2["commits"].AsArray()
+            commitsArr[0] <- System.Text.Json.Nodes.JsonObject.Parse("""{"id": "not-a-commit"}""")
+            let copy = System.Text.Json.Nodes.JsonObject()
+            for kv in v2 do
+                if kv.Key <> "checksum" then copy[kv.Key] <- kv.Value.DeepClone()
+            v2["checksum"] <- Wanxiang.Core.Ledger.Jcs.sha256Hex (copy.ToJsonString(System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.General)))
+            File.WriteAllText(snapPath, v2.ToJsonString(System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.General)))
+            // tryLoad 必须拒绝（显式错误，非静默 None）
+            match Wanxiang.Store.Snapshot.tryLoad snapPath with
+            | Error msg -> Assert.Contains("commits decode failed", msg)
+            | Ok _ -> failwith "corrupt v2 commits must be rejected"
+            // findLatest 层面：该快照损坏 → 无有效快照 → SnapshotCorrupt（不误用坏快照）
+            match Snapshot.findLatest dir with
+            | SnapshotStartup.SnapshotCorrupt _ -> ()
+            | other -> failwithf "expected SnapshotCorrupt, got %A" other
+        finally
+            cleanup dir

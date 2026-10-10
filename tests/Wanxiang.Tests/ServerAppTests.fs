@@ -230,3 +230,33 @@ module ServerAppTests =
         finally
             try Directory.Delete(dir, true) with _ -> ()
 
+    [<Fact>]
+    let ``ServerApp 优雅关闭把全部提交固化为 v2 快照`` () =
+        let dir = createTestDir ()
+        try
+            // 预写 3 条日志（启动重放来源）
+            let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+            let path = DataPaths.eventFilePath dir day
+            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+            for i in 1..3 do
+                let c =
+                    Events.Commit.create (uint64 i) (DateTimeOffset(day.AddSeconds(float i)))
+                        [ ConversationCreated { conversationId = Guid.NewGuid(); title = sprintf "srv-%d" i; config = SessionConfig.empty } ]
+                File.AppendAllText(path, CommitCodec.commitToJsonLine c |> Wanxiang.Core.Ledger.Frame.encode |> System.Text.Encoding.UTF8.GetString)
+            let port = Random.Shared.Next(45001, 55000)
+            let configPath = writeConfigFile dir port "127.0.0.1"
+            let app = new ServerApp(dir, configPath, false, None, ignore)
+            app.Start(false)
+            app.Stop()
+            (app :> IDisposable).Dispose()
+            // 优雅关闭必须写出 v2 快照（batch 6：AllCommits 在 Shutdown 前取）
+            match Wanxiang.Store.Snapshot.findLatest dir with
+            | Wanxiang.Store.SnapshotStartup.SnapshotUsed info ->
+                Assert.Equal(3UL, info.throughCommitId)
+                Assert.True(info.commits.IsSome, "v2 快照应固化 commits")
+                let ids = info.commits.Value |> List.map (fun c -> c.id) |> List.sort
+                Assert.Equal<uint64 list>([ 1UL; 2UL; 3UL ], ids)
+            | other -> failwithf "expected v2 snapshot after graceful stop, got %A" other
+        finally
+            try Directory.Delete(dir, true) with _ -> ()
+

@@ -467,6 +467,74 @@ let ``e2e observe advance cursor then enqueue gets response and push`` () =
         cleanup dir
 
 [<Fact>]
+let ``e2e slow client (never reads) does not block other clients' commits`` () =
+    // §22 资源预算：慢客户端不得阻塞服务器提交。发送队列 BoundedChannel(2048, Wait)
+    // 只阻塞该连接自己的发送循环；coordinator mailbox 与其他连接不受影响。
+    // 断言：连接 A 不读 ws（队列积压），连接 B 的提交仍能在超时内完成。
+    let port = pickPort ()
+    let token = Auth.generateToken ()
+    let handle = E2e.ServerHandle(port, token)
+    try
+        use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
+        let ct = cts.Token
+        // 慢客户端 A：连接 + 认证后**不再读取**（服务端发送队列持续积压）
+        use slow = E2e.conn port token ct
+        E2e.waitFor slow ct (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
+        let obsList = JsonObject()
+        obsList["type"] <- "conversation-list.observe"
+        E2e.send slow obsList ct
+        // 正常客户端 B：认证 + 提交
+        use fast = E2e.conn port token ct
+        E2e.waitFor fast ct (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
+        let obsListB = JsonObject()
+        obsListB["type"] <- "conversation-list.observe"
+        E2e.send fast obsListB ct
+        let listSnap = E2e.waitFor fast ct (fun o -> o["type"].GetValue<string>() = "conversation-list.snapshot")
+        let listPayload = listSnap["payload"].AsObject()
+        let lastCommit = listPayload["lastCommitId"].GetValue<uint64>()
+        let adv = JsonObject()
+        adv["type"] <- "cursor.advanced"
+        let ap = JsonObject()
+        ap["id"] <- lastCommit
+        adv["payload"] <- ap
+        E2e.send fast adv ct
+        // 连续多次提交：慢客户端队列满后（若阻塞 coordinator 则会卡住 B）
+        for i in 1 .. 5 do
+            let convId = Guid.NewGuid()
+            let create = JsonObject()
+            create["type"] <- "conversation.create"
+            let cp = JsonObject()
+            cp["invocationId"] <- Guid.NewGuid().ToString("D")
+            cp["threadId"] <- convId.ToString("D")
+            cp["title"] <- sprintf "slow-client-test-%d" i
+            cp["config"] <- JsonObject()
+            create["payload"] <- cp
+            E2e.send fast create ct
+            let resp = E2e.waitFor fast ct (fun o ->
+                let t = o["type"].GetValue<string>()
+                t = "command.committed" || t = "command.rejected")
+            let t = resp["type"].GetValue<string>()
+            if t <> "command.committed" then
+                let rp = resp["payload"].AsObject()
+                let code = rp["code"].GetValue<string>()
+                failwithf "commit %d rejected with code %s (payload %s)" i code (rp.ToJsonString())
+            Assert.Equal("command.committed", t)
+            // 推进游标到新提交（决策 33/35：客户端确认应用后才继续）
+            let committedPayload = resp["payload"].AsObject()
+            let newCommit = committedPayload["commitId"].GetValue<uint64>()
+            let adv2 = JsonObject()
+            adv2["type"] <- "cursor.advanced"
+            let ap2 = JsonObject()
+            ap2["id"] <- newCommit
+            adv2["payload"] <- ap2
+            E2e.send fast adv2 ct
+        // B 的提交全部成功 → 慢客户端未阻塞服务器
+        Assert.Equal(5, handle.CommitCount)
+        slow.Dispose()
+    finally
+        handle.Dispose()
+
+[<Fact>]
 let ``e2e history paging slices by commit id`` () =
     let port = pickPort ()
     let token = Auth.generateToken ()

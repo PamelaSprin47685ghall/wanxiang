@@ -290,3 +290,62 @@ let ``test_coordinator_repeated_shutdown_and_idisposable`` () =
         (coord :> IDisposable).Dispose() // 覆盖显式 IDisposable 实现
     finally
         cleanup dir
+
+[<Fact>]
+let ``test_all_commits_includes_replayed_and_new_submits_in_order`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        // 预写 3 条日志（启动重放来源）
+        let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+        let path = DataPaths.eventFilePath dir day
+        Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+        for i in 1..3 do
+            let c =
+                Events.Commit.create (uint64 i) (DateTimeOffset(day.AddSeconds(float i)))
+                    [ ConversationCreated { conversationId = newConversationId (); title = sprintf "pre-%d" i; config = testConfig () } ]
+            File.AppendAllText(path, CommitCodec.commitToJsonLine c |> Wanxiang.Core.Ledger.Frame.encode |> System.Text.Encoding.UTF8.GetString)
+        // 启动 coordinator：outcome.commits 含 3 条启动重放提交（batch 6：AllCommits 数据源）
+        let outcome = replayOutcome dir
+        Assert.Equal(3UL, outcome.lastCommitId)
+        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        // 本进程再提交 2 条
+        let convId = newConversationId ()
+        let r1 = coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "new-1"; config = testConfig () } ]
+        let r2 = coord.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "hi" } ]
+        match r1, r2 with
+        | Committed _, Committed _ -> ()
+        | _ -> failwith "expected commits"
+        // AllCommits：启动重放 + 本进程提交，按 id 升序完整
+        let all = coord.AllCommits
+        Assert.Equal(5, all.Length)
+        let ids = all |> List.map (fun c -> c.id)
+        Assert.Equal<uint64 list>([ 1UL; 2UL; 3UL; 4UL; 5UL ], ids)
+        // 一致性：AllCommits 尾部 = CommitsAfter(启动末 id)（快照 v2 写快照与 catch-up 同源）
+        let tail = coord.CommitsAfter 3UL
+        Assert.Equal(2, tail.Length)
+        Assert.Equal<uint64 list>([ 4UL; 5UL ], tail |> List.map (fun c -> c.id))
+        // 幂等：AllCommits 不因重复调用变化
+        Assert.Equal(5, coord.AllCommits.Length)
+    finally
+        cleanup dir
+
+[<Fact>]
+let ``test_all_commits_empty_when_no_history`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let outcome = replayOutcome dir
+        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        Assert.Equal(0UL, outcome.lastCommitId)
+        Assert.Empty(coord.AllCommits)
+        // 空日志提交 1 条后 AllCommits 只含该条
+        let convId = newConversationId ()
+        match coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "only"; config = testConfig () } ] with
+        | Committed c ->
+            let all = coord.AllCommits
+            Assert.Single(all) |> ignore
+            Assert.Equal(c.id, all.Head.id)
+        | _ -> failwith "expected commit"
+    finally
+        cleanup dir
