@@ -184,6 +184,11 @@ type WsConnection(
                                     lock cursorLock (fun () -> observedConversations, observedList)
                                 let items = JsonArray()
                                 let mutable lastItemId = 0UL
+                                // §22：单批字节预算（8 MiB）——64 条事件数上限之外再限总字节，
+                                // 防单条 4 MiB（WebSocket 上限）× 64 条 = 256 MiB 的极端单批。
+                                // 超预算即 break，剩余 commit 由下一批续取（游标推进逻辑不变）。
+                                let mutable batchBytes = 0
+                                let maxBatchBytes = 8 * 1024 * 1024
                                 for commit in batch do
                                     let relevant =
                                         commit.events
@@ -198,10 +203,20 @@ type WsConnection(
                                             | ConversationConfigUpdated d -> listObserved || observedSet.Contains d.conversationId
                                             | ConversationFlagsChanged d -> listObserved || observedSet.Contains d.conversationId)
                                     if relevant then
-                                        items.Add(CommitCodec.commitToJsonLine commit)
-                                        lastItemId <- commit.id
+                                        let line = CommitCodec.commitToJsonLine commit
+                                        let bytes = Text.Encoding.UTF8.GetByteCount line
+                                        if batchBytes + bytes > maxBatchBytes && items.Count > 0 then
+                                            // 本批已满：停止累积，剩余下批续取
+                                            // 不更新 lastItemId——该 commit 未发送，游标停在已发送的最后一条
+                                            ()
+                                        else
+                                            items.Add line
+                                            batchBytes <- batchBytes + bytes
+                                            lastItemId <- commit.id
                                 if items.Count > 0 then
-                                    let catchUp: WireEvent = AuthorityCatchUp {| fromCursor = cursor; toCommitId = (batch |> List.last).id; items = items |}
+                                    // toCommitId = 实际发送的最后一条（字节预算 break 或过滤后
+                                    // batch 尾部可能未发送——水位不得超前于客户端实际收到的内容）
+                                    let catchUp: WireEvent = AuthorityCatchUp {| fromCursor = cursor; toCommitId = lastItemId; items = items |}
                                     if this.TrySend catchUp then
                                         lock cursorLock (fun () ->
                                             // awaitingCursor = 最后一条实际发送的 item id（客户端确认的游标是它）

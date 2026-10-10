@@ -35,7 +35,7 @@
 | 对象 | 预算 | 策略 | 状态 |
 |---|---|---|---|
 | 单批最大事件数 | 64 | `WsConnection` 每批 `getCommitsAfter cursor 64`（S-005 分页：mailbox 线程只复制最多 64 条，不再全量拷贝剩余）；客户端应用后发 `cursor.advanced` 驱动下一批（决策 34） | ✅ |
-| 单批最大字节数 | 无显式字节上限 | 受 64 条事件约束；单条事件大小由消息正文决定 | ⚠️ |
+| 单批最大字节数 | 8 MiB | `WsConnection` catch-up 累积时字节预算（64 条事件数上限之外再限总字节；超预算 break，剩余下批续取）。`toCommitId` = 实际发送的最后一条（过滤/截断后不超前） | ✅ |
 | 会话快照消息上限 | 200 | `snapshotMessageLimit = 200`；超出进入慢客户端分批 catch-up（决策 32-34） | ✅ |
 
 ## 4. WebSocket
