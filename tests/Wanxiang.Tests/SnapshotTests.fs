@@ -39,6 +39,10 @@ module Snapshot =
             | Error e -> failwith e
             | Ok path ->
                 Assert.True(File.Exists path)
+                // R5：写快照不得残留 `.tmp-*` 临时文件（失败路径清理 + 成功路径 Move 走）
+                let tmpLeftovers =
+                    Directory.GetFiles(Path.Combine(dir, "snapshots"), ".tmp-*")
+                Assert.Empty(tmpLeftovers)
                 // 读回
                 match Snapshot.tryLoad path with
                 | Error e -> failwith e

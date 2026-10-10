@@ -334,6 +334,7 @@ module Snapshot =
     /// 创建快照（算法 S）：序列化 → 写临时文件 → flush → 校验和 → 重读验证 → 原子 rename。
     /// **不删除任何事件日志**。返回正式快照文件完整路径。
     let write (dataDir: string) (projection: Projection) (throughFile: string option) (throughOffset: int64) (commits: Events.Commit list) : Result<string, string> =
+        let mutable tmp: string = null
         try
             let throughId = projection.latestCommitId
             // 防御：commits 必须按 id 从 1 连续升序到 throughCommitId（List.rev 语义依赖）。
@@ -365,7 +366,7 @@ module Snapshot =
                 o["checksum"] <- checksum
                 let bytes = Encoding.UTF8.GetBytes(o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General)))
                 // 临时文件名含 GUID：并行测试/并发写快照时避免同名冲突
-                let tmp = Path.Combine(dir, sprintf ".tmp-%d-%d-%s" Environment.ProcessId throughId (Guid.NewGuid().ToString("N")))
+                tmp <- Path.Combine(dir, sprintf ".tmp-%d-%d-%s" Environment.ProcessId throughId (Guid.NewGuid().ToString("N")))
                 do
                     use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
                     fs.Write(bytes, 0, bytes.Length)
@@ -380,7 +381,12 @@ module Snapshot =
                 let final = filePath dataDir throughId
                 File.Move(tmp, final, true)
                 Ok final
-            with e -> Error(sprintf "snapshot write failed: %s" e.Message)
+            with e ->
+                // R5：任何失败路径都不得泄漏临时文件（无界集合）；清理 tmp 后统一转 Error。
+                // 成功路径 tmp 已被 Move 走，Delete 失败（文件不存在）无害。
+                if not (isNull tmp) then
+                    try File.Delete tmp with _ -> ()
+                Error(sprintf "snapshot write failed: %s" e.Message)
 
     // ---------- 算法 L：读快照 ----------
 

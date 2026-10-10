@@ -92,7 +92,9 @@ module Doctor =
                 else
                     sprintf "only %d MiB free (threshold %d MiB)" (free / 1024L / 1024L) (diskFreeWarningBytes / 1024L / 1024L) }
         with _ ->
-            { name = "disk-free-space"; ok = true; detail = "unavailable" }
+            // O-001/R6：磁盘信息不可用 = 无法验证 = 不通过（不得无证据报告 PASS）。
+            // 磁盘满是最危险的静默故障之一，宁可误报也不掩盖。
+            { name = "disk-free-space"; ok = false; detail = "unavailable" }
 
     /// 快照状态检查（findLatest：最新有效快照 / 无 / 损坏 / 超前）。
     let private checkSnapshot (dataDir: string) : CheckResult =

@@ -101,7 +101,14 @@ type AttachmentStore(dataDir: string, maxBytes: int64, ?chunkSizeBytes: int) =
                 o["fileName"] <- fileName
                 o["size"] <- size
                 File.WriteAllText(path, o.ToJsonString())
-            with _ -> ()
+            with e ->
+                // O-001/R6：元数据写失败是 DEGRADED——附件本体已落盘（Complete 已成功），
+                // 仅下载回退默认类型。必须留证据，不允许无证据继续运行。
+                Wanxiang.Server.Stderr.write
+                    "attachment-meta-write-failed"
+                    [ "sha256", sha256
+                      "message", e.Message
+                      "exception", e ]
 
     let uploads = System.Collections.Concurrent.ConcurrentDictionary<Guid, AttachmentUpload>()
 

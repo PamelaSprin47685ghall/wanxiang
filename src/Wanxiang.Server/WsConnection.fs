@@ -73,6 +73,9 @@ type WsConnection(
 
     /// 快照携带的最大消息数（Q127/P1-2：长会话只带尾部，更早历史走 history.request 分页）。
     let snapshotMessageLimit = 200
+    /// catch-up 连续异常重试上限（R5：无界循环必须有界；coordinator 停止等持续故障时
+    /// 耗尽后退出 catch-up 模式恢复实时推送，避免无限重试与悬挂连接）。
+    let maxCatchUpRetries = 10
 
     member _.TrySend(ev: WireEvent) : bool =
         let ok = sendChannel.Writer.TryWrite ev
@@ -136,6 +139,10 @@ type WsConnection(
         if Interlocked.CompareExchange(&catchUpRunning, 1, 0) <> 0 then
             () // 已有 catch-up 进行中：跳过，避免重复批次
         else
+            // 连续异常重试上限：getCommitsAfter 的 PostAndReply 在 coordinator 停止时
+            // 会抛异常；无限重试是 R5 违规（无界循环）。耗尽后退出 catch-up 模式
+            // 恢复实时推送（宁可丢增量也不让连接悬挂），下次队列满会重新进入。
+            let mutable retries = 0
             let mutable doneCatchUp = false
             let mutable cursor = startCursor
             while not doneCatchUp do
@@ -152,8 +159,23 @@ type WsConnection(
                                 lock cursorLock (fun () ->
                                     snapshotMode <- false
                                     awaitingCursor <- None)
-                                continueCatchUp <- false
-                                doneCatchUp <- true
+                                // 竞态窗口：空批判定后、snapshotMode=false 生效前，新提交 X
+                                // 广播会被 ShouldReceiveAuthority（snapshotMode 仍 true）跳过，
+                                // 若直接退出则 X 永久丢失（客户端游标停在旧位置，后续提交正常推送
+                                // 但 X 缺失 → 消息空洞）。
+                                // 修复：用最新水位复核——游标落后则重新进入 catch-up 补发。
+                                // 若 X 恰好在 snapshotMode=false 之后广播成功，这里 latest > cursor
+                                // 会重复补发 X，客户端按 commitId 精确去重（alreadyApplied），安全。
+                                let latest = (getProjection ()).latestCommitId
+                                if latest > cursor then
+                                    // 有新提交在退出窗口内到达：重新进入 catch-up 从 cursor 续取
+                                    lock cursorLock (fun () -> snapshotMode <- true)
+                                    continueCatchUp <- false
+                                    // 不置 doneCatchUp：外层循环重新取批（cursor 未变，取到新提交）
+                                else
+                                    continueCatchUp <- false
+                                    doneCatchUp <- true
+                                    retries <- 0
                             else
                                 // 过滤：只保留观察范围内 commit 的对应事件（列表观察者接收全部列表相关事件）
                                 // 观察集合可能被 recvTask 的 HandleEvent 并发修改（Observe/Unobserve），
@@ -184,6 +206,7 @@ type WsConnection(
                                         lock cursorLock (fun () ->
                                             // awaitingCursor = 最后一条实际发送的 item id（客户端确认的游标是它）
                                             awaitingCursor <- Some lastItemId)
+                                        retries <- 0
                                         // 等待客户端 cursor.advanced 后再发下一批
                                         continueCatchUp <- false
                                         doneCatchUp <- true
@@ -196,13 +219,31 @@ type WsConnection(
                                     // 本批无观察范围内事件：推进游标并继续下一批（循环而非递归，避免深栈）
                                     cursor <- (batch |> List.last).id
                                     lock cursorLock (fun () -> appliedCursor <- cursor)
+                                    retries <- 0
                     with e ->
+                        // O-001/R6：catch-up 异常必须留下诊断证据（含 connectionId），
+                        // 不得无证据继续运行。
+                        Stderr.write
+                            "ws-catchup-failed"
+                            [ "connectionId", connectionId
+                              "cursor", cursor
+                              "message", e.Message
+                              "exception", e ]
                         // 异常：若首批未发出（awaitingCursor 为空），短暂延迟后重试；
                         // 否则等待客户端 cursor.advanced 驱动（CursorAdvanced 分支会再次 SendCatchUp）
                         match lock cursorLock (fun () -> awaitingCursor) with
                         | None ->
-                            Thread.Sleep 100
-                            doneCatchUp <- false
+                            retries <- retries + 1
+                            if retries >= maxCatchUpRetries then
+                                // 重试耗尽（coordinator 停止等持续故障）：退出 catch-up 模式，
+                                // 恢复实时推送路径，避免无限重试（R5 无界循环）与悬挂连接。
+                                lock cursorLock (fun () ->
+                                    snapshotMode <- false
+                                    awaitingCursor <- None)
+                                doneCatchUp <- true
+                            else
+                                Thread.Sleep 100
+                                doneCatchUp <- false
                         | Some _ ->
                             doneCatchUp <- true
             Interlocked.Exchange(&catchUpRunning, 0) |> ignore
@@ -266,7 +307,17 @@ type WsConnection(
                                 more <- false
             with
             | :? OperationCanceledException -> ()
-            | _ -> ()
+            | e ->
+                // O-001/R6：发送循环外层异常（WaitToReadAsync/SendAsync 抛非取消异常，
+                // 如 ObjectDisposedException、WebSocketException）必须留下诊断证据，
+                // 且必须标记 closed——否则 recvTask 继续收、PushAuthority 继续入队，
+                // 连接悬挂（发送死、接收活）。
+                Stderr.write
+                    "ws-send-failed"
+                    [ "connectionId", connectionId
+                      "message", e.Message
+                      "exception", e ]
+                lock cursorLock (fun () -> closed <- true)
         }
 
     /// 推送权威事件；队列满时切换为批式 catch-up（决策 32-34：不为慢客户端无限积压，也不断开）。
