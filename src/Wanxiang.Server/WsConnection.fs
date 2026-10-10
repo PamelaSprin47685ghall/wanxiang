@@ -586,7 +586,7 @@ type WsConnection(
                                         failed <- true
                             if failed then
                                 this.TrySend(ServerError {| message = "attachment download interrupted" |}) |> ignore
-                        } |> ignore
+                        } |> this.Detach
                 | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | HistoryRequest d ->
                 // Q127/P1-2：按全局 commitID 反向分页；页边界用稳定 commitID（不用 offset）。
@@ -675,7 +675,15 @@ type WsConnection(
     member private _.Detach(work: Task) : unit =
         work.ContinueWith(fun (t: Task) ->
             if not (isNull t.Exception) then
-                logInfo(sprintf "detached task failed: %s" (t.Exception.GetBaseException().Message)))
+                // O-001/R6：后台任务异常必须留下 error 级诊断证据（含 connectionId），
+                // 不得仅 info 级或完全未观察。
+                let baseEx = t.Exception.GetBaseException()
+                Stderr.write
+                    "detached-task-failed"
+                    [ "connectionId", connectionId
+                      "message", baseEx.Message
+                      "exception", baseEx ]
+                logInfo(sprintf "detached task failed: %s" baseEx.Message))
         |> ignore
 
     /// 配置写入的公共路径：解析 → 校验 → 原子重写 → 回执 + 广播新目录。
