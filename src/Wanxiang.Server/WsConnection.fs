@@ -799,7 +799,12 @@ type WsConnection(
                 Stderr.write "protocol-decode-error" [ "address", remoteAddress; "message", reason ]
                 do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "invalid event")
             | Ok None ->
-                Stderr.write "protocol-unknown-event-ignored" [ "address", remoteAddress ]
+                // 未知类型是合法忽略（AG-UI 增量安全），记录用于诊断；
+                // 但只在认证后记录——未认证客户端（认证超时 15s 自动关闭）可
+                // 高频发送未知类型洪泛 stderr（磁盘/日志 DoS 面），不值得为
+                // 未认证流量留下诊断记录。
+                if this.IsAuthenticated then
+                    Stderr.write "protocol-unknown-event-ignored" [ "address", remoteAddress ]
             | Ok(Some payload) ->
                 match WireCodec.tryDecodeCommand payload with
                 | Ok cmd ->
