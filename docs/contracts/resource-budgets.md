@@ -44,6 +44,7 @@
 |---|---|---|---|
 | 发送队列上限 | 2048 条 | `BoundedChannelOptions(2048, FullMode = Wait)`（`WsConnection`）——慢客户端不丢事件，发送阻塞 | ✅ |
 | 队列满行为 | 发送阻塞 | `FullMode.Wait`：不静默丢弃；配合快照/catch-up 降级 | ✅ |
+| 并发连接上限 | 256 | `Kestrel Limits.MaxConcurrentConnections`（`ServerApp`）——每连接持 1MB 接收缓冲 + WebSocket + 发送队列，未认证连接 15s 超时但攻击者可持续开新连接耗尽内存（DoS 面） | ✅ |
 
 ## 5. 会话 snapshot（内存投影）
 

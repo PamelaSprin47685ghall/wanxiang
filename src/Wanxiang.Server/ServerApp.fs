@@ -331,6 +331,13 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 options.ConfigureHttpsDefaults(fun https -> https.ServerCertificate <- certificate))
             |> ignore
 
+        builder.WebHost.ConfigureKestrel(fun options ->
+            // R5/§22：连接数上限——每个连接持 1MB 接收缓冲 + WebSocket + 发送队列，
+            // 未认证连接 15s 超时但攻击者可持续开新连接耗尽内存（DoS 面）。
+            // 256 覆盖多客户端 + 慢客户端 catch-up 场景；超过的连接被 Kestrel 拒绝。
+            options.Limits.MaxConcurrentConnections <- Nullable<int64>(256L))
+        |> ignore
+
         let app = builder.Build()
         if servePwa then app.UseResponseCompression() |> ignore
         app.UseWebSockets() |> ignore
