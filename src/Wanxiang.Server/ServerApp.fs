@@ -478,8 +478,10 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                             // 先取锚点（writer 仍打开），再 Shutdown 释放流，最后写快照
                             let fileName, fileLen = c.CurrentFileAnchor()
                             let proj = c.Projection
+                            // 全量提交外壳必须在 Shutdown 前取（Shutdown 后 mailbox 停止）
+                            let allCommits = c.AllCommits
                             c.Shutdown()
-                            match Wanxiang.Store.Snapshot.write dataDir proj (Some fileName) fileLen with
+                            match Wanxiang.Store.Snapshot.write dataDir proj (Some fileName) fileLen allCommits with
                             | Ok path -> logInfo(sprintf "snapshot written to %s" path)
                             | Error e -> Stderr.write "snapshot-write-failed" [ "message", e ]
                         with e ->

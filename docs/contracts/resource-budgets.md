@@ -18,7 +18,7 @@
 
 | 对象 | 预算 | 策略 | 状态 |
 |---|---|---|---|
-| 启动重放量 | 无硬上限（完整重放全部 `.jsonseq`） | 快照启动（S-003）：`data/snapshots/projection-<id>.snapshot` 冻结投影，启动只重放 `throughCommitId+1` 之后（算法 L7）。快照损坏/超前回退完整重放（L8/L9）。**第一版不删除历史日志** | ✅ |
+| 启动重放量 | 无硬上限（完整重放全部 `.jsonseq`） | 快照启动（S-003）：`data/snapshots/projection-<id>.snapshot` 冻结投影 + 全部提交外壳（v2，2026-10-10），启动直接加载快照 + 只重放 `throughCommitId+1` 之后（算法 L7）——启动成本 O(快照加载 + 增量)，与历史长度解耦（§12 STOP-2）。v1 旧快照（无 commits 字段）回退 collect-only 外壳收集（解码 + 校验 + 收集，不 apply projection），保证 `CommitCoordinator.commits` 覆盖全历史、catch-up 任意游标可用。快照损坏/超前回退完整重放（L8/L9）。**第一版不删除历史日志** | ✅ |
 | 快照创建时机 | 优雅关闭（ServerApp.Stop） | 只读降级模式不写（日志损坏时快照会固化损坏前投影） | ✅ |
 | 最坏内存占用 | O(全部历史投影) | 未压缩；第二版 compaction（热→冷）后才受控。见「未实现边界」 | ❌ |
 
@@ -72,7 +72,7 @@
 
 | 对象 | 预算 | 策略 | 状态 |
 |---|---|---|---|
-| 提交缓存 | 无上限 | `CommitCoordinator.commits` 全量内存（供 `CommitsAfter` catch-up）；启动重放后常驻 | ⚠️ |
+| 提交缓存 | 无上限 | `CommitCoordinator.commits` 全量内存（供 `CommitsAfter` catch-up）；启动重放后常驻。快照启动时由 collect-only 外壳收集补全锚点前历史（2026-10-10 修复：此前只含锚点后提交，旧游标 catch-up 会静默丢事件） | ⚠️ |
 | 保留策略 | 无清理 | 快照启动后仍保留全量（catch-up 需要任意游标）。**未实现分页/冷存储** | ❌ |
 
 ## 9. 诊断

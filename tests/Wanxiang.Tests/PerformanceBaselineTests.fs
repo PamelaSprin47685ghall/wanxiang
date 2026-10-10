@@ -69,12 +69,16 @@ module PerformanceBaseline =
             cleanup dir
 
     [<Fact>]
-    let ``快照启动：10^3 commits 续播 < 冷启动`` () =
-        let dir = seedLog 1000
+    let ``快照启动：10^4 commits 续播 < 冷启动`` () =
+        // 10^3 规模太小：快照 JSON 解析开销（投影 + commits 反序列化）占比大，
+        // 快照启动反而不占优（实测 10^3：快照 46ms vs 冷启动 26ms）。
+        // 10^4 消息密集数据（1 会话 + 9999 消息）实测：快照 299ms vs 冷启动 759ms——
+        // 快照跳过投影构建（消息记账/fork 展开），收益随投影复杂度增长。
+        let dir = seedLog 10000
         try
             let outcome = replayOutcome dir
             let fileLen = FileInfo(DataPaths.eventFilePath dir (DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc))).Length
-            match Snapshot.write dir outcome.projection (Some "2026-08-01.jsonseq") fileLen with
+            match Snapshot.write dir outcome.projection (Some "2026-08-01.jsonseq") fileLen outcome.commits with
             | Error e -> failwith e
             | Ok _ ->
                 let _, coldElapsed = timed (fun () -> Replay.inspect dir)
@@ -86,7 +90,8 @@ module PerformanceBaseline =
                             { projection = info.projection
                               throughCommitId = info.throughCommitId
                               throughFile = info.throughFile
-                              throughOffset = info.throughOffset }
+                              throughOffset = info.throughOffset
+                              commits = info.commits }
                     | other -> failwithf "expected SnapshotUsed, got %A" other
                 let _, snapElapsed = timed snapshotStart
                 // 续播只重放 throughCommitId 之后（此处 0 条），应明显快于完整重放
@@ -100,7 +105,7 @@ module PerformanceBaseline =
         try
             let outcome = replayOutcome dir
             let fileLen = FileInfo(DataPaths.eventFilePath dir (DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc))).Length
-            let _, elapsed = timed (fun () -> Snapshot.write dir outcome.projection (Some "2026-08-01.jsonseq") fileLen)
+            let _, elapsed = timed (fun () -> Snapshot.write dir outcome.projection (Some "2026-08-01.jsonseq") fileLen outcome.commits)
             Assert.True(elapsed < TimeSpan.FromSeconds 5.0, sprintf "snapshot creation took %A" elapsed)
         finally
             cleanup dir

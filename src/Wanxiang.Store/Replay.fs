@@ -66,6 +66,9 @@ module Replay =
         throughCommitId: CommitId
         throughFile: string option
         throughOffset: int64
+        /// 快照固化的全部提交外壳（v2，按 id 升序）；None = v1 旧快照，
+        /// inspectFrom 回退 collect-only 外壳收集（扫描锚点前日志）。
+        commits: Events.Commit list option
     }
 
     /// 重放数据目录中的全部事件日志（只读，算法 R 的 R1–R12）。
@@ -75,10 +78,10 @@ module Replay =
     /// None = 完整重放（expectedId 从 1 起）。
     let inspectFrom (dataDir: string) (base_: SnapshotBase) : InspectResult =
         let startFrom = Some base_
-        let baseProjection, baseCommitId, baseFile, baseOffset =
+        let baseProjection, baseCommitId, baseFile, baseOffset, baseCommits =
             match startFrom with
-            | Some b -> b.projection, b.throughCommitId, b.throughFile, b.throughOffset
-            | None -> Projection.empty, 0UL, None, 0L
+            | Some b -> b.projection, b.throughCommitId, b.throughFile, b.throughOffset, b.commits
+            | None -> Projection.empty, 0UL, None, 0L, None
         let eventsDir = DataPaths.eventsDir dataDir
         if not (Directory.Exists eventsDir) then
             Healthy { projection = baseProjection
@@ -109,15 +112,25 @@ module Replay =
                           lastDateUtc = DateTime.UtcNow.Date }
             | Ok files ->
                 let mutable projection = baseProjection
-                let mutable commits: Events.Commit list = []
+                // v2 快照固化的提交外壳直接作为初始列表（按 id 升序）；
+                // v1 旧快照（None）→ 空列表，由 collect-only 扫描补全锚点前历史。
+                let mutable commits: Events.Commit list = baseCommits |> Option.defaultValue []
                 let mutable expectedId = baseCommitId + 1UL
+                // 快照续播（算法 L7）时，锚点之前的外壳收集用独立计数器（从 1 起），
+                // 校验锚点前日志 id 连续；收集结束时必须等于 baseCommitId+1（与续播衔接）。
+                let mutable shellExpectedId = 1UL
                 let mutable lastDate = DateTime.UtcNow.Date
                 let mutable stop = false
                 let mutable currentDamage: Damage option = None
                 // 场景 F（N-1）：未来格式版本 → UnsupportedFormat（拒绝启动写服务，保留数据）
                 let mutable futureFormat: string option = None
 
-                let processRecord (path: string) (recordNumber: int) (record: string) : bool =
+                /// 处理一条记录。collectOnly=true（快照续播锚点前外壳收集）时：
+                /// 只解码 + id 连续性校验 + 收集 commit 外壳，**不 apply projection**——
+                /// 投影构建成本保持 O(快照后增量)，但 commits 覆盖全历史，
+                /// 保证 catch-up 任意游标可用（§22 资源预算：CommitCoordinator.commits 全量保留）。
+                /// 锚点之前的日志在快照创建时已健康且单写者只追加，损坏检测聚焦锚点之后。
+                let processRecord (path: string) (recordNumber: int) (record: string) (collectOnly: bool) : bool =
                     // 一条 RFC 7464 记录（已剥去 RS/LF）
                     if String.IsNullOrWhiteSpace record then
                         true
@@ -149,33 +162,46 @@ module Replay =
                                        reason = sprintf "record %d: unparseable commit" recordNumber }
                             false
                         | Some commit ->
-                            if commit.id <> expectedId then
-                                currentDamage <-
-                                    Some { file = path
-                                           byteOffset = 0L
-                                           reason = sprintf "record %d: id %d out of order; expected %d" recordNumber commit.id expectedId }
-                                false
+                            if collectOnly && commit.id > baseCommitId then
+                                // 外壳收集阶段越过锚点（续播区）：跳过，不校验、不收集
+                                //（续播阶段负责解码/校验/收集，避免重复）。
+                                true
                             else
-                                match Projection.applyCommit projection commit with
-                                | Ok p ->
-                                    projection <- p
-                                    // 前插避免 O(n²)；最终输出时 List.rev 恢复升序
-                                    commits <- commit :: commits
-                                    expectedId <- expectedId + 1UL
-                                    lastDate <- commit.committedAtUtc.UtcDateTime.Date
-                                    true
-                                | Error err ->
+                                let expected = if collectOnly then shellExpectedId else expectedId
+                                if commit.id <> expected then
                                     currentDamage <-
                                         Some { file = path
                                                byteOffset = 0L
-                                               reason = sprintf "record %d: projection failed: %s" recordNumber (WanxiangError.message err) }
+                                               reason = sprintf "record %d: id %d out of order; expected %d" recordNumber commit.id expected }
                                     false
+                                else
+                                    if collectOnly then
+                                        // 外壳收集：不 apply。收集锚点（throughCommitId）之内的外壳。
+                                        commits <- commit :: commits
+                                        shellExpectedId <- shellExpectedId + 1UL
+                                        lastDate <- commit.committedAtUtc.UtcDateTime.Date
+                                        true
+                                    else
+                                        match Projection.applyCommit projection commit with
+                                        | Ok p ->
+                                            projection <- p
+                                            // 前插避免 O(n²)；最终输出时 List.rev 恢复升序
+                                            commits <- commit :: commits
+                                            expectedId <- expectedId + 1UL
+                                            lastDate <- commit.committedAtUtc.UtcDateTime.Date
+                                            true
+                                        | Error err ->
+                                            currentDamage <-
+                                                Some { file = path
+                                                       byteOffset = 0L
+                                                       reason = sprintf "record %d: projection failed: %s" recordNumber (WanxiangError.message err) }
+                                            false
 
                 // 逐字节扫描单个文件，按 RFC 7464 分帧：记录 = RS(0x1E) + JSON + LF(0x0A)。
                 // 保留偏移语义：损坏记录回退到该记录的 RS 起点（= 有效前缀末尾）。
                 // 返回 true 表示文件完整处理；false 表示发现损坏。
                 // startOffset > 0 表示快照续播（算法 L7）：从该字节起扫描，跳过已折叠进快照的前缀。
-                let scanFileFrom (name: string) (path: string) (startOffset: int64) : bool =
+                let scanFileFrom (name: string) (path: string) (startOffset: int64) (collectOnly: bool) : bool =
                     use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
                     let buf = Array.zeroCreate<byte> (64 * 1024)
                     // 当前记录字节缓冲（RS 到 LF 之间，含 LF；不含 RS）
@@ -206,7 +232,7 @@ module Replay =
                         if currentDamage.IsSome then false
                         else
                             let payload = if terminated && record.EndsWith "\n" then record.TrimEnd '\n' else record
-                            processRecord path recordNumber payload
+                            processRecord path recordNumber payload collectOnly
                     while not eof && recordOk do
                         let n = fs.Read(buf, 0, buf.Length)
                         if n = 0 then
@@ -266,7 +292,7 @@ module Replay =
                 let resumeFile = baseFile
                 let resumeOffset = baseOffset
 
-                let scanFile (name: string) (path: string) : bool = scanFileFrom name path 0L
+                let scanFile (name: string) (path: string) : bool = scanFileFrom name path 0L false
 
                 for (name, path) in files do
                     if not stop then
@@ -276,13 +302,23 @@ module Replay =
                             currentDamage <- Some { file = path; byteOffset = 0L; reason = sprintf "invalid event file name %s" name }
                             stop <- true
                         | Some _ ->
-                            // 快照锚点文件：从 throughOffset 续播（跳过已折叠进快照的字节）
+                            // 快照锚点之前的文件：仅 v1 旧快照（commits 未固化）需要
+                            // collect-only 外壳收集回退——不 apply projection，只解码 +
+                            // 校验 id 连续 + 收集 commit 外壳，使 commits 覆盖全历史
+                            //（catch-up 任意游标可用）。v2 快照 commits 已固化，直接跳过。
                             let skipFile =
                                 match skipBeforeFile, DataPaths.tryParseEventFileName name with
                                 | Some anchor, Some thisDate -> thisDate < anchor
                                 | _ -> false
                             if skipFile then
-                                () // 已折叠进快照
+                                match baseCommits with
+                                | Some _ -> () // v2：commits 已固化在快照，跳过
+                                | None ->
+                                    try
+                                        scanFileFrom name path 0L true |> ignore
+                                    with e ->
+                                        currentDamage <- Some { file = path; byteOffset = 0L; reason = sprintf "cannot read file: %s" e.Message }
+                                        stop <- true
                             else
                                 let isResume =
                                     match resumeFile with
@@ -290,7 +326,13 @@ module Replay =
                                     | None -> false
                                 try
                                     if isResume && resumeOffset > 0L then
-                                        scanFileFrom name path resumeOffset |> ignore
+                                        // 锚点文件：v1 旧快照先 collect-only 收集
+                                        // [0, throughOffset) 段外壳（同文件内已折叠进快照的提交），
+                                        // 再从 throughOffset 续播（算法 L7）。
+                                        match baseCommits with
+                                        | Some _ -> ()
+                                        | None -> scanFileFrom name path 0L true |> ignore
+                                        scanFileFrom name path resumeOffset false |> ignore
                                     else
                                         scanFile name path |> ignore
                                 with e ->
@@ -366,7 +408,8 @@ module Replay =
             { projection = Projection.empty
               throughCommitId = 0UL
               throughFile = None
-              throughOffset = 0L }
+              throughOffset = 0L
+              commits = None }
 
 /// 显式修复（算法：截尾 + 级联删除）。**必须**在持锁后调用，且修复前应已建立证据包。
 /// 本模块只执行确定性修复（决策 51/120）：截断损坏点、移除更晚日志内容。

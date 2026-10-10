@@ -165,7 +165,7 @@ module ProjectionInvariants =
                 assertInvariants outcome.projection (List.length ops)
                 // I7：快照 throughCommitId <= 日志最大有效 commitId
                 let fileLen = FileInfo(DataPaths.eventFilePath dir day).Length
-                match Snapshot.write dir outcome.projection (Some(DataPaths.eventFileName day)) fileLen with
+                match Snapshot.write dir outcome.projection (Some(DataPaths.eventFileName day)) fileLen outcome.commits with
                 | Ok _ -> ()
                 | Error e -> failwithf "snapshot write failed: %s" e
                 match Snapshot.findLatest dir with

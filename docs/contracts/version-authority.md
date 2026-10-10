@@ -12,6 +12,7 @@
 | Wanxiang Wire（语义协议版本） | 1 | `Wanxiang.Core/Types.fs` → `Constants.ProtocolVersion = 1` | 否（仅诊断展示 `SettingsGeneral.fs`；客户端已不发送 Hello，ADR-001 方案 B） | **A 独立格式**（诊断展示用；线上版本协商 in-band = AG-UI `protocolVersion`）。见 ADR-001。 |
 | AG-UI | 1.0 | `Wanxiang.Agui/Capabilities.fs` → `Capabilities.ProtocolVersion = "1.0"` | 是（`WireAgui` 承载；`RUN_STARTED.protocolVersion` 带内声明） | **A 独立格式**（外部标准，只读）。 |
 | MCP | 2025-06-18 | `Wanxiang.Server/McpTransport.fs` → `McpJson.initializeParams` 硬编码 `"2025-06-18"` | 是 | **A 独立格式**（外部标准）。版本字符串目前是局部字面量，建议提升为 `McpJson.ProtocolVersion` 常量（单一权威，P-002 范围）。 |
+| Snapshot（投影快照） | 2（v1 兼容读取） | `Wanxiang.Store/Snapshot.fs` → `Snapshot.FormatVersion = 2`；编码 `Snapshot.write` / 解码 `Snapshot.tryLoad`（唯一入口） | 是（优雅关闭写、启动优先读，算法 S/L） | **A 独立格式**。v2（2026-10-10）：信封新增 `commits` 字段（全部提交外壳数组）——快照启动直接加载，无需 collect-only 扫描日志，启动成本与历史长度解耦（§12 STOP-2）。v1 无该字段，读取兼容（`commits = None`，`Replay.inspectFrom` 回退外壳收集）；`tryLoad` 显式识别 1/2 并拒绝其他。 |
 
 ## 差异：生产 Commit 外壳 vs 文档/测试 Record 外壳（已收敛）
 

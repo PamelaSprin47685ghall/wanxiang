@@ -207,7 +207,8 @@ module Program =
                                 { projection = info.projection
                                   throughCommitId = info.throughCommitId
                                   throughFile = info.throughFile
-                                  throughOffset = info.throughOffset }
+                                  throughOffset = info.throughOffset
+                                  commits = info.commits }
                         | Wanxiang.Store.SnapshotStartup.SnapshotCorrupt reasons ->
                             logInfo(sprintf "snapshot corrupt (%s); falling back to full replay" (String.concat "; " reasons))
                             Replay.inspect dataDir

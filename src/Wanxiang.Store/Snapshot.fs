@@ -22,6 +22,10 @@ type SnapshotInfo = {
     path: string
     /// 冻结的投影副本
     projection: Projection
+    /// 快照冻结时刻的全部提交外壳（按 id 升序）。v2 起固化在快照内，
+    /// 快照启动直接加载（无需 collect-only 扫描日志）；v1 旧快照为 None，
+    /// 调用方回退 collect-only 外壳收集（Replay.inspectFrom）。
+    commits: Events.Commit list option
 }
 
 /// 快照优先启动的结论（供调用方记录诊断证据；R6）。
@@ -51,8 +55,11 @@ type SnapshotStartup =
 module Snapshot =
 
     /// 快照格式版本（单一权威，P-002；version-authority.md 钉住）。
+    /// v2（2026-10-10）：信封新增 `commits` 字段（全部提交外壳数组）——
+    /// 快照启动直接加载 commits，无需 collect-only 扫描日志，启动成本与历史长度解耦
+    /// （§12 STOP-2）。v1 快照无该字段，读取兼容（commits = None，调用方回退扫描）。
     [<Literal>]
-    let FormatVersion = 1
+    let FormatVersion = 2
 
     let snapshotsDir (dataDir: string) = Path.Combine(dataDir, "snapshots")
 
@@ -326,40 +333,54 @@ module Snapshot =
 
     /// 创建快照（算法 S）：序列化 → 写临时文件 → flush → 校验和 → 重读验证 → 原子 rename。
     /// **不删除任何事件日志**。返回正式快照文件完整路径。
-    let write (dataDir: string) (projection: Projection) (throughFile: string option) (throughOffset: int64) : Result<string, string> =
+    let write (dataDir: string) (projection: Projection) (throughFile: string option) (throughOffset: int64) (commits: Events.Commit list) : Result<string, string> =
         try
             let throughId = projection.latestCommitId
-            let dir = snapshotsDir dataDir
-            Directory.CreateDirectory dir |> ignore
-            let o = JsonObject()
-            o["snapshotFormatVersion"] <- FormatVersion
-            o["throughCommitId"] <- throughId.ToString(CultureInfo.InvariantCulture)
-            o["createdAt"] <- DateTimeOffset.UtcNow.UtcDateTime.ToString("o")
-            match throughFile with
-            | Some f -> o["throughFile"] <- f
-            | None -> ()
-            o["throughOffset"] <- throughOffset
-            o["projection"] <- projectionToJson projection
-            let checksum = envelopeChecksum o
-            o["checksum"] <- checksum
-            let bytes = Encoding.UTF8.GetBytes(o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General)))
-            // 临时文件名含 GUID：并行测试/并发写快照时避免同名冲突
-            let tmp = Path.Combine(dir, sprintf ".tmp-%d-%d-%s" Environment.ProcessId throughId (Guid.NewGuid().ToString("N")))
-            do
-                use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
-                fs.Write(bytes, 0, bytes.Length)
-                fs.Flush(true) // S4：耐久 flush
-            // S5-S7：重新读取并验证校验和
-            match JsonNode.Parse(File.ReadAllText tmp) with
-            | :? JsonObject as parsed ->
-                if envelopeChecksum parsed <> checksum then
-                    failwith "snapshot self-check failed (checksum mismatch after write)"
-            | _ -> failwith "snapshot self-check failed (re-read is not an object)"
-            // S8：原子 rename
-            let final = filePath dataDir throughId
-            File.Move(tmp, final, true)
-            Ok final
-        with e -> Error(sprintf "snapshot write failed: %s" e.Message)
+            // 防御：commits 必须按 id 从 1 连续升序到 throughCommitId（List.rev 语义依赖）。
+            // 调用方传错（乱序/缺失/越界）→ 拒绝写快照，避免固化损坏的 catch-up 数据。
+            let commitsValid =
+                commits
+                |> List.mapi (fun i c -> c.id = uint64 (i + 1))
+                |> List.forall id
+                && (commits.IsEmpty || (commits |> List.last).id = throughId)
+            if not commitsValid then
+                Error(sprintf "snapshot write failed: commits must be id-contiguous 1..%d (got %d)" throughId commits.Length)
+            else
+                let dir = snapshotsDir dataDir
+                Directory.CreateDirectory dir |> ignore
+                let o = JsonObject()
+                o["snapshotFormatVersion"] <- FormatVersion
+                o["throughCommitId"] <- throughId.ToString(CultureInfo.InvariantCulture)
+                o["createdAt"] <- DateTimeOffset.UtcNow.UtcDateTime.ToString("o")
+                match throughFile with
+                | Some f -> o["throughFile"] <- f
+                | None -> ()
+                o["throughOffset"] <- throughOffset
+                o["projection"] <- projectionToJson projection
+                // v2：固化全部提交外壳（按 id 升序）。行编码复用 CommitCodec（R3：唯一编码入口），
+                // 快照启动直接加载 commits（Replay.inspectFrom），无需 collect-only 扫描日志。
+                let lines = JsonArray([| for c in commits -> JsonNode.Parse(CommitCodec.commitToJsonLine c) |])
+                o["commits"] <- lines
+                let checksum = envelopeChecksum o
+                o["checksum"] <- checksum
+                let bytes = Encoding.UTF8.GetBytes(o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General)))
+                // 临时文件名含 GUID：并行测试/并发写快照时避免同名冲突
+                let tmp = Path.Combine(dir, sprintf ".tmp-%d-%d-%s" Environment.ProcessId throughId (Guid.NewGuid().ToString("N")))
+                do
+                    use fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)
+                    fs.Write(bytes, 0, bytes.Length)
+                    fs.Flush(true) // S4：耐久 flush
+                // S5-S7：重新读取并验证校验和
+                match JsonNode.Parse(File.ReadAllText tmp) with
+                | :? JsonObject as parsed ->
+                    if envelopeChecksum parsed <> checksum then
+                        failwith "snapshot self-check failed (checksum mismatch after write)"
+                | _ -> failwith "snapshot self-check failed (re-read is not an object)"
+                // S8：原子 rename
+                let final = filePath dataDir throughId
+                File.Move(tmp, final, true)
+                Ok final
+            with e -> Error(sprintf "snapshot write failed: %s" e.Message)
 
     // ---------- 算法 L：读快照 ----------
 
@@ -369,10 +390,10 @@ module Snapshot =
             match JsonNode.Parse(File.ReadAllText path) with
             | :? JsonObject as o ->
                 match tryInt o "snapshotFormatVersion" with
-                | Some v when v <> FormatVersion ->
-                    Error(sprintf "unsupported snapshot formatVersion %d (expected %d)" v FormatVersion)
+                | Some v when v <> FormatVersion && v <> 1 ->
+                    Error(sprintf "unsupported snapshot formatVersion %d (supported: %d, legacy 1)" v FormatVersion)
                 | None -> Error "missing snapshotFormatVersion"
-                | Some _ ->
+                | Some fmtVer ->
                     match tryStr o "checksum" with
                     | None -> Error "missing checksum"
                     | Some stored ->
@@ -386,13 +407,36 @@ module Snapshot =
                                 | Some v when v.GetValueKind() = JsonValueKind.Object ->
                                     match projectionFromJson (v.AsObject()) with
                                     | Some proj when proj.latestCommitId = throughId ->
-                                        Ok
-                                            { throughCommitId = throughId
-                                              throughFile = tryStr o "throughFile"
-                                              throughOffset = tryInt64 o "throughOffset" |> Option.defaultValue 0L
-                                              createdAtUtc = createdAt
-                                              path = path
-                                              projection = proj }
+                                        // v2：读 commits 字段（提交外壳数组）；v1（无该字段）→ None
+                                        let commits =
+                                            if fmtVer >= 2 then
+                                                match tryGet o "commits" with
+                                                | Some c when c.GetValueKind() = JsonValueKind.Array ->
+                                                    let mutable ok = true
+                                                    let list = System.Collections.Generic.List<Events.Commit>()
+                                                    for item in c.AsArray() do
+                                                        match item with
+                                                        | :? System.Text.Json.Nodes.JsonObject as jo ->
+                                                            match CommitCodec.tryCommitFromJsonLine (jo.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General))) with
+                                                            | Some commit -> list.Add commit
+                                                            | None -> ok <- false
+                                                        | _ -> ok <- false
+                                                    if ok then Some(List.ofSeq list) else None
+                                                | _ -> None
+                                            else
+                                                None
+                                        match commits with
+                                        | None when fmtVer >= 2 ->
+                                            Error "snapshot commits decode failed"
+                                        | commitsOpt ->
+                                            Ok
+                                                { throughCommitId = throughId
+                                                  throughFile = tryStr o "throughFile"
+                                                  throughOffset = tryInt64 o "throughOffset" |> Option.defaultValue 0L
+                                                  createdAtUtc = createdAt
+                                                  path = path
+                                                  projection = proj
+                                                  commits = commitsOpt }
                                     | Some _ -> Error "snapshot projection latestCommitId != throughCommitId"
                                     | None -> Error "snapshot projection decode failed"
                                 | _ -> Error "snapshot projection missing"

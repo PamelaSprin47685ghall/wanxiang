@@ -165,6 +165,12 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
                             lo <- mid + 1
                     reply.Reply([ for i = idx to commits.Count - 1 do commits[i] ])
                     return! loop ()
+                | GetAllCommits reply ->
+                    // 全量提交（含启动重放 + 本进程提交）：优雅关闭写快照时
+                    // 需要把 commit 外壳固化进快照（快照 v2，供快照启动直接加载，
+                    // 无需 collect-only 扫描日志）。
+                    reply.Reply([ for c in commits -> c ])
+                    return! loop ()
                 | GetCurrentFile reply ->
                     reply.Reply(writer.CurrentFileName, writer.Position)
                     return! loop ()
@@ -191,6 +197,10 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
     member _.CommitsAfter(cursor: CommitId) : Events.Commit list =
         mailbox.PostAndReply(fun ch -> GetCommitsAfter(cursor, ch))
 
+    /// 全部已提交（启动重放 + 本进程提交，按 id 升序）。快照 v2 写快照用。
+    member _.AllCommits : Events.Commit list =
+        mailbox.PostAndReply(GetAllCommits)
+
     /// 当前打开的日志文件名与字节长度（快照锚点用；mailbox 线程内读取保证与写入串行）。
     member _.CurrentFileAnchor() : string * int64 =
         mailbox.PostAndReply(GetCurrentFile)
@@ -210,5 +220,6 @@ and private CoordinatorMessage =
     | Submit of CommitSubmit * AsyncReplyChannel<SubmitResult>
     | GetProjection of AsyncReplyChannel<Projection>
     | GetCommitsAfter of CommitId * AsyncReplyChannel<Events.Commit list>
+    | GetAllCommits of AsyncReplyChannel<Events.Commit list>
     | GetCurrentFile of AsyncReplyChannel<string * int64>
     | FlushAndStop of AsyncReplyChannel<unit>
