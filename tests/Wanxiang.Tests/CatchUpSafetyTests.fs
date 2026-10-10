@@ -40,6 +40,46 @@ let ``coordinator survives broadcast work in onCommitted callback`` () =
     finally
         cleanup dir
 
+/// §13/§22：catch-up 单批有限。CommitsAfter(cursor, limit) 只返回最多 limit 条，
+/// 慢客户端追赶长历史时避免每批 O(n) 复制剩余全部（O(n²)）并阻塞单写者 mailbox。
+[<Fact>]
+let ``CommitsAfter paging returns at most limit commits and advances cursor`` () =
+    let dir = tempDir ()
+    try
+        DataPaths.ensureDataDirs dir
+        let outcome = replayOutcome dir
+        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        let convId = newConversationId ()
+        coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
+        for i in 1..9 do
+            coord.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson (sprintf "m%d" i) } ] |> ignore
+        // 10 条提交（id 1..10）
+        Assert.Equal(10UL, coord.Projection.latestCommitId)
+        // limit=4：只返回 4 条，且是游标后**最前**的 4 条（升序）
+        let page1 = coord.CommitsAfter(0UL, 4)
+        Assert.Equal(4, page1.Length)
+        Assert.Equal<CommitId>([ 1UL; 2UL; 3UL; 4UL ], page1 |> List.map (fun c -> c.id))
+        // 游标推进到批尾后取下一页：4..8
+        let page2 = coord.CommitsAfter(4UL, 4)
+        Assert.Equal(4, page2.Length)
+        Assert.Equal<CommitId>([ 5UL; 6UL; 7UL; 8UL ], page2 |> List.map (fun c -> c.id))
+        // 最后一页不足 limit
+        let page3 = coord.CommitsAfter(8UL, 4)
+        Assert.Equal(2, page3.Length)
+        Assert.Equal<CommitId>([ 9UL; 10UL ], page3 |> List.map (fun c -> c.id))
+        // 分页遍历与全量结果一致（无丢、无重）
+        let paged = page1 @ page2 @ page3
+        Assert.Equal<CommitId>(coord.CommitsAfter 0UL |> List.map (fun c -> c.id), paged |> List.map (fun c -> c.id))
+        // limit=0 → 空（不返回任何条）
+        Assert.Empty(coord.CommitsAfter(0UL, 0))
+        // limit 超过剩余 → 返回剩余全部（不越界）
+        Assert.Equal(10, (coord.CommitsAfter(0UL, 100)).Length)
+        // 游标超过最新 + 任意 limit → 空
+        Assert.Empty(coord.CommitsAfter(10UL, 4))
+        coord.Shutdown()
+    finally
+        cleanup dir
+
 /// 并发提交竞争（42.md 第 15 条发布阻塞项）：多个线程同时提交，
 /// 单写者 mailbox 串行化，id 必须严格连续、无空洞。
 [<Fact>]

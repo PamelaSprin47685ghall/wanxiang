@@ -359,7 +359,9 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                                 orchestrator.Value,
                                 attachmentStore,
                                 toolRegistry.DescriptorsJson,
-                                (fun cursor -> coordinator.Value.CommitsAfter cursor),
+                                // 分页取批：慢客户端每批最多 64 条（§13/§22 单批有限），
+                                // 避免 O(n) 全量复制剩余提交（长历史下 O(n²) 并阻塞单写者 mailbox）
+                                (fun cursor limit -> coordinator.Value.CommitsAfter(cursor, limit)),
                                 pairing,
                                 failureTracker,
                                 (fun code ->

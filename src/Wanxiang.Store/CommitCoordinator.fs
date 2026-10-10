@@ -151,7 +151,7 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
                 | GetProjection reply ->
                     reply.Reply projection
                     return! loop ()
-                | GetCommitsAfter(cursor, reply) ->
+                | GetCommitsAfter(cursor, limitOpt, reply) ->
                     // 二分定位游标后截取（避免 O(n) 全量 filter）；游标 = 客户端已应用的最后 id
                     let mutable lo = 0
                     let mutable hi = commits.Count - 1
@@ -163,7 +163,12 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
                             hi <- mid - 1
                         else
                             lo <- mid + 1
-                    reply.Reply([ for i = idx to commits.Count - 1 do commits[i] ])
+                    // 分页上限（§13/§22：catch-up 单批有限）：limit = None 保持全量语义
+                    // （快照 v2 全量写快照用），Some n 只复制最多 n 条，避免慢客户端
+                    // 追赶长历史时每批 O(n) 复制剩余全部（O(n²)）并阻塞单写者 mailbox。
+                    let limit = commits.Count - idx
+                    let count = match limitOpt with Some n -> min n limit | None -> limit
+                    reply.Reply([ for i = idx to idx + count - 1 do commits[i] ])
                     return! loop ()
                 | GetAllCommits reply ->
                     // 全量提交（含启动重放 + 本进程提交）：优雅关闭写快照时
@@ -193,9 +198,12 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
     member _.Projection : Projection =
         mailbox.PostAndReply(GetProjection)
 
-    /// 返回 replay 加载的有效提交，用于连接断线后的权威 catch-up。
-    member _.CommitsAfter(cursor: CommitId) : Events.Commit list =
-        mailbox.PostAndReply(fun ch -> GetCommitsAfter(cursor, ch))
+    /// 返回游标之后的提交，用于连接断线后的权威 catch-up。
+    /// limit = None 返回全部剩余（快照 v2 写快照等全量场景）；
+    /// Some n 只返回最多 n 条（慢客户端分页追赶，§13/§22 单批有限）。
+    member _.CommitsAfter(cursor: CommitId, ?limit: int) : Events.Commit list =
+        let limitOpt = limit |> Option.map (fun n -> max 0 n)
+        mailbox.PostAndReply(fun ch -> GetCommitsAfter(cursor, limitOpt, ch))
 
     /// 全部已提交（启动重放 + 本进程提交，按 id 升序）。快照 v2 写快照用。
     member _.AllCommits : Events.Commit list =
@@ -219,7 +227,7 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
 and private CoordinatorMessage =
     | Submit of CommitSubmit * AsyncReplyChannel<SubmitResult>
     | GetProjection of AsyncReplyChannel<Projection>
-    | GetCommitsAfter of CommitId * AsyncReplyChannel<Events.Commit list>
+    | GetCommitsAfter of CommitId * int option * AsyncReplyChannel<Events.Commit list>
     | GetAllCommits of AsyncReplyChannel<Events.Commit list>
     | GetCurrentFile of AsyncReplyChannel<string * int64>
     | FlushAndStop of AsyncReplyChannel<unit>

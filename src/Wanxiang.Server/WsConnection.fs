@@ -49,7 +49,7 @@ type WsConnection(
     attachmentStore: AttachmentStore,
     /// 当前可用工具的目录（内置 + MCP 发现）
     toolDescriptors: unit -> JsonArray,
-    getCommitsAfter: CommitId -> Events.Commit list,
+    getCommitsAfter: CommitId -> int -> Events.Commit list,
     pairing: Auth.PairingState,
     failureTracker: Auth.FailureTracker,
     logPairingCode: string -> unit,
@@ -145,8 +145,9 @@ type WsConnection(
                     try
                         let mutable continueCatchUp = true
                         while continueCatchUp && not closed do
-                            let commits = getCommitsAfter cursor
-                            let batch = commits |> List.truncate 64
+                            // 分页取批：只取最多 64 条（§13/§22 单批上限），
+                            // 避免慢客户端追赶长历史时每批 O(n) 复制剩余全部（O(n²)）。
+                            let batch = getCommitsAfter cursor 64
                             if List.isEmpty batch then
                                 lock cursorLock (fun () ->
                                     snapshotMode <- false
