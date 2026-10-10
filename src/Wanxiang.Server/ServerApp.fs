@@ -224,6 +224,12 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                             match orchestrator with
                             | Some o -> o.StartRegeneration d.conversationId
                             | None -> ()
+                        | DeleteConversation d ->
+                            // R5：删除是 runtime 的唯一移除点——会话已从投影删除，
+                            // 残留 runtime 会随会话创建数无界增长。
+                            match orchestrator with
+                            | Some o -> o.OnConversationDeleted d.conversationId
+                            | None -> ()
                         | _ -> ()
                         CommandExecutionResult.CommandCommitted c.id
                     | SubmitResult.IdempotentReplay c -> CommandExecutionResult.CommandIdempotent c.id

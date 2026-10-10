@@ -72,6 +72,20 @@ module Auth =
         let lockObj = obj()
         let failures = System.Collections.Generic.Dictionary<string, DateTimeOffset list>()
         let frozenUntil = System.Collections.Generic.Dictionary<string, DateTimeOffset>()
+        /// 惰性清理阈值：条目数超过该值才扫描清理过期条目（R5：攻击者可伪造
+        /// 大量不同地址反复失败，字典不得随失败次数无界增长；每次 RecordFailure
+        /// 全量扫描是 O(n)，只在超过阈值时做）。
+        let pruneThreshold = 1024
+        /// 移除已过窗口的失败记录与已过期的冻结条目。仅在条目数超过阈值时调用，
+        /// 保证长期运行内存有界且单次成本 O(n) 摊销可忽略。
+        let prune (nowUtc: DateTimeOffset) : unit =
+            let cutoff = nowUtc - failureWindow
+            for kv in failures |> Seq.toArray do
+                match kv.Value |> List.filter (fun t -> t > cutoff) with
+                | [] -> failures.Remove kv.Key |> ignore
+                | kept -> failures[kv.Key] <- kept
+            for kv in frozenUntil |> Seq.toArray do
+                if nowUtc >= kv.Value then frozenUntil.Remove kv.Key |> ignore
 
         member _.IsFrozen(nowUtc: DateTimeOffset, address: string) : bool =
             lock lockObj (fun () ->
@@ -82,6 +96,7 @@ module Auth =
         member _.RecordFailure(nowUtc: DateTimeOffset, address: string) : bool =
             // 返回 true = 触发冻结
             lock lockObj (fun () ->
+                if failures.Count + frozenUntil.Count >= pruneThreshold then prune nowUtc
                 let cutoff = nowUtc - failureWindow
                 let recent =
                     match failures.TryGetValue address with

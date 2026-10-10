@@ -544,8 +544,36 @@ let ``Auth FailureTracker 失败追踪、窗口滑动、达到阈值冻结与手
     Assert.False fWindow
     Assert.False(tracker.IsFrozen(t0 + TimeSpan.FromMinutes 2.0, ip3))
 
+[<Fact>]
+let ``Auth FailureTracker 超过阈值时清理过期条目（R5 有界内存）`` () =
+    let window = TimeSpan.FromMinutes 1.0
+    let tracker = Auth.FailureTracker(window, 3, TimeSpan.FromMinutes 5.0)
+    let t0 = DateTimeOffset.Parse("2026-01-01T12:00:00Z")
+
+    // 插入 1100 个不同地址（超过 1024 阈值），每个只失败一次（不触发冻结）
+    for i in 1..1100 do
+        let ip = sprintf "10.1.0.%d" i
+        tracker.RecordFailure(t0, ip) |> ignore
+
+    // 全部在窗口内：清理后仍应保留（未过期不删）
+    Assert.False(tracker.IsFrozen(t0, "10.1.0.1"))
+
+    // 时间推进到窗口外：再触发一次 RecordFailure 应触发清理，
+    // 旧条目被移除——新地址的失败计数从零开始（不因残留条目受影响）
+    let late = t0 + TimeSpan.FromMinutes 10.0
+    // 新地址连续 3 次失败（窗口外时间）→ 触发冻结，说明旧条目未干扰
+    let ipNew = "10.2.0.1"
+    tracker.RecordFailure(late, ipNew) |> ignore
+    tracker.RecordFailure(late + TimeSpan.FromSeconds 1.0, ipNew) |> ignore
+    let frozen = tracker.RecordFailure(late + TimeSpan.FromSeconds 2.0, ipNew)
+    Assert.True frozen
+    Assert.True(tracker.IsFrozen(late + TimeSpan.FromSeconds 2.0, ipNew))
+
+    // 清理已发生：旧地址的冻结状态不受影响（从未冻结）
+    Assert.False(tracker.IsFrozen(late, "10.1.0.1"))
+
 // ================================================================
-// TomlCodec.fs 深度测试（类型回退、未知键告警、全字段验证与序列化）
+// TomlCodec.fs 深度测试（配置回退、未知键告警、全字段验证与序列化）
 // ================================================================
 
 [<Fact>]

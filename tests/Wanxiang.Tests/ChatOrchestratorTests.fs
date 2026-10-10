@@ -8,6 +8,7 @@ open Wanxiang.Core
 open Wanxiang.Server
 open Wanxiang.Store
 open Wanxiang.Agent
+open Wanxiang.Tests.Helpers
 
 module ChatOrchestratorTests =
 
@@ -249,6 +250,51 @@ module ChatOrchestratorTests =
         let parsed = JsonNode.Parse text
         Assert.NotNull parsed
         Assert.Equal("tool unknown_function_call not found", parsed["error"].GetValue<string>())
+
+    [<Fact>]
+    let ``会话删除后内存运行时被移除且可重建（R5 无界集合）`` () =
+        let dir = tempDir ()
+        try
+            DataPaths.ensureDataDirs dir
+            let outcome = replayOutcome dir
+            use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+            let instanceId = Guid.NewGuid()
+            let appCfg = AppConfig.defaults instanceId
+            let registry = new ToolRegistry((fun () -> appCfg), ignore)
+            let proj = coord.Projection
+            let orch =
+                ChatOrchestrator(
+                    coord,
+                    (fun () -> proj),
+                    (fun _ _ -> ()),
+                    registry,
+                    (fun () -> appCfg),
+                    (fun _ -> None),
+                    ignore)
+            // 1. 发消息创建 runtime（provider 缺失 → 生成失败，但 runtime 已创建）
+            let convId = newConversationId ()
+            let cmd =
+                SendUserMessage
+                    {| invocationId = Guid.NewGuid()
+                       conversationId = convId
+                       messageJson = userMessageJson "hello" |}
+            orch.HandleSendUserMessage cmd
+            Assert.Equal(1, orch.RuntimeCount)
+            // 2. 删除会话 → runtime 移除
+            orch.OnConversationDeleted convId
+            Assert.Equal(0, orch.RuntimeCount)
+            // 3. 同会话再次发消息 → runtime 可重建（无残留状态冲突）
+            let cmd2 =
+                SendUserMessage
+                    {| invocationId = Guid.NewGuid()
+                       conversationId = convId
+                       messageJson = userMessageJson "again" |}
+            orch.HandleSendUserMessage cmd2
+            Assert.Equal(1, orch.RuntimeCount)
+            orch.OnConversationDeleted convId
+            Assert.Equal(0, orch.RuntimeCount)
+        finally
+            cleanup dir
 
 
 

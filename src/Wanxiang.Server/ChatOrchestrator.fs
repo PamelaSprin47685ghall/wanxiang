@@ -190,6 +190,10 @@ type ChatOrchestrator(
     member this.RuntimeStateOf(convId: Guid) : string =
         this.RuntimeSnapshotOf convId |> fst
 
+    /// 内存运行时数量（R5 诊断：runtimes 随会话创建增长，删除会话是唯一移除点；
+    /// 长期运行后该值应约等于活跃会话数，而非历史会话总数）。
+    member _.RuntimeCount : int = runtimes.Count
+
     /// 状态转换与通知同锁；快照不能排在 finished 后面却还声称正在生成。
     /// 正常结束时还需在同一临界区检查队列，避免最后一条排队消息被遗留。
     member private _.FinishGeneration(convId: Guid, generationId: Guid, ev: WireEvent, requireEmptyQueue: bool) =
@@ -669,6 +673,22 @@ type ChatOrchestrator(
                 g.cts.Cancel()
                 Ok()
             | _ -> Error(GenerationNotFound(convId, generationId)))
+
+    /// 会话删除后清理内存运行时（R5：runtimes 不得随会话创建无界增长；
+    /// 删除是唯一移除点——会话已从投影删除，残留 runtime 只会持有
+    /// pendingQueue/generation/cts 直到进程退出）。
+    /// 活跃生成被取消（决策 88 合作式取消；删除后继续生成没有意义）。
+    member this.OnConversationDeleted(convId: Guid) : unit =
+        match runtimes.TryRemove convId with
+        | true, rt ->
+            lock rt (fun () ->
+                match rt.generation with
+                | Some g ->
+                    g.cancelled <- true
+                    g.cts.Cancel()
+                | None -> ())
+            titledConversations.TryRemove(convId, ref false) |> ignore
+        | false, _ -> ()
 
     /// 关闭：取消所有生成。
     member _.Dispose() =
