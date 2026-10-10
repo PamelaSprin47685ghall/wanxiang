@@ -526,7 +526,8 @@ type NavigationController(initialSidebarCollapsed: bool) =
                     if compact then
                         { state with
                             compactMode = true
-                            compactNavigationOpen = if changed then not hasConversation else state.compactNavigationOpen }
+                            // 窄屏起步仍先看到输入区。只有显式导航动作才打开抽屉。
+                            compactNavigationOpen = if changed then false else state.compactNavigationOpen }
                     else
                         { state with compactMode = false; compactNavigationOpen = false }
             needsApply, state

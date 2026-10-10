@@ -260,10 +260,21 @@ type MainView() as this =
     member private this.Render() =
         let run = runs.Get activeConvId
         let generating = run.running
+        sidebar.SetServerUrl lastUrl
+        let startReady =
+            authenticated && Catalog.isReady catalog && not generating && run.error.IsNone
+            && (match activeConvId, activeConversation () with
+                | None, _ -> true
+                | Some _, Some view -> view.messages.Count = 0
+                | _ -> false)
+        match chatColumn with
+        | :? ConversationWorkspace as surface -> surface.SetStarting startReady
+        | _ -> ()
+        composer.SetSessionContext(activeConversation () |> Option.map _.config, authenticated, fun () -> this.ShowSessionContext())
         match activeConvId, activeConversation () with
         | None, _ ->
             chat.SetConversationChrome false
-            chat.SetTitle("", false)
+            chat.SetTitle("新对话", false)
             if not authenticated then
                 chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
                 composer.SetEnabled(false, "连接服务器后即可开始对话。")
@@ -273,9 +284,7 @@ type MainView() as this =
                 composer.SetEnabled(false, "还没有可用的模型，先在设置里添加一个服务商。")
                 composer.SetModelLabel "未配置模型"
             else
-                // 输入区保持可用：直接打字就会自动建会话再发出，
-                // 不必先点一次「新建」。空态里的按钮只是另一条同样有效的路径。
-                chat.ShowEmpty(ChatEmptyState.NoConversation, Some("新建会话", fun () -> this.CreateConversation() |> ignore))
+                chat.ShowEmpty(ChatEmptyState.NoConversation, None)
                 composer.SetEnabled(true, "")
                 match draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog) with
                 | Some(providerId, model) -> composer.SetModelLabel(Catalog.describeModel providerId model catalog)
@@ -296,10 +305,7 @@ type MainView() as this =
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
             if List.isEmpty messages && streaming.IsNone && run.error.IsNone then
                 chat.HideSkeletonLoading()
-                // 空会话与另外三个空态（未连接/无服务商/无会话）对齐：都有主行动键。
-                // 这个会话下输入区本来就能打字，缺的只是「从空态把注意力交付出
-                // 去」的入口；键盘用户走到这里原来是无路可走的死头。
-                chat.ShowEmpty(EmptyConversation, Some("开始输入", fun () -> composer.Focus()))
+                chat.ShowEmpty(EmptyConversation, None)
             else
                 chat.HideSkeletonLoading()
                 chat.HideEmpty()
@@ -1429,6 +1435,16 @@ type MainView() as this =
         sidebar.Build()
         sidebar.SetShowArchived prefs.showArchived
 
+    member private this.ShowSessionContext() =
+        match activeConvId, activeConversation () with
+        | Some convId, Some view when authenticated ->
+            Dialogs.sessionSettings overlay catalog view.config (fun config onCompleted ->
+                let command =
+                    UpdateConversationConfig
+                        {| invocationId = newInvocation (); conversationId = convId; config = config |}
+                sendCommandWithCompletion command (Some "会话设置已更新") ignore onCompleted)
+        | _ -> toast "连接并选择会话后，可以调整上下文。" Warning
+
     member private this.BuildChat() =
         let messageActions =
             { copyText = copyToClipboard
@@ -1456,16 +1472,7 @@ type MainView() as this =
                         sendCommand (
                             RenameConversation {| invocationId = newInvocation (); conversationId = convId; title = title |})
                     | None -> ()
-              openSessionSettings =
-                fun () ->
-                    match activeConvId with
-                    | Some convId ->
-                        Dialogs.sessionSettings overlay catalog (activeConfig ()) (fun config onCompleted ->
-                            let command =
-                                UpdateConversationConfig
-                                    {| invocationId = newInvocation (); conversationId = convId; config = config |}
-                            sendCommandWithCompletion command (Some "会话设置已更新") ignore onCompleted)
-                    | None -> toast "先选择一个会话。" Warning
+              openSessionSettings = fun () -> this.ShowSessionContext()
               forkFromHere =
                 fun () ->
                     match activeConversation () with
@@ -1486,6 +1493,7 @@ type MainView() as this =
               focusHome = fun () -> composer.Focus()
               message = messageActions }
         chat <- ChatView(chatActions, Brand.logo)
+        chat.ConfigureMenu(overlay, fun () -> activeSummary () |> Option.iter (fun summary -> this.ExportConversation summary))
         chat.Build()
 
     member private this.RequestOlderHistory() =
@@ -1566,10 +1574,7 @@ type MainView() as this =
         this.BuildComposer()
         this.BuildSettings()
 
-        chatColumn <- DockPanel()
-        DockPanel.SetDock(composer, Dock.Bottom)
-        chatColumn.Children.Add composer
-        chatColumn.Children.Add chat
+        chatColumn <- ConversationWorkspace(chat, composer)
 
         let initialNavigation = navigation.State
         shellGrid <- Grid()

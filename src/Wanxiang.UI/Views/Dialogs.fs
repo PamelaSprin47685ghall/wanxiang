@@ -398,6 +398,7 @@ module Dialogs =
         let mutable setPending: bool -> unit = ignore
         let mutable providerId = current.provider
         let mutable model = current.model
+        let mutable revealParameters: unit -> unit = ignore
 
         let mutable setModelText: string -> unit = ignore
         let modelOptions () =
@@ -531,6 +532,7 @@ module Dialogs =
                                 if ok then overlay.CloseDialog()
                                 else overlay.Toast("保存失败，请重试。", Failure))
             else
+                revealParameters ()
                 Ui.applyValidationFeedback (List.ofSeq errors) (Some errorSummary) (fun message -> overlay.Toast(message, Warning))
 
         let temperatureColumn = Ui.inputFieldGroup "Temperature" "0–2，留空跟随服务端默认" temperatureBox
@@ -538,6 +540,33 @@ module Dialogs =
         let maxTokensColumn = Ui.inputFieldGroup "最大输出 token" "限制单次回复，留空不限制" maxTokensBox
         let thinkingBudgetColumn = Ui.inputFieldGroup "思维链预算（token）" "0 关闭思维链，留空跟随默认" thinkingBudgetBox
         let paramGrid, applyParamLayout = Ui.twoColumnForm Spacing.space2xl Spacing.spaceXl 4 [ temperatureColumn; topPColumn; maxTokensColumn; thinkingBudgetColumn ]
+        let parameterSummary =
+            if current.temperature.IsSome || current.topP.IsSome || current.maxTokens.IsSome || current.thinkingBudget.IsSome then
+                "生成参数 · 已自定义"
+            else "生成参数 · 跟随默认值"
+        let advanced =
+            Expander(
+                Header = Ui.title parameterSummary,
+                Content = paramGrid,
+                IsExpanded = false,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                ContentTransition = null)
+        AutomationProperties.SetName(advanced, "生成参数")
+        revealParameters <- fun () -> advanced.IsExpanded <- true
+        let tools =
+            Expander(
+                Header = Ui.title (sprintf "工具 · 已启用 %d 项" selectedTools.Count),
+                Content = toolsPanel,
+                IsExpanded = false,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                ContentTransition = null)
+        AutomationProperties.SetName(tools, "会话工具")
+        // 计数在展开/收起时更新，不重建工具开关，也不丢键盘位置。
+        tools.PropertyChanged.Add(fun e ->
+            if e.Property = Expander.IsExpandedProperty then
+                tools.Header <- Ui.title (sprintf "工具 · 已启用 %d 项" selectedTools.Count))
 
         let cancelButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
         AutomationProperties.SetName(cancelButton, "取消")
@@ -572,20 +601,23 @@ module Dialogs =
         let content =
             Ui.vstack
                 Spacing.space2xl
-                [ Ui.vstack Spacing.spaceXs [ Ui.title "会话设置" :> Control; Ui.caption "只影响当前会话，不改服务端默认值。" :> Control ] :> Control
-                  errorSummary :> Control
+                [ errorSummary :> Control
                   Ui.controlFieldGroup "模型" "" (modelButton :> Control)
                   Ui.controlFieldGroup "系统指令" "" (instructionsShell :> Control)
-                  paramGrid :> Control
-                  Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control
-                  Ui.groupingCard
-                      (Thickness(Spacing.spaceXl, Spacing.spaceMd))
-                      (Ui.vstack Spacing.spaceMd [ Ui.sectionLabel "可用工具" :> Control; toolsPanel :> Control ])
-                      Spacing.Radius.md
-                  :> Control
-                  Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control
-                  footer :> Control ]
-        content.KeyDown.Add(fun e ->
+                  tools :> Control
+                  advanced :> Control ]
+        let dialog = DockPanel(LastChildFill = true, MaxHeight = LayoutPolicy.dialogContentMaxHeight)
+        let heading =
+            Ui.vstack Spacing.spaceXs
+                [ Ui.heading "会话上下文" :> Control
+                  Ui.caption "只影响当前会话。保存后用于后续请求，不改动已有消息。" :> Control ]
+        heading.Margin <- Thickness(0.0, 0.0, 0.0, Spacing.space2xl)
+        footer.Margin <- Thickness(0.0, Spacing.space2xl, 0.0, 0.0)
+        DockPanel.SetDock(heading, Dock.Top)
+        DockPanel.SetDock(footer, Dock.Bottom)
+        dialog.Children.Add heading
+        dialog.Children.Add footer
+        dialog.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
             // Ctrl+Enter 保存；Escape 统一走 OverlayHost.HandleEscape。
             if e.Key = Key.Enter && ctrl then
@@ -594,11 +626,11 @@ module Dialogs =
         let scroller =
             ScrollViewer(
                 Content = content,
-                MaxHeight = LayoutPolicy.dialogContentMaxHeight,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto)
+        dialog.Children.Add scroller
         applyParamLayout ()
-        overlay.ShowDialog(scroller :> Control, 520.0, onClosed = (fun () ->
+        overlay.ShowDialog(dialog :> Control, 520.0, scrollWholeContent = false, onClosed = (fun () ->
             dialogActive <- false),
             canDismiss = (fun () -> not pending))
 

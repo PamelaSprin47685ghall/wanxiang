@@ -409,10 +409,9 @@ let ``generation ending hands keyboard focus back to the composer`` () =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``top bar stop button hands keyboard focus back to the composer when a run finishes`` () =
+let ``the sole primary stop returns keyboard focus to input when a run finishes`` () =
     Headless.run (fun () ->
-    // 直接驱动 ChatView：AppShell 下发生成态的连线已有 stopVisible 用例覆盖
-    // （composer 那一侧），这里只钉「焦点从顶栏槽位回家」这一行为本身。
+    // 主要停止入口移到输入区后，结束生成仍须把键盘输入交回文本框。
     let chat =
         ChatView(
             { renameTitle = ignore
@@ -432,42 +431,46 @@ let ``top bar stop button hands keyboard focus back to the composer when a run f
                   openLink = ignore } },
             Brand.logo)
     chat.Build()
-    let host = Grid()
+    let composer = Composer(
+        { submit = (fun _ -> true); stopGeneration = ignore; pickAttachment = ignore
+          removeAttachment = ignore; openModelPicker = ignore; dropFiles = ignore
+          pasteFromClipboard = (fun () -> false) })
+    composer.Build()
+    composer.SetEnabled(true, "")
+    let host = DockPanel()
+    DockPanel.SetDock(composer, Dock.Bottom)
+    host.Children.Add composer
     host.Children.Add chat
     let window = Window(Content = host, Width = 900.0, Height = 700.0)
     window.Show()
     try
         Dispatcher.UIThread.RunJobs()
-        // 与 AppShell 的真实顺序一致：先有会话 chrome（顶栏才可见），再置生成态，
-        // 最后 SetCanStop 让停止键从禁用态转为可聚焦。
+        // 与 AppShell 顺序一致：设置生成态，再确认是否可以停止。
         chat.SetConversationChrome true
-        let mutable homed = false
-        chat.SetGenerating(true, "生成中", (fun () -> homed <- true))
+        chat.SetGenerating(true, "生成中")
         chat.SetCanStop true
+        composer.SetGenerating true
+        composer.SetCanStop true
         Dispatcher.UIThread.RunJobs()
         // 首帧 layout 尚未落地前 Focus 不可能成功：Bounds 全 0、effVis 假。
         // 二次 RunJobs 让窗口完成 measure/arrange 再落焦点；headless 下窗口的
         // 首帧 layout 不随 window.Show() 同步落地，得手动推一轮 layout pass。
         window.GetLayoutManager().ExecuteLayoutPass()
         Dispatcher.UIThread.RunJobs()
-        let chatStop =
-            controls chat |> Seq.find (fun c -> AutomationProperties.GetName c = "停止生成")
-        Assert.True(chatStop.Focusable, "前置条件：生成态顶栏停止键可获得焦点")
-        let ok = chatStop.Focus()
+        let stop =
+            controls composer |> Seq.find (fun c -> AutomationProperties.GetName c = "停止生成")
+        Assert.True(stop.Focusable, "前置条件：输入区停止键可获得焦点")
+        let ok = stop.Focus()
         Dispatcher.UIThread.RunJobs()
-        Assert.True(ok && chatStop.IsFocused, "前置条件：键盘焦点落在顶栏停止键上")
-        chat.SetGenerating(false, "", (fun () -> homed <- true))
+        Assert.True(ok && stop.IsFocused, "前置条件：键盘焦点落在停止键上")
+        chat.SetGenerating(false, "")
+        composer.SetGenerating false
         Dispatcher.UIThread.RunJobs()
-        Assert.False(chatStop.Focusable, "生成结束后槽位复位为不可聚焦（占位保留、不断布局）")
-        // ChatView 只负责委托：AppShell 侧收到 focusHome 后把焦点搬去输入区
-        // （同 composer.SetGenerating 那条路径，另有一测钉住 input.IsFocused）。
-        // 这里的契约就是「委托确实发出」——不发出，真实链路里焦点就悬在
-        // Opacity=0 的 Border 上，之后敲的字全部丢失。
-        Assert.True(homed, "顶栏槽位失资格时焦点必须委托给 AppShell；"
-            + "没有这条委托，Avalonia 不会替失资格宿主迁焦，键盘用户之后敲的字全部丢失。")
-        // kelivo chat_input_bar.dart:1010 生成结束一律 requestFocus 回输入框，
-        // 与 kelivo 桌面端同向；主动点「停止」已由 AppShell.StopGeneration 收口，
-        // 这里接自然完成与排队条目过期。
+        Assert.False(stop.Focusable, "没有待发送内容时发送键不可聚焦")
+        // 不允许焦点留在停止结束后已经失去操作资格的按钮上。
+        let input = controls composer |> Seq.pick (function :? TextBox as b when b.AcceptsReturn -> Some b | _ -> None)
+        Assert.True(input.IsFocused, "停止完成后键盘输入必须由文本框承接")
+        // 同时覆盖自然完成时的回焦，而不只覆盖用户主动停止。
     finally
         window.Close()
     )

@@ -12,13 +12,10 @@ open Xunit
 open Wanxiang.Core
 open Wanxiang.UI
 
-/// 顶栏「上一条 / 下一条」问答跳转。
-///
-/// 借 kelivo scroll_nav_buttons 的 jump-to-question 语义（锚点跟随，连续按键一排排翻），
-/// 但收敛成本项目既有的顶栏按钮组，不引入第二套悬浮按钮层。
+/// 菜单与快捷键共用的问答跳转。不依赖动作是否常驻顶栏。
 /// 这里锁三条可观察契约：
 /// - 锚点语义：第二次「上一条」翻到的是倒数第三轮，而不是重新按当前视口算一次；
-/// - 端点禁用：翻到头不能再翻，按钮槽位保留（宽度不跳）；
+/// - 端点边界：翻到头不能再翻；
 /// - 手动滚动会刷新端点态（无锚点时锚点由视口决定）。
 [<Trait("Category", "UI")>]
 module ExchangeNavTests =
@@ -87,13 +84,13 @@ module ExchangeNavTests =
         |> Seq.cast<Control>
         |> Seq.find contains
 
-    /// 点顶栏按钮。自动化 Invoke 走 Dispatcher.Post，先跑两轮把它排空。
-    /// 动画路径由既有 smoothScroll 用例覆盖；这里关掉动效，让跳转落位瞬时可见，
-    /// 断言的是「跳到哪一轮」而不是「动画播了多少」。
+    /// 驱动菜单和快捷键共用的跳转动作；真实菜单可达性另由 ConversationWorkspaceTests 验证。
+    /// 这里关闭动效，只检查跳到哪一轮及滚动边界。
     let private invoke (chat: ChatView) (name: string) =
-        let button = named chat name
-        let peer = Automation.Peers.ControlAutomationPeer.CreatePeerForElement button
-        Assert.IsAssignableFrom<Automation.Provider.IInvokeProvider>(peer).Invoke()
+        match name with
+        | "上一条提问" -> chat.JumpExchange -1
+        | "下一条提问" -> chat.JumpExchange 1
+        | _ -> failwithf "未知阅读动作：%s" name
         Dispatcher.UIThread.RunJobs()
         Dispatcher.UIThread.RunJobs()
 
@@ -117,15 +114,8 @@ module ExchangeNavTests =
             // 贴到真正的底部（首屏 follow 落在中段是有意的：末条助手消息刚入库）。
             scroller.Offset <- Vector(0.0, scroller.Extent.Height - scroller.Viewport.Height)
             Dispatcher.UIThread.RunJobs()
-            let next = named chat "下一条提问"
-            Assert.True(next.IsVisible, "下一条按钮应可见")
-            Assert.False(next.IsEnabled, "已在最后一条时应禁用")
-            Assert.True(approx next.Width Tokens.iconButton, "禁用态不得收缩宽度")
-            Assert.Equal<string>("已经是最后一条提问", ToolTip.GetTip(next) :?> string)
-
-            let prev = named chat "上一条提问"
-            Assert.True(prev.IsVisible)
-            Assert.True(prev.IsEnabled, "前面还有提问，上一条应可用")
+            Assert.False(chat.CanJumpNext, "已在最后一条时没有下一条")
+            Assert.True(chat.CanJumpPrevious, "前面还有提问，上一条应可用")
         finally
             window.Close()
         )
@@ -142,12 +132,12 @@ module ExchangeNavTests =
             Dispatcher.UIThread.RunJobs()
             Dispatcher.UIThread.RunJobs()
             Assert.True(scroller.Offset.Y < 1.0, sprintf "应已到顶：offset=%f" scroller.Offset.Y)
-            Assert.True((named chat "下一条提问").IsEnabled, "滚到顶部后下一条应可用")
+            Assert.True(chat.CanJumpNext, "滚到顶部后下一条应可用")
             // 到顶时当前轮是第 2 轮（第一屏看得见的第二轮），所以「上一条」还有第 1 轮可去；
             // 再按一次跳到第 1 轮之后才真的没有更早的提问。
             invoke chat "上一条提问"
-            Assert.False((named chat "上一条提问").IsEnabled, "跳到第 1 轮后不应再有更早的提问")
-            Assert.True((named chat "下一条提问").IsEnabled, "第 1 轮之后还有下一轮")
+            Assert.False(chat.CanJumpPrevious, "跳到第 1 轮后不应再有更早的提问")
+            Assert.True(chat.CanJumpNext, "第 1 轮之后还有下一轮")
         finally
             window.Close()
         )
@@ -204,27 +194,30 @@ module ExchangeNavTests =
         let chat, window =
             buildChat [ for i in 1 .. 6 -> { MessageView.empty with role = "assistant"; text = sprintf "回复 %d：%s" i (String.replicate 8 "填充。"); commitId = Some(uint64 i) } ]
         try
-            Assert.False((named chat "上一条提问").IsEnabled)
-            Assert.False((named chat "下一条提问").IsEnabled)
+            Assert.False(chat.CanJumpPrevious)
+            Assert.False(chat.CanJumpNext)
         finally
             window.Close()
         )
 
     [<Trait("Category", "UI")>]
     [<Fact>]
-    let ``compact 档收起顶栏跳转按钮`` () =
+    let ``compact 档保留会话菜单且不再堆叠导航按钮`` () =
         Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 3)
         try
-            let prev = named chat "上一条提问"
-            let next = named chat "下一条提问"
-            Assert.True(prev.IsVisible && next.IsVisible)
+            let more = named chat "会话操作"
+            Assert.True(more.IsVisible)
             chat.SetCompactMode true
             chat.SetConversationChrome true
             Dispatcher.UIThread.RunJobs()
-            Assert.False(prev.IsVisible, "compact 档顶栏让位")
-            Assert.False(next.IsVisible)
+            Assert.True(more.IsVisible, "compact 下低频操作仍通过同一个菜单可达")
+            Assert.Equal(LayoutPolicy.compactActionTarget, more.MinHeight)
+            Assert.DoesNotContain(chat.GetVisualDescendants(), fun visual ->
+                match visual with
+                | :? Control as control -> AutomationProperties.GetName control = "上一条提问"
+                | _ -> false)
         finally
             window.Close()
         )

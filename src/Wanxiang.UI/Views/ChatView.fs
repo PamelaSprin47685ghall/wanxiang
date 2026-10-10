@@ -101,15 +101,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Foreground = Tokens.accent,
             VerticalAlignment = VerticalAlignment.Center)
 
-    // 上一条 / 下一条：跨问答跳转。长会话里找「上一个提问」不该靠滚轮拖半屏。
-    // 借 kelivo scroll_nav_buttons 的上/下一条语义，但收敛到顶栏按钮组：
-    // 桌面端的全局聊天动作本来就在这一行（停止 / 分叉 / 会话设置），
-    // 不再引入第二套悬浮按钮层——那会压住消息内容，也和顶栏形成第二个动作入口。
-    let prevExchangeButton = Ui.iconButton Icons.chevronsUp "上一条提问"
-    let nextExchangeButton = Ui.iconButton Icons.chevronsDown "下一条提问"
-    let stopButton = Ui.iconButton Icons.stop "停止生成"
-    let forkButton = Ui.iconButton Icons.fork "从当前分叉"
-    let sessionSettingsButton = Ui.iconButton Icons.sliders "会话设置"
+    // 顶栏只交代“正在看哪段对话”。低频管理与阅读导航进入有文字的菜单。
+    let moreButton = Ui.iconButton Icons.more "会话操作"
+    let mutable showMore: Control -> unit = ignore
+    let mutable canJumpPrevious = false
+    let mutable canJumpNext = false
     let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl+B / ⌘B）"
 
     let messagePanel =
@@ -208,8 +204,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable compactMode = false
     let mutable hasConversationChrome = false
     let mutable isGenerating = false
-    /// 停止按钮当前是否可点（生成中且已认证且存在生成 Id 时为 true）。
-    /// 禁用态只在槽位可见时施加：隐藏帧上写 opacityDisabled 会让「不可见」重新显形。
+    /// 菜单的停止项只在服务端已确认生成身份、且连接允许操作时出现。
     let mutable canStop = false
     let mutable titleEditable = false
     let mutable editingTitle = false
@@ -277,8 +272,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             timer.Start()
 
 
-    /// 顶栏两个跳转钮的可用态：端点处不可点，但保留槽位（只切 opacity/命中，不动宽度），
-    /// 否则用户每翻到第一条按钮就消失一次，顶栏按钮会左右跳。
+    /// 阅读导航的端点状态。菜单与快捷键共用锚点，不再为不可用动作预留顶栏按钮。
     let syncExchangeNavState () =
         let cards = exchangeIndices ()
         let anchorIndex =
@@ -292,12 +286,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         // 「下一条」仍可点，按下去只是原地跳一格再被自动跟随拽回底部。
         // 与 kelivo 的 hasNext 端点规则同向：target 越界即不可跳。
         let hasNext = hasNext && not atBottom
-        Ui.setEnabled prevExchangeButton hasPrev
-        Ui.setEnabled nextExchangeButton hasNext
-        // 提示随手性走：禁用写原因，重新可用时还原成动作名，不留下一条过时的
-        // 「已经是第一条提问」骗用户（滚回去后它明明又可用）。
-        ToolTip.SetTip(prevExchangeButton, if hasPrev then "上一条提问" else "已经是第一条提问")
-        ToolTip.SetTip(nextExchangeButton, if hasNext then "下一条提问" else "已经是最后一条提问")
+        canJumpPrevious <- hasPrev
+        canJumpNext <- hasNext
 
 
     do
@@ -481,56 +471,63 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         else
             Ui.setReservedActionVisible generatingChip isGenerating
 
-    /// 停止按钮的常驻槽位：SetGenerating / SetCompactMode / 初始化三条路径的唯一收口。
-    ///
-    /// 与顶栏 chip 同一原语（Ui.setReservedActionVisible）：IsVisible 恒为 true，
-    /// 只切 Opacity / 命中 / 聚焦 / 无障碍视图。停止按钮位于右侧 Dock.Right 组，
-    /// 用 IsVisible 直接开关会让组宽、标题可用宽度与按钮位置在生成开始/结束时位移。
-    /// 禁用态只在槽位可见（生成中）时施加：隐藏后再写 Opacity 会让隐藏按钮显形。
-    member private this.SyncStopSlot() =
-        Ui.setReservedActionVisible stopButton isGenerating
-        if isGenerating then Ui.setEnabled stopButton canStop
-
-    /// `focusHome` 在生成态收尾、焦点停在停止键上时托管回家（AppShell 传输入区）。
-    /// 顶栏停止键也是保留槽位：Focusable 复位为 false 时 Avalonia 不自动迁焦，
-    /// 焦点会悬在 Opacity=0 的宿主上，键盘用户之后敲的字没有任何承接。
+    /// 停止的常驻入口属于输入区；顶栏只显示状态，不再预留第二个停止按钮。
     member this.SetGenerating(generating: bool, statusText: string, ?focusHome: unit -> unit) =
-        let focusHome = focusHome |> Option.defaultValue ignore
         isGenerating <- generating
         this.SyncGeneratingChipVisibility()
         generatingCaption.Text <- if String.IsNullOrWhiteSpace statusText then "生成中" else statusText
-        this.SyncStopSlot()
-        if not generating && stopButton.IsFocused then focusHome ()
 
     member this.SetCanStop(value: bool) =
         canStop <- value
-        // 非生成态时停止按钮处于保留隐藏槽位，此时施加禁用视觉（setEnabled 会写
-        // Opacity）会让隐藏的按钮重新显形。AppShell 的真实顺序是 SetGenerating
-        // 之后跟一次 SetCanStop，隐藏帧上跳过即可保持「看不见」。
-        if isGenerating then Ui.setEnabled stopButton value
+
+    member _.CanJumpPrevious = canJumpPrevious
+    member _.CanJumpNext = canJumpNext
+
+    member this.ConfigureMenu(overlay: OverlayHost, exportConversation: unit -> unit) =
+        showMore <- fun anchor ->
+            syncExchangeNavState ()
+            let conversation =
+                [ if titleEditable then
+                      MenuEntry.create "重命名" (fun () -> this.BeginTitleEdit()) |> MenuEntry.withIcon Icons.pencil
+                  MenuEntry.create "会话上下文" actions.openSessionSettings |> MenuEntry.withIcon Icons.sliders
+                  MenuEntry.create "从当前分叉" actions.forkFromHere |> MenuEntry.withIcon Icons.fork
+                  MenuEntry.create "导出为 Markdown" exportConversation |> MenuEntry.withIcon Icons.download ]
+            let reading =
+                [ if canJumpPrevious then
+                      MenuEntry.create "上一条提问" (fun () -> this.JumpExchange -1) |> MenuEntry.withIcon Icons.chevronsUp
+                  if canJumpNext then
+                      MenuEntry.create "下一条提问" (fun () -> this.JumpExchange 1) |> MenuEntry.withIcon Icons.chevronsDown
+                  if messagePanel.Children.Count > 0 then
+                      MenuEntry.create "回到会话开头" (fun () -> this.SmoothScrollToBeginning())
+                      MenuEntry.create "回到最新" (fun () -> this.SmoothScrollToEnd()) ]
+            let groups =
+                [ "当前会话", conversation
+                  if not (List.isEmpty reading) then "阅读位置", reading
+                  if isGenerating && canStop then
+                      "执行", [ MenuEntry.create "停止生成" (fun () -> actions.stopGeneration (); actions.focusHome ()) |> MenuEntry.withIcon Icons.stop ] ]
+            Menu.showGrouped overlay anchor false groups
 
     /// 会话状态变化时同步顶栏功能按钮的可用性。
     member this.SetConversationChrome(hasConversation: bool) =
         hasConversationChrome <- hasConversation
-        forkButton.IsVisible <- hasConversation && not compactMode
-        // 问答跳转只在有会话时出现；compact 档顶栏让位，和 forkButton 同一判据。
-        prevExchangeButton.IsVisible <- hasConversation && not compactMode
-        nextExchangeButton.IsVisible <- hasConversation && not compactMode
+        moreButton.IsVisible <- hasConversation
         syncExchangeNavState ()
-        sessionSettingsButton.IsVisible <- hasConversation
         if not (isNull (box headerBar)) then headerBar.IsVisible <- true
 
 
     member this.SetCompactMode(value: bool) =
         compactMode <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
-        for button in [ sidebarToggleButton; stopButton; forkButton; sessionSettingsButton; prevExchangeButton; nextExchangeButton; scrollToBottomButton ] do
+        for button in [ sidebarToggleButton; moreButton; scrollToBottomButton ] do
             Ui.setSquareTarget button size
-        this.SyncStopSlot()
-        sessionSettingsButton.IsVisible <- hasConversationChrome
+        moreButton.IsVisible <- hasConversationChrome
         this.UpdateScrollToBottomAppearance()
         this.SyncGeneratingChipVisibility()
-        forkButton.IsVisible <- hasConversationChrome && not value
+
+    /// 空态标题靠近输入区；只改布局，不移除或重挂输入控件。
+    member _.SetStartMode(value: bool) =
+        emptyPanel.VerticalAlignment <- if value then VerticalAlignment.Bottom else VerticalAlignment.Center
+        emptyPanel.Margin <- Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, Spacing.space2xl)
 
     member this.ShowEmpty(state: ChatEmptyState, onPrimary: (string * (unit -> unit)) option) =
         match onPrimary with
@@ -544,8 +541,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 match state with
                 | NotConnected -> "先连接一台万象服务器", "服务端负责运行模型与保存会话；客户端只是它的一个视图。"
                 | NoProvider -> "还没有可用的模型", "添加一个服务商并填入密钥，就可以开始对话了。"
-                | NoConversation -> "开始一次新对话", "左侧新建会话，或从历史里挑一个继续。"
-                | EmptyConversation -> "说点什么吧", "这个会话还是空的。你的第一句话会决定它的标题。"
+                | NoConversation -> "从一个问题开始", "直接输入即可开始。历史对话留在左侧，随时可以继续。"
+                | EmptyConversation -> "继续你的想法", "输入问题，或添加一份文件。发送后开始这段对话。"
             match onPrimary with
             | Some(label, _) ->
                 Ui.setButtonText emptyActionButton label
@@ -1091,8 +1088,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.Build() =
         this.Background <- Tokens.canvas
 
-        Ui.onClick prevExchangeButton (fun () -> this.JumpExchange -1)
-        Ui.onClick nextExchangeButton (fun () -> this.JumpExchange 1)
+        Ui.onClick moreButton (fun () -> showMore moreButton)
         Ui.onClick titleAction (fun () -> this.BeginTitleEdit())
         titleAction.KeyDown.Add(fun e ->
             if (e.Key = Key.F2 || e.Key = Key.Enter) && titleEditable then
@@ -1127,13 +1123,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         titleEditShell.PointerExited.Add(fun _ ->
             if not titleEditBox.IsFocused then titleEditShell.BorderBrush <- Tokens.border)
 
-        Ui.onClick stopButton (fun () -> actions.stopGeneration ())
-        Ui.onClick forkButton (fun () -> actions.forkFromHere ())
-        Ui.onClick sessionSettingsButton (fun () -> actions.openSessionSettings ())
         Ui.onClick sidebarToggleButton (fun () -> actions.toggleSidebar ())
-        Ui.setReservedActionVisible stopButton false
-        forkButton.IsVisible <- false
-        sessionSettingsButton.IsVisible <- false
+        moreButton.IsVisible <- false
 
         // 顶栏左组不能用横向 StackPanel：它会用无限宽测量标题，长标题不会真正
         // 进入 ellipsis，而是去挤右侧动作。Grid 把标题放进唯一可 shrink 的 Star 列。
@@ -1153,16 +1144,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         leftGroup.Children.Add sidebarToggleButton
         leftGroup.Children.Add titleHost
         leftGroup.Children.Add generatingChip
-        // 从左到右按保留优先级排列：Stop > Session Settings > Fork > Prev/Next。
-        // 问答跳转排最后：它不是每次生成都会用的动作，优先级低于停止与分叉。
-        let rightGroup =
-            Ui.hstack
-                Spacing.spaceXs
-                [ stopButton :> Control
-                  sessionSettingsButton :> Control
-                  forkButton :> Control
-                  prevExchangeButton :> Control
-                  nextExchangeButton :> Control ]
+        let rightGroup = Ui.hstack Spacing.spaceXs [ moreButton :> Control ]
         let headerDock = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
         DockPanel.SetDock(rightGroup, Dock.Right)
         headerDock.Children.Add rightGroup

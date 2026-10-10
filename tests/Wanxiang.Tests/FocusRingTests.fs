@@ -239,15 +239,11 @@ let ``非 compact 下侧栏不拦截 Tab，桌面态与主区互 Tab 如常`` ()
         window.Close()
     )
 
-/// 视口把抽屉自动带开的路径（AppShell.ApplyResponsiveLayout → NavigationController.ApplyViewport）
-/// 也必须先聚焦进抽屉：进入 compact 且无会话时抽屉自动打开，焦点须落在抽屉搜索框，
-/// 之后 Tab 全程在抽屉内循环，背景聊天/输入区键盘不可达——与用户手动打开（FocusSearch）同一归宿。
-/// MainView.ApplyResponsiveLayout 是私有方法且依赖完整壳（client/composer/timers），无头测试不整体构造它；
-/// 本用例把「真实状态迁移：NavigationController.ApplyViewport」与「焦点归宿契约：SetCompactMode 投影 + FocusSearch」
-/// 在焦点环现场复现并对齐，并逐条钉住「聚焦进抽屉」的触发条件：仅当抽屉由「未开」翻到「compact 打开」。
+/// 窄屏默认保留会话主区。用户显式打开抽屉后，焦点进入搜索框并在抽屉内循环。
+/// 同时验证反例：仅改变视口宽度不得抢走输入焦点。
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``视口自动带开 compact 抽屉时焦点先落抽屉内，背景键盘不可达`` () =
+let ``窄屏不自动打开抽屉，显式打开后焦点留在抽屉内`` () =
     Headless.run (fun () ->
     let sidebar, overlay, background, window = buildCompactDrawer ()
     try
@@ -259,13 +255,15 @@ let ``视口自动带开 compact 抽屉时焦点先落抽屉内，背景键盘�
             Dispatcher.UIThread.RunJobs()
             args
 
-        // 真实状态迁移：窄视口 + 无会话，ApplyViewport 自 compact 外把抽屉带开。
+        // 真实状态迁移：先进入 compact，再由用户动作打开抽屉。
         let nav = NavigationController(false)
         let before = nav.State
-        let needsApply, state = nav.ApplyViewport(360.0, false)
+        let needsApply, compactState = nav.ApplyViewport(360.0, false)
         Assert.True(needsApply, "进入 compact 应触发一次布局投影")
+        Assert.False(compactState.compactNavigationOpen, "没有会话也先展示输入区，不自动盖上历史列表")
+        let state = nav.ToggleSidebar()
         Assert.True(state.compactMode, "窄视口下应为 compact")
-        Assert.True(state.compactNavigationOpen, "无会话时视口应把抽屉自动带开")
+        Assert.True(state.compactNavigationOpen, "显式打开才展示抽屉")
         Assert.False(before.compactMode && before.compactNavigationOpen, "迁移前抽屉未开，构成「翻到打开」")
 
         // 壳层投影：MainLayout.Apply 把 compactMode 同步给侧栏，抽屉的 Tab 包含逻辑随 compactMode 启用。
@@ -282,7 +280,7 @@ let ``视口自动带开 compact 抽屉时焦点先落抽屉内，背景键盘�
 
         let ring = overlay.Focusables(sidebar)
         let searchBox = drawerSearchBox ring
-        Assert.True(obj.ReferenceEquals(focused (), searchBox), "自动带开后焦点应落在抽屉搜索框")
+        Assert.True(obj.ReferenceEquals(focused (), searchBox), "显式打开后焦点应落在抽屉搜索框")
         Assert.False(background.IsFocused, "焦点不应落在背景输入区")
         Assert.True(withinDrawer ring, "起点即在抽屉内")
 

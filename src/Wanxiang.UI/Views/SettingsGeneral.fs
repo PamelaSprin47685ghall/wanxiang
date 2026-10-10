@@ -48,7 +48,32 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
     let mutable setGenerationPending: bool -> unit = ignore
     /// 生成保存往返中的重入 guard：按钮已禁用，但重复调用仍能进 Save。
     let mutable generationSaving = false
+    let mutable generationDirty = false
+    let mutable generationSyncing = false
+    let mutable generationRevision = 0
+    let mutable generationBaseline = catalog.generation
+    let mutable generationScope = ""
+    let mutable draftScope = ""
+    let mutable scopeEpoch = 0
+    let generationStatus = Ui.caption "修改后保存，仅用于新会话。"
     let mutable syncAppearance: UiPrefs -> unit = ignore
+
+    let markGenerationDirty () =
+        if not generationSyncing then
+            if not generationDirty then draftScope <- generationScope
+            generationRevision <- generationRevision + 1
+            generationDirty <- true
+            generationStatus.Text <-
+                if draftScope <> generationScope then "服务器已切换。旧草稿仍在，但不能保存到另一台服务器。请返回原服务器，或放弃修改。"
+                else "有未保存的修改。离开设置后，草稿仍留在当前窗口。"
+
+    do
+        Avalonia.Automation.AutomationProperties.SetName(generationStatus, "生成设置保存状态")
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(
+            generationStatus, Avalonia.Automation.AutomationLiveSetting.Polite)
+        for box in [ temperatureBox; topPBox; maxTokensBox; contextBox; toolRoundsBox; instructionsBox ] do
+            box.PropertyChanged.Add(fun e ->
+                if e.Property = TextBox.TextProperty then markGenerationDirty ())
 
     let floatText (value: float option) =
         match value with
@@ -77,14 +102,48 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
 
     member this.SetCatalog(next: Catalog) =
         catalog <- next
-        let g = next.generation
-        temperatureBox.Text <- floatText g.temperature
-        topPBox.Text <- floatText g.topP
-        maxTokensBox.Text <- (match g.maxTokens with Some v -> string v | None -> "")
-        contextBox.Text <- string g.maxContextMessages
-        toolRoundsBox.Text <- string g.maxToolRounds
-        instructionsBox.Text <- g.instructions |> Option.defaultValue ""
-        setAutoTitle g.autoTitle
+        // 目录更新也会由其它设置操作触发；不能用它覆盖尚未提交的表单。
+        if not generationDirty && not generationSaving then
+            generationSyncing <- true
+            try
+                let g = next.generation
+                temperatureBox.Text <- floatText g.temperature
+                topPBox.Text <- floatText g.topP
+                maxTokensBox.Text <- (match g.maxTokens with Some v -> string v | None -> "")
+                contextBox.Text <- string g.maxContextMessages
+                toolRoundsBox.Text <- string g.maxToolRounds
+                instructionsBox.Text <- g.instructions |> Option.defaultValue ""
+                setAutoTitle g.autoTitle
+                generationBaseline <- g
+            finally
+                generationSyncing <- false
+        elif not generationSaving && draftScope = generationScope && next.generation <> generationBaseline then
+            generationStatus.Text <- "服务器默认值已变化。草稿已保留；请核对后保存，或放弃修改。"
+
+    /// 只保留一份可见草稿；切换目标后阻止把旧服务器的表单误写给新服务器。
+    member _.SetGenerationScope(instance: string) =
+        if generationScope <> instance then
+            scopeEpoch <- scopeEpoch + 1
+            generationScope <- instance
+            generationSaving <- false
+            setGenerationPending false
+            if generationDirty then
+                generationStatus.Text <-
+                    if draftScope = instance then "已回到草稿所属的服务器。修改尚未保存。"
+                    else "服务器已切换。旧草稿仍在，但不能保存到另一台服务器。请返回原服务器，或放弃修改。"
+
+    member _.HasUnsavedGeneration = generationDirty
+
+    member this.DiscardGenerationChanges() =
+        if not generationSaving then
+            generationDirty <- false
+            draftScope <- generationScope
+            generationRevision <- generationRevision + 1
+            this.SetCatalog catalog
+            for box in [ temperatureBox; topPBox; maxTokensBox; contextBox; toolRoundsBox ] do Ui.clearFieldError box
+            generationErrorSummary.IsVisible <- false
+            generationStatus.Text <- "已恢复当前服务器的默认值。"
+            setGenerationPending false
 
     member this.SetPrefs(next: UiPrefs) =
         prefs <- next
@@ -143,20 +202,46 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             payload["maxContextMessages"] <- contextMessages.Value
             payload["maxToolRounds"] <- toolRounds.Value
             payload["autoTitle"] <- readAutoTitle ()
+            let submitted =
+                { catalog.generation with
+                    temperature = temperature
+                    topP = topP
+                    maxTokens = maxTokens
+                    instructions = if String.IsNullOrWhiteSpace instructions then None else Some instructions
+                    maxContextMessages = contextMessages.Value
+                    maxToolRounds = toolRounds.Value
+                    autoTitle = readAutoTitle () }
+            let submittedRevision = generationRevision
+            let submittedEpoch = scopeEpoch
             setGenerationPending true
+            generationStatus.Text <- "正在保存到服务器…"
             actions.updateGeneration payload (fun ok ->
-                setGenerationPending false
-                if not ok then actions.toast "保存失败，请重试。" Failure)
+                if submittedEpoch <> scopeEpoch then ()
+                elif ok then
+                    setGenerationPending false
+                    generationBaseline <- submitted
+                    catalog <- { catalog with generation = submitted }
+                    // 往返期间仍可编辑。较早提交的确认不能把后续编辑标成已保存。
+                    generationDirty <- generationRevision <> submittedRevision
+                    generationStatus.Text <-
+                        if generationDirty then "上一版已保存，后续修改尚未保存。"
+                        else "已保存。之后新建的会话将使用这些默认值。"
+                else
+                    setGenerationPending false
+                    generationDirty <- true
+                    generationStatus.Text <- "保存失败。修改仍在当前窗口，可以重试。"
+                    actions.toast "保存失败，请重试。" Failure)
         else
             Ui.applyValidationFeedback (List.ofSeq errors) (Some generationErrorSummary) (fun message -> actions.toast message Warning)
 
     /// pending 中的保存直接返回，不做二次提交。
     member private this.SaveGeneration() =
-        if generationSaving then () else this.SaveGenerationCore()
+        if generationSaving || (generationDirty && draftScope <> generationScope) then ()
+        else this.SaveGenerationCore()
 
     member this.BuildGeneration() : Control =
         let autoTitleRow, readAuto, writeAuto =
-            Ui.switchRow "自动生成会话标题" "首轮对话后用同一个模型起一个短标题；失败时回落到你的第一句话。" true ignore
+            Ui.switchRow "自动生成会话标题" "首轮对话后用同一个模型起一个短标题；失败时回落到你的第一句话。" catalog.generation.autoTitle (fun _ -> markGenerationDirty ())
         readAutoTitle <- readAuto
         setAutoTitle <- writeAuto
         let saveButton = Ui.button Ui.Primary "保存生成设置" (fun () -> this.SaveGeneration())
@@ -166,9 +251,12 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         ToolTip.SetTip(saveButton, "保存生成设置 (Ctrl+Enter)")
         Ui.preparePendingButton saveButton
         saveButton.HorizontalAlignment <- HorizontalAlignment.Left
+        let discardButton = Ui.button Ui.Ghost "放弃修改" (fun () -> this.DiscardGenerationChanges())
         setGenerationPending <- fun pending ->
             generationSaving <- pending
             Ui.setButtonPending saveButton pending "保存生成设置" "正在保存…"
+            if not pending then Ui.setEnabled saveButton (not generationDirty || draftScope = generationScope)
+            Ui.setEnabled discardButton (not pending)
         let temperatureField = Ui.inputFieldGroup "Temperature" "越高越发散。留空则用服务商默认值。" temperatureBox
         let topPField = Ui.inputFieldGroup "Top P" "核采样阈值，0–1。" topPBox
         let maxTokensField = Ui.inputFieldGroup "最大输出 token" "限制单次回复长度。" maxTokensBox
@@ -186,8 +274,8 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                 Spacing.space4xl
                 [ Ui.vstack
                       Spacing.spaceXs
-                      [ Ui.heading "生成" :> Control
-                        Ui.caption "这些是新会话的默认值。单个会话可以在会话设置里单独调整。" :> Control ]
+                      [ Ui.heading "新会话默认值" :> Control
+                        Ui.caption "保存到当前服务器，供所有客户端新建会话时使用。不会改动已有会话。" :> Control ]
                   :> Control
                   generationErrorSummary :> Control
                   // 数值表单、指令框与开关行收进与 Appearance/About 同档的分组面板卡
@@ -203,7 +291,8 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                             autoTitleRow ])
                       Spacing.Radius.lg) :> Control
                   Ui.hairline () :> Control
-                  saveButton :> Control ]
+                  generationStatus :> Control
+                  Ui.hstack Spacing.spaceMd [ saveButton :> Control; discardButton :> Control ] :> Control ]
         generationForm.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
             if e.Key = Key.Enter && ctrl then
@@ -218,19 +307,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                 if e.Key = Key.Enter && not (ctrl e) then
                     e.Handled <- true
                     this.SaveGeneration())
-        // 失焦即提交：与 Enter 同一条 SaveGeneration 路径（generationSaving 重入 guard
-        // 兜底），补上「改完数值直接点去别处」这条最常见的提交时机——此前只有
-        // Enter / Ctrl+Enter / 保存按钮三条路，鼠标用户改完温度顺手点左侧导航切分区，
-        // 那次编辑既不入库也不提示，切回来时被 SetCatalog 的旧值覆盖，静默回滚。
-        // kelivo display_settings_page.dart:1736-1755（_NumberFieldRow 的 FocusNode
-        // listener）与 auto_retry_page.dart:53-65 都是失焦即落库，语义同理。
-        // 与「保存生成设置」按钮不双重提交：点按钮时焦点先离开输入框，这次提前的
-        // SaveGeneration 会把存中标记先立起来，按钮回调紧随其后被 guard 挡掉。
-        let saveField (box: TextBox) =
-            box.LostFocus.Add(fun _ ->
-                if not generationSaving then this.SaveGeneration())
-        for box in [ temperatureBox; topPBox; maxTokensBox; contextBox; toolRoundsBox ] do
-            saveField box
+        // 焦点移动只改变编辑位置，不提交；切换分区后仍使用同一张表单。
         generationForm :> Control
 
     member this.BuildAppearance() : Control =

@@ -11,6 +11,7 @@ open Avalonia.Media
 open Avalonia.Platform.Storage
 open Avalonia.Threading
 open Avalonia.VisualTree
+open Wanxiang.Core
 
 /// 输入区对外暴露的动作。
 type ComposerActions = {
@@ -27,7 +28,7 @@ type ComposerActions = {
 /// 消息输入区。
 ///
 /// 关键取舍：
-/// - 无会话时整块禁用并说明原因，而不是留一个点了没反应的输入框；
+/// - 没有会话也可以直接输入；发送时沿既有路径创建会话；
 /// - 生成中把发送键换成停止键，同一位置同一手势；
 /// - 附件以可删除的小卡呈现，而不是一行状态文字；
 /// - 模型选择就在输入框里，换模型不必开设置。
@@ -88,10 +89,13 @@ type Composer(actions: ComposerActions) as this =
             Child = pendingScroller)
     let mutable pendingKeys: (Guid * DeliveryState * bool * bool) list = []
     let attachButton = Ui.iconButton Icons.paperclip "添加附件"
+    let mutable openSessionSettings: unit -> unit = ignore
+    let contextButton = Ui.button Ui.Ghost "上下文" (fun () -> openSessionSettings ())
+    let mutable applyToolbarLayout: bool -> unit = ignore
     let modelCaption =
         TextBlock(
             Text = "未选择模型",
-            FontSize = Tokens.fontMicro,
+            FontSize = Tokens.fontSmall,
             Foreground = Tokens.textMuted,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -249,6 +253,12 @@ type Composer(actions: ComposerActions) as this =
                 "输入消息…"
 
     let refreshSendState () =
+        hintText.Text <-
+            if generating then
+                if enterSends then "正在回复 · Enter 排队 / Esc 停止"
+                else "正在回复 · Ctrl+Enter 排队 / Esc 停止"
+            elif enterSends then "Enter 发送 / Shift+Enter 换行"
+            else "Ctrl+Enter 发送 / Enter 换行"
         let text = input.Text
         let checkPresenterMultiLine () =
             let presenter = input.GetVisualDescendants() |> Seq.tryPick (function :? Avalonia.Controls.Presenters.TextPresenter as p -> Some p | _ -> None)
@@ -275,7 +285,7 @@ type Composer(actions: ComposerActions) as this =
             queueButton.Focusable <- false
         let sendTip =
             if generating then
-                if canStop then "停止生成 (Escape)" else "已停止，等待确认…"
+                if canStop then "停止生成 (Escape)" else "等待服务器确认…"
             elif not enabled then
                 if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
             elif uploading then
@@ -309,6 +319,9 @@ type Composer(actions: ComposerActions) as this =
                 Avalonia.Automation.AutomationProperties.SetName(queueButton.Child, "排队发送")
 
     do
+        contextButton.IsVisible <- false
+        Avalonia.Automation.AutomationProperties.SetName(contextButton, "会话上下文")
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(hintText, Avalonia.Automation.AutomationLiveSetting.Polite)
         modelChip.Child <-
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXs, VerticalAlignment = VerticalAlignment.Center)
             let glyph = Icons.sparkle Tokens.textFaint
@@ -749,6 +762,7 @@ type Composer(actions: ComposerActions) as this =
         // 连接暂不可用时仍能写草稿；只限制发送与上传。
         input.IsEnabled <- true
         Ui.setEnabled attachButton value
+        Ui.setEnabled modelChip value
         shell.Opacity <- if value then 1.0 else Tokens.opacityComposerDisabled
         disabledNoticeText.Text <- reason
         disabledNotice.IsVisible <- not value && not (String.IsNullOrWhiteSpace reason)
@@ -759,6 +773,22 @@ type Composer(actions: ComposerActions) as this =
             tryFocusInput ()
 
     member _.SetModelLabel(text: string) = modelCaption.Text <- text
+
+    member _.SetSessionContext(config: SessionConfig option, canEdit: bool, onOpen: unit -> unit) =
+        openSessionSettings <- onOpen
+        contextButton.IsVisible <- config.IsSome
+        Ui.setEnabled contextButton canEdit
+        match config with
+        | Some value ->
+            let label = if List.isEmpty value.tools then "上下文" else sprintf "上下文 · %d 工具" value.tools.Length
+            Ui.setButtonText contextButton label
+            Avalonia.Automation.AutomationProperties.SetName(contextButton, "会话上下文")
+            let detail =
+                sprintf "%s，%d 项工具。修改只影响当前会话。"
+                    (if value.instructions.IsSome then "已设系统指令" else "默认系统指令") value.tools.Length
+            ToolTip.SetTip(contextButton, detail)
+            Avalonia.Automation.AutomationProperties.SetHelpText(contextButton, detail)
+        | None -> ()
 
     /// 模型芯片本身：快捷键打开选择器时用它做锚点，菜单与点击芯片时同源同位。
     member _.ModelAnchor() : Control = modelChip :> Control
@@ -792,6 +822,8 @@ type Composer(actions: ComposerActions) as this =
         Ui.setSquareTarget sendButton actionSize
         Ui.setSquareTarget queueButton actionSize
         modelChip.MinHeight <- if value then LayoutPolicy.compactActionTarget else 0.0
+        contextButton.MinHeight <- if value then LayoutPolicy.compactActionTarget else ControlMetrics.textButtonMinHeight
+        applyToolbarLayout (value || this.Bounds.Width < LayoutPolicy.compactBreakpoint)
         compactMode <- value
         this.Padding <-
             if value then
@@ -820,8 +852,10 @@ type Composer(actions: ComposerActions) as this =
         this.ApplyComposerPadding()
         // 宽度跨断点时刷新非 compact 留白；compact 档保留收紧边距、不参与。
         this.PropertyChanged.Add(fun args ->
-            if args.Property = Visual.BoundsProperty && not compactMode then
-                this.ApplyComposerPadding())
+            if args.Property = Visual.BoundsProperty then
+                if not compactMode then this.ApplyComposerPadding()
+                // 侧栏也会吃掉宽度；工具行以自身宽度而不是整窗宽度判定是否换行。
+                applyToolbarLayout (compactMode || this.Bounds.Width < LayoutPolicy.compactBreakpoint))
 
         // 次级图标操作（附件/排队）与所有 Ui.iconButton 一致：不带一次性描边，30px ghost
         // 目标靠透明底 + hover 底区分，发送键保持 accent 实心。曾单给这两个补 hairline 轮廓，
@@ -831,26 +865,37 @@ type Composer(actions: ComposerActions) as this =
         let actionRow = Ui.hstack Spacing.spaceMd [ attachButton :> Control; queueButton :> Control; sendButton :> Control ]
         actionRow.VerticalAlignment <- VerticalAlignment.Bottom
 
-        let inputRow = DockPanel(LastChildFill = true)
-        DockPanel.SetDock(actionRow, Dock.Right)
-        inputRow.Children.Add actionRow
-        inputRow.Children.Add input
+        // 输入文字独占一行。模型/上下文是本次请求的条件，附件/发送是动作，分居工具行两端。
+        let requestContext = Ui.hstack Spacing.spaceMd [ modelChip :> Control; contextButton :> Control ]
+        let toolbar = Grid(ColumnSpacing = Spacing.spaceMd, RowSpacing = Spacing.spaceXs)
+        toolbar.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+        toolbar.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
+        toolbar.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
+        toolbar.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
+        toolbar.Children.Add requestContext
+        toolbar.Children.Add actionRow
+        actionRow.HorizontalAlignment <- HorizontalAlignment.Right
+        applyToolbarLayout <- fun compact ->
+            Grid.SetColumn(requestContext, 0)
+            Grid.SetRow(requestContext, 0)
+            Grid.SetColumnSpan(requestContext, if compact then 2 else 1)
+            Grid.SetRow(actionRow, if compact then 1 else 0)
+            Grid.SetColumn(actionRow, if compact then 0 else 1)
+            Grid.SetColumnSpan(actionRow, if compact then 2 else 1)
+        applyToolbarLayout compactMode
 
         let footerRow = DockPanel(LastChildFill = true)
-        DockPanel.SetDock(modelChip, Dock.Left)
         // 拖放提示与模型芯片同 dock 在左侧（芯片之后、fill 的键位提示之前）：
         // 窄窗口下先省略两条提示文本，模型芯片不与任何文本重叠争位。
         DockPanel.SetDock(dropAttachHint, Dock.Left)
         // hint 不 dock、作为 fill 占剩余宽度并右对齐：长模型名或窄窗口下只省略提示文本，绝不与模型芯片重叠争位。
-        footerRow.Children.Add modelChip
         footerRow.Children.Add dropAttachHint
         footerRow.Children.Add hintText
 
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
         column.Children.Add attachmentScroller
-        column.Children.Add inputRow
-        // 输入壳内的上下分层：最轻档 hairline（Ui.hairline 取 borderSoft，是更上一档的标准分隔）。
-        column.Children.Add(Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control)
+        column.Children.Add input
+        column.Children.Add toolbar
         column.Children.Add footerRow
 
         let dropOverlayContent =

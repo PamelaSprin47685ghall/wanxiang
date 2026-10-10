@@ -75,6 +75,7 @@
     <Compile Include="StateConvergenceTests.fs" />
     <Compile Include="SearchHighlightTests.fs" />
     <Compile Include="SettingsSurfaceTests.fs" />
+    <Compile Include="ConversationWorkspaceTests.fs" />
     <Compile Include="ConversationPresentationTests.fs" />
     <Compile Include="OverlayMenuTests.fs" />
     <Compile Include="KeyConvergenceTests.fs" />

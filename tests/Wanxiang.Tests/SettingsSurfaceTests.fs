@@ -190,13 +190,11 @@ let ``generation form consumes shared column spacing and text metrics`` () =
 // 键盘路由本身的验证不在此处：合成按键在无头窗口里不会从焦点控件冒泡到祖先
 // （同一原因，SettingsProviders / SettingsTools 的行级 KeyDown 也没有单测），
 // 这里只锁用户可观察的那一半——按钮自描述里的键位。
-// 生成参数此前的提交时机只有 Enter / Ctrl+Enter / 保存按钮三条：改完数值直接点去
-// 别处（切分区、点窗口其它区域），那次编辑既不入库也不提示，切回来被 SetCatalog
-// 的旧值覆盖——静默回滚。kelivo display_settings_page.dart:1736-1755 的 FocusNode
-// listener 失焦即落库。锁：数值框失焦真的触发 updateGeneration。
+// 服务器默认值采用明确提交：移开焦点不发送请求，目录刷新不覆盖草稿。
+// 保存动作必须携带编辑值；确认成功后才清除未保存状态。
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``editing a generation number and moving away commits it`` () =
+let ``editing a generation number stays local until explicitly saved`` () =
     Headless.run (fun () ->
     let toasts = ResizeArray<string * ToastTone>()
     let saved = ResizeArray<JsonObject>()
@@ -236,9 +234,16 @@ let ``editing a generation number and moving away commits it`` () =
         temperatureBox.Focus() |> ignore
         Assert.False(contextBox.IsFocused, "前置条件：焦点已离开上下文框")
         Dispatcher.UIThread.RunJobs()
-        Assert.True(saved.Count > 0, "失焦即提交：改完上下文上限点去别处必须落库")
+        Assert.Equal(0, saved.Count)
+        Assert.True(general.HasUnsavedGeneration)
+        general.SetCatalog Catalog.empty
+        Assert.Equal("321", contextBox.Text)
+        let save = byAutomationName built "保存生成设置"
+        save.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter))
+        Assert.Equal(1, saved.Count)
         let payload = saved.[saved.Count - 1]
         Assert.Equal(321, int (payload.["maxContextMessages"].GetValue<int>()))
+        Assert.False(general.HasUnsavedGeneration)
     finally
         window.Close()
     )

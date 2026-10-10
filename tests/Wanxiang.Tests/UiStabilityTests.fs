@@ -217,10 +217,10 @@ let ``navigation controller owns compact and collapsed state transitions`` () =
     let applyCompact, compact = navigation.ApplyViewport(600.0, false)
     Assert.True applyCompact
     Assert.True compact.compactMode
-    Assert.True compact.compactNavigationOpen
+    Assert.False compact.compactNavigationOpen
 
     let toggled = navigation.ToggleSidebar()
-    Assert.False toggled.compactNavigationOpen
+    Assert.True toggled.compactNavigationOpen
     let closed = navigation.SetCompactNavigation(false)
     Assert.False closed.compactNavigationOpen
 
@@ -292,7 +292,9 @@ let ``main layout controller is the only column projector and survives every mat
     try
         let mutable savedWidth = Tokens.sidebarWidth
         let controller = MainLayoutController(shell, sidebar, splitter, chatColumn, composer, chat, fun () -> savedWidth)
-        let compact = NavigationController(false).ApplyViewport(719.0, false) |> snd
+        let compact =
+            NavigationController(false).ApplyViewport(719.0, false) |> snd
+            |> fun state -> { state with compactNavigationOpen = true }
         let wide = NavigationController(false).ApplyViewport(721.0, false) |> snd
         let collapsed = { wide with sidebarCollapsed = true }
 
@@ -1607,9 +1609,9 @@ let ``long chat title never pushes header actions outside narrow viewport`` () =
     let window = show chat 540.0 420.0
     try
         Dispatcher.UIThread.RunJobs()
-        let settings = byAutomationName chat "会话设置"
-        let stop = byAutomationName chat "停止生成"
-        for control in [ settings; stop ] do
+        let more = byAutomationName chat "会话操作"
+        let toggle = byAutomationName chat "切换侧边栏（Ctrl+B / ⌘B）"
+        for control in [ more; toggle ] do
             let point = control.TranslatePoint(Point(0.0, 0.0), chat)
             Assert.True(point.HasValue)
             Assert.True(point.Value.X >= -0.5)
@@ -1617,16 +1619,15 @@ let ``long chat title never pushes header actions outside narrow viewport`` () =
 
         chat.SetCompactMode true
         Dispatcher.UIThread.RunJobs()
-        let fork = byAutomationName chat "从当前分叉"
-        Assert.False fork.IsVisible
-        Assert.Equal(LayoutPolicy.compactActionTarget, stop.Bounds.Width, 1)
+        Assert.True more.IsVisible
+        Assert.Equal(LayoutPolicy.compactActionTarget, more.Bounds.Width, 1)
     finally
         window.Close()
     )
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``stop affordance keeps a constant header slot across generation`` () =
+let ``conversation menu and title geometry stay stable across generation without a duplicate stop slot`` () =
     Headless.run (fun () ->
     let messageActions =
         { copyText = ignore
@@ -1652,9 +1653,9 @@ let ``stop affordance keeps a constant header slot across generation`` () =
     let window = show chat 900.0 420.0
     try
         Dispatcher.UIThread.RunJobs()
-        let stop = byAutomationName chat "停止生成"
-        let settings = byAutomationName chat "会话设置"
-        let fork = byAutomationName chat "从当前分叉"
+        let status = byAutomationName chat "正在生成回答"
+        let more = byAutomationName chat "会话操作"
+        let toggle = byAutomationName chat "切换侧边栏（Ctrl+B / ⌘B）"
         let titleText =
             descendants chat
             |> Seq.choose (function :? TextBlock as t when t.Text = "会话语义标题" -> Some t | _ -> None)
@@ -1665,7 +1666,7 @@ let ``stop affordance keeps a constant header slot across generation`` () =
                 let point = control.TranslatePoint(Point(0.0, 0.0), chat)
                 Assert.True point.HasValue
                 (point.Value.X, point.Value.Y, control.Bounds.Width, control.Bounds.Height)
-            (at stop, at settings, at fork, at titleText)
+            (at status, at more, at toggle, at titleText)
         // geometry 返回四个控件各自的 (x,y,w,h)；逐项比较，强度不减。
         let assertSame a b =
             let a1, a2, a3, a4 = a
@@ -1675,30 +1676,25 @@ let ``stop affordance keeps a constant header slot across generation`` () =
                 Assert.Equal(ay, by, 1.0)
                 Assert.Equal(aw, bw, 1.0)
                 Assert.Equal(ah, bh, 1.0)
-        // 未生成：停止槽位已经常驻（保留隐藏），键盘、命中与无障碍视图均不达。
-        Assert.True stop.IsVisible
-        Assert.Equal(0.0, stop.Opacity, 3)
-        Assert.False stop.IsHitTestVisible
-        Assert.False stop.Focusable
-        Assert.Equal(AccessibilityView.Raw, AutomationProperties.GetAccessibilityView(stop))
+        // 状态预留位置，不再为重复的执行按钮预留空洞。
+        Assert.True status.IsVisible
+        Assert.Equal(0.0, status.Opacity, 3)
+        Assert.DoesNotContain(descendants chat, fun control -> AutomationProperties.GetName control = "停止生成")
         let before = geometry ()
         // 与 AppShell 的真实顺序一致（源码 383-401 的两段式契约）：
         // SetGenerating 让常驻槽位显形但仍随 canStop 处禁用态，
         // SetCanStop(true) 才真正解除禁用、Opacity 提到 1.0。
         chat.SetGenerating(true, "生成中")
         chat.SetCanStop true
-        Assert.Equal(1.0, stop.Opacity, 3)
-        Assert.True stop.IsHitTestVisible
-        Assert.True stop.Focusable
-        Assert.Equal(AccessibilityView.Default, AutomationProperties.GetAccessibilityView(stop))
+        Assert.Equal(1.0, status.Opacity, 3)
+        Assert.True more.Focusable
         let during = geometry ()
         // 停止按 AppShell 的真实顺序：先 SetGenerating(false)，再 SetCanStop(false)。
         // 隐藏槽位上不得因禁用态写 Opacity 而重新显形。
         chat.SetGenerating(false, "")
         chat.SetCanStop false
-        Assert.Equal(0.0, stop.Opacity, 3)
-        Assert.False stop.IsHitTestVisible
-        Assert.False stop.Focusable
+        Assert.Equal(0.0, status.Opacity, 3)
+        Assert.True more.Focusable
         let after = geometry ()
         // 生成开始 / 结束前后：停止按钮、其余顶栏动作与标题可用宽度几何逐项不变。
         assertSame before during
@@ -1706,9 +1702,9 @@ let ``stop affordance keeps a constant header slot across generation`` () =
         // compact 只换命中面尺寸，不破坏常驻槽位。
         chat.SetCompactMode true
         Dispatcher.UIThread.RunJobs()
-        Assert.True stop.IsVisible
-        Assert.Equal(0.0, stop.Opacity, 3)
-        Assert.Equal(LayoutPolicy.compactActionTarget, stop.Bounds.Width, 1)
+        Assert.False status.IsVisible
+        Assert.True more.IsVisible
+        Assert.Equal(LayoutPolicy.compactActionTarget, more.Bounds.Width, 1)
     finally
         window.Close()
     )
@@ -1766,7 +1762,7 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
         let window = show root width height
         try
             Dispatcher.UIThread.RunJobs()
-            for name in [ "切换侧边栏（Ctrl+B / ⌘B）"; "停止生成"; "会话设置"; "发送"; "添加附件" ] do
+            for name in [ "切换侧边栏（Ctrl+B / ⌘B）"; "会话操作"; "发送"; "添加附件" ] do
                 let control = byAutomationName root name
                 if control.IsVisible then
                     match control.TranslatePoint(Point(0.0, 0.0), root) with
@@ -2045,7 +2041,7 @@ let ``appearance preference update keeps the same focused control instance`` () 
     root.Children.Insert(0, settings)
     let window = show root 900.0 680.0
     try
-        let appearance = byAutomationName settings "外观"
+        let appearance = byAutomationName settings "外观与操作"
         ControlAutomationPeer.CreatePeerForElement appearance
         |> Assert.IsAssignableFrom<IInvokeProvider>
         |> fun provider -> provider.Invoke()
@@ -2090,7 +2086,7 @@ let ``font size stepper disables the direction that hits the scale boundary`` ()
     root.Children.Insert(0, settings)
     let window = show root 900.0 680.0
     try
-        let appearance = byAutomationName settings "外观"
+        let appearance = byAutomationName settings "外观与操作"
         ControlAutomationPeer.CreatePeerForElement appearance
         |> Assert.IsAssignableFrom<IInvokeProvider>
         |> fun provider -> provider.Invoke()
@@ -2158,7 +2154,7 @@ let ``settings caps content width and centers it while exposing selected navigat
         Assert.Equal(HorizontalAlignment.Center, frame.HorizontalAlignment)
 
         let providers = byAutomationName settings "服务商"
-        let appearance = byAutomationName settings "外观"
+        let appearance = byAutomationName settings "外观与操作"
         Assert.Equal("当前分区", AutomationProperties.GetItemStatus(providers))
         let invokeAppearance = ControlAutomationPeer.CreatePeerForElement appearance |> Assert.IsAssignableFrom<IInvokeProvider>
         invokeAppearance.Invoke()

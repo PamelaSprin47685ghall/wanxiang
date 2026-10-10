@@ -170,7 +170,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let searchShell, searchBox = Ui.textField "搜索会话"
     let clearSearchButton = Ui.iconButton Icons.close "清空搜索"
     let compactBackButton = Ui.iconButton Icons.arrowLeft "返回对话"
-    let newConversationButton = Ui.iconButtonAccent Icons.plus "新建会话（Ctrl+N）"
+    let newConversationButton = Ui.button Ui.Secondary "新建会话" ignore
     let settingsButton = Ui.iconButton Icons.gear "设置（Ctrl+,）"
     let searchDebounce = DispatcherTimer(Interval = MotionLedger.searchInputDebounce)
     let conversationList =
@@ -253,6 +253,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             IsVisible = false)
 
     let statusDot = Ui.statusDot ControlMetrics.sidebarRunningDotSize
+    let serverCaption =
+        TextBlock(Text = "选择服务器", FontSize = Tokens.fontSmall, Foreground = Tokens.text,
+                  TextTrimming = TextTrimming.CharacterEllipsis)
     let statusText =
         TextBlock(
             Text = "未连接",
@@ -1172,8 +1175,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         compactMode <- value
         compactBackButton.IsVisible <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
-        for button in [ compactBackButton; newConversationButton; settingsButton; clearSearchButton ] do
+        for button in [ compactBackButton; settingsButton; clearSearchButton ] do
             Ui.setSquareTarget button size
+        newConversationButton.MinHeight <- if value then LayoutPolicy.compactActionTarget else ControlMetrics.textButtonMinHeight
         // 已渲染的行同步 compact 态：行菜单按钮常驻弱显（可见性两种模式同一路径），
         // 命中面仍按模式分档（compact 抬到 compactActionTarget，桌面回 iconButton）。
         // 同时按当前 hover/focus 快照刷新不透明度。按钮槽位本来常驻，标题不跳动。
@@ -1199,6 +1203,12 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         searchBox.Focus() |> ignore
         if select || String.IsNullOrEmpty searchBox.Text then
             searchBox.SelectAll()
+
+    member _.SetServerUrl(url: string) =
+        serverCaption.Text <-
+            match Uri.TryCreate(url, UriKind.Absolute) with
+            | true, uri -> uri.Authority
+            | _ -> "选择服务器"
 
     /// 契约 C2：当前从上到下展示的会话行 id（字符串），供 ShellFix Ctrl+1..9 索引。
     member _.GetVisibleOrder() : string list =
@@ -1356,16 +1366,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 VerticalAlignment = VerticalAlignment.Center)
         let brandRow = Ui.hstack Spacing.spaceMd [ brand; wordmark :> Control ]
         let leading = Ui.hstack Spacing.spaceXs [ compactBackButton :> Control; brandRow :> Control ]
+        newConversationButton.HorizontalAlignment <- HorizontalAlignment.Stretch
+        Avalonia.Automation.AutomationProperties.SetName(newConversationButton, "新建会话（Ctrl+N）")
+        ToolTip.SetTip(newConversationButton, "新建会话（Ctrl+N）")
         brandHeader <-
-            let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
-            DockPanel.SetDock(leading, Dock.Left)
-            DockPanel.SetDock(newConversationButton, Dock.Right)
-            dock.Children.Add leading
-            dock.Children.Add newConversationButton
+            let brandLine = Border(Height = Tokens.barHeight, Child = leading)
+            let column = Ui.vstack Spacing.spaceMd [ brandLine :> Control; newConversationButton :> Control ]
             Border(
-                Height = Tokens.barHeight,
-                Padding = Thickness(Spacing.space2xl, 0.0),
-                Child = dock)
+                Padding = Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, Spacing.spaceMd),
+                Child = column)
 
         searchBox.KeyDown.Add(fun e ->
             if e.Key = Key.Down then
@@ -1428,20 +1437,21 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 CornerRadius = CornerRadius Spacing.Radius.sm,
                 Cursor = handCursor,
                 Focusable = true,
-                Child = Ui.hstack Spacing.spaceMd [ statusDot :> Control; statusText :> Control ])
+                Child = Ui.vstack Spacing.spaceXs
+                    [ serverCaption :> Control
+                      Ui.hstack Spacing.spaceMd [ statusDot :> Control; statusText :> Control ] :> Control ])
         // 状态行是可点击的重连入口：hover / focus 底色由 Interaction 的原生伪类
         // 负责（`:pointerover` / `:focus-visible`），命中测试与「点击重连」行为不变。
         Interaction.surface statusRow Interaction.HoverVariant.plain |> ignore
         Interaction.reportFocusOrigin statusRow
-        ToolTip.SetTip(statusRow, "点击重新连接")
+        ToolTip.SetTip(statusRow, "切换或重新连接服务器")
         Avalonia.Automation.AutomationProperties.SetName(statusRow, "重新连接服务器")
         Ui.onClick statusRow (fun () -> actions.reconnect ())
         sidebarFooter <-
-            let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
-            DockPanel.SetDock(statusRow, Dock.Left)
+            let dock = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(settingsButton, Dock.Right)
-            dock.Children.Add statusRow
             dock.Children.Add settingsButton
+            dock.Children.Add statusRow
             Border(
                 Height = Tokens.barHeight,
                 Padding = Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, 0.0),

@@ -197,9 +197,8 @@ let ``wheel moving either way stops an in-flight smooth scroll`` () =
             typeof<ChatView>.GetField("smoothScrollTimer", Reflection.BindingFlags.Instance ||| Reflection.BindingFlags.NonPublic)
         Assert.True(not (isNull smoothField), "ChatView 应有 smoothScrollTimer 字段")
         // 从顶部往下跳：距离足够远，必然进入平滑滚动路径（近距离是立即落位）。
-        let next = namedControl chat "下一条提问"
-        Assert.True(next.IsEnabled, "前置条件：顶部时下一条可用")
-        privateKey next Key.Enter |> ignore
+        Assert.True(chat.CanJumpNext, "前置条件：顶部时下一条可用")
+        chat.JumpExchange 1
         Dispatcher.UIThread.RunJobs()
         let running () : bool =
             not (isNull (smoothField.GetValue chat))
@@ -213,9 +212,8 @@ let ``wheel moving either way stops an in-flight smooth scroll`` () =
         // （近距离分支 abs(offset-target)<5 会立即落位，那不是动画被停，是没起播）。
         scroller.Offset <- Vector(0.0, scroller.Extent.Height - scroller.Viewport.Height)
         Dispatcher.UIThread.RunJobs()
-        let prev = namedControl chat "上一条提问"
-        Assert.True(prev.IsEnabled, "前置条件：锚点已前移，上一条可用")
-        privateKey prev Key.Enter |> ignore
+        Assert.True(chat.CanJumpPrevious, "前置条件：锚点已前移，上一条可用")
+        chat.JumpExchange -1
         Dispatcher.UIThread.RunJobs()
         Assert.True(running (), "前置条件：再次发起跳转")
         let up = raiseWheel scroller 120.0

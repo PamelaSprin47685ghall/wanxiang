@@ -258,9 +258,8 @@ let ``next question anchors on the topmost visible card`` () =
         // 停在顶部：视口顶端第一张用户卡是第 1 轮，底端还压着第 2/3 轮的结尾。
         scroller.Offset <- Vector(0.0, 0.0)
         Dispatcher.UIThread.RunJobs()
-        let next = byNameOrFail chat "下一条提问"
-        Assert.True(next.IsEnabled, "前置条件：顶部时下一条可用")
-        privateKey next Key.Enter |> ignore
+        Assert.True(chat.CanJumpNext, "前置条件：顶部时下一条可用")
+        chat.JumpExchange 1
         Dispatcher.UIThread.RunJobs()
         // 锚点语义：第一跳后第 2 轮用户卡必须已进入视口顶部
         // （smoothScrollToCard 的目标 = 卡片 Y - Spacing.space3xl，落在顶部带一点间距）。

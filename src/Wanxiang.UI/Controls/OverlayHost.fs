@@ -366,14 +366,15 @@ type OverlayHost(root: Grid) =
             restoreDialogFocus ()
             callback ()
 
-    member this.ShowDialog(content: Control, width: float, ?onClosed: unit -> unit, ?canDismiss: unit -> bool, ?initialFocus: Control) =
+    /// 固定页头/页脚的表单自行管理中间滚动区；普通对话框仍默认整块可滚动。
+    member this.ShowDialog(content: Control, width: float, ?onClosed: unit -> unit, ?canDismiss: unit -> bool, ?initialFocus: Control, ?scrollWholeContent: bool) =
         if dialogCard.IsVisible then
             // 嵌套打开：保留当前子内容 + onClosed + 守卫，关闭时原样恢复。
             dialogStack.Add((dialogCard.Child, dialogPreferredWidth, onDialogClosed, dialogGuard))
         else rememberDialogFocus ()
         onDialogClosed <- defaultArg onClosed id
         dialogGuard <- defaultArg canDismiss (fun () -> true)
-        let hosted = wrapForDialog content
+        let hosted = if defaultArg scrollWholeContent true then wrapForDialog content else content
         dialogCard.Child <- hosted
         dialogPreferredWidth <- width
         fitDialogToViewport ()

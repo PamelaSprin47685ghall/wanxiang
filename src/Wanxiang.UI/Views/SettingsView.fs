@@ -19,14 +19,22 @@ type SettingsSection =
 
 module SettingsSection =
 
-    let all = [ Providers; Tools; Generation; Appearance; About ]
+    let groups =
+        [ "当前服务器", [ Providers; Tools; Generation ]
+          "这台客户端", [ Appearance; About ] ]
+
+    let all = groups |> List.collect snd
+
+    let scope = function
+        | Providers | Tools | Generation -> "当前服务器"
+        | Appearance | About -> "这台客户端"
 
     let label (section: SettingsSection) =
         match section with
         | Providers -> "服务商"
         | Tools -> "工具与 MCP"
-        | Generation -> "生成"
-        | Appearance -> "外观"
+        | Generation -> "新会话默认值"
+        | Appearance -> "外观与操作"
         | About -> "关于"
 
     let icon (section: SettingsSection) =
@@ -50,6 +58,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     let contentHost = ContentControl()
     let mutable contentScroll: ScrollViewer option = None
     let navPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXs)
+    let groupLabels = ResizeArray<TextBlock>()
+    let scopeCaption = Ui.sectionLabel "当前服务器"
+    let targetCaption = Ui.caption "尚未连接服务器"
     let mutable current = Providers
     let mutable instanceId = ""
     let mutable serverUrl = ""
@@ -118,6 +129,15 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 if scroller.Offset.Y > 0.0 || not (scrollPositions.ContainsKey current) then
                     scrollPositions[current] <- scroller.Offset.Y)
         current <- section
+        scopeCaption.Text <- SettingsSection.scope section
+        targetCaption.Text <-
+            match section with
+            | Appearance -> "仅在这台客户端即时生效，不修改服务器配置。"
+            | About -> "应用版本与当前连接信息。"
+            | _ ->
+                match Uri.TryCreate(serverUrl, UriKind.Absolute) with
+                | true, uri -> sprintf "%s · 配置由连接这台服务器的客户端共用。" uri.Authority
+                | _ -> "尚未连接服务器"
         this.UpdateNavButtonStates()
         contentHost.Content <- renderSection section
         if changed then
@@ -266,10 +286,13 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         // 同步现有控件；只有尚未构建时才在首次进入时读取最新 prefs。
 
     member this.SetConnection(instance: string, url: string) =
+        generalPanel.SetGenerationScope instance
         instanceId <- instance
         serverUrl <- url
         invalidate [ About ]
-        if current = About then contentHost.Content <- renderSection current
+        this.Select current
+
+    member _.HasUnsavedChanges = generalPanel.HasUnsavedGeneration
 
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
         providersPanel.ApplyProbe(providerId, ok, models, error)
@@ -277,8 +300,8 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     member this.Build() =
         this.Background <- Tokens.canvas
 
-        let closeButton = Ui.iconButton Icons.close "关闭设置（Esc）"
-        Ui.onClick closeButton onClose
+        let closeButton = Ui.button Ui.Ghost "返回会话" onClose
+        Avalonia.Automation.AutomationProperties.SetHelpText(closeButton, "返回会话（Esc），未保存的草稿留在当前窗口")
         let header =
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             // 窗口标题用页面主标题档（fontDisplay=25），明确高于分区内的小节标题（Ui.heading=19）；
@@ -302,8 +325,13 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 BorderThickness = Thickness(0.0, 0.0, 0.0, ControlMetrics.borderWidth),
                 Child = dock)
 
-        for section in SettingsSection.all do
-            navPanel.Children.Add(this.NavButton section)
+        for group, sections in SettingsSection.groups do
+            let label = Ui.sectionLabel group
+            label.Margin <- Thickness(Spacing.spaceXl, Spacing.space2xl, Spacing.spaceXl, Spacing.spaceMd)
+            groupLabels.Add label
+            navPanel.Children.Add label
+            for section in sections do
+                navPanel.Children.Add(this.NavButton section)
         let navScroll =
             ScrollViewer(
                 Content = navPanel,
@@ -330,7 +358,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         let contentFrame =
             Border(
                 Padding = Thickness(Spacing.space6xl, Spacing.space4xl, Spacing.space6xl, Spacing.space8xl),
-                Child = contentHost,
+                Child = Ui.vstack Spacing.space4xl
+                    [ Ui.vstack Spacing.spaceXs [ scopeCaption :> Control; targetCaption :> Control ] :> Control
+                      contentHost :> Control ],
                 MaxWidth = ControlMetrics.settingsContentMaxWidth,
                 // 宽屏下内容列居中：MaxWidth 仍封顶 settingsContentMaxWidth，超宽窗口不再右侧留大片空白；
                 // 窄屏内容未触顶时居中与拉伸等价（可用宽度小于 MaxWidth 时两者渲染相同）。
@@ -354,6 +384,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 if responsiveCompact <> Some compact then
                     let previousOffset = content.Offset
                     responsiveCompact <- Some compact
+                    for label in groupLabels do label.IsVisible <- not compact
                     if compact then
                         DockPanel.SetDock(nav, Dock.Top)
                         nav.Width <- Double.NaN

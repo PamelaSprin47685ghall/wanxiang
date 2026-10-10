@@ -4,6 +4,9 @@ namespace Wanxiang.UI
 /// 与颜色/字号等视觉 Tokens 分开，避免组件各自复制 magic breakpoint。
 module LayoutPolicy =
 
+    /// 起步区只在有足够纵向空间时居中；短窗口与软键盘场景优先保证输入可见。
+    let startWorkspaceMinHeight = 600.0
+
     /// 主壳、Settings 共用的 compact 模式断点。
     let compactBreakpoint = 720.0
 

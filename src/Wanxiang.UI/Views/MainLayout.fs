@@ -5,6 +5,36 @@ open Avalonia
 open Avalonia.Controls
 open Avalonia.VisualTree
 
+/// 同一个输入控件贯穿起步和对话，不用两张页面互相搬运草稿、焦点及附件。
+type ConversationWorkspace(chat: ChatView, composer: Composer) as this =
+    inherit DockPanel()
+
+    let grid = Grid()
+    let tail = RowDefinition(Height = GridLength 0.0)
+    let mutable starting = false
+
+    let apply () =
+        let centered = starting && this.Bounds.Height >= LayoutPolicy.startWorkspaceMinHeight
+        tail.Height <- if centered then GridLength.Star else GridLength 0.0
+        chat.SetStartMode centered
+
+    do
+        grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Star, MinHeight = Tokens.barHeight))
+        grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
+        grid.RowDefinitions.Add tail
+        Grid.SetRow(chat, 0)
+        Grid.SetRow(composer, 1)
+        grid.Children.Add chat
+        grid.Children.Add composer
+        this.Children.Add grid
+        this.PropertyChanged.Add(fun e -> if e.Property = Visual.BoundsProperty then apply ())
+
+    member _.SetStarting(value: bool) =
+        starting <- value
+        apply ()
+
+    member _.IsStarting = starting
+
 /// 主工作区唯一的空间投影器。
 /// NavigationController 决定“当前是什么状态”，这里决定“这个状态在 Grid 上怎么成立”。
 /// AppShell 不再直接改列宽 / Grid.Column / ZIndex，避免响应式规则散落成 patch。
