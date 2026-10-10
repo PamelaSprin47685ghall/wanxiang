@@ -108,6 +108,12 @@ module SupportBundle =
             let diag = JsonObject()
             diag["createdAt"] <- DateTimeOffset.UtcNow.UtcDateTime.ToString("o")
             diag["dataDir"] <- dataDir
+            // §18 关联 ID：bundle 必须可追溯到来源实例（多实例部署诊断时区分）。
+            // 配置不可读（损坏）时省略——诊断仍可进行，不因缺 instanceId 失败。
+            if File.Exists configPath then
+                match Wanxiang.Config.TomlCodec.tryParse (File.ReadAllText configPath) with
+                | Ok cfg -> diag["instanceId"] <- string cfg.instanceId
+                | Error _ -> ()
             let diagnosis = Doctor.run (configPath, dataDir)
             diag["configOk"] <- diagnosis.checks |> List.exists (fun c -> c.name = "config" && c.ok)
             diag["configErrors"] <- JsonArray([| for e in diagnosis.configErrors -> JsonNode.op_Implicit e |])

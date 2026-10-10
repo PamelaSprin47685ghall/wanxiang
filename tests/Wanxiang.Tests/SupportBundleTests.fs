@@ -13,9 +13,10 @@ open Wanxiang.Tests.Helpers
 /// 只收集元数据；禁止包含 apiKey/token/完整用户消息/完整附件。
 module SupportBundle =
 
-    let private writeConfig (dir: string) : string =
+    let private writeConfig (dir: string) : string * Guid =
         let path = Path.Combine(dir, "config.toml")
         let cfg = AppConfig.defaults (Guid.NewGuid())
+        let instanceId = cfg.instanceId
         let withKey =
             { cfg with
                 providers =
@@ -35,14 +36,14 @@ module SupportBundle =
                             headers = Map.empty
                             extraJson = None } ] }
         File.WriteAllText(path, Wanxiang.Config.TomlCodec.serialize withKey)
-        path
+        path, instanceId
 
     [<Fact>]
     let ``bundle 生成全部必需文件且不含密钥`` () =
         let dir = tempDir ()
         try
             DataPaths.ensureDataDirs dir
-            let configPath = writeConfig dir
+            let configPath, cfgInstanceId = writeConfig dir
             let outPath = Path.Combine(dir, "bundle")
             match SupportBundle.create dir configPath outPath with
             | Error e -> failwith e
@@ -58,6 +59,10 @@ module SupportBundle =
                 let versions = File.ReadAllText(Path.Combine(outPath, "versions.json"))
                 Assert.Contains(sprintf "\"storageFormatVersion\":%d" Constants.FormatVersion, versions)
                 Assert.Contains(sprintf "\"configFormatVersion\":%d" AppConfig.CurrentVersion, versions)
+                // diagnosis.json 可追溯到来源实例（§18 关联 ID）
+                let diag = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(outPath, "diagnosis.json"))) :?> System.Text.Json.Nodes.JsonObject
+                Assert.True(diag.ContainsKey "instanceId", "diagnosis.json missing instanceId")
+                Assert.Equal(string cfgInstanceId, string diag["instanceId"])
                 // snapshot-status.json
                 let snap = File.ReadAllText(Path.Combine(outPath, "snapshot-status.json"))
                 Assert.Contains("no-snapshot", snap)
@@ -69,7 +74,7 @@ module SupportBundle =
         let dir = tempDir ()
         try
             DataPaths.ensureDataDirs dir
-            let configPath = writeConfig dir
+            let configPath, _ = writeConfig dir
             // 制造损坏日志
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
             let convId = newConversationId ()
@@ -94,7 +99,7 @@ module SupportBundle =
         let dir = tempDir ()
         try
             DataPaths.ensureDataDirs dir
-            let configPath = writeConfig dir
+            let configPath, _ = writeConfig dir
             // 触发一条错误事件（含密钥值——必须被脱敏）
             Wanxiang.Server.Stderr.registerSecrets [ "sk-secret-key-123456789" ]
             Wanxiang.Server.Stderr.write "test-error" [ "message", "failed with sk-secret-key-123456789" ]
@@ -116,7 +121,7 @@ module SupportBundle =
         let dir = tempDir ()
         try
             DataPaths.ensureDataDirs dir
-            let configPath = writeConfig dir
+            let configPath, _ = writeConfig dir
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
             let convId = newConversationId ()
             let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "机密会话"; config = testConfig () } ]
