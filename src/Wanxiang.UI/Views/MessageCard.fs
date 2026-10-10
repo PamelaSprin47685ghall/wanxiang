@@ -422,11 +422,13 @@ module MessageCard =
                 let single = trimmed.Replace('\n', ' ').Replace('\r', ' ')
                 1, (if single.Length > 96 then single.Substring(0, 95) + "…" else single)
 
+    /// 从工具调用结果中尝试提取错误摘要。
+    /// 若返回 Some msg 说明调用失败并携带错误说明；若为 None 说明没有检测到错误。
     let private tryExtractToolError (resultOpt: string option) : string option =
         match resultOpt with
         | Some res when not (String.IsNullOrWhiteSpace res) ->
             let trimmed = res.Trim()
-            if trimmed.StartsWith "error:" then
+            if trimmed.StartsWith("error:", StringComparison.OrdinalIgnoreCase) then
                 let msg = trimmed.Substring(6).Trim()
                 Some(if String.IsNullOrWhiteSpace msg then "执行失败" else msg)
             elif trimmed.StartsWith "{" && trimmed.EndsWith "}" then
@@ -435,7 +437,32 @@ module MessageCard =
                     let root = doc.RootElement
                     if root.ValueKind = JsonValueKind.Object then
                         let mutable errProp = Unchecked.defaultof<_>
-                        if root.TryGetProperty("error", &errProp) then
+                        let mutable isErrProp = Unchecked.defaultof<_>
+                        let mutable successProp = Unchecked.defaultof<_>
+                        let mutable statusProp = Unchecked.defaultof<_>
+
+                        let tryExtractMessageFromObject (obj: JsonElement) : string option =
+                            let mutable p = Unchecked.defaultof<_>
+                            if obj.TryGetProperty("message", &p) && p.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(p.GetString())) then
+                                Some(p.GetString().Trim())
+                            elif obj.TryGetProperty("msg", &p) && p.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(p.GetString())) then
+                                Some(p.GetString().Trim())
+                            elif obj.TryGetProperty("reason", &p) && p.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(p.GetString())) then
+                                Some(p.GetString().Trim())
+                            elif obj.TryGetProperty("error", &p) then
+                                match p.ValueKind with
+                                | JsonValueKind.String when not (String.IsNullOrWhiteSpace(p.GetString())) -> Some(p.GetString().Trim())
+                                | JsonValueKind.Object ->
+                                    let mutable innerMsg = Unchecked.defaultof<_>
+                                    if p.TryGetProperty("message", &innerMsg) && innerMsg.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(innerMsg.GetString())) then
+                                        Some(innerMsg.GetString().Trim())
+                                    else Some(p.GetRawText())
+                                | _ -> None
+                            else None
+
+                        if root.TryGetProperty("error", &errProp)
+                           && errProp.ValueKind <> JsonValueKind.Null
+                           && errProp.ValueKind <> JsonValueKind.False then
                             match errProp.ValueKind with
                             | JsonValueKind.String -> Some(errProp.GetString())
                             | JsonValueKind.Object ->
@@ -443,8 +470,23 @@ module MessageCard =
                                 if errProp.TryGetProperty("message", &msgProp) && msgProp.ValueKind = JsonValueKind.String then
                                     Some(msgProp.GetString())
                                 else Some(errProp.GetRawText())
+                            | JsonValueKind.True -> Some("执行失败")
                             | _ -> Some(errProp.GetRawText())
-                        else None
+                        elif (root.TryGetProperty("isError", &isErrProp) && isErrProp.ValueKind = JsonValueKind.True)
+                             || (root.TryGetProperty("is_error", &isErrProp) && isErrProp.ValueKind = JsonValueKind.True) then
+                            Some(defaultArg (tryExtractMessageFromObject root) "执行失败")
+                        elif root.TryGetProperty("success", &successProp) && successProp.ValueKind = JsonValueKind.False then
+                            Some(defaultArg (tryExtractMessageFromObject root) "执行失败")
+                        elif root.TryGetProperty("status", &statusProp) && statusProp.ValueKind = JsonValueKind.String then
+                            let statusVal = statusProp.GetString().Trim()
+                            if statusVal.Equals("error", StringComparison.OrdinalIgnoreCase)
+                               || statusVal.Equals("failed", StringComparison.OrdinalIgnoreCase)
+                               || statusVal.Equals("failure", StringComparison.OrdinalIgnoreCase) then
+                                Some(defaultArg (tryExtractMessageFromObject root) "执行失败")
+                            else
+                                None
+                        else
+                            None
                     else None
                 with _ -> None
             elif trimmed.IndexOf("traceback", StringComparison.OrdinalIgnoreCase) >= 0 then
@@ -463,54 +505,149 @@ module MessageCard =
                     |> Array.filter (not << String.IsNullOrWhiteSpace)
                     |> Array.tryHead
                 Some(defaultArg firstLine "执行失败")
-            else None
+            elif trimmed.IndexOf("500 internal server error", StringComparison.OrdinalIgnoreCase) >= 0 then
+                Some("500 Internal Server Error")
+            elif trimmed.IndexOf("internal server error", StringComparison.OrdinalIgnoreCase) >= 0 then
+                Some("Internal Server Error")
+            else
+                let lines =
+                    trimmed.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+                    |> Array.map (fun s -> s.Trim())
+                    |> Array.filter (not << String.IsNullOrWhiteSpace)
+
+                let tryMatchFatal () =
+                    lines
+                    |> Array.tryFind (fun l -> l.StartsWith("fatal:", StringComparison.OrdinalIgnoreCase))
+                    |> Option.map (fun l ->
+                        let rest = l.Substring(6).Trim()
+                        if String.IsNullOrWhiteSpace rest then "执行失败" else rest)
+
+                let tryMatchHttpStatus () =
+                    let isStatusLine (l: string) =
+                        let stripped =
+                            if l.StartsWith("HTTP/", StringComparison.OrdinalIgnoreCase) then
+                                let idx = l.IndexOf(' ')
+                                if idx > 0 then l.Substring(idx).Trim() else l
+                            elif l.StartsWith("HTTP ", StringComparison.OrdinalIgnoreCase) then
+                                l.Substring(5).Trim()
+                            else l
+                        if stripped.Equals("401 Unauthorized", StringComparison.OrdinalIgnoreCase)
+                           || stripped.Equals("401: Unauthorized", StringComparison.OrdinalIgnoreCase)
+                           || stripped.StartsWith("401 Unauthorized", StringComparison.OrdinalIgnoreCase)
+                           || stripped.StartsWith("401: Unauthorized", StringComparison.OrdinalIgnoreCase) then
+                            Some "401 Unauthorized"
+                        elif stripped.Equals("403 Forbidden", StringComparison.OrdinalIgnoreCase)
+                             || stripped.Equals("403: Forbidden", StringComparison.OrdinalIgnoreCase)
+                             || stripped.StartsWith("403 Forbidden", StringComparison.OrdinalIgnoreCase)
+                             || stripped.StartsWith("403: Forbidden", StringComparison.OrdinalIgnoreCase) then
+                            Some "403 Forbidden"
+                        elif stripped.Equals("404 Not Found", StringComparison.OrdinalIgnoreCase)
+                             || stripped.Equals("404: Not Found", StringComparison.OrdinalIgnoreCase)
+                             || stripped.StartsWith("404 Not Found", StringComparison.OrdinalIgnoreCase)
+                             || stripped.StartsWith("404: Not Found", StringComparison.OrdinalIgnoreCase) then
+                            Some "404 Not Found"
+                        else None
+
+                    let isExactStatus (l: string) =
+                        let stripped =
+                            if l.StartsWith("HTTP/", StringComparison.OrdinalIgnoreCase) then
+                                let idx = l.IndexOf(' ')
+                                if idx > 0 then l.Substring(idx).Trim() else l
+                            elif l.StartsWith("HTTP ", StringComparison.OrdinalIgnoreCase) then
+                                l.Substring(5).Trim()
+                            else l
+                        if stripped.Equals("401 Unauthorized", StringComparison.OrdinalIgnoreCase)
+                           || stripped.Equals("401: Unauthorized", StringComparison.OrdinalIgnoreCase) then
+                            Some "401 Unauthorized"
+                        elif stripped.Equals("403 Forbidden", StringComparison.OrdinalIgnoreCase)
+                             || stripped.Equals("403: Forbidden", StringComparison.OrdinalIgnoreCase) then
+                            Some "403 Forbidden"
+                        elif stripped.Equals("404 Not Found", StringComparison.OrdinalIgnoreCase)
+                             || stripped.Equals("404: Not Found", StringComparison.OrdinalIgnoreCase) then
+                            Some "404 Not Found"
+                        else None
+
+                    match lines |> Array.tryHead with
+                    | Some firstLine when (isStatusLine firstLine).IsSome -> isStatusLine firstLine
+                    | _ -> lines |> Array.tryPick isExactStatus
+
+                let tryMatchPermissionDenied () =
+                    lines
+                    |> Array.tryFind (fun l ->
+                        let s = l.Trim()
+                        s.Equals("permission denied", StringComparison.OrdinalIgnoreCase)
+                        || s.Equals("permission denied.", StringComparison.OrdinalIgnoreCase)
+                        || s.Equals("access denied", StringComparison.OrdinalIgnoreCase)
+                        || s.Equals("access denied.", StringComparison.OrdinalIgnoreCase)
+                        || s.StartsWith("permission denied:", StringComparison.OrdinalIgnoreCase)
+                        || s.StartsWith("access denied:", StringComparison.OrdinalIgnoreCase)
+                        || s.StartsWith("access denied for ", StringComparison.OrdinalIgnoreCase)
+                        || s.IndexOf(": permission denied", StringComparison.OrdinalIgnoreCase) >= 0
+                        || s.IndexOf(": access denied", StringComparison.OrdinalIgnoreCase) >= 0)
+
+                let tryMatchCommandNotFound () =
+                    lines
+                    |> Array.tryFind (fun l ->
+                        let s = l.Trim()
+                        s.Equals("command not found", StringComparison.OrdinalIgnoreCase)
+                        || s.Equals("command not found.", StringComparison.OrdinalIgnoreCase)
+                        || s.StartsWith("command not found:", StringComparison.OrdinalIgnoreCase)
+                        || s.EndsWith(": command not found", StringComparison.OrdinalIgnoreCase)
+                        || s.EndsWith(": command not found.", StringComparison.OrdinalIgnoreCase)
+                        || s.IndexOf(": command not found", StringComparison.OrdinalIgnoreCase) >= 0)
+
+                match tryMatchFatal () with
+                | Some err -> Some err
+                | None ->
+                    match tryMatchHttpStatus () with
+                    | Some err -> Some err
+                    | None ->
+                        match tryMatchPermissionDenied () with
+                        | Some err -> Some err
+                        | None ->
+                            match tryMatchCommandNotFound () with
+                            | Some err -> Some err
+                            | None -> None
         | _ -> None
 
-    let private toolCallCard (ctx: MessageContext) (actions: MessageActions) (call: ToolCallView) : Control =
-        let running = call.result.IsNone
-        // 与 tryExtractToolError 同意：只要能摘出错误摘要就按失败呈现。
-        // plain-text 失败（error: 前缀、traceback、Command failed）从此也不再
-        // 穿绿色成功外衣、挂“已完成” pill，错误横幅必定出现。
-        let errorSummaryOpt = tryExtractToolError call.result
-        let jsonSignalsError (res: string) =
-                let trimmed = res.Trim()
-                if trimmed.StartsWith "{" && trimmed.EndsWith "}" then
-                    try
-                        use doc = JsonDocument.Parse trimmed
-                        let root = doc.RootElement
-                        root.ValueKind = JsonValueKind.Object
-                        && (root.TryGetProperty("error", ref (Unchecked.defaultof<_>))
-                            || (let mutable isErr = Unchecked.defaultof<_>
-                                root.TryGetProperty("isError", &isErr) && isErr.ValueKind = JsonValueKind.True))
-                    with _ -> false
-                else false
-        let hasError =
-            errorSummaryOpt.IsSome
-            || (match call.result with
-                | Some res when not (String.IsNullOrWhiteSpace res) -> jsonSignalsError res
-                | _ -> false)
-        let statusBrush: IBrush =
-            if running then Tokens.accent
-            elif hasError then Tokens.danger
-            else Tokens.success
-        let statusBg: IBrush =
-            if running then Tokens.surfaceSoft :> IBrush
-            elif hasError then Tokens.dangerSoft :> IBrush
-            else Tokens.surfaceSoft :> IBrush
-        let statusBadgeText =
+    let private resolveToolCallStatus (isStreaming: bool) (call: ToolCallView) : ToolCallStatus =
+        match call.result with
+        | Some res ->
+            match tryExtractToolError (Some res) with
+            | Some err -> ToolCallStatus.Failed(Some err)
+            | None -> ToolCallStatus.Success
+        | None ->
+            if isStreaming then ToolCallStatus.Running
+            else ToolCallStatus.Unknown
 
-            if running then "执行中"
-            elif hasError then "执行失败"
-            else "已完成"
+    let private toolCallCard (ctx: MessageContext) (actions: MessageActions) (call: ToolCallView) : Control =
+        let status = resolveToolCallStatus ctx.streaming call
+        let statusBrush: IBrush =
+            match status with
+            | ToolCallStatus.Running -> Tokens.accent
+            | ToolCallStatus.Success -> Tokens.success
+            | ToolCallStatus.Failed _ -> Tokens.danger
+            | ToolCallStatus.Unknown -> Tokens.warning
+        let statusBg: IBrush =
+            match status with
+            | ToolCallStatus.Running -> Tokens.surfaceSoft :> IBrush
+            | ToolCallStatus.Success -> Tokens.surfaceSoft :> IBrush
+            | ToolCallStatus.Failed _ -> Tokens.dangerSoft :> IBrush
+            | ToolCallStatus.Unknown -> Tokens.surfaceSoft :> IBrush
+        let statusBadgeText = ToolCallStatus.badgeText status
         let icon: Control =
-            if running then Ui.spinner ControlMetrics.spinnerSize
-            elif hasError then Icons.alert statusBrush
-            else Icons.wrench statusBrush
+            match status with
+            | ToolCallStatus.Running -> Ui.spinner ControlMetrics.spinnerSize
+            | ToolCallStatus.Success -> Icons.wrench statusBrush
+            | ToolCallStatus.Failed _ -> Icons.alert statusBrush
+            | ToolCallStatus.Unknown -> Icons.info statusBrush
         icon.VerticalAlignment <- VerticalAlignment.Center
         let statusGlyph: Control =
-            if running then Ui.spinner ControlMetrics.spinnerCompactSize
-            elif hasError then Icons.alert statusBrush
-            else Icons.check statusBrush
+            match status with
+            | ToolCallStatus.Running -> Ui.spinner ControlMetrics.spinnerCompactSize
+            | ToolCallStatus.Success -> Icons.check statusBrush
+            | ToolCallStatus.Failed _ -> Icons.alert statusBrush
+            | ToolCallStatus.Unknown -> Icons.info statusBrush
         statusGlyph.VerticalAlignment <- VerticalAlignment.Center
         statusGlyph.Margin <- Thickness(0.0, 0.0, Spacing.spaceXs, 0.0)
         let name =
@@ -541,8 +678,7 @@ module MessageCard =
                 Child = statusPillContent)
         /// 未展开时也给一行参数摘要：多数时候用户只想确认「传了什么」。
         let argCount, previewText = formatToolArgsPreview call.argumentsJson
-        let summaryText =
-            previewText
+        let summaryText = previewText
         let summary =
             TextBlock(
                 Text = summaryText,
@@ -552,6 +688,14 @@ module MessageCard =
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 IsVisible = not (String.IsNullOrWhiteSpace summaryText),
                 Margin = Thickness(0.0, Spacing.spaceXs, 0.0, 0.0))
+        let errorSummaryOpt =
+            match status with
+            | ToolCallStatus.Failed errOpt -> errOpt
+            | _ -> None
+        let hasError =
+            match status with
+            | ToolCallStatus.Failed _ -> true
+            | _ -> false
         let errorBanner =
             let errGlyph = Icons.alert Tokens.danger
             errGlyph.VerticalAlignment <- VerticalAlignment.Center
@@ -577,7 +721,10 @@ module MessageCard =
             [ if not (String.IsNullOrWhiteSpace call.argumentsJson) then sprintf "// 参数 (Arguments)\n%s" call.argumentsJson
               match call.result with
               | Some res when not (String.IsNullOrWhiteSpace res) -> sprintf "// 结果 (Result)\n%s" res
-              | _ -> () ]
+              | _ ->
+                  match status with
+                  | ToolCallStatus.Unknown -> sprintf "// 结果 (Result)\n未收到工具执行结果（生成已结束）"
+                  | _ -> () ]
             |> String.concat "\n\n"
         let detailPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
         let createDetailSection (label: string) (payload: string) (isError: bool) =
@@ -614,7 +761,11 @@ module MessageCard =
         match call.result with
         | Some result when not (String.IsNullOrWhiteSpace result) ->
             detailPanel.Children.Add(createDetailSection (if hasError then "执行结果 (异常)" else "执行结果") result hasError)
-        | _ -> ()
+        | _ ->
+            match status with
+            | ToolCallStatus.Unknown ->
+                detailPanel.Children.Add(createDetailSection "执行结果" "未收到工具执行结果（生成已结束）" false)
+            | _ -> ()
         let detail, setDetailVisible = detailViewport LayoutPolicy.expandedDetailMaxHeight (detailPanel :> Control) false
         detail.Margin <- Thickness(0.0, Spacing.spaceMd, 0.0, 0.0)
         let chevronHost =
@@ -739,6 +890,163 @@ module MessageCard =
         syncChevron ()
         syncToolName ()
         host :> Control
+
+    /// 工具活动概览（UX-002 W4.2 / W4.4 / W4.5）：
+    /// 当消息有工具调用时，在工具调用上方形成简短概览（如「调用 2 个工具 · 1 个完成」），
+    /// 不创建独立执行看板，且可折叠/展开工具卡片列表。
+    let private toolActivityBlock (ctx: MessageContext) (actions: MessageActions) (calls: ToolCallView list) : Control =
+        let statuses = calls |> List.map (resolveToolCallStatus ctx.streaming)
+        let total = List.length calls
+        let runningCount = statuses |> List.filter (function ToolCallStatus.Running -> true | _ -> false) |> List.length
+        let successCount = statuses |> List.filter (function ToolCallStatus.Success -> true | _ -> false) |> List.length
+        let failedCount = statuses |> List.filter (function ToolCallStatus.Failed _ -> true | _ -> false) |> List.length
+        let unknownCount = statuses |> List.filter (function ToolCallStatus.Unknown -> true | _ -> false) |> List.length
+
+        let overviewBaseText =
+            if total = 1 then
+                match List.head statuses with
+                | ToolCallStatus.Running -> "调用 1 个工具 · 执行中"
+                | ToolCallStatus.Success -> "调用 1 个工具 · 已完成"
+                | ToolCallStatus.Failed _ -> "调用 1 个工具 · 执行失败"
+                | ToolCallStatus.Unknown -> "调用 1 个工具 · 结果未知"
+            else
+                let parts = [
+                    if successCount > 0 then yield sprintf "%d 个完成" successCount
+                    if runningCount > 0 then yield sprintf "%d 个执行中" runningCount
+                    if failedCount > 0 then yield sprintf "%d 个失败" failedCount
+                    if unknownCount > 0 then yield sprintf "%d 个结果未知" unknownCount
+                ]
+                let summary =
+                    if List.isEmpty parts then "无状态"
+                    else String.concat " · " parts
+                sprintf "调用 %d 个工具 · %s" total summary
+
+        let overviewBrush: IBrush =
+            if runningCount > 0 then Tokens.accent
+            elif failedCount > 0 then Tokens.danger
+            elif unknownCount > 0 then Tokens.warning
+            else Tokens.textMuted
+
+        let overviewIcon: Control =
+            if runningCount > 0 then Ui.spinner ControlMetrics.spinnerCompactSize
+            elif failedCount > 0 then Icons.alert overviewBrush
+            elif unknownCount > 0 then Icons.info overviewBrush
+            else Icons.check overviewBrush
+        overviewIcon.VerticalAlignment <- VerticalAlignment.Center
+
+        let cardsPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
+        for call in calls do
+            cardsPanel.Children.Add(toolCallCard ctx actions call)
+
+        let mutable listVisible = true
+
+        let chevronHost =
+            Border(
+                Width = Tokens.iconGlyph,
+                Height = Tokens.iconGlyph,
+                MinWidth = Tokens.iconGlyph,
+                MinHeight = Tokens.iconGlyph,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center)
+        let rotateTransform = RotateTransform(if listVisible then 90.0 else 0.0)
+        let chevronTransitions = Avalonia.Animation.Transitions()
+        let rotateTransition = Avalonia.Animation.DoubleTransition()
+        rotateTransition.Property <- RotateTransform.AngleProperty
+        rotateTransition.Duration <- MotionPolicy.duration MotionLedger.disclosureChevronRotate.TotalMilliseconds
+        rotateTransition.Easing <- MotionPolicy.easeOutCubic
+        chevronTransitions.Add rotateTransition
+        rotateTransform.Transitions <- chevronTransitions
+        let chevronGlyph = Icons.chevronRight Tokens.textMuted
+        chevronGlyph.HorizontalAlignment <- HorizontalAlignment.Center
+        chevronGlyph.VerticalAlignment <- VerticalAlignment.Center
+        chevronGlyph.RenderTransform <- rotateTransform
+        chevronGlyph.RenderTransformOrigin <- RelativePoint.Center
+        chevronHost.Child <- chevronGlyph
+
+        let titleRun = Run()
+        let stateRun = Run()
+        let syncOverviewText () =
+            rotateTransform.Angle <- if listVisible then 90.0 else 0.0
+            titleRun.Text <- overviewBaseText
+            titleRun.Foreground <- overviewBrush
+            stateRun.Text <- if listVisible then " (收起)" else " (展开)"
+            stateRun.Foreground <- Tokens.textMuted
+
+        syncOverviewText ()
+
+        let captionText =
+            TextBlock(
+                FontSize = Tokens.fontCaption,
+                FontWeight = FontWeight.Medium,
+                LineHeight = ReadingRhythm.captionLineHeight,
+                Foreground = Tokens.textMuted,
+                VerticalAlignment = VerticalAlignment.Center)
+        captionText.Inlines.Add titleRun
+        captionText.Inlines.Add stateRun
+
+        let headerRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
+        headerRow.Cursor <- handCursor
+        headerRow.Children.Add chevronHost
+        headerRow.Children.Add overviewIcon
+        headerRow.Children.Add captionText
+
+        let header =
+            ActionBorder(
+                CornerRadius = CornerRadius Spacing.Radius.sm,
+                Padding = Thickness(Spacing.spaceXs, Spacing.spaceSm),
+                Margin = Thickness(0.0, 0.0, 0.0, Spacing.spaceMd),
+                Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
+                BorderThickness = Thickness ControlMetrics.borderWidth,
+                Cursor = handCursor,
+                Focusable = true,
+                Transitions = Ui.surfaceBorderedTransitions (),
+                Child = headerRow)
+
+        let toggleList () =
+            listVisible <- not listVisible
+            cardsPanel.IsVisible <- listVisible
+            syncOverviewText ()
+            let actionName = if listVisible then "收起工具活动列表" else "展开工具活动列表"
+            Avalonia.Automation.AutomationProperties.SetName(header, actionName)
+            Avalonia.Automation.AutomationProperties.SetHelpText(header, sprintf "%s工具活动" (if listVisible then "点击收起" else "点击展开"))
+
+        header.SetInvokeAction toggleList
+        header.PointerReleased.Add(fun e ->
+            if not e.Handled && header.IsEnabled && header.IsHitTestVisible && e.InitialPressMouseButton = MouseButton.Left then
+                e.Handled <- true
+                toggleList ())
+        header.KeyDown.Add(fun e ->
+            if not e.Handled && header.IsFocused && header.IsEnabled && (e.Key = Key.Enter || e.Key = Key.Space) then
+                e.Handled <- true
+                toggleList ())
+
+        let updateHeaderVisual () =
+            if header.IsFocused then
+                header.BorderBrush <- Tokens.accent
+                header.Background <- Tokens.hover
+                header.Opacity <- 1.0
+            elif header.IsPointerOver then
+                header.BorderBrush <- Tokens.line
+                header.Background <- Tokens.hover
+                header.Opacity <- Tokens.opacityHoverDim
+            else
+                header.BorderBrush <- Brushes.Transparent
+                header.Background <- Brushes.Transparent
+                header.Opacity <- 1.0
+
+        Interaction.surface header Interaction.HoverVariant.bordered |> ignore
+        Interaction.reportFocusOrigin header
+        updateHeaderVisual ()
+
+        Avalonia.Automation.AutomationProperties.SetName(header, overviewBaseText)
+        Avalonia.Automation.AutomationProperties.SetRole(header, AutomationRole.Button)
+        Avalonia.Automation.AutomationProperties.SetHelpText(header, if listVisible then "点击收起工具活动列表" else "点击展开工具活动列表")
+
+        let container = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
+        container.Children.Add header
+        container.Children.Add cardsPanel
+        container :> Control
 
     /// 附件：统一渲染文件条（图片用 image 图标区分），点击下载；
     /// 内容已丢失的附件退化为不可点的静态条。
@@ -1450,8 +1758,8 @@ module MessageCard =
             let duration = ctx.usage |> Option.bind (fun u -> u.durationMs)
             body.Children.Add(reasoningBlock ctx actions message.reasoning duration)
 
-        for call in message.toolCalls do
-            body.Children.Add(toolCallCard ctx actions call)
+        if not (List.isEmpty message.toolCalls) then
+            body.Children.Add(toolActivityBlock ctx actions message.toolCalls)
 
         if not (String.IsNullOrWhiteSpace message.text) then
             if MessageView.isUser message then

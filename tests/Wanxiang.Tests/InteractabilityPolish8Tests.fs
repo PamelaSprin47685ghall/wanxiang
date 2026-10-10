@@ -107,7 +107,7 @@ let private buildSidebar () =
     root.Children.Add sidebar
     root, overlay, sidebar
 
-// ── 1. 空态：搜索框 Down 落进空态主按钮 ───────────────────────────────────
+// ── 1. 零会话：搜索框 Down 落到唯一的顶部新建入口 ─────────────────────────
 
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -116,7 +116,7 @@ let ``down in the search box reaches the empty state action`` () =
     let root, _, sidebar = buildSidebar ()
     let window = show root 320.0 420.0
     try
-        // 零会话：走 NoConversations 空态（connected 且不在加载），主按钮「新建会话」。
+        // 零会话仍有顶部新建入口；空态不能再造第二个同样的按钮。
         sidebar.SetConnection(true, "已连接")
         sidebar.SetConversationListLoading false
         sidebar.SetConversations []
@@ -127,13 +127,13 @@ let ``down in the search box reaches the empty state action`` () =
                 | :? TextBox as tb when not (isNull tb.PlaceholderText) && tb.PlaceholderText = "搜索会话" -> Some tb
                 | _ -> None)
             |> Option.defaultWith (fun () -> failwith "侧栏缺少搜索框")
-        let actionButton = byNameOrFail root "新建会话"
+        let actionButton = byNameOrFail root "新建会话（Ctrl+N）"
         searchBox.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
         let e = privateKey searchBox Key.Down
         Dispatcher.UIThread.RunJobs()
         Assert.True(e.Handled, "空态下 Down 必须被侧栏消费")
-        Assert.True(actionButton.IsFocused, "焦点应落进空态主按钮（新建会话）")
+        Assert.True(actionButton.IsFocused, "焦点应落到顶部唯一的新建会话入口")
     finally
         window.Close()
     )

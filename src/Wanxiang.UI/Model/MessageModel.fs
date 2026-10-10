@@ -30,9 +30,37 @@ type ToolCallView = {
     callId: string
     name: string
     argumentsJson: string
-    /// 结果尚未返回时为 None（渲染成「执行中」）
+    /// 结果尚未返回时为 None（生成中为「执行中」，生成结束后为「结果未知」）
     result: string option
 }
+
+/// 工具调用的四种确定状态（UX-002 W4.3）。
+[<RequireQualifiedAccess>]
+type ToolCallStatus =
+    /// 工具明确仍在执行（generation 未结束 + 该 call 没有 result）
+    | Running
+    /// 调用已完成且有结果
+    | Success
+    /// 调用已完成且有错误（携带错误摘要）
+    | Failed of errorSummary: string option
+    /// 生成已结束但该工具调用没有 result 也未被标记为 error
+    | Unknown
+
+module ToolCallStatus =
+
+    let badgeText (status: ToolCallStatus) =
+        match status with
+        | ToolCallStatus.Running -> "执行中"
+        | ToolCallStatus.Success -> "已完成"
+        | ToolCallStatus.Failed _ -> "执行失败"
+        | ToolCallStatus.Unknown -> "结果未知"
+
+    let isTerminal (status: ToolCallStatus) =
+        match status with
+        | ToolCallStatus.Running -> false
+        | ToolCallStatus.Success
+        | ToolCallStatus.Failed _
+        | ToolCallStatus.Unknown -> true
 
 /// 一条消息的渲染视图。
 type MessageView = {

@@ -62,6 +62,9 @@ type MainView() as this =
 
     let mutable lastUrl = CredentialStore.defaultServerUrl ()
     let mutable lastToken: string option = None
+    let mutable hasSavedCredentials = CredentialStore.tryLoadClientToml().IsSome
+    let mutable connectionError: string option = None
+    let mutable enteredSettingsForFirstProvider = false
     let mutable reconnectCts: CancellationTokenSource option = None
     let mutable reconnectDelayMs = ReconnectBackoff.baseDelayMs
     let mutable pairingRequested = false
@@ -276,12 +279,23 @@ type MainView() as this =
             chat.SetConversationChrome false
             chat.SetTitle("新对话", false)
             if not authenticated then
-                chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
-                composer.SetEnabled(false, "连接服务器后即可开始对话。")
-                composer.SetModelLabel "连接已断开"
+                match connectionError with
+                | Some err ->
+                    chat.ShowEmpty(ChatEmptyState.ConnectionFailed err, Some("重新连接", fun () -> this.ShowConnectDialog()))
+                    composer.SetEnabled(false, sprintf "连接失败：%s" err)
+                    composer.SetModelLabel "未连接"
+                | None ->
+                    if not hasSavedCredentials then
+                        chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
+                        composer.SetEnabled(false, "需要连接服务器才能开始对话。")
+                        composer.SetModelLabel "未连接"
+                    else
+                        chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
+                        composer.SetEnabled(false, "正在连接服务器…草稿已保留。")
+                        composer.SetModelLabel "正在连接"
             elif not (Catalog.isReady catalog) then
-                chat.ShowEmpty(ChatEmptyState.NoProvider, Some("打开设置添加服务商", fun () -> this.ShowSettings()))
-                composer.SetEnabled(false, "还没有可用的模型，先在设置里添加一个服务商。")
+                chat.ShowEmpty(ChatEmptyState.NoProvider, Some("添加服务商", fun () -> this.ShowAddProvider()))
+                composer.SetEnabled(false, "还没有可用的模型，先添加一个服务商。")
                 composer.SetModelLabel "未配置模型"
             else
                 chat.ShowEmpty(ChatEmptyState.NoConversation, None)
@@ -367,8 +381,8 @@ type MainView() as this =
     // ---- 连接 ----
 
     member private this.ShowConnectDialog() =
-        setConnectStatus <-
-            Dialogs.connect
+        let announce =
+            Dialogs.connectWithClosed
                 overlay
                 lastUrl
                 (fun request ->
@@ -379,11 +393,15 @@ type MainView() as this =
                     reconnectDelayMs <- ReconnectBackoff.baseDelayMs
                     this.Connect())
                 (fun code -> send (PairingAttempted {| code = code; clientName = Some CredentialStore.clientName |}))
+                (fun () -> setConnectStatus <- ignore)
+        setConnectStatus <- announce
+        connectionError |> Option.iter announce
 
     member private this.Connect() =
         connectAttempt <- connectAttempt + 1
         let attempt = connectAttempt
         authenticated <- false
+        connectionError <- None
         runs.Disconnect()
         exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
         outbox.Disconnect instanceId
@@ -422,9 +440,12 @@ type MainView() as this =
             with ex ->
                 Dispatcher.UIThread.Post(fun () ->
                     if attempt = connectAttempt then
-                        setConnectStatus (sprintf "连接已断开：%s" ex.Message)
+                        let msg = sprintf "连接已断开：%s" ex.Message
+                        connectionError <- Some msg
+                        setConnectStatus msg
                         sidebar.SetConnection(false, "连接已断开")
-                        this.ScheduleReconnect())
+                        this.ScheduleReconnect()
+                        this.Render())
         }
         |> Async.Start
 
@@ -501,8 +522,8 @@ type MainView() as this =
             toast "连接服务器后才能新建会话；草稿会保留。" Warning
             None
         elif not (Catalog.isReady catalog) then
-            toast "先在设置里添加一个服务商。" Warning
-            this.ShowSettings()
+            toast "先添加一个服务商。" Warning
+            this.ShowAddProvider()
             None
         else
             let conversationId = Guid.CreateVersion7()
@@ -693,6 +714,31 @@ type MainView() as this =
                 with _ -> fallback ())
         | None -> fallback ()
 
+    member private this.ShowAddProvider() =
+        enteredSettingsForFirstProvider <- not (Catalog.isReady catalog)
+        this.ShowSettings()
+        Dispatcher.UIThread.Post(
+            (fun () ->
+                let rec findAddButton (control: Control) : ActionBorder option =
+                    match control with
+                    | :? ActionBorder as ab when
+                        (match ab.Child with
+                         | :? TextBlock as tb -> tb.Text = "添加服务商"
+                         | _ -> false) -> Some ab
+                    | :? Panel as panel ->
+                        panel.Children |> Seq.tryPick findAddButton
+                    | :? ContentControl as cc ->
+                        match cc.Content with
+                        | :? Control as c -> findAddButton c
+                        | _ -> None
+                    | :? Border as b ->
+                        if not (isNull b.Child) then findAddButton b.Child else None
+                    | _ -> None
+                match findAddButton settings with
+                | Some btn -> btn.InvokeFromAutomation()
+                | None -> ()),
+            DispatcherPriority.Render)
+
     member private this.ShowSettings() =
         settingsReturnFocus <- this.CurrentFocusControl()
         settingsHost.IsVisible <- true
@@ -705,6 +751,7 @@ type MainView() as this =
         send CatalogRequest
 
     member private this.CloseSettings() =
+        enteredSettingsForFirstProvider <- false
         settingsHost.IsVisible <- false
         workspace.IsVisible <- true
         this.RestoreSettingsFocus()
@@ -1061,6 +1108,8 @@ type MainView() as this =
                 sidebar.SetConversations []
                 composer.SetText((drafts.Get(d.instanceId, None)).text)
             authenticated <- true
+            hasSavedCredentials <- true
+            connectionError <- None
             instanceId <- d.instanceId
             // 连接真的成功了，退避归零
             reconnectDelayMs <- ReconnectBackoff.baseDelayMs
@@ -1087,24 +1136,36 @@ type MainView() as this =
             authenticated <- false
             exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
             lastToken <- None
-            sidebar.SetConnection(false, "连接已断开")
+            hasSavedCredentials <- false
+            sidebar.SetConnection(false, "未认证")
             // 失败只报一次：连接对话框内联呈现原因（紧邻重连入口），不再叠 toast。
-            setConnectStatus (sprintf "连接已断开：%s" d.reason)
+            let msg = sprintf "服务器拒绝连接：%s" d.reason
+            connectionError <- Some msg
+            setConnectStatus msg
             this.Render()
-        | PairingStarted _ -> setConnectStatus "配对码已打印到服务端终端，请输入后提交。"
+        | PairingStarted _ ->
+            connectionError <- None
+            setConnectStatus "配对码已打印到服务端终端，请输入后提交。"
         | PairingSucceeded d ->
             lastToken <- Some d.token
+            hasSavedCredentials <- true
+            connectionError <- None
             setConnectStatus "配对成功，正在认证…"
             send (AuthPresent {| token = d.token |})
         | PairingFailed d ->
             let message =
                 if d.frozen then sprintf "配对已冻结 %d 分钟：%s" d.freezeMinutes d.reason
                 else sprintf "配对失败：%s" d.reason
+            connectionError <- Some message
             setConnectStatus message
-            // 配对失败只报一次：对话框内联呈现（紧邻重试入口），不再叠 toast。
+            this.Render()
         | CatalogSnapshot d ->
             catalog <- Catalog.parse d.providers d.tools d.generation
             settings.SetCatalog catalog
+            if enteredSettingsForFirstProvider && Catalog.isReady catalog then
+                enteredSettingsForFirstProvider <- false
+                this.CloseSettings()
+                composer.Focus()
             this.Render()
         | ConfigChanged _ -> send CatalogRequest
         | ProviderProbeResult d ->
@@ -1687,6 +1748,7 @@ type MainView() as this =
     member private this.AutoConnect() =
         match CredentialStore.tryLoadClientToml () with
         | Some(url, token) ->
+            hasSavedCredentials <- true
             lastUrl <- url
             lastToken <- Some token
             this.Connect()
@@ -1697,11 +1759,16 @@ type MainView() as this =
                     match stored with
                     | Some(url, token, _) ->
                         Dispatcher.UIThread.Post(fun () ->
+                            hasSavedCredentials <- true
                             lastUrl <- url
                             lastToken <- Some token
                             this.Connect())
-                    | None -> Dispatcher.UIThread.Post(fun () -> this.ShowConnectDialog())
+                    | None ->
+                        Dispatcher.UIThread.Post(fun () ->
+                            hasSavedCredentials <- false
+                            this.Render())
                 }
                 |> Async.Start
             else
-                Dispatcher.UIThread.Post(fun () -> this.ShowConnectDialog())
+                hasSavedCredentials <- false
+                this.Render()

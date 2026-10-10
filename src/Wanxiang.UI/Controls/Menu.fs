@@ -105,11 +105,10 @@ module Menu =
             Nullable Avalonia.Automation.Peers.AutomationControlType.MenuItem)
         // hover/focus 底色补间走 Ui.surfaceTransitions：与全应用基控件同一机制、同一时长。
         host.Transitions <- Ui.surfaceTransitions ()
-        // 危险项（删除会话等）用 dangerSoft 做 hover/focus 底，与常规 hover 拉开差距；
+        // 危险项（删除会话等）用 danger 变体（dangerSoft 叠 hover 底），与常规 hover 拉开差距；
         // 键盘激活（Enter/Space）由 Ui.onClick 统一绑定，Tab 焦点环由 ActionBorder 绘制。
-        let hoverBrush: IBrush = if entry.danger then Tokens.dangerSoft :> IBrush else Tokens.hover :> IBrush
-        // hover / focus 底色走 Interaction 的原生伪类；菜单项是 hover 高亮档。
-        Interaction.surface host Interaction.HoverVariant.plain |> ignore
+        let hoverVariant = if entry.danger then Interaction.HoverVariant.danger else Interaction.HoverVariant.plain
+        Interaction.surface host hoverVariant |> ignore
         Interaction.reportFocusOrigin host
         // 按压反馈由 Interaction 的 `:pressed` 伪类负责（不透明度脉冲，不碰几何）。
         Ui.onClick host (fun () ->

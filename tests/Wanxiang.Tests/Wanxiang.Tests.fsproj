@@ -90,6 +90,7 @@
     <Compile Include="UiModelTests.fs" />
     <Compile Include="DialogsTests.fs" />
     <Compile Include="MessageCardTests.fs" />
+    <Compile Include="ToolCallStatusTests.fs" />
     <Compile Include="UiPureLogicTests.fs" />
   </ItemGroup>
 

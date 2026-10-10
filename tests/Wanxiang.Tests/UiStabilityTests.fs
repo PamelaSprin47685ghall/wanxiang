@@ -2336,21 +2336,21 @@ let ``sidebar empty state separates list loading from confirmed empty and embeds
         sidebar.SetConnection(true, "已连接")
         Assert.True(hasText "还没有会话")
         Assert.False(hasText "正在加载会话…")
-        let createButton = byName "新建会话" |> Option.get
+        let createButton = byName "新建会话（Ctrl+N）" |> Option.get
         Assert.True(createButton.IsVisible)
         pressEnter createButton
         Assert.Equal(1, createCount)
-        // 已发出请求、快照未达：只呈现加载中，行动按钮隐藏。
+        // 已发出请求、快照未达：列表只呈现加载中，顶部新建入口仍随时可用。
         sidebar.SetConversationListLoading true
         Assert.True(hasText "正在加载会话…")
         Assert.False(hasText "还没有会话")
         Assert.True((byName "正在加载会话" |> Option.get).IsVisible)
-        Assert.False((byName "新建会话" |> Option.get).IsVisible)
+        Assert.True(createButton.IsVisible)
         // 快照到达（空列表）：加载态解除，回到确认空态。
         sidebar.SetConversations []
         Assert.True(hasText "还没有会话")
         Assert.False(hasText "正在加载会话…")
-        Assert.True((byName "新建会话" |> Option.get).IsVisible)
+        Assert.True(createButton.IsVisible)
         // 断连：加载中随连接翻转作废，回到未连接空态（断连清空列表的既有路径不变）。
         sidebar.SetConversationListLoading true
         sidebar.SetConnection(false, "连接已断开")

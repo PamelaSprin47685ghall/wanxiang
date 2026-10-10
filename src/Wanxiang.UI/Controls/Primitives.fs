@@ -385,6 +385,39 @@ module Ui =
     let emptyState (logo: Control) (title: string option) (hint: string) (extra: Control option) (action: Border option) : Control =
         emptyStateWith false logo title hint extra action
 
+    /// 正常的会话起点不是错误面板。输入区已经是主动作，不再重复品牌卡和按钮。
+    /// 连接与服务商不可用仍使用上面的可操作空态。
+    let conversationPrompt (title: string) (hint: string) (action: Border option) : Control =
+        let heading =
+            TextBlock(
+                Text = title,
+                FontSize = Tokens.fontDisplay,
+                FontWeight = FontWeight.Medium,
+                Foreground = Tokens.text,
+                TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap)
+        let caption =
+            TextBlock(
+                Text = hint,
+                FontSize = Tokens.fontBody,
+                Foreground = Tokens.textMuted,
+                TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = ReadingRhythm.uiBodyLineHeight)
+        let column =
+            StackPanel(
+                Orientation = Orientation.Vertical,
+                Spacing = Spacing.spaceMd,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                MaxWidth = ContentMetrics.emptyStateMaxWidth)
+        column.Children.Add heading
+        column.Children.Add caption
+        // 平时没有重复按钮；调用方若明确提供一个恢复动作，则仍须完整呈现。
+        action |> Option.iter (fun button ->
+            button.HorizontalAlignment <- HorizontalAlignment.Center
+            column.Children.Add button)
+        column :> Control
+
     // ---------- 徽标 / 状态 ----------
 
     /// 标签语气档。Neutral 为默认外观（既有 surfaceRaised + border + textMuted）；

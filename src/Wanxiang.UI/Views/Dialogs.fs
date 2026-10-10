@@ -255,11 +255,12 @@ module Dialogs =
             box.CaretIndex <- (if isNull box.Text then 0 else box.Text.Length))
 
     /// 连接对话框：地址 + 令牌，或走配对码。
-    let connect
+    let connectWithClosed
         (overlay: OverlayHost)
         (defaultUrl: string)
         (onConnect: ConnectRequest -> unit)
         (onSubmitCode: string -> unit)
+        (onClosed: unit -> unit)
         : (string -> unit) =
         let urlField, urlBox = Ui.labeledField "服务器地址" "ws://127.0.0.1:8765/ws"
         urlBox.Text <- defaultUrl
@@ -293,15 +294,52 @@ module Dialogs =
                 LineHeight = ReadingRhythm.captionLineHeight)
         // 连接错误走 assertive live region：与行内字段错误（Ui.setFieldError）同等的读屏待遇。
         AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Assertive)
+
+        let mutable connectActionRef: unit -> unit = ignore
+        let mutable submitCodeRef: unit -> unit = ignore
+
+        let retryButton =
+            Ui.button Ui.Secondary "重试连接" (fun () ->
+                if codeSection.IsVisible then
+                    let code = if isNull codeBox.Text then "" else codeBox.Text.Trim()
+                    if code.Length = 6 then submitCodeRef ()
+                    else
+                        onConnect
+                            { url = (if isNull urlBox.Text then "" else urlBox.Text.Trim())
+                              token = None
+                              usePairing = true }
+                else
+                    connectActionRef ())
+        retryButton.IsVisible <- false
+        retryButton.HorizontalAlignment <- HorizontalAlignment.Left
+
         let announce message =
             status.Text <- message
-            status.IsVisible <- not (String.IsNullOrWhiteSpace message)
+            let hasMessage = not (String.IsNullOrWhiteSpace message)
+            status.IsVisible <- hasMessage
             AutomationProperties.SetName(status, message)
+            if hasMessage then
+                let isFailure =
+                    message.Contains "失败"
+                    || message.Contains "拒绝"
+                    || message.Contains "断开"
+                    || message.Contains "超时"
+                    || message.Contains "错误"
+                if isFailure then
+                    status.Foreground <- Tokens.danger
+                    Ui.setButtonText retryButton (if codeSection.IsVisible then "重试配对" else "重试连接")
+                    retryButton.IsVisible <- true
+                else
+                    status.Foreground <- Tokens.textMuted
+                    retryButton.IsVisible <- false
+            else
+                retryButton.IsVisible <- false
 
         let submitCode () =
             let code = if isNull codeBox.Text then "" else codeBox.Text.Trim()
             if code.Length = 6 then onSubmitCode code
             else announce "请输入 6 位配对码。"
+        submitCodeRef <- submitCode
         codeBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
                 e.Handled <- true
@@ -315,6 +353,8 @@ module Dialogs =
                 let show = not codeSection.IsVisible
                 codeSection.IsVisible <- show
                 codeButton.IsVisible <- show
+                if retryButton.IsVisible then
+                    Ui.setButtonText retryButton (if show then "重试配对" else "重试连接")
                 if show then
                     onConnect
                         { url = (if isNull urlBox.Text then "" else urlBox.Text.Trim())
@@ -333,6 +373,7 @@ module Dialogs =
                     { url = url
                       token = (if String.IsNullOrWhiteSpace token then None else Some token)
                       usePairing = false }
+        connectActionRef <- connectAction
 
         urlBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
@@ -366,6 +407,7 @@ module Dialogs =
                   urlField
                   tokenField
                   status :> Control
+                  retryButton :> Control
                   Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control
                   pairingToggle :> Control
                   codeSection :> Control
@@ -382,8 +424,16 @@ module Dialogs =
         // 「没有令牌？改用配对码」上，而不是目标字段）。
         let target =
             if String.IsNullOrWhiteSpace (if isNull urlBox.Text then "" else urlBox.Text) then urlBox else tokenBox
-        overlay.ShowDialog(content :> Control, 460.0, initialFocus = target)
+        overlay.ShowDialog(content :> Control, 460.0, initialFocus = target, onClosed = onClosed)
         announce
+
+    let connect
+        (overlay: OverlayHost)
+        (defaultUrl: string)
+        (onConnect: ConnectRequest -> unit)
+        (onSubmitCode: string -> unit)
+        : (string -> unit) =
+        connectWithClosed overlay defaultUrl onConnect onSubmitCode ignore
 
 
     /// 会话设置：模型、生成参数、系统指令、工具勾选。

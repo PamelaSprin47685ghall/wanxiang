@@ -1677,17 +1677,15 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
     )
 
 // =========================================================================
-// 10. Composer 拖放入口可发现性（footer 常驻弱提示）
+// 10. Composer 把键盘/拖放帮助收在操作控件上，不长期占用输入高度
 // =========================================================================
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``Composer footer keeps a persistent drop hint outside compact and folds it inside compact`` () =
+let ``Composer keeps drop and keyboard instructions on their actual controls`` () =
     Headless.run (fun () ->
-    // 拖放入口的可发现性：footer caption 行的常驻弱提示（「可将文件拖入此处添加附件」）
-    // 在宽屏默认可见——静态界面不拖文件也能看到入口线索；compact 档与键位提示
-    // hintText 走同一显隐逻辑一并折叠（Composer.SetCompactMode），footer 高度由
-    // modelChip.MinHeight 兜底。控件以 AutomationName 暴露（读屏可发现），与文本同名。
+    // 功能没有丢：添附件按钮说明拖放，输入框说明快捷键。
+    // 两项帮助都不必用常驻 footer 重复占一行。
     let composerActions =
         { submit = fun _ -> true
           stopGeneration = ignore
@@ -1700,18 +1698,19 @@ let ``Composer footer keeps a persistent drop hint outside compact and folds it 
     let composer = Composer(composerActions)
     composer.Build()
 
-    let dropHint =
+    let attach =
         descendants composer
-        |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "可将文件拖入此处添加附件")
-
-    // 宽屏默认：常驻可见（不只看拖放 banner 的拖放中态）。
-    Assert.True(dropHint.IsVisible)
-    // compact：与 hintText 一起折叠，不占 footer 行位。
+        |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "添加附件")
+    let input =
+        descendants composer
+        |> Seq.pick (function :? TextBox as field when field.AcceptsReturn -> Some field | _ -> None)
+    Assert.Contains("拖入", Avalonia.Automation.AutomationProperties.GetHelpText(attach))
+    Assert.Contains("Enter 发送", Avalonia.Automation.AutomationProperties.GetHelpText(input))
     composer.SetCompactMode true
-    Assert.False(dropHint.IsVisible)
-    // 退回宽屏：恢复常驻。
+    Assert.True(attach.IsVisible)
+    Assert.Contains("拖入", Avalonia.Automation.AutomationProperties.GetHelpText(attach))
     composer.SetCompactMode false
-    Assert.True(dropHint.IsVisible)
+    Assert.True(attach.IsVisible)
     )
 
 [<Trait("Category", "UI")>]

@@ -11,6 +11,7 @@ open Avalonia.Controls
 open Avalonia.Headless
 open Avalonia.Input
 open Avalonia.Layout
+open Avalonia.Styling
 open Avalonia.Threading
 open Avalonia.VisualTree
 open Xunit
@@ -65,7 +66,7 @@ let private field root placeholder =
     descendants root |> Seq.choose (function :? TextBox as box -> Some box | _ -> None)
     |> Seq.find (fun box -> box.PlaceholderText = placeholder)
 
-let private capture (window: Window) name =
+let private capture (window: Window) name (light: bool) =
     match Environment.GetEnvironmentVariable "WANXIANG_UX_ARTIFACT_DIR" with
     | null | "" -> ()
     | directory ->
@@ -73,16 +74,26 @@ let private capture (window: Window) name =
         AvaloniaHeadlessPlatform.ForceRenderTimerTick()
         use frame = window.CaptureRenderedFrame()
         Assert.NotNull frame
-        frame.Save(Path.Combine(directory, name + ".png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default)
+        let fileName = if light then name + "-light.png" else name + ".png"
+        frame.Save(Path.Combine(directory, fileName), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default)
 
-[<Trait("Category", "UI"); Fact>]
-let ``starting and continuing share the same focused draft and attachment controls`` () =
+let private applyTheme (window: Window) (light: bool) =
+    MotionPolicy.setReduced true
+    let themeMode = if light then ThemeMode.Light else ThemeMode.Dark
+    Tokens.apply themeMode
+    window.RequestedThemeVariant <- (if light then ThemeVariant.Light else ThemeVariant.Dark)
+    Dispatcher.UIThread.RunJobs()
+
+[<Trait("Category", "UI"); Theory; InlineData(false); InlineData(true)>]
+let ``starting and continuing share the same focused draft and attachment controls`` (lightTheme: bool) =
     Headless.run (fun () ->
+        let initialTheme = Tokens.current ()
         let chat = chat ()
         chat.ShowEmpty(NoConversation, None)
         let composer = composer ()
         let surface = ConversationWorkspace(chat, composer)
         let window = Window(Width = 1000.0, Height = 820.0, Content = surface)
+        applyTheme window lightTheme
         window.Show()
         try
             surface.SetStarting true
@@ -93,7 +104,7 @@ let ``starting and continuing share the same focused draft and attachment contro
             Assert.True(input.IsFocused)
             let before = composer.TranslatePoint(Point(), surface).Value.Y
             Assert.True(before < surface.Bounds.Height * 0.75, "起步输入应在画面中部，而非底边")
-            capture window "start-desktop"
+            capture window "start-desktop" lightTheme
             surface.SetStarting false
             Dispatcher.UIThread.RunJobs()
             Assert.Same(parent, composer.Parent)
@@ -107,16 +118,139 @@ let ``starting and continuing share the same focused draft and attachment contro
             let at = composer.TranslatePoint(Point(), surface).Value
             Assert.True(at.Y + composer.Bounds.Height <= surface.Bounds.Height + 1.0)
             Assert.True(input.IsEffectivelyVisible)
+        finally
+            Tokens.apply initialTheme
+            window.Close())
+
+[<Trait("Category", "UI"); Fact>]
+let ``a normal conversation start is an unboxed prompt followed by the sole composer`` () =
+    Headless.run (fun () ->
+        let chat = chat ()
+        let composer = composer ()
+        let surface = ConversationWorkspace(chat, composer)
+        let window = Window(Width = 900.0, Height = 780.0, Content = surface)
+        window.Show()
+        try
+            chat.ShowEmpty(NoConversation, None)
+            surface.SetStarting true
+            Dispatcher.UIThread.RunJobs()
+            let headline =
+                descendants chat
+                |> Seq.pick (function :? TextBlock as text when text.Text = "今天想讨论什么？" -> Some text | _ -> None)
+            Assert.Equal(Tokens.fontDisplay, headline.FontSize)
+            // 起步文案直接位于空态容器，不再被一张带描边的卡片包围。
+            Assert.IsType<StackPanel>(headline.Parent.Parent) |> ignore
+            Assert.Single(descendants surface |> Seq.filter (fun c -> obj.ReferenceEquals(c, composer))) |> ignore
         finally window.Close())
 
-[<Trait("Category", "UI"); Theory; InlineData(375.0); InlineData(520.0); InlineData(1000.0)>]
-let ``request context and execution actions stay within the composer`` width =
+[<Trait("Category", "UI"); Fact>]
+let ``composer shows custom context only when useful and reserves no idle queue slot`` () =
     Headless.run (fun () ->
+        let view = composer ()
+        view.SetText "保留的草稿"
+        view.SetSessionContext(Some SessionConfig.empty, true, ignore)
+        let window = Window(Width = 800.0, Height = 220.0, Content = view)
+        window.Show()
+        try
+            Dispatcher.UIThread.RunJobs()
+            let context = named view "会话上下文"
+            let queue = named view "排队发送"
+            let send = named view "发送"
+            Assert.False(context.IsVisible)
+            Assert.False(queue.IsVisible)
+            let idleRightEdge = send.TranslatePoint(Point(send.Bounds.Width, 0.0), view).Value.X
+            view.SetSessionContext(Some { SessionConfig.empty with tools = [ "example-tool" ] }, true, ignore)
+            Assert.True(context.IsVisible)
+            view.SetGenerating true
+            Dispatcher.UIThread.RunJobs()
+            Assert.True(queue.IsVisible)
+            let stop = named view "停止生成"
+            Assert.Same(send, stop)
+            let activeRightEdge = stop.TranslatePoint(Point(stop.Bounds.Width, 0.0), view).Value.X
+            Assert.InRange(abs(activeRightEdge - idleRightEdge), 0.0, 0.5)
+            view.SetGenerating false
+            view.SetSessionContext(Some SessionConfig.empty, true, ignore)
+            Assert.False(queue.IsVisible)
+            Assert.False(context.IsVisible)
+            Assert.Equal("保留的草稿", view.Text)
+        finally window.Close())
+
+[<Trait("Category", "UI"); Theory; InlineData(false); InlineData(true)>]
+let ``conversation first desktop composition keeps history secondary to the current draft`` (lightTheme: bool) =
+    Headless.run (fun () ->
+        let initialTheme = Tokens.current ()
+        // 用合成历史检查整幅画面的关系；不连接服务器，不读取真实会话。
+        let root = Grid(Background = Tokens.canvas)
+        root.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength 280.0))
+        root.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength ControlMetrics.sidebarDividerWidth))
+        root.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+        let actions: SidebarActions =
+            { newConversation = ignore
+              openConversation = ignore
+              renameConversation = ignore
+              deleteConversation = ignore
+              setPinned = fun _ _ -> ()
+              setArchived = fun _ _ -> ()
+              selectionAllPinned = fun _ -> false
+              setPinnedMany = fun _ _ -> ()
+              setArchivedMany = fun _ _ -> ()
+              deleteMany = ignore
+              duplicateAsFork = ignore
+              exportConversation = ignore
+              openSettings = ignore
+              reconnect = ignore
+              toggleArchivedVisibility = ignore
+              closeNavigation = ignore }
+        let sidebar = Sidebar(OverlayHost(Grid()), actions, Brand.logo)
+        sidebar.Build()
+        let now = DateTimeOffset.Now
+        let summary title preview pinned : ConversationSummary =
+            { id = Guid.NewGuid(); title = title; preview = preview
+              running = false; pinned = pinned; archived = false
+              createdAt = now; updatedAt = now; messageCount = 4
+              isFork = false; providerId = "sample"; model = "sample-model"; lastCommitId = 3UL }
+        sidebar.SetConnection(true, "已连接")
+        sidebar.SetServerUrl("ws://localhost:9000")
+        sidebar.SetConversations
+            [ summary "重整会话体验" "讨论页面结构和操作层级" true
+              summary "一些随手想法" "留下一点想法，稍后继续" false
+              summary "阅读笔记" "整理一段长文的要点" false ]
+        let chat = chat ()
+        chat.SetConversationChrome false
+        chat.SetTitle("新对话", false)
+        chat.ShowEmpty(NoConversation, None)
+        let composer = composer ()
+        let surface = ConversationWorkspace(chat, composer)
+        Grid.SetColumn(sidebar, 0)
+        Grid.SetColumn(surface, 2)
+        root.Children.Add sidebar
+        root.Children.Add surface
+        let window = Window(Width = 1120.0, Height = 780.0, Content = root)
+        applyTheme window lightTheme
+        window.Show()
+        try
+            surface.SetStarting true
+            Dispatcher.UIThread.RunJobs()
+            Assert.True((named sidebar "新建会话（Ctrl+N）").IsEffectivelyVisible)
+            Assert.True((named composer "切换本会话使用的模型").IsEffectivelyVisible)
+            capture window "full-conversation-desktop" lightTheme
+        finally
+            Tokens.apply initialTheme
+            window.Close())
+
+[<Trait("Category", "UI"); Theory;
+  InlineData(375.0, false); InlineData(375.0, true);
+  InlineData(520.0, false); InlineData(520.0, true);
+  InlineData(1000.0, false); InlineData(1000.0, true)>]
+let ``request context and execution actions stay within the composer`` (width: float, lightTheme: bool) =
+    Headless.run (fun () ->
+        let initialTheme = Tokens.current ()
         let view = composer ()
         view.SetSessionContext(Some { SessionConfig.empty with tools = [ "test-tool" ] }, true, ignore)
         view.SetCompactMode(width < LayoutPolicy.compactBreakpoint)
         view.SetModelLabel(String.replicate 12 "模型名称")
         let window = Window(Width = width, Height = 620.0, Content = view)
+        applyTheme window lightTheme
         window.Show()
         try
             view.SetText "这里有一段可以继续编辑的草稿。"
@@ -129,11 +263,13 @@ let ``request context and execution actions stay within the composer`` width =
                 Assert.True(point.X >= 0.0, name)
                 Assert.True(point.X + control.Bounds.Width <= view.Bounds.Width + 1.0, name)
                 Assert.True(control.IsEffectivelyVisible, name)
-            if width = 375.0 then capture window "composer-compact"
+            if width = 375.0 then capture window "composer-compact" lightTheme
             view.SetEnabled(false, "连接已断开，内容仍在当前窗口。")
             Assert.Equal("这里有一段可以继续编辑的草稿。", view.Text)
             Assert.False((view.ModelAnchor()).IsEnabled)
-        finally window.Close())
+        finally
+            Tokens.apply initialTheme
+            window.Close())
 
 [<Trait("Category", "UI"); Fact>]
 let ``compact conversation menu keeps fork export and reading actions reachable`` () =
@@ -160,12 +296,16 @@ let ``compact conversation menu keeps fork export and reading actions reachable`
             Assert.True(trigger.IsEffectivelyVisible)
         finally window.Close())
 
-[<Trait("Category", "UI"); Theory; InlineData(700.0, 780.0); InlineData(375.0, 520.0)>]
-let ``session parameters reveal validation errors and leave save outside the scroll area`` (width: float, height: float) =
+[<Trait("Category", "UI"); Theory;
+  InlineData(700.0, 780.0, false); InlineData(700.0, 780.0, true);
+  InlineData(375.0, 520.0, false); InlineData(375.0, 520.0, true)>]
+let ``session parameters reveal validation errors and leave save outside the scroll area`` (width: float, height: float, lightTheme: bool) =
     Headless.run (fun () ->
+        let initialTheme = Tokens.current ()
         let root = Grid()
         let overlay = OverlayHost root
         let window = Window(Width = width, Height = height, Content = root)
+        applyTheme window lightTheme
         window.Show()
         try
             let mutable submissions = 0
@@ -176,7 +316,7 @@ let ``session parameters reveal validation errors and leave save outside the scr
             Assert.False advanced.IsExpanded
             let save = named root "保存"
             Assert.False(save.GetVisualAncestors() |> Seq.exists (fun v -> v :? ScrollViewer))
-            capture window (if width > 400.0 then "session-context" else "session-context-compact")
+            capture window (if width > 400.0 then "session-context" else "session-context-compact") lightTheme
             press save
             Assert.Equal(0, submissions)
             Assert.True advanced.IsExpanded
@@ -187,7 +327,9 @@ let ``session parameters reveal validation errors and leave save outside the scr
             temperature.Text <- "0.7"
             press save
             Assert.Equal(1, submissions)
-        finally window.Close())
+        finally
+            Tokens.apply initialTheme
+            window.Close())
 
 [<Trait("Category", "UI"); Fact>]
 let ``save acknowledgement never overwrites edits made while the request is pending`` () =

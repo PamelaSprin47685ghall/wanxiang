@@ -297,6 +297,11 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
         providersPanel.ApplyProbe(providerId, ok, models, error)
 
+    /// 供外部直接打开添加服务商编辑器的公开入口
+    member this.OpenAddProvider() =
+        this.Select Providers
+        providersPanel.OpenAddEditor()
+
     member this.Build() =
         this.Background <- Tokens.canvas
 

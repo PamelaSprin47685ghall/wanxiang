@@ -161,6 +161,34 @@ module EndpointScrollTests =
             window.Close()
         )
 
+    [<Trait("Category", "UI")>]
+    [<Fact>]
+    let ``return to latest stays hidden when layout reports intermediate offsets`` () =
+        Headless.run (fun () ->
+        let chat, window = buildChat (exchanges 8)
+        try
+            let scroller, _ = scrollerOf chat
+            scroller.Offset <- Vector(0.0, 0.0)
+            settle chat
+            let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
+            let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
+            let button = Assert.IsAssignableFrom<Border>(body.Children.[2])
+            Assert.True(button.IsVisible, "滚动前必须离开底部")
+            button.RaiseEvent(
+                KeyEventArgs(
+                    RoutedEvent = InputElement.KeyDownEvent,
+                    Key = Key.Enter,
+                    Source = button))
+            Assert.False(button.IsVisible, "点击后立即隐藏")
+            // 模拟异步 ScrollToEnd 尚未落到目标前的 ScrollChanged。
+            // 旧实现会在此把悬浮按钮重新亮起，形成闪烁与偶发测试失败。
+            scroller.Offset <- Vector(0.0, scroller.Extent.Height * 0.25)
+            settle chat
+            Assert.False(button.IsVisible, "自动滚动的中途帧不能使按钮重新出现")
+        finally
+            window.Close()
+        )
+
     // ---------- 快捷键解析 ----------
 
     [<Trait("Category", "UI")>]

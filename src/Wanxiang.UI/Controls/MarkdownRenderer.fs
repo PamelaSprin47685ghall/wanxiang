@@ -740,16 +740,18 @@ type MarkdownRenderer(
                     Thickness(Spacing.spaceMd, 0.0, 0.0, ReadingRhythm.paragraphGap)
                 else
                     Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap)
-            [ (Ui.groupingCard
-                (Thickness(Spacing.spaceXs, Spacing.spaceXs, Spacing.spaceXs, Spacing.spaceXs))
-                (Border(
+            // 引用块为单层容器：左侧强调条 + surfaceContainer 微底色，消除双层卡片/双环嵌套。
+            let quoteCard =
+                Border(
+                    Background = Tokens.surfaceContainer,
                     BorderBrush = Tokens.accent,
                     BorderThickness = Thickness(ControlMetrics.quoteEdgeWidth, 0.0, 0.0, 0.0),
-                    Padding = Thickness(Spacing.spaceMd, Spacing.spaceXs, Spacing.spaceXs, Spacing.spaceXs),
-                    Child = stack))
-                Spacing.Radius.sm
-                |> fun card -> card.ClipToBounds <- true; card.Margin <- quoteMargin; card)
-              :> Control ]
+                    CornerRadius = CornerRadius(0.0, Spacing.Radius.sm, Spacing.Radius.sm, 0.0),
+                    Padding = Thickness(Spacing.spaceMd, Spacing.spaceSm, Spacing.spaceMd, Spacing.spaceSm),
+                    Margin = quoteMargin,
+                    ClipToBounds = true,
+                    Child = stack)
+            [ quoteCard :> Control ]
         | MdCode(language, code) -> [ this.RenderCode(language, code) ]
         | MdRule ->
             [ Border(

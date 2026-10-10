@@ -405,12 +405,13 @@ module SettingsViewTests =
 
             let textBoxes = descendants root |> Seq.choose (function :? TextBox as tb -> Some tb | _ -> None) |> List.ofSeq
             Assert.True(textBoxes.Length >= 6)
-            let idBox = textBoxes.[0]
-            let labelBox = textBoxes.[1]
-            let urlBox = textBoxes.[2]
-            let keyBox = textBoxes.[3]
-            let modelsBox = textBoxes.[4]
-            let defaultModelBox = textBoxes.[5]
+            let byWatermark wm = textBoxes |> List.find (fun tb -> tb.Watermark = wm)
+            let idBox = byWatermark "例如 openai"
+            let labelBox = byWatermark "在界面上怎么称呼它"
+            let urlBox = byWatermark "https://api.openai.com/v1"
+            let keyBox = byWatermark "粘贴密钥"
+            let modelsBox = byWatermark "每行一个模型名"
+            let defaultModelBox = byWatermark "留空则自动使用列表中第一个"
 
             // 1. 清空必填字段并保存 -> 验证必填字段错误（默认模型留空为合法可选，不触发必填错误）
             idBox.Text <- ""
@@ -471,10 +472,11 @@ module SettingsViewTests =
             Dispatcher.UIThread.RunJobs()
 
             let textBoxes = descendants root |> Seq.choose (function :? TextBox as tb -> Some tb | _ -> None) |> List.ofSeq
-            let idBox = textBoxes.[0]
-            let labelBox = textBoxes.[1]
-            let urlBox = textBoxes.[2]
-            let modelsBox = textBoxes.[4]
+            let byWatermark wm = textBoxes |> List.find (fun tb -> tb.Watermark = wm)
+            let idBox = byWatermark "例如 openai"
+            let labelBox = byWatermark "在界面上怎么称呼它"
+            let urlBox = byWatermark "https://api.openai.com/v1"
+            let modelsBox = byWatermark "每行一个模型名"
 
             // 验证默认从 OpenAI 预设初始化
             Assert.Equal("openai", idBox.Text)
@@ -498,6 +500,188 @@ module SettingsViewTests =
                 |> Seq.choose (function :? TextBlock as tb when tb.Text = "自定义" -> Some tb | _ -> None)
                 |> List.ofSeq
             Assert.NotEmpty(customTextBlocks)
+
+            window.Close()
+        )
+
+    [<Trait("Category", "UI")>]
+    [<Fact>]
+    let ``SettingsProviders two-tier form defaults to quick access and preserves drafts when toggling advanced settings`` () =
+        Headless.run (fun () ->
+            let root = Grid()
+            let over = OverlayHost(root)
+            let toasts = ResizeArray<string * ToastTone>()
+            let providers = SettingsProviders(over, defaultActions toasts)
+            let window = Window(Width = 800.0, Height = 600.0, Content = root)
+            window.Show()
+            Dispatcher.UIThread.RunJobs()
+
+            // 打开新建服务商编辑器
+            invokePrivate<unit> providers "ShowEditor" [| box None |]
+            Dispatcher.UIThread.RunJobs()
+
+            let textBoxes = descendants root |> Seq.choose (function :? TextBox as tb -> Some tb | _ -> None) |> List.ofSeq
+            let byWatermark wm = textBoxes |> List.find (fun tb -> tb.Watermark = wm)
+            let labelBox = byWatermark "在界面上怎么称呼它"
+            let urlBox = byWatermark "https://api.openai.com/v1"
+            let keyBox = byWatermark "粘贴密钥"
+            let idBox = byWatermark "例如 openai"
+            let timeoutBox = byWatermark "120"
+            let retriesBox = byWatermark "2"
+
+            // 1. 验证默认处于快速接入层：高级设置切换按钮存在且显示“高级设置 ▼”
+            let toggleBtn = byAutomationName root "高级设置" :?> Border
+            let toggleText = (toggleBtn.Child :?> TextBlock).Text
+            Assert.Equal("高级设置 ▼", toggleText)
+
+            // 2. 在快速接入层修改草稿字段
+            labelBox.Text <- "我的专属模型"
+            keyBox.Text <- "sk-custom-secret-key"
+            urlBox.Text <- "https://api.my-endpoint.com/v1"
+
+            // 3. 点击展开高级设置
+            submit toggleBtn
+            Dispatcher.UIThread.RunJobs()
+            Assert.Equal("收起高级设置 ▲", (toggleBtn.Child :?> TextBlock).Text)
+
+            // 4. 验证快速层填过的值在高级层依然完整保留（草稿不丢失）
+            Assert.Equal("我的专属模型", labelBox.Text)
+            Assert.Equal("sk-custom-secret-key", keyBox.Text)
+            Assert.Equal("https://api.my-endpoint.com/v1", urlBox.Text)
+
+            // 5. 在高级层修改字段
+            idBox.Text <- "my-custom-provider"
+            timeoutBox.Text <- "180"
+            retriesBox.Text <- "3"
+
+            // 6. 点击收起高级设置，回到快速接入层
+            submit toggleBtn
+            Dispatcher.UIThread.RunJobs()
+            Assert.Equal("高级设置 ▼", (toggleBtn.Child :?> TextBlock).Text)
+
+            // 7. 再次展开，验证高级层修改的值依然完整保留
+            submit toggleBtn
+            Dispatcher.UIThread.RunJobs()
+            Assert.Equal("my-custom-provider", idBox.Text)
+            Assert.Equal("180", timeoutBox.Text)
+            Assert.Equal("3", retriesBox.Text)
+            Assert.Equal("我的专属模型", labelBox.Text)
+
+            window.Close()
+        )
+
+    [<Trait("Category", "UI")>]
+    [<Fact>]
+    let ``SettingsProviders saveCore with invalid advanced field automatically expands advanced layer and focuses error`` () =
+        Headless.run (fun () ->
+            let root = Grid()
+            let over = OverlayHost(root)
+            let toasts = ResizeArray<string * ToastTone>()
+            let providers = SettingsProviders(over, defaultActions toasts)
+            let window = Window(Width = 800.0, Height = 600.0, Content = root)
+            window.Show()
+            Dispatcher.UIThread.RunJobs()
+
+            invokePrivate<unit> providers "ShowEditor" [| box None |]
+            Dispatcher.UIThread.RunJobs()
+
+            let textBoxes = descendants root |> Seq.choose (function :? TextBox as tb -> Some tb | _ -> None) |> List.ofSeq
+            let byWatermark wm = textBoxes |> List.find (fun tb -> tb.Watermark = wm)
+            let modelsBox = byWatermark "每行一个模型名"
+            let toggleBtn = byAutomationName root "高级设置" :?> Border
+            let saveBtn = byAutomationName root "添加" :?> Border
+
+            // 确保初始状态为收起状态
+            Assert.Equal("高级设置 ▼", (toggleBtn.Child :?> TextBlock).Text)
+
+            // 清空模型列表（高级字段）
+            modelsBox.Text <- ""
+
+            // 在快速接入状态下点击添加
+            submit saveBtn
+            Dispatcher.UIThread.RunJobs()
+
+            // 验证高级设置已自动展开（W2.6）以便用户聚焦并修改错误
+            Assert.Equal("收起高级设置 ▲", (toggleBtn.Child :?> TextBlock).Text)
+            Assert.Equal("至少填写一个模型名（每行一个）。", Ui.fieldValidationMessage(modelsBox).Text)
+
+            window.Close()
+        )
+
+    [<Trait("Category", "UI")>]
+    [<Fact>]
+    let ``SettingsProviders ApplyProbe updates draft models in open editor and caches without auto-upserting`` () =
+        Headless.run (fun () ->
+            let root = Grid()
+            let over = OverlayHost(root)
+            let toasts = ResizeArray<string * ToastTone>()
+            let upsertCalls = ResizeArray<JsonObject>()
+            let actions =
+                stubActions
+                    toasts
+                    (fun payload cb ->
+                        upsertCalls.Add payload
+                        cb true)
+                    ignore
+                    ignore
+                    (fun _ cb -> cb true)
+                    ignore
+                    (fun _ cb -> cb true)
+            let providers = SettingsProviders(over, actions)
+            let existingProvider =
+                { id = "test-prov"
+                  label = "Test Provider"
+                  kind = "openai"
+                  baseUrl = "https://api.test.com/v1"
+                  hasApiKey = true
+                  models = [ "old-model" ]
+                  defaultModel = "old-model"
+                  timeoutSeconds = 120
+                  maxRetries = 2
+                  enabled = true }
+            providers.SetCatalog { Catalog.empty with providers = [ existingProvider ] }
+            let window = Window(Width = 800.0, Height = 600.0, Content = root)
+            window.Show()
+            Dispatcher.UIThread.RunJobs()
+
+            // 1. 打开服务商编辑器并触发探测
+            invokePrivate<unit> providers "ShowEditor" [| box (Some existingProvider) |]
+            Dispatcher.UIThread.RunJobs()
+
+            let textBoxes = descendants root |> Seq.choose (function :? TextBox as tb -> Some tb | _ -> None) |> List.ofSeq
+            let byWatermark wm = textBoxes |> List.find (fun tb -> tb.Watermark = wm)
+            let modelsBox = byWatermark "每行一个模型名"
+
+            // 展开高级设置并点击探活按钮触发探测
+            let toggleBtn = byAutomationName root "高级设置" :?> Border
+            submit toggleBtn
+            Dispatcher.UIThread.RunJobs()
+
+            let probeBtn = byAutomationName root "从服务器获取模型列表" :?> Border
+            submit probeBtn
+            Dispatcher.UIThread.RunJobs()
+
+            // 模拟收到探活结果 ApplyProbe
+            let probedModels = [ "probed-model-1"; "probed-model-2" ]
+            providers.ApplyProbe("test-prov", true, probedModels, None)
+            Dispatcher.UIThread.RunJobs()
+
+            // 验证模型框已回填为草稿
+            Assert.Contains("probed-model-1", modelsBox.Text)
+            Assert.Contains("probed-model-2", modelsBox.Text)
+
+            // 关键断言（W2.5）：绝不自动调用 upsertProvider 提交到持久化！
+            Assert.Empty(upsertCalls)
+
+            // 2. 模拟在未打开编辑器时收到 ApplyProbe（例如列表卡片触发）
+            over.CloseDialog()
+            Dispatcher.UIThread.RunJobs()
+
+            providers.ApplyProbe("test-prov", true, [ "bg-model-a" ], None)
+            Dispatcher.UIThread.RunJobs()
+
+            // 关键断言（W2.5）：后台探测依然绝不调用 upsertProvider
+            Assert.Empty(upsertCalls)
 
             window.Close()
         )

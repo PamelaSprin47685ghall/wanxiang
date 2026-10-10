@@ -122,23 +122,35 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             | _ -> initialPreset |> Option.map (fun x -> x.kind) |> Option.defaultValue "openai"
 
         let _, idBox = Ui.textField "例如 openai"
+        Avalonia.Automation.AutomationProperties.SetName(idBox, "稳定标识")
         let idField = Ui.inputFieldGroup "稳定标识" "创建后不可修改；仅限字母、数字、下划线与连字符。" idBox
         let _, labelBox = Ui.textField "在界面上怎么称呼它"
+        Avalonia.Automation.AutomationProperties.SetName(labelBox, "显示名称")
         let labelField = Ui.inputFieldGroup "显示名称" "仅用于界面显示。" labelBox
         let _, urlBox = Ui.textField "https://api.openai.com/v1"
+        Avalonia.Automation.AutomationProperties.SetName(urlBox, "端点地址")
         let urlField = Ui.inputFieldGroup "端点地址" "https:// 开头的服务地址；原生与兼容接口均可。" urlBox
         let _, keyBox = Ui.textField "粘贴密钥"
+        Avalonia.Automation.AutomationProperties.SetName(keyBox, "API Key")
         let keyField = Ui.inputFieldGroup "API Key" "只保存在服务端，界面不会回显。" keyBox
         keyBox.PasswordChar <- '●'
         let _, modelsBox = Ui.textField "每行一个模型名"
+        Avalonia.Automation.AutomationProperties.SetName(modelsBox, "模型列表")
         let modelsField = Ui.inputFieldGroup "模型列表" "每行一个；也可用逗号分隔。" modelsBox
         modelsBox.AcceptsReturn <- true
         modelsBox.TextWrapping <- TextWrapping.Wrap
         modelsBox.MinHeight <- ControlMetrics.textAreaMinHeight
         modelsBox.VerticalContentAlignment <- VerticalAlignment.Top
         let _, defaultModelBox = Ui.textField "留空则自动使用列表中第一个"
+        Avalonia.Automation.AutomationProperties.SetName(defaultModelBox, "默认模型")
         let defaultModelField = Ui.inputFieldGroup "默认模型" "必须在模型列表中；留空自动选用第一个。" defaultModelBox
-        let allBoxes = [ idBox; labelBox; urlBox; keyBox; modelsBox; defaultModelBox ]
+        let _, timeoutBox = Ui.textField "120"
+        Avalonia.Automation.AutomationProperties.SetName(timeoutBox, "请求超时")
+        let timeoutField = Ui.inputFieldGroup "请求超时（秒）" "单个请求等待的最长时间（秒），默认 120 秒。" timeoutBox
+        let _, retriesBox = Ui.textField "2"
+        Avalonia.Automation.AutomationProperties.SetName(retriesBox, "失败重试")
+        let retriesField = Ui.inputFieldGroup "失败重试次数" "网络或偶发错误时的重试次数（0-5），默认 2 次。" retriesBox
+        let allBoxes = [ idBox; labelBox; urlBox; keyBox; modelsBox; defaultModelBox; timeoutBox; retriesBox ]
         for box in allBoxes do attachFieldValidation box
         // 表单错误摘要：与 SettingsGeneral / SettingsTools 同款的可聚焦 live region，
         // 多错时由 Ui.applyValidationFeedback 汇总呈现，单错时收起。
@@ -194,6 +206,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 urlBox.Text <- preset.baseUrl
                 modelsBox.Text <- String.Join("\n", preset.models)
                 defaultModelBox.Text <- preset.models |> List.tryHead |> Option.defaultValue ""
+                timeoutBox.Text <- "120"
+                retriesBox.Text <- "2"
                 presetHint.Text <- preset.hint
                 syncPresetHint ()
                 setPresetText preset.label
@@ -255,8 +269,16 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             idBox.IsEnabled <- false
             labelBox.Text <- p.label
             urlBox.Text <- p.baseUrl
-            modelsBox.Text <- String.Join("\n", p.models)
-            defaultModelBox.Text <- p.defaultModel
+            let effectiveModels =
+                match probeResults.TryGetValue p.id with
+                | true, cachedModels when not (List.isEmpty cachedModels) -> cachedModels
+                | _ -> p.models
+            modelsBox.Text <- String.Join("\n", effectiveModels)
+            defaultModelBox.Text <-
+                if List.contains p.defaultModel effectiveModels then p.defaultModel
+                else effectiveModels |> List.tryHead |> Option.defaultValue ""
+            timeoutBox.Text <- string p.timeoutSeconds
+            retriesBox.Text <- string p.maxRetries
             keyBox.PlaceholderText <- if p.hasApiKey then "已保存（留空则不改动）" else "粘贴密钥"
             presetHint.Text <- initialPreset |> Option.map (fun x -> x.hint) |> Option.defaultValue ""
             syncPresetHint ()
@@ -319,6 +341,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let mutable setPending: bool -> unit = ignore
         /// 保存往返中的重入 guard：按钮已禁用，但 Ctrl+Enter 仍能进 save。
         let mutable savePending = false
+        let mutable isAdvanced = false
+        let mutable showAdvanced: bool -> unit = ignore
         let saveCore () =
             for box in allBoxes do clearFieldError box
             errorSummary.IsVisible <- false
@@ -376,6 +400,28 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 else
                     rawDefaultModel
 
+            let timeout =
+                let rawTimeout = if isNull timeoutBox.Text then "" else timeoutBox.Text.Trim()
+                if String.IsNullOrWhiteSpace rawTimeout then
+                    existing |> Option.map (fun p -> p.timeoutSeconds) |> Option.defaultValue 120
+                else
+                    match Int32.TryParse rawTimeout with
+                    | true, v when v > 0 -> v
+                    | _ ->
+                        fail timeoutBox "超时时间必须是大于 0 的整秒数。"
+                        120
+
+            let retries =
+                let rawRetries = if isNull retriesBox.Text then "" else retriesBox.Text.Trim()
+                if String.IsNullOrWhiteSpace rawRetries then
+                    existing |> Option.map (fun p -> p.maxRetries) |> Option.defaultValue 2
+                else
+                    match Int32.TryParse rawRetries with
+                    | true, v when v >= 0 && v <= 10 -> v
+                    | _ ->
+                        fail retriesBox "重试次数必须是 0 到 10 之间的整数。"
+                        2
+
             if List.isEmpty (List.ofSeq errors) then
                 let payload =
                     providerPayload
@@ -387,14 +433,21 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         models
                         defaultModel
                         (readEnabled ())
-                        (existing |> Option.map (fun p -> p.timeoutSeconds) |> Option.defaultValue 120)
-                        (existing |> Option.map (fun p -> p.maxRetries) |> Option.defaultValue 2)
+                        timeout
+                        retries
                 setPending true
                 actions.upsertProvider payload (fun ok ->
                     setPending false
                     if ok && editorActive then overlay.CloseDialog()
                     elif not ok then actions.toast "保存失败，请重试。" Failure)
             else
+                // 若错误发生在高级设置收起区域，自动展开以便用户查看与聚焦错误（W2.6）
+                let hasAdvancedError =
+                    errors |> Seq.exists (fun (box, _) ->
+                        box = idBox || box = modelsBox || box = defaultModelBox || box = timeoutBox || box = retriesBox)
+                if hasAdvancedError && not isAdvanced then
+                    showAdvanced true
+
                 Ui.applyValidationFeedback (List.ofSeq errors) (Some errorSummary) (fun message -> actions.toast message Warning)
 
         /// pending 中的 save 直接返回，不做二次提交。
@@ -406,7 +459,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let submitOnEnter () =
             let ctrl (e: KeyEventArgs) =
                 e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
-            for box in [ idBox; labelBox; urlBox; keyBox; defaultModelBox ] do
+            for box in [ idBox; labelBox; urlBox; keyBox; defaultModelBox; timeoutBox; retriesBox ] do
                 box.KeyDown.Add(fun e ->
                     if e.Key = Key.Enter && not (ctrl e) then
                         e.Handled <- true
@@ -452,6 +505,52 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             submitOnEnter ()
             row
 
+        let quickPanel =
+            Ui.vstack
+                Spacing.spaceXl
+                [ labelField
+                  keyField
+                  urlField ]
+
+        let probeRow =
+            Ui.vstack
+                Spacing.spaceXs
+                [ probeButton :> Control
+                  probeStatus :> Control ]
+
+        let advancedPanel =
+            Ui.vstack
+                Spacing.spaceXl
+                [ idField
+                  modelsField
+                  defaultModelField
+                  probeRow :> Control
+                  timeoutField
+                  retriesField
+                  enabledRow ]
+
+        advancedPanel.IsVisible <- false
+
+        let advancedToggleButton =
+            Ui.button Ui.Ghost "高级设置 ▼" (fun () -> showAdvanced (not isAdvanced))
+        advancedToggleButton.HorizontalAlignment <- HorizontalAlignment.Left
+        advancedToggleButton.Margin <- Thickness 0.0
+        advancedToggleButton.Focusable <- true
+        Avalonia.Automation.AutomationProperties.SetName(advancedToggleButton, "高级设置")
+        Avalonia.Automation.AutomationProperties.SetHelpText(advancedToggleButton, "展开高级设置（稳定标识、模型列表、超时与重试）")
+        ToolTip.SetTip(advancedToggleButton, "展开高级设置（稳定标识、模型列表、超时与重试）")
+
+        showAdvanced <- fun expanded ->
+            isAdvanced <- expanded
+            advancedPanel.IsVisible <- expanded
+            let txt = if expanded then "收起高级设置 ▲" else "高级设置 ▼"
+            match advancedToggleButton.Child with
+            | :? TextBlock as tb -> tb.Text <- txt
+            | _ -> ()
+            let help = if expanded then "收起高级设置" else "展开高级设置（稳定标识、模型列表、超时与重试）"
+            Avalonia.Automation.AutomationProperties.SetHelpText(advancedToggleButton, help)
+            ToolTip.SetTip(advancedToggleButton, help)
+
         let form =
             Ui.vstack
                 Spacing.spaceXl
@@ -460,15 +559,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                   kindCaption :> Control
                   presetHint :> Control
                   errorSummary :> Control
-                  idField
-                  labelField
-                  urlField
-                  keyField
-                  modelsField
-                  defaultModelField
-                  probeButton :> Control
-                  probeStatus :> Control
-                  enabledRow
+                  quickPanel :> Control
+                  advancedToggleButton :> Control
+                  advancedPanel :> Control
                   Ui.hairline () :> Control
                   buttons :> Control ]
         form.KeyDown.Add(fun e ->
@@ -486,17 +579,13 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         overlay.ShowDialog(
             scroller :> Control,
             520.0,
-            // 首焦落在主输入框（新建 → ID；编辑 → 名称，ID 已禁用），而不是
-            // 预设下拉：键盘用户打开编辑器的意图就是填字段（Kelivo
-            // model_edit_dialog.dart:88 autofocus 首位可编辑字段）。
-            initialFocus =
-                (match existing with
-                 | Some _ -> labelBox
-                 | None -> idBox),
+            // 无论新建还是编辑，首焦均落在快速接入的名称输入框（如果是已有服务商，名称即首个可编辑项；
+            // 如果是新建，名称已由预设填好且可改，保证首次交互直接处于输入就绪态，满足无障碍焦点契约）。
+            initialFocus = labelBox,
             onClosed = (fun () -> editorActive <- false; activeProbe <- None),
             canDismiss = (fun () -> not savePending))
 
-    /// 探活结果回填：把服务商的模型列表直接更新到配置里。
+    /// 探活结果回填：把服务商的模型列表回填到草稿中，不自动提交保存（W2.5）。
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
         match activeProbe with
         | Some (pid, setPending, applyModels, setStatus) when pid = providerId ->
@@ -505,34 +594,24 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             if ok && not (List.isEmpty models) then
                 setStatus ""
                 applyModels models
+                actions.toast (sprintf "已获取 %d 个模型，已填入草稿，请确认后保存。" (List.length models)) Info
             elif ok then
                 setStatus "服务商返回了空模型列表，模型框未改动。"
+                actions.toast "服务商返回了空模型列表。" Warning
             else
-                setStatus (sprintf "探测失败：%s" (error |> Option.defaultValue "未知原因"))
-        | _ -> ()
-        if ok then
-            probeResults[providerId] <- models
-            match Catalog.tryProvider providerId catalog with
-            | Some provider when not (List.isEmpty models) ->
-                let defaultModel =
-                    if List.contains provider.defaultModel models then provider.defaultModel else List.head models
-                actions.toast (sprintf "已获取 %d 个模型，正在保存…" (List.length models)) Info
-                actions.upsertProvider
-                    (providerPayload
-                        provider.id
-                        provider.label
-                        provider.kind
-                        provider.baseUrl
-                        None
-                        models
-                        defaultModel
-                        provider.enabled
-                        provider.timeoutSeconds
-                        provider.maxRetries)
-                    ignore
-            | _ -> actions.toast "服务商返回了空模型列表。" Warning
-        else
-            actions.toast (sprintf "探测失败：%s" (error |> Option.defaultValue "未知原因")) Failure
+                let errMsg = error |> Option.defaultValue "未知原因"
+                setStatus (sprintf "探测失败：%s" errMsg)
+                actions.toast (sprintf "探测失败：%s" errMsg) Failure
+        | _ ->
+            // 编辑器未打开或不是当前服务商时的探活回调：仅缓存结果和给出反馈，绝不后台自动 upsert
+            if ok then
+                probeResults[providerId] <- models
+                if not (List.isEmpty models) then
+                    actions.toast (sprintf "已获取 %d 个模型。可在编辑服务商中确认后保存。" (List.length models)) Info
+                else
+                    actions.toast "服务商返回了空模型列表。" Warning
+            else
+                actions.toast (sprintf "探测失败：%s" (error |> Option.defaultValue "未知原因")) Failure
 
     member private this.RenderRow(provider: ProviderInfo) : Control =
         // 点只反映配置完整度：没探活过就没资格显示「健康」。
@@ -636,9 +715,14 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             for provider in next.providers do
                 listPanel.Children.Add(this.RenderRow provider)
 
+    /// 供外部直接触发新建服务商编辑器的公开入口（例如首次接入无模型时引导直达）
+    member this.OpenAddEditor() =
+        this.ShowEditor None
+
     member this.Build() : Control =
         let addButton = Ui.button Ui.Primary "添加服务商" (fun () -> this.ShowEditor None)
         addButton.HorizontalAlignment <- HorizontalAlignment.Left
+        Avalonia.Automation.AutomationProperties.SetName(addButton, "添加服务商")
         Ui.vstack
             Spacing.space4xl
             [ Ui.vstack

@@ -77,13 +77,13 @@ type Composer(actions: ComposerActions) as this =
                      HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                      VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                      Margin = Thickness(0.0, 0.0, LayoutPolicy.nestedScrollGutter, 0.0))
+    // pendingContainer 是未确认消息的外层宿主：自身不叠卡片与描边，
+    // 内部每项已有 groupingCard 建立清晰的次级表面边界，消除卡片嵌套与双重描边。
     let pendingContainer =
         Border(
-            Background = Tokens.surfaceSoft,
-            BorderBrush = Tokens.borderSoft,
-            BorderThickness = Thickness Spacing.Stroke.thin,
-            CornerRadius = CornerRadius Spacing.Radius.md,
-            Padding = Thickness(Spacing.spaceXl, Spacing.spaceMd, Spacing.spaceMd, Spacing.spaceMd),
+            Background = Brushes.Transparent,
+            BorderThickness = Thickness 0.0,
+            Padding = Thickness 0.0,
             Margin = Thickness(0.0, 0.0, 0.0, Spacing.spaceMd),
             IsVisible = false,
             Child = pendingScroller)
@@ -113,32 +113,6 @@ type Composer(actions: ComposerActions) as this =
             BorderThickness = Thickness ControlMetrics.borderWidth,
             VerticalAlignment = VerticalAlignment.Center,
             Transitions = Ui.surfaceBorderedTransitions ())
-    let hintText =
-        TextBlock(
-            Text = "",
-            // 键位提示是重要 affordance：升到 caption 档 + textMuted，不再与角标混同的 micro/faint。
-            FontSize = Tokens.fontCaption,
-            Padding = Thickness(0.0, ControlMetrics.compactChipPaddingY),
-            Foreground = Tokens.textMuted,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            TextAlignment = TextAlignment.Right,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center)
-
-    // 拖放入口的可发现性：AllowDrop 与 dropHintBanner 只服务「已经在拖」的用户，
-    // 静态界面此前没有任何线索。这里在 footer caption 行补一条常驻弱提示：复用
-    // Ui.caption（fontCaption + textMuted）同一档位，不加新行高、不碰拖放逻辑。
-    let dropAttachHint =
-        let hint = Ui.caption "可将文件拖入此处添加附件"
-        // footer 是单行 caption 行：覆盖 Ui.caption 的换行为不换行，窄窗口省略而非折行；
-        // 左空与模型芯片分开，剩余宽度仍由 fill 的 hintText 承接。
-        hint.TextWrapping <- TextWrapping.NoWrap
-        hint.TextTrimming <- TextTrimming.CharacterEllipsis
-        hint.Margin <- Thickness(Spacing.spaceMd, 0.0, 0.0, 0.0)
-        hint.VerticalAlignment <- VerticalAlignment.Center
-        // 纯文本控件补 Name 供读屏读取，与 SetPendingMessages 的 pendingNotice 同一惯例。
-        Avalonia.Automation.AutomationProperties.SetName(hint, hint.Text)
-        hint
     let shell =
         Border(
             Background = Tokens.surface,
@@ -146,11 +120,12 @@ type Composer(actions: ComposerActions) as this =
             BorderThickness = Thickness ControlMetrics.borderWidth,
             CornerRadius = CornerRadius Spacing.Radius.lg)
 
+    // 拖拽文件覆盖层：shell 自身已有 accent 描边与外环，此处仅作半透明淡色蒙版，
+    // 设 BorderThickness 为 0 消除内侧双环；中央 dropOverlayContent 承载文字胶囊。
     let dropHintBanner =
         Border(
             Background = Tokens.accentFaint,
-            BorderBrush = Tokens.accentSoft,
-            BorderThickness = Thickness ControlMetrics.borderWidth,
+            BorderThickness = Thickness 0.0,
             CornerRadius = CornerRadius Spacing.Radius.lg,
             IsHitTestVisible = false,
             IsVisible = false)
@@ -253,12 +228,15 @@ type Composer(actions: ComposerActions) as this =
                 "输入消息…"
 
     let refreshSendState () =
-        hintText.Text <-
+        let keyboardHint =
             if generating then
                 if enterSends then "正在回复 · Enter 排队 / Esc 停止"
                 else "正在回复 · Ctrl+Enter 排队 / Esc 停止"
             elif enterSends then "Enter 发送 / Shift+Enter 换行"
             else "Ctrl+Enter 发送 / Enter 换行"
+        // 快捷键是输入框的帮助，而不是永久占一整行的视觉内容。
+        Avalonia.Automation.AutomationProperties.SetHelpText(input, keyboardHint)
+        ToolTip.SetTip(input, keyboardHint)
         let text = input.Text
         let checkPresenterMultiLine () =
             let presenter = input.GetVisualDescendants() |> Seq.tryPick (function :? Avalonia.Controls.Presenters.TextPresenter as p -> Some p | _ -> None)
@@ -278,7 +256,8 @@ type Composer(actions: ComposerActions) as this =
         let canSend = enabled && not uploading && not hasFailed && (hasText || hasAttachment)
         Ui.setEnabled sendButton (if generating then canStop else canSend)
         Ui.setEnabled queueButton canSend
-        Ui.setReservedActionVisible queueButton generating
+        // 排队只在生成时成立。闲置时把它从布局中收起，发送键仍靠右不移动。
+        queueButton.IsVisible <- generating
         if generating && not canSend then
             queueButton.Opacity <- Tokens.opacityDisabled
             queueButton.IsHitTestVisible <- false
@@ -321,12 +300,8 @@ type Composer(actions: ComposerActions) as this =
     do
         contextButton.IsVisible <- false
         Avalonia.Automation.AutomationProperties.SetName(contextButton, "会话上下文")
-        Avalonia.Automation.AutomationProperties.SetLiveSetting(hintText, Avalonia.Automation.AutomationLiveSetting.Polite)
         modelChip.Child <-
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXs, VerticalAlignment = VerticalAlignment.Center)
-            let glyph = Icons.sparkle Tokens.textFaint
-            glyph.VerticalAlignment <- VerticalAlignment.Center
-            row.Children.Add glyph
             row.Children.Add modelCaption
             let chevron = Icons.chevronDown Tokens.textFaint
             chevron.VerticalAlignment <- VerticalAlignment.Center
@@ -337,13 +312,14 @@ type Composer(actions: ComposerActions) as this =
         // 这里补描边色与悬停底色正交）——描边是「值」不是「状态」，故由事件写值。
         Interaction.surface modelChip Interaction.HoverVariant.plain |> ignore
         Interaction.reportFocusOrigin modelChip
-        modelChip.GotFocus.Add(fun _ -> modelChip.BorderBrush <- Tokens.accent)
-        modelChip.LostFocus.Add(fun _ -> modelChip.BorderBrush <- Tokens.hairline)
         Ui.onClick modelChip (fun () -> actions.openModelPicker(modelChip :> Control))
         ToolTip.SetTip(modelChip, "切换本会话使用的模型")
         Avalonia.Automation.AutomationProperties.SetName(modelChip, "切换本会话使用的模型")
 
         Ui.onClick attachButton (fun () -> actions.pickAttachment ())
+        let attachHint = "添加附件，也可以将文件拖入输入区"
+        ToolTip.SetTip(attachButton, attachHint)
+        Avalonia.Automation.AutomationProperties.SetHelpText(attachButton, attachHint)
         Avalonia.Automation.AutomationProperties.SetName(attachmentStrip, "附件列表")
         ScrollViewer.SetHorizontalScrollBarVisibility(input, ScrollBarVisibility.Disabled)
         ScrollViewer.SetVerticalScrollBarVisibility(input, ScrollBarVisibility.Auto)
@@ -772,15 +748,27 @@ type Composer(actions: ComposerActions) as this =
             wasActiveBeforeDisabled <- false
             tryFocusInput ()
 
-    member _.SetModelLabel(text: string) = modelCaption.Text <- text
+    member _.SetModelLabel(text: string) =
+        modelCaption.Text <- text
+        modelCaption.Foreground <-
+            if String.IsNullOrWhiteSpace text || text = "未选择模型" then Tokens.textMuted else Tokens.text
 
     member _.SetSessionContext(config: SessionConfig option, canEdit: bool, onOpen: unit -> unit) =
         openSessionSettings <- onOpen
-        contextButton.IsVisible <- config.IsSome
+        // 上下文完整入口始终在会话菜单里；只有这段会话真的作了特殊设置，
+        // 输入区才显示摘要。这是状态标记，不再是第二份常驻设置导航。
+        let isCustomized (value: SessionConfig) =
+            value.instructions.IsSome || not (List.isEmpty value.tools)
+            || value.temperature.IsSome || value.topP.IsSome || value.maxTokens.IsSome
+            || value.thinkingBudget.IsSome || value.extraJson.IsSome
+        contextButton.IsVisible <- config |> Option.exists isCustomized
         Ui.setEnabled contextButton canEdit
         match config with
-        | Some value ->
-            let label = if List.isEmpty value.tools then "上下文" else sprintf "上下文 · %d 工具" value.tools.Length
+        | Some value when isCustomized value ->
+            let label =
+                if not (List.isEmpty value.tools) then sprintf "工具 %d 项" value.tools.Length
+                elif value.instructions.IsSome then "系统指令"
+                else "生成参数"
             Ui.setButtonText contextButton label
             Avalonia.Automation.AutomationProperties.SetName(contextButton, "会话上下文")
             let detail =
@@ -788,15 +776,13 @@ type Composer(actions: ComposerActions) as this =
                     (if value.instructions.IsSome then "已设系统指令" else "默认系统指令") value.tools.Length
             ToolTip.SetTip(contextButton, detail)
             Avalonia.Automation.AutomationProperties.SetHelpText(contextButton, detail)
-        | None -> ()
+        | _ -> ()
 
     /// 模型芯片本身：快捷键打开选择器时用它做锚点，菜单与点击芯片时同源同位。
     member _.ModelAnchor() : Control = modelChip :> Control
 
     member _.SetEnterSends(value: bool) =
         enterSends <- value
-        // V35: 分隔符对齐 ChatView/快捷键帮助的“/”惯例（Dialogs 中“Ctrl / ⌘ + N”、关闭提示“Esc / Enter”），不用“·”另造分隔。
-        hintText.Text <- if value then "Enter 发送 / Shift+Enter 换行" else "Ctrl+Enter 发送 / Enter 换行"
         refreshSendState ()
 
     /// 非 compact 路径的水平留白：按 Composer 自身宽度（父级 chatColumn 给出）经
@@ -809,12 +795,7 @@ type Composer(actions: ComposerActions) as this =
 
     /// 窄屏只收紧已有控件，不增加第二套输入逻辑：隐藏键盘提示、压缩边距与模型标签。
     member this.SetCompactMode(value: bool) =
-        // compact 下提示行直接折叠；footer 高度由 modelChip.MinHeight 兜底，不塌陷。
-        // 拖放提示与键位提示同级，一并折叠：不引入第二套显隐逻辑。
-        hintText.IsVisible <- not value
-        hintText.IsHitTestVisible <- not value
-        dropAttachHint.IsVisible <- not value
-        dropAttachHint.IsHitTestVisible <- not value
+        // compact 只重新排布实际可操作内容；没有冗余提示行需要隐藏。
         modelCaption.MaxWidth <-
             if value then ControlMetrics.composerModelCompactMaxWidth else ControlMetrics.composerModelMaxWidth
         let actionSize = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
@@ -884,19 +865,10 @@ type Composer(actions: ComposerActions) as this =
             Grid.SetColumnSpan(actionRow, if compact then 2 else 1)
         applyToolbarLayout compactMode
 
-        let footerRow = DockPanel(LastChildFill = true)
-        // 拖放提示与模型芯片同 dock 在左侧（芯片之后、fill 的键位提示之前）：
-        // 窄窗口下先省略两条提示文本，模型芯片不与任何文本重叠争位。
-        DockPanel.SetDock(dropAttachHint, Dock.Left)
-        // hint 不 dock、作为 fill 占剩余宽度并右对齐：长模型名或窄窗口下只省略提示文本，绝不与模型芯片重叠争位。
-        footerRow.Children.Add dropAttachHint
-        footerRow.Children.Add hintText
-
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
         column.Children.Add attachmentScroller
         column.Children.Add input
         column.Children.Add toolbar
-        column.Children.Add footerRow
 
         let dropOverlayContent =
             Border(
@@ -921,7 +893,7 @@ type Composer(actions: ComposerActions) as this =
         shell.Child <- shellGrid
         // 输入壳是常驻 chrome：不带软阴影；表面分层与焦点外环已足够，
         // 描边/底色补间走共享 transitions（reduced-motion 自动降级为瞬时）。
-        shell.Transitions <- Ui.surfaceBorderedTransitions ()
+        shell.Transitions <- Ui.surfaceTransitions ()
         shell.BoxShadow <- BoxShadows()
 
         input.GotFocus.Add(fun _ ->

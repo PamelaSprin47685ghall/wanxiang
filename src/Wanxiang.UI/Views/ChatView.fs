@@ -28,8 +28,10 @@ type ChatActions = {
 
 /// 空态在不同前提下要说不同的话，否则用户不知道下一步做什么。
 type ChatEmptyState =
-    /// 未连接
+    /// 未连接（无保存凭据）
     | NotConnected
+    /// 连接或认证失败，附失败原因
+    | ConnectionFailed of reason: string
     /// 已连接但没有可用服务商
     | NoProvider
     /// 有服务商但没选会话
@@ -195,6 +197,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable smoothScrollTimer: DispatcherTimer option = None
 
     let mutable atBottom = true
+    /// “回到最新”是一次明确的用户意图：滚动动画尚未完成时，ScrollChanged
+    /// 看到的中途偏移不能把刚隐藏的按钮重新点亮。到达底部或用户重新滚动后解除。
+    let mutable returningToLatest = false
     /// 当前「上一条 / 下一条」跳转锚点：用户消息卡的身份。
     /// None 表示还没跳转过，此时以当前所在的那一轮问答为基准（kelivo 的
     /// jump-to-question 语义；见 currentExchangeIndex）。
@@ -539,10 +544,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             lastEmptyState <- Some currentStateKey
             let title, hint =
                 match state with
-                | NotConnected -> "先连接一台万象服务器", "服务端负责运行模型与保存会话；客户端只是它的一个视图。"
+                | NotConnected -> "需要连接服务器才能开始对话", "服务端负责运行模型与保存会话；客户端只是它的一个视图。"
+                | ConnectionFailed reason -> "连接服务器失败", sprintf "%s。请检查网络或重新配置连接。" reason
                 | NoProvider -> "还没有可用的模型", "添加一个服务商并填入密钥，就可以开始对话了。"
-                | NoConversation -> "从一个问题开始", "直接输入即可开始。历史对话留在左侧，随时可以继续。"
-                | EmptyConversation -> "继续你的想法", "输入问题，或添加一份文件。发送后开始这段对话。"
+                | NoConversation -> "今天想讨论什么？", "发出第一条消息后，会自动建立会话。"
+                | EmptyConversation -> "开始这段会话", "输入问题，或附上一份文件。"
             match onPrimary with
             | Some(label, _) ->
                 Ui.setButtonText emptyActionButton label
@@ -554,11 +560,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             match emptyActionButton.Parent with
             | :? Panel as panel -> panel.Children.Remove emptyActionButton |> ignore
             | _ -> ()
-            let logo = brandLogo Tokens.logoEmpty
-            logo.HorizontalAlignment <- HorizontalAlignment.Center
             emptyPanel.Children.Clear()
-            emptyPanel.Children.Add(
-                Ui.emptyStateWith true logo (Some title) hint None (Some emptyActionButton))
+            match state with
+            | NoConversation | EmptyConversation ->
+                emptyPanel.Children.Add(
+                    Ui.conversationPrompt title hint (onPrimary |> Option.map (fun _ -> emptyActionButton)))
+            | NotConnected | ConnectionFailed _ | NoProvider ->
+                let logo = brandLogo Tokens.logoEmpty
+                logo.HorizontalAlignment <- HorizontalAlignment.Center
+                emptyPanel.Children.Add(
+                    Ui.emptyStateWith true logo (Some title) hint None (Some emptyActionButton))
         emptyPanel.IsVisible <- true
         scroller.IsVisible <- false
         this.HideSkeletonLoading()
@@ -578,6 +589,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
         atBottom <- true
+        returningToLatest <- false
         unreadSinceScrolledUp <- 0
         previousRenderedMessageCount <- 0
         // 锚点跟着会话一起丢：换会话后旧锚引用的卡片已不在面板上。
@@ -931,6 +943,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 理由见 ScrollToBeginning。
     member this.SmoothScrollToBeginning() =
         exchangeAnchor <- None
+        returningToLatest <- false
         // 一离开底部就不再是「贴底」：否则整个上滚过程里「回到最新」一直藏着，
         // 用户中途改主意只能继续滚。与 ScrollChanged 里 nowAtBottom 同一个判据的方向。
         atBottom <- false
@@ -991,6 +1004,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.SmoothScrollToEnd() =
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
+        returningToLatest <- true
+        atBottom <- true
+        unreadSinceScrolledUp <- 0
+        this.UpdateScrollToBottomAppearance()
         if MotionPolicy.isReduced () then
             this.ScrollToEndDeferred()
         else
@@ -1177,11 +1194,13 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let offset = scroller.Offset.Y
             // 用户手动向上滚动（或滚轮/触控向上拉），立即打断平滑自动滚动，不与用户手势冲突
             if e.OffsetDelta.Y < -0.1 then
+                returningToLatest <- false
                 smoothScrollTimer |> Option.iter (fun t -> t.Stop())
                 smoothScrollTimer <- None
-            let wasAtBottom = atBottom
             let nowAtBottom = extent - viewport - offset < ContentMetrics.scrollBottomThreshold
-            atBottom <- nowAtBottom
+            if nowAtBottom then returningToLatest <- false
+            // 中途帧仍按用户已发出的“回到底”意图处理，不重新显示按钮。
+            atBottom <- nowAtBottom || returningToLatest
             if nowAtBottom then
                 unreadSinceScrolledUp <- 0
                 scrollToBottomButton.IsVisible <- false
@@ -1197,6 +1216,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         // 变成两个动画争抢 Offset——手势输了。
         scroller.PointerWheelChanged.Add(fun e ->
             if abs e.Delta.Y > 0.0 then
+                returningToLatest <- false
                 smoothScrollTimer |> Option.iter (fun t -> t.Stop())
                 smoothScrollTimer <- None)
 
