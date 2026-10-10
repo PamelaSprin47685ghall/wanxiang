@@ -26,6 +26,18 @@ open Wanxiang.Store
 /// 锁仍由本构造器独立获取并持有。
 type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string option, logInfo: string -> unit, ?startupOutcome: ReplayOutcome) =
 
+    do
+        // §18 关联 ID：注册稳定 instanceId（决策 182），所有 stderr 事件自动携带。
+        // 配置损坏等早期路径（configPath 不可读）时跳过——该路径仍可诊断，不因注册失败阻塞启动。
+        try
+            if File.Exists configPath then
+                match Wanxiang.Config.TomlCodec.tryParse (File.ReadAllText configPath) with
+                | Ok cfg -> Stderr.setInstanceId (string cfg.instanceId)
+                | Error _ -> ()
+        with e ->
+            // DEGRADED（§17.1）：instanceId 注册失败不阻塞启动，但必须留下证据
+            Stderr.write "instance-id-register-failed" [ "message", e.Message ]
+
     /// 运行期数据锁：获取失败即启动失败；Stop 时释放（严格单进程，决策 105）
     /// 无论 startupOutcome 是否提供都必须检查 Acquire 结果（第二进程抢占时拒绝启动）。
     let lockHandle: Result<DataLock, string> = DataLock.Acquire dataDir

@@ -23,9 +23,18 @@ module Stderr =
     let private recentErrors = System.Collections.Generic.Queue<string>()
     let private recentErrorsLock = obj()
     let private recentErrorsLimit = 200
+    /// 本实例稳定标识（决策 182 / §18 关联 ID）：配置 instanceId，启动时注册。
+    /// 跨实例日志关联用；未注册（配置损坏等早期路径）时省略该字段。
+    let mutable private instanceId: string option = None
+    let private instanceIdLock = obj()
 
     let private rebuildSorted () =
         sortedSecrets <- secretValues |> List.sortByDescending (fun x -> x.Length)
+
+    /// 注册实例 ID（幂等；§18 统一关联 ID 字段名 instanceId）。
+    /// 由 ServerApp 启动时从配置读取注册；配置不可读时跳过（doctor/早期路径仍可诊断）。
+    let setInstanceId (id: string) =
+        lock instanceIdLock (fun () -> instanceId <- if String.IsNullOrEmpty id then None else Some id)
 
     /// 注册已知凭据值（幂等；供写 stderr 前脱敏）。
     let registerSecrets (secrets: string seq) =
@@ -54,11 +63,19 @@ module Stderr =
                 if s.Contains secret then s <- s.Replace(secret, "***")
             s)
 
-    let write (event: string) (fields: (string * obj) list) =
-        let o = JsonObject()
-        o["level"] <- "error"
+    /// 公共信封字段：level、event、utc、instanceId（§18 关联 ID，全局统一字段名）。
+    let private envelope (level: string) (event: string) (o: JsonObject) =
+        o["level"] <- level
         o["event"] <- event
         o["utc"] <- DateTimeOffset.UtcNow.UtcDateTime.ToString("o")
+        lock instanceIdLock (fun () ->
+            match instanceId with
+            | Some id -> o["instanceId"] <- id
+            | None -> ())
+
+    let write (event: string) (fields: (string * obj) list) =
+        let o = JsonObject()
+        envelope "error" event o
         for (k, v) in fields do
             match v with
             | :? string as s -> o[k] <- redact s
@@ -84,9 +101,7 @@ module Stderr =
 
     let info (message: string) =
         let o = JsonObject()
-        o["level"] <- "info"
-        o["event"] <- "info"
-        o["utc"] <- DateTimeOffset.UtcNow.UtcDateTime.ToString("o")
+        envelope "info" "info" o
         o["message"] <- redact message
         eprintfn "%s" (o.ToJsonString options)
 

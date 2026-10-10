@@ -243,6 +243,36 @@ module AcceptanceScenario =
         finally
             Wanxiang.Server.Stderr.clearSecrets ()
 
+    [<Fact>]
+    let ``场景H：stderr 事件自动携带 instanceId（§18 关联 ID）`` () =
+        // §18：instanceId 是统一关联 ID 之一；注册后每个事件自动附加，跨实例日志可关联。
+        // 通过 recentErrorLines 环形缓冲读回（不捕获全局 Console.Error——xunit 线程并行下
+        // 其他测试并发写 stderr，捕获会拿到别人的行；用唯一 event 名标记自己的事件行）。
+        // 只验证注册后行为（进程全局 instanceId 无法与并行测试安全隔离未注册态）。
+        let marker = sprintf "test-instance-id-%d" (System.Environment.TickCount64 % 100000L)
+        let captureEvent (fields: (string * obj) list) : System.Text.Json.Nodes.JsonObject =
+            Wanxiang.Server.Stderr.write marker fields
+            let lines = Wanxiang.Server.Stderr.recentErrorLines ()
+            let mine =
+                lines
+                |> List.map (fun l ->
+                    try System.Text.Json.Nodes.JsonNode.Parse(l) :?> System.Text.Json.Nodes.JsonObject
+                    with _ -> null)
+                |> List.filter (fun o -> not (isNull o) && o.ContainsKey "event" && string o["event"] = marker)
+            Assert.True(mine.Length >= 1, sprintf "marker event %s not found in recentErrors" marker)
+            mine |> List.last
+        // 注册后 → 自动附加
+        Wanxiang.Server.Stderr.setInstanceId "00000000-0000-0000-0000-000000000001"
+        try
+            let after = captureEvent [ "message", box "with-instance" ]
+            Assert.True(after.ContainsKey "instanceId")
+            Assert.Equal("00000000-0000-0000-0000-000000000001", string after["instanceId"])
+            Assert.True(after.ContainsKey "event")
+            Assert.True(after.ContainsKey "utc")
+        finally
+            // 恢复（测试进程无真实 ServerApp，清掉避免污染其他测试的字段名断言）
+            Wanxiang.Server.Stderr.setInstanceId ""
+
     // -------------------------------------------------------------------------
     // 场景 C：人工修复（§31 场景 C）——损坏 → doctor --fix 等价链 → recovery
     // bundle → 哈希有效 → 截尾修复 → 复查 PASS。整条链机器化验收。
