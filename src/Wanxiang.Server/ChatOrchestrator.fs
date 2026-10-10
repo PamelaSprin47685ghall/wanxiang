@@ -366,8 +366,21 @@ type ChatOrchestrator(
                                    providerId = p.id
                                    model = agentRuntime.Model |})
                         let task = this.RunGenerationLoop(convId, generationId)
-                        // 防止 task 未观察异常
-                        task.ContinueWith(fun (t: Task) -> t.Exception |> ignore, TaskContinuationOptions.OnlyOnFaulted) |> ignore
+                        // 防止 task 未观察异常；异常必须留下诊断证据（O-005 关联 ID：
+                        // conversationId/generationId——RunStreaming 抛非业务异常时
+                        // 生成循环没有其他出口记录，这里是最外层兜底）。
+                        task.ContinueWith(
+                            (fun (t: Task) ->
+                                if not (isNull t.Exception) then
+                                    let baseEx = t.Exception.GetBaseException()
+                                    Wanxiang.Server.Stderr.write
+                                        "generation-loop-failed"
+                                        [ "conversationId", convId
+                                          "generationId", generationId
+                                          "message", baseEx.Message
+                                          "exception", baseEx ]),
+                            TaskContinuationOptions.OnlyOnFaulted)
+                        |> ignore
                         true)
         if not acquired then
             ()
