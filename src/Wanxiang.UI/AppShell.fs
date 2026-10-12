@@ -361,8 +361,12 @@ type MainView() as this =
                 chat.ShowEmpty(ChatEmptyState.NoConversation, None)
                 composer.SetEnabled(true, "")
                 match draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog) with
-                | Some(providerId, model) -> composer.SetModelLabel(Catalog.describeModel providerId model catalog)
-                | None -> composer.SetModelLabel "未选择模型"
+                | Some(providerId, model) ->
+                    composer.SetModelLabel(Catalog.describeModel providerId model catalog)
+                    composer.SetModelVision(ModelVision.classify model, Catalog.describeModel providerId model catalog)
+                | None ->
+                    composer.SetModelLabel "未选择模型"
+                    composer.SetModelVision(VisionUnknown, "")
         | Some convId, None ->
             chat.SetConversationChrome true
             // Loading 分级：快照 300ms 内到达就不闪任何 loading chrome，超时才在本地挂骨架；
@@ -378,6 +382,7 @@ type MainView() as this =
             chat.SetBreadcrumb(ForkLineage.breadcrumb summaries lineage convId, fun parentId -> this.OpenConversation parentId)
             chat.SetTitle((summary |> Option.map (fun s -> s.title) |> Option.defaultValue "对话"), true)
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
+            composer.SetModelVision(ModelVision.classify view.config.model, Catalog.describeModel view.config.provider view.config.model catalog)
             chat.SetHeaderModel(
                 ModelSwitcher.chipText view.config.provider view.config.model catalog,
                 (Catalog.tryProvider view.config.provider catalog |> Option.map _.label |> Option.defaultValue ""),
@@ -1285,12 +1290,13 @@ type MainView() as this =
                 false
 
     member private this.BeginUpload(owner: AttachmentDraftController, fileName: string, bytes: byte[]) =
-        if bytes.Length = 0 then toast "没有添加附件：文件是空的。请换一个文件。" Warning
-        elif int64 bytes.Length > 64L * 1024L * 1024L then toast "没有添加附件：文件超过 64 MiB 上限。请压缩或拆分后再试。" Warning
-        else
+        match MediaTypes.validate fileName (int64 bytes.Length) with
+        | Error message -> toast message Warning
+        | Ok() ->
             let sha = Convert.ToHexString(SHA256.HashData bytes).ToLowerInvariant()
             let mediaType = MediaTypes.ofFileName fileName
             let attachmentId = Guid.CreateVersion7()
+            if MediaTypes.isModelImage mediaType then composer.SetThumbnail(attachmentId, bytes)
             let upload =
                 { attachmentId = attachmentId
                   fileName = fileName

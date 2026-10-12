@@ -116,6 +116,7 @@
     <Compile Include="ModelChipUiTests.fs" />
     <Compile Include="PerceivedPerfTests.fs" />
     <Compile Include="WindowedNavigationTests.fs" />
+    <Compile Include="AttachmentVisionTests.fs" />
   </ItemGroup>
 
   <!-- 真 KaTeX 生成的 HTML 夹具：公式排版测试不必带一个 JS 引擎 -->
