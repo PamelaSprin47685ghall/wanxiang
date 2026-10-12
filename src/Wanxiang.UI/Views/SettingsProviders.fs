@@ -117,7 +117,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let labelField = Ui.inputFieldGroup "显示名称" "仅用于界面显示。" labelBox
         let _, urlBox = Ui.textField "https://api.openai.com/v1"
         Avalonia.Automation.AutomationProperties.SetName(urlBox, "端点地址")
-        let urlField = Ui.inputFieldGroup "端点地址" "https:// 开头的服务地址；原生与兼容接口均可。" urlBox
+        let urlField = Ui.inputFieldGroup "端点地址" "模型服务的 API 地址，以 https:// 开头；原生接口与兼容接口均可。" urlBox
         let _, keyBox = Ui.textField "粘贴密钥"
         Avalonia.Automation.AutomationProperties.SetName(keyBox, "API Key")
         let keyField = Ui.inputFieldGroup "API Key" "只保存在主机，界面不会回显。" keyBox
@@ -313,7 +313,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         // 编辑已有模型服务时传输类型来自它自己，不走 applyPreset，这里补一次同步。
         syncKindCaption ()
 
-        let probeIdleText = "从主机获取模型列表"
+        let probeIdleText = "获取模型列表"
         let mutable setProbePending: bool -> unit = ignore
         /// 探活失败的常驻行内标记：toast 一闪而过，这行留到下一次探活。
         let probeStatus =
@@ -346,10 +346,11 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 actions.probeProvider id
                 actions.toast "正在向模型服务请求模型列表…" Info
         let probeButton = Ui.button Ui.Secondary probeIdleText runProbe
+        Avalonia.Automation.AutomationProperties.SetAutomationId(probeButton, "provider-probe-models")
         // 新增时模型服务还不存在，探测无从谈起：按钮直接置灰并就地说明，
         // 不再等用户点了才弹 toast（toast 一闪而过，也不告诉人下一步）。
         let probeNeedsSaveHint =
-            Ui.caption "保存模型服务后即可从主机获取模型列表；现在请手动填写模型名。"
+            Ui.caption "新的模型服务要先保存，才能自动获取模型列表；现在可以手动填写模型名。"
         probeNeedsSaveHint.IsVisible <- existing.IsNone
         if existing.IsNone then Ui.setEnabled probeButton false
         // pending 文案更长，预留最小宽度：label 切换不改变按钮几何。

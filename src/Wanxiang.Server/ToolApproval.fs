@@ -106,7 +106,7 @@ type ToolApprovalBroker(getConfig: unit -> AppConfig, broadcast: Guid -> WireEve
                 lock resolveLock (fun () ->
                     match recent.TryGetValue approvalId with
                     | true, v -> v
-                    | _ -> "expired", "这个审批已经失效（可能因为服务已重启）。")
+                    | _ -> "expired", "这个审批已经失效（可能因为主机已重启）。")
             reply (
                 ToolApprovalResolved
                     {| approvalId = approvalId

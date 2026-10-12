@@ -380,8 +380,8 @@ type MarkdownRenderer(
             stopTimer ()
             pulseCopyConfirmation ()
             Ui.setIcon copyButton Icons.check Tokens.success
-            ToolTip.SetTip(copyButton, "已复制！")
-            Avalonia.Automation.AutomationProperties.SetName(copyButton, "已复制！")
+            ToolTip.SetTip(copyButton, "已复制")
+            Avalonia.Automation.AutomationProperties.SetName(copyButton, "已复制")
             let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
             timer.Tick.Add(fun _ ->
                 if copyTimer = Some timer then

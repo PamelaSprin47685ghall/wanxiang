@@ -629,7 +629,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let title, hint =
                 match state with
                 | NotConnected -> "需要连接主机才能开始对话", "主机负责运行模型与保存对话；客户端只是它的一个视图。"
-                | ConnectionFailed reason -> "连接主机失败", sprintf "%s。请检查网络或重新配置连接。" reason
+                | ConnectionFailed reason -> "没能连上主机", sprintf "%s。请确认主机在运行、网络可达，然后重新连接。" reason
                 | NoProvider -> "还没有可用的模型", "添加一个模型服务并填入密钥，就可以开始对话了。"
                 | NoConversation -> "今天想讨论什么？", "发出第一条消息后，会自动建立对话。"
                 | EmptyConversation -> "开始这段对话", "输入问题，或附上一份文件。"

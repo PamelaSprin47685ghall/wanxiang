@@ -1108,8 +1108,8 @@ type MainView() as this =
                 false
 
     member private this.BeginUpload(owner: AttachmentDraftController, fileName: string, bytes: byte[]) =
-        if bytes.Length = 0 then toast "空文件无法上传。" Warning
-        elif int64 bytes.Length > 64L * 1024L * 1024L then toast "附件超过 64 MiB 上限。" Warning
+        if bytes.Length = 0 then toast "没有添加附件：文件是空的。请换一个文件。" Warning
+        elif int64 bytes.Length > 64L * 1024L * 1024L then toast "没有添加附件：文件超过 64 MiB 上限。请压缩或拆分后再试。" Warning
         else
             let sha = Convert.ToHexString(SHA256.HashData bytes).ToLowerInvariant()
             let mediaType = MediaTypes.ofFileName fileName
@@ -1498,7 +1498,7 @@ type MainView() as this =
                     match d.error with
                     | Some _ as error -> error
                     | None ->
-                        Some(GenerationError.create GenerationErrorKind.UnknownFailure "生成失败，但主机没有返回错误详情。")
+                        Some(GenerationError.create GenerationErrorKind.UnknownFailure "生成失败，主机没有说明原因。可以重试；反复出现时请在设置里「检查主机」。")
                 | unknown ->
                     Some(
                         GenerationError.create GenerationErrorKind.UnknownFailure "生成结束状态未知，已按失败处理。"
@@ -1575,9 +1575,9 @@ type MainView() as this =
                 let convId = activeConvId.Value
                 let failure = GenerationError.create GenerationErrorKind.UnknownFailure d.message
                 if runs.Finish(convId, Guid.CreateVersion7(), Some failure, None) then this.Render()
-                else toast (sprintf "主机错误：%s" d.message) Failure
+                else toast (sprintf "主机报告了错误：%s" d.message) Failure
             else
-                toast (sprintf "主机错误：%s" d.message) Failure
+                toast (sprintf "主机报告了错误：%s" d.message) Failure
         | _ -> ()
 
     // ---- 组装 ----
@@ -1721,7 +1721,7 @@ type MainView() as this =
                                         ignore,
                                         (fun ok ->
                                             if not ok then
-                                                toast "删除被拒绝，请重试。" Warning))
+                                                toast "没有删除：主机拒绝了这次请求。请重试。" Warning))
                                 sidebar.ExitSelection()
                                 let deletedCurrent = Option.exists (fun id -> List.contains id ids) activeConvId
                                 if deletedCurrent then
@@ -1920,11 +1920,11 @@ type MainView() as this =
                         timeout.Stop()
                         match settings.Health.Doctor with
                         | Running ->
-                            settings.Health.SetUnavailable "主机没有返回结果。主机版本可能较旧，或检查超时。"
+                            settings.Health.SetUnavailable "没有拿到检查结果：主机可能版本较旧，或检查超时了。请稍后重试，仍不行就升级主机。"
                         | _ -> ())
                     timeout.Start()
                 else
-                    settings.Health.SetUnavailable "未连接到主机，连接后才能检查。")
+                    settings.Health.SetUnavailable "还没连接主机，无法检查。连接后再试。")
         settings.LocalDrafts.ClearRequested <-
             (fun () ->
                 Dialogs.confirm

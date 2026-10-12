@@ -1476,8 +1476,8 @@ let ``Markdown code block copy button confirms visually with check icon and tool
         Dispatcher.UIThread.RunJobs()
 
         Assert.Equal("let x = 42", copiedText.Trim())
-        Assert.Equal("已复制！", Avalonia.Automation.AutomationProperties.GetName(copyButton))
-        Assert.Equal("已复制！", ToolTip.GetTip(copyButton) :?> string)
+        Assert.Equal("已复制", Avalonia.Automation.AutomationProperties.GetName(copyButton))
+        Assert.Equal("已复制", ToolTip.GetTip(copyButton) :?> string)
     finally
         window.Close()
     )
