@@ -1144,7 +1144,12 @@ let ``streaming completion keeps the message footnote row geometry constant`` ()
     let named (card: Control) (name: string) =
         descendants card |> Seq.exists (fun c -> AutomationProperties.GetName c = name)
     let footnote (card: Control) =
-        let host = card :?> StackPanel
+        // v4：消息卡根是 reveal-highlight Border，脚注仍在内层 StackPanel 上。
+        let host =
+            match card with
+            | :? Border as b when b.Name = "reveal-highlight" -> b.Child :?> StackPanel
+            | :? StackPanel as sp -> sp
+            | _ -> failwithf "unexpected message card root: %A" (card.GetType())
         let metaRow = host.Children.[1] :?> StackPanel
         let buttons = metaRow.Children.[0] :?> StackPanel
         buttons.Bounds.Height
