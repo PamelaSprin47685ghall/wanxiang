@@ -840,3 +840,34 @@ Ctrl/⌘+K 是桌面软件（VS Code、Slack、Linear、ChatGPT）的通用命�
 - 手机 qa_shot 的老路径（07 设置）在安装提示盖住汉堡按钮时点不开设置，截到的是对话页；本轮只在新增步骤里先收起提示，老步骤待改。
 - 面板未覆盖的动作：消息级操作（复制某条、从某条分叉）仍走消息菜单；「设置项」只跳到分区，不滚到具体控件。
 - 拼音只认首字母，不支持全拼（「duihua」）。
+
+# 380. 用例清点是 CI 门禁
+r20 发现 `-class` 格式错让 34 个嵌套类 UI 用例从未运行而 CI 全绿。`run-tests.sh` 先用 `-preEnumerateTheories -list full/json` 取发现清单，作为每组“应跑多少”的唯一来源；任何分组实际 `Total` 与期望不等即失败，并指名分组。
+
+# 381. 用例数基线下限
+`tests/test-counts.baseline` 记录 UI / NonUI / LargeHistory 三类用例数下限，发现数低于下限即失败。新增测试可上调；有意删除须在同一 PR 下调并写明原因。
+
+# 382. 源码静态清点
+`tools/test_inventory.py check`：源码里的 `[<Fact>]`/`[<Theory>]` 属性数不得多于程序集发现的测试方法数；`//` 注释里出现测试属性（如 `// probe: ...[<Fact>]`）直接报错。r21 据此复活了被注释吞掉的「navigation controller owns compact and collapsed state transitions」（此前从未运行，复活后通过）。
+
+# 383. 跳过的用例
+全库唯一 `Skip` 是 10^6 冷启动手动基准（§21.6，>300s），保留并计入 LargeHistory 发现数；不得新增无期限的 Skip，需跳过时写明重新评估条件。
+
+# 384. 输入法组合期间按键归输入法（全局）
+`Controls/ImeGuard.fs` 在 App.Initialize（桌面与 PWA 共用）安装 TextBox 隧道阶段类处理器：`TextPresenter.PreeditText` 非空时吞掉 Enter/↑/↓/Esc/Tab，`Key.ImeProcessed` 一律吞掉。早于任何视图自己挂的 KeyDown，所以输入框、侧栏搜索、命令面板、模型切换、重命名、配对码/主机地址、设置各表单都不会在选字时提交、移动选择或关闭对话框。新增文本框无需各自判断。
+
+# 385. 预编辑可见、提交不重复
+预编辑文本由 Avalonia TextPresenter 绘制（带下划线）；输入法提交只经一次 TextInput 落字。单元测试覆盖任意 TextBox、命令面板、输入框三处。
+
+# 386. 命令面板组合期间不执行、不移动
+见 384；`R21ImeTests` 断言组合中 ↓ 与回车不执行，组合结束后回车照常执行。
+
+# 387. 输入框组合期间不发送
+Composer 原有的 `isImeComposing` 改为调用 `ImeGuard.isComposing`，判据统一。
+
+# 388. PWA 输入法回归脚本
+`tools/qa_ime_pwa.js` 用 CDP `Input.imeSetComposition` + 组合中回车（keyCode 229）+ `Input.insertText` 提交，在 headless Chrome 验证输入框、侧栏搜索、命令面板：文本为「ab你」（组合中回车未提交、无重复字），并截预编辑与提交后的图。无需配对。
+
+# 389. r21 待办
+- PWA：不经组合直接 `beforeinput insertText`（CDP insertText、部分语音输入/联想上屏）不会落进 Avalonia 文本框——上游浏览器后端只认按键与 composition；需评估在 patch_avalonia_js.py 里补，或等上游。
+- 重命名、配对码、设置表单的输入法行为只有全局守卫的单元覆盖，未在 PWA 里实机走（需配对后的会话）；iOS/Android 真机输入法、Windows 微软拼音未验证。
