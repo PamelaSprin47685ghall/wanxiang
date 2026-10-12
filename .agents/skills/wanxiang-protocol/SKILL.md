@@ -856,3 +856,7 @@ MAF ⇄ AG-UI 消息往返对文本/工具调用/工具结果/推理/图片/混�
 # 242（r7 指针）：`provider.rate-limit` 是 wanxiang.dev 加法
 
 2026-10-12：新增主机 → 客户端的 `CUSTOM wanxiang.dev/provider.rate-limit`（threadId、runId、providerId，及可选的 remainingRequests / remainingTokens / resetSeconds / retryAfterSeconds），总在对应失败的 `generation.finished` 之前下发。语义见 `wanxiang-ui` 第 242–243 节。不进日志，旧客户端忽略。
+
+## conversation.import（r14，决策 313）
+客户端写命令，载荷 `{invocationId, threadId, title, config, messages: [ChatMessage JSON…]}`。主机规划为 `ConversationCreated` + 逐条 `AgentMessageRecorded`，不启动生成；消息为空、超过 `ImportLimits.maxMessages`（5000）、或含 role 不在 user/assistant/tool/system 的对象时以 `validation-error` 拒绝。旧主机不认识该命令名时按未知命令处理（客户端看到拒绝即提示导入未完成）。
+

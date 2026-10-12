@@ -8,6 +8,7 @@ open System.Text
 open System.Text.Json.Nodes
 open System.Threading.Tasks
 open Avalonia.Controls
+open Avalonia.Headless
 open Avalonia.Input
 open Avalonia.Threading
 open Avalonia.VisualTree
@@ -323,4 +324,74 @@ let ``310 未超时不判失败；断线时在途请求立即判失败`` () =
     Assert.Contains("断开", chat.OlderPageFailureText)
     chat.ResetScrollState()
     Assert.False(chat.OlderPageFailureVisible, "换对话后失败提示不残留")
+    )
+
+// ---------- 截图（仅在设置 WANXIANG_UX_ARTIFACT_DIR 时落盘） ----------
+
+let private capture (window: Window) (name: string) =
+    match Environment.GetEnvironmentVariable "WANXIANG_UX_ARTIFACT_DIR" with
+    | null | "" -> ()
+    | directory ->
+        IO.Directory.CreateDirectory directory |> ignore
+        Avalonia.Headless.AvaloniaHeadlessPlatform.ForceRenderTimerTick()
+        Dispatcher.UIThread.RunJobs()
+        use frame = window.CaptureRenderedFrame()
+        frame.Save(IO.Path.Combine(directory, name + ".png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default)
+
+[<Trait("Category", "UI")>]
+[<Fact>]
+let ``r14 截图：导出、导入、更早一页失败、撤销提示条`` () =
+    Headless.run (fun () ->
+    MotionPolicy.setReduced true
+    Tokens.apply ThemeMode.Light
+    let proj, id = fixture 6
+    let shellWindow () =
+        let root = Grid(Background = Tokens.canvas)
+        let window = Window(Width = 960.0, Height = 680.0, Content = root)
+        window.RequestedThemeVariant <- Avalonia.Styling.ThemeVariant.Light
+        window.Show()
+        root, window, OverlayHost(root)
+    // 1 导出对话框（分叉）
+    let _, w1, o1 = shellWindow ()
+    let requested = ResizeArray<ConversationExportQuery>()
+    let export = ConversationExportDialog(o1, id, "旅行计划", (fun q -> requested.Add q; Task.FromResult true), (fun () -> w1 :> TopLevel), forkLineage (Guid.NewGuid()))
+    export.Show()
+    Dispatcher.UIThread.RunJobs()
+    let mutable i = 0
+    while i < requested.Count do
+        (match ServerModel.exportPage proj requested[i] with Ok p -> export.Handle p | Error e -> failwith e)
+        i <- i + 1
+    capture w1 "01-export-dialog-markdown-json-privacy"
+    w1.Close()
+    // 2 导入预览 / 3 导入错误
+    let _, w2, o2 = shellWindow ()
+    let import = ConversationImportDialog(o2, (fun () -> w2 :> TopLevel), fun _ _ -> ())
+    import.Show()
+    Dispatcher.UIThread.RunJobs()
+    capture w2 "02-import-dialog-before-pick"
+    let text = exported 6
+    import.LoadText("旅行计划.json", int64 text.Length, text)
+    capture w2 "03-import-dialog-preview"
+    import.LoadText("旅行计划.md", 20L, "# 旅行计划\n\n正文")
+    capture w2 "04-import-dialog-rejects-markdown"
+    w2.Close()
+    // 5 更早一页失败 / 6 撤销提示条聚焦
+    let view = MainView()
+    view.Build()
+    let w3 = Window(Width = 1100.0, Height = 720.0, Content = view)
+    w3.RequestedThemeVariant <- Avalonia.Styling.ThemeVariant.Light
+    w3.Show()
+    Dispatcher.UIThread.RunJobs()
+    let field name = typeof<MainView>.GetField(name, flags)
+    field("pageLoading").SetValue(view, true)
+    field("pageRequestedAt").SetValue(view, Some(DateTimeOffset.UtcNow.AddSeconds -11.0))
+    typeof<MainView>.GetMethod("CheckOlderPageTimeout", flags).Invoke(view, [| box DateTimeOffset.UtcNow |]) |> ignore
+    Dispatcher.UIThread.RunJobs()
+    capture w3 "05-older-page-timeout-inline-retry"
+    let overlay = field("overlay").GetValue(view) :?> OverlayHost
+    overlay.ToastWith("已删除「旅行计划」", Info, Some("撤销", ignore))
+    Dispatcher.UIThread.RunJobs()
+    overlay.FocusToastAction() |> ignore
+    capture w3 "06-undo-toast-focused-via-f6"
+    w3.Close()
     )

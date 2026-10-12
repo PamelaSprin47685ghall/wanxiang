@@ -27,6 +27,7 @@ type ConversationImportDialog(
     let mutable preview: ImportPreview option = None
     let mutable busy = false
     let mutable active = false
+    let mutable currentAttempt = Guid.Empty
     let closeButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
     let pickButton = Ui.button Ui.Secondary "选择 JSON 文件…" (fun () -> this.Pick())
     let importButton = Ui.button Ui.Primary "导入为新对话" (fun () -> this.Confirm())
@@ -140,11 +141,19 @@ type ConversationImportDialog(
             busy <- true
             status.Text <- "正在导入…"
             this.Refresh()
-            submit p (fun ok ->
-                busy <- false
-                if ok then overlay.CloseDialog()
-                else
-                    status.Text <- "导入没有完成，主机拒绝了这份内容或连接已断开。可以再试一次。"
-                    status.Foreground <- Tokens.danger
-                    this.Refresh())
+            let attempt = Guid.NewGuid()
+            currentAttempt <- attempt
+            let finish ok (message: string) =
+                if busy && currentAttempt = attempt then
+                    busy <- false
+                    if ok then overlay.CloseDialog()
+                    elif active then
+                        status.Text <- message
+                        status.Foreground <- Tokens.danger
+                        this.Refresh()
+            // 旧主机不认识 conversation.import 时不会回应：等待有上限，不让对话框永远停在「正在导入…」。
+            DispatcherTimer.RunOnce(
+                (fun () -> finish false "主机没有回应导入请求，可能是主机版本过旧。升级主机后再试。"),
+                MotionLedger.importResponseTimeout) |> ignore
+            submit p (fun ok -> finish ok "导入没有完成，主机拒绝了这份内容或连接已断开。可以再试一次。")
         | _ -> ()

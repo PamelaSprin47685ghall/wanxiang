@@ -86,6 +86,8 @@ module MotionLedger =
     let olderPageTimeout = TimeSpan.FromMilliseconds 10000.0
     /// 更早一页历史的超时检查 tick。
     let olderPageCheckTick = TimeSpan.FromMilliseconds 500.0
+    /// 决策 313：导入命令的等待上限（旧主机不认识命令时会静默忽略）。
+    let importResponseTimeout = TimeSpan.FromMilliseconds 30000.0
     /// 进度文字节流时长（预留）：传输事件可远快于人眼阅读，100ms 约每秒 10 次，既顺滑又可读。
     let progressTextThrottle = TimeSpan.FromMilliseconds 100.0
     /// 主题颜色过渡时长（预留）：200ms 约 60fps 下 12 帧，落在常见 150~300ms 状态色过渡区间，可感知而不拖沓。
