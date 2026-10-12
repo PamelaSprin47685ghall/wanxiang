@@ -246,6 +246,31 @@ module InteractabilityConvergenceTests =
             window.Close()
         )
 
+    // UX-003：没有任何可用模型时点模型芯片，不能只弹一句话就收场——
+    // 要直接进入“添加服务商”，与空态主按钮是同一个出口。
+    [<Trait("Category", "UI")>]
+    [<Fact>]
+    let ``model chip with no usable model goes straight to adding a provider`` () =
+        Headless.run (fun () ->
+        MotionPolicy.setReduced true
+        let shell = MainView()
+        shell.Build()
+        let window = Window(Width = 900.0, Height = 700.0, Content = shell)
+        window.Show()
+        Dispatcher.UIThread.RunJobs()
+        try
+            let flags = BindingFlags.Instance ||| BindingFlags.NonPublic
+            let firstProvider () =
+                typeof<MainView>.GetField("enteredSettingsForFirstProvider", flags).GetValue shell :?> bool
+            Assert.False(firstProvider (), "起始状态不应处于首个服务商引导")
+            let showPicker = typeof<MainView>.GetMethod("ShowModelPicker", flags)
+            showPicker.Invoke(shell, [| box (Border()) |]) |> ignore
+            Dispatcher.UIThread.RunJobs()
+            Assert.True(firstProvider (), "空目录点模型入口应进入首个服务商引导")
+        finally
+            window.Close()
+        )
+
     // 空态下点模型芯片：过去固定弹「先选择一个会话。」——而此刻输入区是启用的、
     // 芯片上正亮着默认模型名。kelivo model_select_sheet.dart:216 的选择不依赖已有会话。
     // 这里锁三条：菜单开得出、选中写入草稿暂存位、草稿不走丢（建会话时作为起点）。

@@ -775,7 +775,9 @@ type MainView() as this =
                                     this.Render()))
                             |> MenuEntry.markSelected (provider.id = view.config.provider && model = view.config.model) ] ]
             if List.isEmpty groups then
-                toast "还没有可用的模型。" Warning
+                // 空态不是死路：点模型入口就直接进入“添加服务商”，与空态主按钮同一出口。
+                toast "还没有可用的模型，先添加一个服务商。" Warning
+                this.ShowAddProvider()
             else
                 Menu.showGrouped overlay anchor false groups
         | _ ->
@@ -792,7 +794,9 @@ type MainView() as this =
                                 composer.SetModelLabel(Catalog.describeModel provider.id model catalog)
                                 toast (sprintf "已选择 %s · %s" provider.label model) Info) ] ]
             if List.isEmpty groups then
-                toast "还没有可用的模型。" Warning
+                // 空态不是死路：点模型入口就直接进入“添加服务商”，与空态主按钮同一出口。
+                toast "还没有可用的模型，先添加一个服务商。" Warning
+                this.ShowAddProvider()
             else
                 Menu.showGrouped overlay anchor false groups
 
