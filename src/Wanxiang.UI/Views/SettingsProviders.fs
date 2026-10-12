@@ -32,6 +32,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
     let listPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
     let mutable catalog = Catalog.empty
+    /// 顶部「添加服务商」：列表为空时由空态里的同名主按钮接管，避免同屏两个相同主操作。
+    let mutable topAddButton: Border option = None
 
     /// 外壳反馈只切描边颜色与外阴影（Stroke.thick 外环），不动厚度与内边距。
     /// 错误行只在自己组内与 hint 互换（Ui.fieldGroup），不挤占兄弟。
@@ -149,7 +151,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let timeoutField = Ui.inputFieldGroup "请求超时（秒）" "单个请求等待的最长时间（秒），默认 120 秒。" timeoutBox
         let _, retriesBox = Ui.textField "2"
         Avalonia.Automation.AutomationProperties.SetName(retriesBox, "失败重试")
-        let retriesField = Ui.inputFieldGroup "失败重试次数" "网络或偶发错误时的重试次数（0-5），默认 2 次。" retriesBox
+        let retriesField = Ui.inputFieldGroup "失败重试次数" "网络或偶发错误时的重试次数（0-10），默认 2 次。" retriesBox
         let allBoxes = [ idBox; labelBox; urlBox; keyBox; modelsBox; defaultModelBox; timeoutBox; retriesBox ]
         for box in allBoxes do attachFieldValidation box
         // 表单错误摘要：与 SettingsGeneral / SettingsTools 同款的可聚焦 live region，
@@ -323,6 +325,12 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 actions.probeProvider id
                 actions.toast "正在向服务商请求模型列表…" Info
         let probeButton = Ui.button Ui.Secondary probeIdleText runProbe
+        // 新增时服务商还不存在，探测无从谈起：按钮直接置灰并就地说明，
+        // 不再等用户点了才弹 toast（toast 一闪而过，也不告诉人下一步）。
+        let probeNeedsSaveHint =
+            Ui.caption "保存服务商后即可从服务器获取模型列表；现在请手动填写模型名。"
+        probeNeedsSaveHint.IsVisible <- existing.IsNone
+        if existing.IsNone then Ui.setEnabled probeButton false
         // pending 文案更长，预留最小宽度：label 切换不改变按钮几何。
         Ui.preparePendingButton probeButton
         setProbePending <- fun pending ->
@@ -435,6 +443,16 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         (readEnabled ())
                         timeout
                         retries
+                // 需要密钥的服务商没填密钥也允许先存（列表里会标「缺少密钥」），
+                // 但要当场说清后果与补救路径，而不是等到发消息失败才发现。
+                let keyEmpty = String.IsNullOrWhiteSpace(if isNull keyBox.Text then "" else keyBox.Text)
+                let needsKey =
+                    match ProviderPresets.matchByBaseUrl url with
+                    | Some preset -> preset.needsApiKey
+                    | None -> not (isLoopbackUrl url)
+                let hadKey = existing |> Option.map (fun p -> p.hasApiKey) |> Option.defaultValue false
+                if keyEmpty && needsKey && not hadKey then
+                    actions.toast "尚未填写 API Key：已先保存，在服务商列表点「编辑」补上后才能对话。" Info
                 setPending true
                 actions.upsertProvider payload (fun ok ->
                     setPending false
@@ -516,6 +534,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             Ui.vstack
                 Spacing.spaceXs
                 [ probeButton :> Control
+                  probeNeedsSaveHint :> Control
                   probeStatus :> Control ]
 
         let advancedPanel =
@@ -701,7 +720,10 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
     member this.SetCatalog(next: Catalog) =
         catalog <- next
         listPanel.Children.Clear()
+        topAddButton |> Option.iter (fun b -> b.IsVisible <- not (List.isEmpty next.providers))
         if List.isEmpty next.providers then
+            let emptyAdd = Ui.button Ui.Primary "添加服务商" (fun () -> this.ShowEditor None)
+            Avalonia.Automation.AutomationProperties.SetName(emptyAdd, "添加服务商")
             listPanel.Children.Add(
                 // 空态统一为单行说明（logo + 一行 caption），与 SettingsTools 的两个空态同一节律：
                 // 不再单独给服务商面板加标题，三个设置空态一致。
@@ -710,7 +732,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                     None
                     "添加一个服务商后就能开始对话。预设已经填好端点和常见模型，你只需要粘贴密钥。"
                     None
-                    None)
+                    (Some emptyAdd))
         else
             for provider in next.providers do
                 listPanel.Children.Add(this.RenderRow provider)
@@ -723,6 +745,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let addButton = Ui.button Ui.Primary "添加服务商" (fun () -> this.ShowEditor None)
         addButton.HorizontalAlignment <- HorizontalAlignment.Left
         Avalonia.Automation.AutomationProperties.SetName(addButton, "添加服务商")
+        topAddButton <- Some addButton
+        addButton.IsVisible <- not (List.isEmpty catalog.providers)
         Ui.vstack
             Spacing.space4xl
             [ Ui.vstack
