@@ -1,0 +1,3 @@
+12 MP (4000x3000) 噪点 JPEG q100, 16,819,165 B, headless Chrome (swiftshader), Release wasm
+Skia in wasm (旧路径):   1275–1381 ms, 整段阻塞 UI 线程, 输出 7,947,040 B 4000x3000 JPEG
+浏览器 Canvas (新路径):  920–1094 ms, 最长单帧间隔约 323 ms, 输出 7,947,040 B 4000x3000 JPEG
