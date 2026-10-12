@@ -43,6 +43,11 @@ public static partial class BrowserBridge
     [JSImport("wxViewportWidth", "wanxiang")]
     public static partial double ViewportWidth();
 
+    /// <summary>网络恢复 / 页面回到前台的计数（第 213 节）：数值变化即“现在值得立刻重连”，
+    /// 由 F# 侧轮询比较，跳过正在等待的退避延时。</summary>
+    [JSImport("wxResumeEpoch", "wanxiang")]
+    public static partial int ResumeEpoch();
+
     /// <summary>第一次完整对话成功结束：PWA 安装引导此后才允许出现（第 210 节）。</summary>
     [JSImport("wxConversationSucceeded", "wanxiang")]
     public static partial void ConversationSucceeded();

@@ -100,6 +100,8 @@ type MainView() as this =
     let mutable hostViewportWidth: float option = None
     /// 浏览器 CSS 视口轮询计时器：仅在 Browser 环境启动，卸载时停止。
     let mutable viewportTimer: DispatcherTimer option = None
+    /// 上次看到的浏览器“恢复”计数（online / 回到前台，第 213 节）。
+    let mutable lastResumeEpoch = 0
     let commandFeedback = CommandFeedbackTracker()
     let configFeedback = ConfigFeedbackTracker()
     let mutable exportDialog: ConversationExportDialog option = None
@@ -240,6 +242,12 @@ type MainView() as this =
                     if css > 0.0 && hostViewportWidth <> Some css then
                         hostViewportWidth <- Some css
                         this.ApplyResponsiveLayout css
+                with _ -> ()
+                try
+                    let epoch = BrowserBridge.ResumeEpoch()
+                    if epoch <> lastResumeEpoch then
+                        lastResumeEpoch <- epoch
+                        this.ResumeReconnectNow()
                 with _ -> ())
             viewportTimer <- Some timer
             timer.Start()
@@ -614,6 +622,18 @@ type MainView() as this =
                         this.Render())
         }
         |> Async.Start
+
+    /// 网络恢复或页面回到前台（第 213 节）：正在退避等待的重连立刻执行，并把退避归零；
+    /// 没有挂起的重连（已连接，或从未拿到令牌）时什么也不做，不另起第二条连接。
+    member private this.ResumeReconnectNow() =
+        match reconnectCts with
+        | Some cts ->
+            cts.Cancel()
+            reconnectCts <- None
+            reconnectDelayMs <- ReconnectBackoff.baseDelayMs
+            pairingRequested <- false
+            this.Connect()
+        | None -> ()
 
     member private this.ScheduleReconnect() =
         match reconnectCts, lastToken with

@@ -114,6 +114,39 @@ export function wxViewportWidth() {
     return globalThis.innerWidth || 0;
 }
 
+// ---- 恢复信号（第 213 节）：网络恢复 / 页面回到前台 → 计数 +1，F# 侧轮询到变化即跳过退避立刻重连 ----
+let resumeEpoch = 0;
+export function wxResumeEpoch() { return resumeEpoch; }
+addEventListener("online", () => { resumeEpoch++; });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") resumeEpoch++; });
+addEventListener("pageshow", (e) => { if (e.persisted) resumeEpoch++; });
+
+// ---- 可视视口跟随（第 213 节）：软键盘不盖住输入框 ----
+// Chrome Android 靠 meta interactive-widget=resizes-content 已缩布局视口；iOS Safari 不认它，
+// 键盘只缩 visualViewport。这里把可视视口的高与偏移写成 CSS 变量，#out 据此定位，
+// canvas 随之 resize，Avalonia 的输入框自然留在键盘上方。双指缩放（scale≠1）时不跟随，免得画布抖。
+function syncVisualViewport() {
+    const vv = globalThis.visualViewport;
+    const root = document.documentElement.style;
+    if (!vv || Math.abs(vv.scale - 1) > 0.01) {
+        root.removeProperty("--wx-vvh"); root.removeProperty("--wx-vvtop"); root.removeProperty("--wx-safe-bottom");
+        return;
+    }
+    const keyboard = globalThis.innerHeight - vv.height > 80; // 小于 80px 的差是地址栏伸缩，不算键盘
+    root.setProperty("--wx-vvh", `${Math.round(vv.height)}px`);
+    root.setProperty("--wx-vvtop", `${Math.round(vv.offsetTop)}px`);
+    if (keyboard) root.setProperty("--wx-safe-bottom", "0px"); else root.removeProperty("--wx-safe-bottom");
+    document.documentElement.classList.toggle("wx-keyboard", keyboard);
+    // iOS 聚焦输入时会把整页滚上去，把它拉回来：我们自己已经按可视视口布局
+    if (keyboard && (globalThis.scrollY || document.documentElement.scrollTop)) globalThis.scrollTo(0, 0);
+}
+if (globalThis.visualViewport) {
+    visualViewport.addEventListener("resize", syncVisualViewport);
+    visualViewport.addEventListener("scroll", syncVisualViewport);
+}
+addEventListener("orientationchange", () => setTimeout(syncVisualViewport, 250));
+syncVisualViewport();
+
 // ---- 富文本引擎（highlight.js / KaTeX）----
 // 脚本正文由 .NET 侧作为清单资源持有并传进来，浏览器这边只负责执行与调用：
 // 一份资源同时服务桌面（Jint）与浏览器（本地 JS 引擎），不会两边各存一套。
@@ -262,7 +295,7 @@ const dotnetRuntime = await dotnet
     .create();
 
 dotnetRuntime.setModuleImports("wanxiang", {
-    credList, credPut, credDelete, draftGet, draftPut, draftDelete, pageUrl, wxViewportWidth, wxConversationSucceeded,
+    credList, credPut, credDelete, draftGet, draftPut, draftDelete, pageUrl, wxViewportWidth, wxResumeEpoch, wxConversationSucceeded,
     richLoad, richHighlight, richMath,
 });
 

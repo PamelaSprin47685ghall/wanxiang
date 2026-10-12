@@ -248,15 +248,22 @@ html, body, #out, #out * {
  * 移动端 / 触控 / 安装壳（PWA 专属，不碰 Avalonia 画布内部）
  * ============================================================ */
 
-/* 刘海与手势条：viewport-fit=cover 后画布会铺到安全区之下，
-   这里把画布容器收进安全区，避免输入框、侧栏按钮被圆角/Home 条遮挡 */
+/* 刘海与手势条 + 软键盘（第 213 节）：viewport-fit=cover 后视口铺到安全区之下。
+   不能用 padding 收进安全区——Avalonia 的 canvas 是 position:absolute 100%，
+   参照的是 padding box，padding 对它无效（旧实现的坑）。改为直接把容器本身定位在安全区内：
+   画布尺寸 = 容器内容尺寸，ResizeObserver 拿到的就是安全区内的真实大小。
+   高度跟随 visualViewport（main.js 写 --wx-vvh / --wx-vvtop）：iOS Safari 弹出键盘时
+   布局视口不缩，只缩可视视口，不跟随的话输入框会被键盘盖住。键盘打开时 Home 条不显示，
+   底部安全区由 --wx-safe-bottom 归零。 */
 #out {
+    position: fixed;
     box-sizing: border-box;
-    padding:
-        env(safe-area-inset-top, 0px)
-        env(safe-area-inset-right, 0px)
-        env(safe-area-inset-bottom, 0px)
-        env(safe-area-inset-left, 0px);
+    min-height: 0;
+    top: calc(var(--wx-vvtop, 0px) + env(safe-area-inset-top, 0px));
+    left: env(safe-area-inset-left, 0px);
+    right: env(safe-area-inset-right, 0px);
+    width: auto;
+    height: calc(var(--wx-vvh, 100dvh) - env(safe-area-inset-top, 0px) - var(--wx-safe-bottom, env(safe-area-inset-bottom, 0px)));
 }
 #out canvas { touch-action: none; }
 
