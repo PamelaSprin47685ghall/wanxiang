@@ -174,6 +174,10 @@ type WireEvent =
     | DevicesSnapshot of {| items: JsonArray; canInvite: bool |}
     | DeviceRename of {| requestId: Guid; deviceId: string; name: string |}
     | DeviceRevoke of {| requestId: Guid; deviceId: string |}
+    // ---- 模型服务限流信号（决策 241，仅追加；旧端忽略这个 wanxiang.dev/* 事件）----
+    /// 主机 → 观察该对话的客户端：某次生成失败时模型服务给出的限流 / 额度头。
+    /// 总是先于对应的 generation.finished 下发；客户端据此给错误卡加倒计时。
+    | ProviderRateLimitNotice of {| conversationId: Guid; generationId: Guid; providerId: string; limit: ProviderRateLimit |}
 
 module WireEvent =
 
@@ -253,3 +257,4 @@ module WireEvent =
         | DevicesSnapshot _ -> "devices.snapshot"
         | DeviceRename _ -> "device.rename"
         | DeviceRevoke _ -> "device.revoke"
+        | ProviderRateLimitNotice _ -> "provider.rate-limit"

@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <Compile Include="Types.fs" />
+    <Compile Include="RateLimit.fs" />
     <Compile Include="Ledger\Jcs.fs" />
     <Compile Include="Ledger\Frame.fs" />
     <Compile Include="PlainText.fs" />

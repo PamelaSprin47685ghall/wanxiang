@@ -322,6 +322,7 @@ type MainView() as this =
         composer.SetSessionContext(activeConversation () |> Option.map _.config, authenticated, fun () -> this.ShowSessionContext())
         match activeConvId, activeConversation () with
         | None, _ ->
+            chat.SetHeaderModel("", "", false)
             chat.SetConversationChrome false
             chat.SetBreadcrumb(None, ignore)
             chat.SetTitle("新对话", false)
@@ -373,6 +374,10 @@ type MainView() as this =
             chat.SetBreadcrumb(ForkLineage.breadcrumb summaries lineage convId, fun parentId -> this.OpenConversation parentId)
             chat.SetTitle((summary |> Option.map (fun s -> s.title) |> Option.defaultValue "对话"), true)
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
+            chat.SetHeaderModel(
+                ModelSwitcher.chipText view.config.provider view.config.model catalog,
+                (Catalog.tryProvider view.config.provider catalog |> Option.map _.label |> Option.defaultValue ""),
+                authenticated)
             if List.isEmpty messages && streaming.IsNone && run.error.IsNone then
                 chat.HideSkeletonLoading()
                 chat.ShowEmpty(EmptyConversation, None)
@@ -1100,48 +1105,43 @@ type MainView() as this =
         this.RestoreSettingsFocus()
 
     member private this.ShowModelPicker(anchor: Control) =
+        // 决策 240：顶栏芯片、输入区芯片与 Ctrl+M 共用同一个可搜索的快速切换。
         match activeConvId, activeConversation () with
         | Some convId, Some view ->
-            let groups =
-                [ for provider in Catalog.usableProviders catalog ->
-                      provider.label,
-                      [ for model in provider.models ->
-                            MenuEntry.create model (fun () ->
-                                let config = { view.config with provider = provider.id; model = model }
-                                let command =
-                                    UpdateConversationConfig
-                                        {| invocationId = newInvocation ()
-                                           conversationId = convId
-                                           config = config |}
-                                sendCommandWithFeedback command (Some(sprintf "已切换到 %s · %s" provider.label model)) (fun () ->
-                                    view.config <- config
-                                    this.Render()))
-                            |> MenuEntry.markSelected (provider.id = view.config.provider && model = view.config.model) ] ]
-            if List.isEmpty groups then
+            let options = ModelSwitcher.options catalog (Some(view.config.provider, view.config.model))
+            if List.isEmpty options then
                 // 空态不是死路：点模型入口就直接进入“添加模型服务”，与空态主按钮同一出口。
                 toast "还没有可用的模型，先添加一个模型服务。" Warning
                 this.ShowAddProvider()
             else
-                Menu.showGrouped overlay anchor false groups
+                let generating = (runs.Get(Some convId)).running
+                let title =
+                    if generating then "正在生成的这条回复不受影响，切换从下一条开始。"
+                    else "切换本对话的模型"
+                ModelSwitcherView.show overlay anchor false options title (fun picked ->
+                    let config = { view.config with provider = picked.providerId; model = picked.model }
+                    let command =
+                        UpdateConversationConfig
+                            {| invocationId = newInvocation ()
+                               conversationId = convId
+                               config = config |}
+                    sendCommandWithFeedback command (Some(ModelSwitcher.switchedToast picked.providerLabel picked.model)) (fun () ->
+                        view.config <- config
+                        this.Render()))
         | _ ->
             // 没有对话也要能挑模型：这一刻输入区是启用的（Render 的空态分支），
             // 芯片上正亮着默认模型名，点了却弹「先选择一个对话」是把可用面拔掉。
-            // kelivo model_select_sheet.dart:216：模型选择不依赖已有对话。
             // 选择只落草稿暂存位，建对话时作为 config 的 provider/model 起手。
-            let groups =
-                [ for provider in Catalog.usableProviders catalog ->
-                      provider.label,
-                      [ for model in provider.models ->
-                            MenuEntry.create model (fun () ->
-                                draftModelSelection <- Some(provider.id, model)
-                                composer.SetModelLabel(Catalog.describeModel provider.id model catalog)
-                                toast (sprintf "已选择 %s · %s" provider.label model) Info) ] ]
-            if List.isEmpty groups then
-                // 空态不是死路：点模型入口就直接进入“添加模型服务”，与空态主按钮同一出口。
+            let current = draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog)
+            let options = ModelSwitcher.options catalog current
+            if List.isEmpty options then
                 toast "还没有可用的模型，先添加一个模型服务。" Warning
                 this.ShowAddProvider()
             else
-                Menu.showGrouped overlay anchor false groups
+                ModelSwitcherView.show overlay anchor false options "新对话使用的模型" (fun picked ->
+                    draftModelSelection <- Some(picked.providerId, picked.model)
+                    composer.SetModelLabel(Catalog.describeModel picked.providerId picked.model catalog)
+                    toast (sprintf "已选择 %s · %s" picked.providerLabel picked.model) Info)
 
     // ---- 附件 ----
 
@@ -1387,7 +1387,7 @@ type MainView() as this =
         | OpenModelPicker ->
             e.Handled <- true
             // 焦点在输入框时不必先找到左下角芯片：锚点取芯片本身，菜单位置与点击一致。
-            this.ShowModelPicker(composer.ModelAnchor())
+            this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
         | JumpExchange direction ->
             e.Handled <- true
             chat.JumpExchange direction
@@ -1671,6 +1671,7 @@ type MainView() as this =
                     Some(
                         GenerationError.create GenerationErrorKind.UnknownFailure "生成结束状态未知，已按失败处理。"
                         |> GenerationError.withDetail (sprintf "未知状态：%s" unknown))
+            error |> Option.iter (fun err -> RetryCountdown.attach d.generationId err DateTimeOffset.UtcNow)
             if runs.Finish(d.conversationId, d.generationId, error, d.usage) then
                 state.Handle ev
                 // PWA 安装引导推迟到第一次成功对话之后（第 210 节）：首次运行时不和引导卡 / 输入框抢位置。
@@ -1683,6 +1684,9 @@ type MainView() as this =
                     toast (GenerationError.display err) Failure
                 | _ -> ()
                 if activeConvId = Some d.conversationId then this.Render()
+        | ProviderRateLimitNotice d ->
+            // 决策 241：限流信号先到，等对应的 generation.finished 再挂到错误卡上。
+            RetryCountdown.notice d.generationId d.limit DateTimeOffset.UtcNow
         | AttachmentCommitted d ->
             match drafts.All |> Seq.tryPick (fun draft -> draft.attachments.Complete(d.attachmentId, d.size)) with
             // 完成 toast 只给当前可见对话：后台对话的翻转由 chip 自证，不叠 toast（C5）。
@@ -2222,6 +2226,7 @@ type MainView() as this =
                         Dispatcher.UIThread.Post(fun () -> this.ApplyTheme()))
         this.KeyDown.Add(fun e -> this.HandleShortcut e)
         chat.SetStarterHandler(fun seed -> composer.SetText seed)
+        chat.SetModelSwitcherHandler(fun anchor -> this.ShowModelPicker anchor)
         this.PropertyChanged.Add(fun args ->
             if args.Property = Visual.BoundsProperty then
                 this.ApplyResponsiveLayout this.Bounds.Width)

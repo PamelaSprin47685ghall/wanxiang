@@ -506,6 +506,22 @@ type ChatOrchestrator(
                                             generationId
                                             (GenerationErrorKind.code err.kind)
                                             (err.detail |> Option.defaultValue err.message))
+                                    // 决策 241：限流 / 额度头先于 finished 单独下发（追加的 wanxiang.dev/* 事件，旧端忽略）；
+                                    // 同时把建议等待秒数补进错误本身，旧客户端也能看到「建议等待约 N 秒」。
+                                    let err =
+                                        match g.runtime.LastRateLimit with
+                                        | Some limit ->
+                                            broadcastToConversation
+                                                convId
+                                                (ProviderRateLimitNotice
+                                                    {| conversationId = convId
+                                                       generationId = generationId
+                                                       providerId = g.runtime.ProviderId
+                                                       limit = limit |})
+                                            match err.retryAfterSeconds, ProviderRateLimit.waitSeconds limit with
+                                            | None, Some wait when err.retryable -> { err with retryAfterSeconds = Some wait }
+                                            | _ -> err
+                                        | None -> err
                                     let ev = finishedEvent convId generationId "failed" (Some err) g.startedAtUtc (Some g.accumulatedUsage)
                                     this.FinishGeneration(convId, generationId, ev, false) |> ignore
                                     running <- false

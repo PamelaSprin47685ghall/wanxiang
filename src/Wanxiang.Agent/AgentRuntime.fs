@@ -177,6 +177,33 @@ module ProviderFailure =
             else None
 
     /// 归类一个 Provider 调用异常。
+    /// 失败异常里携带的限流信号（决策 241）：SDK 的原始响应头，或自有传输塞进 Data 的解析结果。
+    /// 沿 InnerException 往下找，SDK 有时会包一层。
+    let rec rateLimitOf (ex: exn) : ProviderRateLimit option =
+        if isNull ex then None
+        else
+            let direct =
+                try
+                    match ex with
+                    | :? System.ClientModel.ClientResultException as cre ->
+                        let response = cre.GetRawResponse()
+                        if isNull response || isNull response.Headers then None
+                        else
+                            let lookup (name: string) =
+                                let mutable value = ""
+                                if response.Headers.TryGetValue(name, &value) && not (String.IsNullOrWhiteSpace value) then Some value
+                                else None
+                            ProviderRateLimit.ofHeaders DateTimeOffset.UtcNow lookup
+                    | _ when not (isNull ex.Data) && ex.Data.Contains "RateLimit" ->
+                        match ex.Data["RateLimit"] with
+                        | :? ProviderRateLimit as limit -> Some limit
+                        | _ -> None
+                    | _ -> None
+                with _ -> None
+            match direct with
+            | Some _ -> direct
+            | None -> rateLimitOf ex.InnerException
+
     let classify (providerLabel: string) (model: string) (ex: exn) : GenerationError =
         match ex with
         | :? System.ClientModel.ClientResultException as cre ->
@@ -326,6 +353,8 @@ type AgentRuntime(
         | _ -> openAiChatClient ()
 
     let agentOptions = ChatClientAgentOptions()
+    /// 最近一次失败调用带回的限流信号（决策 241）；成功调用会清空。
+    let mutable lastRateLimit: ProviderRateLimit option = None
 
     do
         agentOptions.Name <- provider.id
@@ -360,6 +389,9 @@ type AgentRuntime(
 
     /// 实际生效的 provider id。
     member _.ProviderId = provider.id
+
+    /// 最近一次失败调用携带的限流 / 额度信号（决策 241）。
+    member _.LastRateLimit : ProviderRateLimit option = lastRateLimit
 
     /// 创建对话并绑定 conversationId（运行时对象）。
     member _.CreateSession(conversationId: Guid) : AgentSession =
@@ -409,10 +441,13 @@ type AgentRuntime(
                         if isNull response || isNull response.Usage then None else Some response.Usage
                     with _ ->
                         None
+                lastRateLimit <- None
                 return Completed usage
             with
             | :? OperationCanceledException when ct.IsCancellationRequested -> return Cancelled
-            | ex -> return Failed(ProviderFailure.classify providerLabel resolvedModel ex)
+            | ex ->
+                lastRateLimit <- ProviderFailure.rateLimitOf ex
+                return Failed(ProviderFailure.classify providerLabel resolvedModel ex)
         }
 
     /// 非流式执行一次调用（工具结果回传、标题生成等）。
@@ -421,10 +456,13 @@ type AgentRuntime(
             try
                 let! agentResponse = agent.RunAsync(message, session, cancellationToken = ct)
                 let usage = if isNull agentResponse || isNull agentResponse.Usage then None else Some agentResponse.Usage
+                lastRateLimit <- None
                 return Completed usage
             with
             | :? OperationCanceledException when ct.IsCancellationRequested -> return Cancelled
-            | ex -> return Failed(ProviderFailure.classify providerLabel resolvedModel ex)
+            | ex ->
+                lastRateLimit <- ProviderFailure.rateLimitOf ex
+                return Failed(ProviderFailure.classify providerLabel resolvedModel ex)
         }
 
     /// 一次性补全，不经 AgentSession、不写历史（标题生成等旁路用途）。

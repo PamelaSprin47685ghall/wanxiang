@@ -9,6 +9,7 @@ open System.Text.Json.Nodes
 open System.Threading
 open System.Threading.Channels
 open System.Threading.Tasks
+open Wanxiang.Core
 
 /// 一条 SSE 事件。`event:` 缺省时为空串（Gemini 只发 `data:`）。
 type SseEvent = { name: string; data: string }
@@ -61,6 +62,17 @@ module ProviderSse =
         ignore pump
         channel.Reader.ReadAllAsync ct
 
+    /// 从 HTTP 响应头读出限流信号（决策 241）。头名不区分大小写，响应头与内容头都看。
+    let rateLimitOfResponse (response: HttpResponseMessage) : ProviderRateLimit option =
+        if isNull response then None
+        else
+            let lookup (name: string) =
+                let mutable values: System.Collections.Generic.IEnumerable<string> = null
+                if not (isNull response.Headers) && response.Headers.TryGetValues(name, &values) then Seq.tryHead values
+                elif not (isNull response.Content) && response.Content.Headers.TryGetValues(name, &values) then Seq.tryHead values
+                else None
+            ProviderRateLimit.ofHeaders DateTimeOffset.UtcNow lookup
+
     /// 非 2xx 一律翻成带状态码的 HttpRequestException：
     /// `ProviderFailure` 正是按状态码归类错误，抛别的类型会退化成 UnknownFailure。
     let raiseForStatus (response: HttpResponseMessage) (body: string) : unit =
@@ -76,6 +88,12 @@ module ProviderSse =
                         ex.Data["RetryAfterSeconds"] <- int ra.Delta.Value.TotalSeconds
                     elif ra.Date.HasValue then
                         ex.Data["RetryAfterSeconds"] <- int (ra.Date.Value - DateTimeOffset.UtcNow).TotalSeconds
+            with _ -> ()
+            // 决策 241：限流 / 额度头随异常带走，由编排层以 wanxiang.dev/provider.rate-limit 下发。
+            try
+                match rateLimitOfResponse response with
+                | Some limit -> ex.Data["RateLimit"] <- box limit
+                | None -> ()
             with _ -> ()
             raise ex
 

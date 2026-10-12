@@ -107,6 +107,60 @@ type ConversationRuns() =
         retired <- Set.empty
         retiredOrder.Clear()
 
+/// 错误卡的重试倒计时（决策 242）。
+///
+/// 截止时刻在**收到失败的那一刻**定下，挂在那份错误实例上（引用身份）：卡片每次重渲染
+/// 都读同一个截止时刻，倒计时不会因为界面刷新从头再数。来源优先级：
+/// `wanxiang.dev/provider.rate-limit` 的等待秒数 → 错误自带的 `retryAfterSeconds`。
+/// 不给错误记录加字段：记录形状是既有契约（同 RestoredAttachments 的取舍）。
+type RetryCountdownInfo = {
+    retryAt: DateTimeOffset
+    limit: ProviderRateLimit option
+}
+
+module RetryCountdown =
+    let private table = System.Runtime.CompilerServices.ConditionalWeakTable<GenerationError, RetryCountdownInfo>()
+    /// 已收到、尚未配上 finished 的限流信号（按 generationId）。
+    let private pending = System.Collections.Concurrent.ConcurrentDictionary<Guid, ProviderRateLimit * DateTimeOffset>()
+
+    /// 记下某次生成的限流信号（先于 generation.finished 到达）。
+    let notice (generationId: Guid) (limit: ProviderRateLimit) (receivedAt: DateTimeOffset) =
+        // 防止异常对端只发 notice 不发 finished 让表无限增长。
+        if pending.Count > 256 then pending.Clear()
+        pending[generationId] <- (limit, receivedAt)
+
+    /// generation.finished 到达：给错误实例定下截止时刻。没有任何等待信号时不登记。
+    let attach (generationId: Guid) (error: GenerationError) (now: DateTimeOffset) =
+        let limit =
+            match pending.TryRemove generationId with
+            | true, (limit, receivedAt) -> Some(limit, receivedAt)
+            | _ -> None
+        let fromLimit =
+            limit |> Option.bind (fun (l, at) -> ProviderRateLimit.waitSeconds l |> Option.map (fun s -> at.AddSeconds(float s)))
+        let fromError = error.retryAfterSeconds |> Option.filter (fun s -> s > 0) |> Option.map (fun s -> now.AddSeconds(float s))
+        match fromLimit |> Option.orElse fromError with
+        | Some retryAt when error.retryable ->
+            table.AddOrUpdate(error, { retryAt = retryAt; limit = limit |> Option.map fst })
+        | _ -> ()
+
+    /// 错误卡读取截止时刻。未登记但错误自带秒数时（直接构造的卡片、旧主机），
+    /// 以第一次读取的时刻为起点登记，之后同一实例读到的都是同一个截止时刻。
+    let tryGet (error: GenerationError) (now: DateTimeOffset) : RetryCountdownInfo option =
+        match table.TryGetValue error with
+        | true, info -> Some info
+        | _ ->
+            match error.retryAfterSeconds with
+            | Some s when s > 0 && error.retryable ->
+                let info = { retryAt = now.AddSeconds(float s); limit = None }
+                table.AddOrUpdate(error, info)
+                Some info
+            | _ -> None
+
+    /// 剩余整秒（向上取整，不小于 0）。
+    let remainingSeconds (info: RetryCountdownInfo) (now: DateTimeOffset) =
+        let left = (info.retryAt - now).TotalSeconds
+        if left <= 0.0 then 0 else int (Math.Ceiling left)
+
 /// Composer 中的一条附件草稿。用 attachmentId 而不是 sha256 作为身份：
 /// 同一文件被选择两次时，两条草稿仍能独立上传、删除和完成。
 type PendingAttachment = {

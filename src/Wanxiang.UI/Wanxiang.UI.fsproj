@@ -49,6 +49,7 @@
     <Compile Include="Views/ToolApprovalCard.fs" />
     <Compile Include="Views/ChatView.fs" />
     <Compile Include="Views/Composer.fs" />
+    <Compile Include="Views/ModelSwitcherView.fs" />
     <Compile Include="Views/OnboardingCard.fs" />
     <Compile Include="Views/Sidebar.fs" />
     <Compile Include="Views/SettingsProviders.fs" />
