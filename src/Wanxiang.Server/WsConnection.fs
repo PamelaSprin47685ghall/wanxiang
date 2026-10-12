@@ -515,6 +515,8 @@ type WsConnection(
                     // 降级到 catch-up 分批重同步（决策 32-34），绝不静默丢弃快照
                     if not (this.SendConversationSnapshot d.conversationId) then
                         this.EnterSnapshotMode()
+                    // 决策 250：刷新 / 换设备后，半截回复与错误卡随快照一起回来
+                    orchestrator.Partials.TryGet d.conversationId |> Option.iter (fun ev -> this.TrySend ev |> ignore)
                     // 断线重连后审批卡片仍在：补发这个对话里还在等待的审批请求
                     if this.ApprovalCapable then
                         for ev in orchestrator.Approvals.PendingFor d.conversationId do

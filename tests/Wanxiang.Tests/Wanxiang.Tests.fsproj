@@ -103,6 +103,7 @@
     <Compile Include="LibraryTests.fs" />
     <Compile Include="LibraryUndoTests.fs" />
     <Compile Include="ContinueLinkUndoTests.fs" />
+    <Compile Include="PartialPersistAndUrlSchemeTests.fs" />
     <Compile Include="VisualPassR3Tests.fs" />
     <Compile Include="PwaMobileTests.fs" />
     <Compile Include="VisualPassV4Tests.fs" />

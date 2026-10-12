@@ -37,6 +37,8 @@ type MarkdownRenderer(
         let lh = defaultArg lineHeight (ReadingRhythm.proseLineHeight size)
         let block =
             SelectableTextBlock(
+                // 视觉走查 r8：主题自带的英文「Copy」浮层会吞掉右键，消息菜单（含「复制消息链接」）出不来
+                ContextFlyout = null,
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = size,
                 FontWeight = weight,
@@ -259,6 +261,8 @@ type MarkdownRenderer(
     member private _.RenderCode(language: string, code: string) : Control =
         let block =
             SelectableTextBlock(
+                // 视觉走查 r8：主题自带的英文「Copy」浮层会吞掉右键，消息菜单（含「复制消息链接」）出不来
+                ContextFlyout = null,
                 FontFamily = Tokens.monoFontFamily,
                 FontSize = fontSize - 1.5,
                 Foreground = Tokens.codeText,

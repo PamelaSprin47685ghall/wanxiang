@@ -1684,6 +1684,10 @@ type MainView() as this =
                     toast (GenerationError.display err) Failure
                 | _ -> ()
                 if activeConvId = Some d.conversationId then this.Render()
+        | GenerationPartial d ->
+            if runs.RestorePartial(d.conversationId, d.generationId, MessageView.ofJson d.message, d.error)
+               && activeConvId = Some d.conversationId then
+                this.Render()
         | ProviderRateLimitNotice d ->
             // 决策 241：限流信号先到，等对应的 generation.finished 再挂到错误卡上。
             RetryCountdown.notice d.generationId d.limit DateTimeOffset.UtcNow
@@ -2123,6 +2127,13 @@ type MainView() as this =
 
         this.BuildSidebar()
         this.BuildChat()
+        // 决策 251：系统打开的 wanxiang:// 链接（启动参数 / 第二实例转发 / macOS 激活）
+        if not (OperatingSystem.IsBrowser()) then
+            ExternalLinks.subscribe (fun url ->
+                Avalonia.Threading.Dispatcher.UIThread.Post(fun () ->
+                    match MessageLink.tryParse url with
+                    | Some link -> this.OpenMessageLink link
+                    | None -> toast "无法识别这个链接。" Warning))
         this.BuildComposer()
         this.BuildSettings()
         this.BuildOnboarding()

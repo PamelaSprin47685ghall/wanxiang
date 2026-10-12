@@ -89,6 +89,16 @@ type ConversationRuns() =
         items <- items |> Map.map (fun _ item -> { item with generationId = None; running = false; message = None })
 
     /// 决策 230：把半截回复编成可落盘的助手消息（去掉尾部空白：Anthropic 拒收以空白结尾的预填）。
+    /// 决策 250：主机保存的半截回复（刷新 / 换设备后随观察下发）。正在生成时不覆盖；
+    /// 本端已有更晚一次生成的结果（另一 generationId 的错误或流）时也不覆盖。
+    member this.RestorePartial(id: Guid, generationId: Guid, message: MessageView, error: GenerationError option) =
+        let current = this.Get(Some id)
+        if current.running || message.role <> "assistant" || String.IsNullOrWhiteSpace message.text then false
+        else
+            retire id generationId
+            items <- items.Add(id, { current with partial = Some message; error = (error |> Option.orElse current.error) })
+            true
+
     static member PartialMessageJson(partial: MessageView) : JsonObject =
         let node = JsonObject()
         node["text"] <- partial.text.TrimEnd()

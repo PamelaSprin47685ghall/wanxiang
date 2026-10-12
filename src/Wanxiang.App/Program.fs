@@ -23,6 +23,8 @@ module Cli =
         config: string option
         data: string option
         bundle: string option
+        /// 决策 251：系统打开 `wanxiang://` 链接时作为唯一位置参数传入
+        openUrl: string option
     }
 
     let defaults =
@@ -32,7 +34,8 @@ module Cli =
           fix = None
           config = None
           data = None
-          bundle = None }
+          bundle = None
+          openUrl = None }
 
     let parseBool (s: string) : bool option =
         match s.ToLowerInvariant() with
@@ -64,6 +67,7 @@ module Cli =
             elif arg.StartsWith "--fix=" then o <- { o with fix = parseBool (arg.Substring "--fix=".Length) }
             elif arg.StartsWith "--bundle=" then o <- { o with bundle = Some(arg.Substring "--bundle=".Length) }
             elif arg = "--bundle" then o <- { o with bundle = Some(takeValue ()) }
+            elif arg.StartsWith("wanxiang://", StringComparison.OrdinalIgnoreCase) then o <- { o with openUrl = Some arg }
             elif arg = "--help" || arg = "-h" then
                 eprintfn "usage: wanxiang [--server=true|false] [--client=true|false] [--pwa=true|false] [--fix] [--config <path>] [--data <dir>] [--bundle <path>]"
                 exit 0
@@ -107,6 +111,14 @@ module Program =
                   fix = cli.fix |> Option.defaultValue defaults.fix }
 
             let isDoctorOnly = not switches.server && not switches.client && not switches.pwa
+
+            // 决策 251：桌面已在运行时（系统打开链接 = 再启动一次），把链接交给它后退出，
+            // 不去抢数据锁、也不弹第二个窗口。
+            let instanceSocket = Wanxiang.UI.SingleInstance.socketPath (Path.GetDirectoryName configPath)
+            if switches.client && Wanxiang.UI.SingleInstance.tryForward instanceSocket cli.openUrl then
+                logInfo "forwarded to the running wanxiang window"
+                exit 0
+            cli.openUrl |> Option.iter Wanxiang.UI.ExternalLinks.post
 
             // 决策 50：pwa 开关 = 托管 PWA 静态资源。PWA 由 S 托管并依赖其 /ws 端点（决策 2），
             // 因此 pwa=true 隐含 server 功能——pwa-only 组合 = 托管 PWA + WebSocket 端点的无 UI 模式，
@@ -377,6 +389,40 @@ module Program =
                             shutdownUi ())))
                     with _ -> None
                 // 桌面 UI 入口（决策 48：本机客户端也必须走真实 WebSocket，入口仅负责 AppBuilder 平台启动）
+                Wanxiang.UI.UrlSchemeRegistration.registerCurrentUser logInfo
+                let mainWindow () =
+                    match Application.Current with
+                    | null -> None
+                    | app ->
+                        match app.ApplicationLifetime with
+                        | :? IClassicDesktopStyleApplicationLifetime as l when not (isNull l.MainWindow) -> Some l.MainWindow
+                        | _ -> None
+                let activate () =
+                    Avalonia.Threading.Dispatcher.UIThread.Post(fun () ->
+                        mainWindow () |> Option.iter (fun w ->
+                            if w.WindowState = Avalonia.Controls.WindowState.Minimized then
+                                w.WindowState <- Avalonia.Controls.WindowState.Normal
+                            w.Activate()))
+                use _instance =
+                    Wanxiang.UI.SingleInstance.listen
+                        instanceSocket
+                        (fun url -> Wanxiang.UI.ExternalLinks.post url; activate ())
+                        activate
+                // 决策 251：Avalonia 主线程初始化后，macOS 打开链接走 OpenUri 激活。
+                Avalonia.Threading.Dispatcher.UIThread.Post(fun () ->
+                    try
+                        match Application.Current with
+                        | null -> ()
+                        | app ->
+                            match app.TryGetFeature<IActivatableLifetime>() with
+                            | null -> ()
+                            | lifetime ->
+                                lifetime.Activated.Add(fun e ->
+                                    match e with
+                                    | :? ProtocolActivatedEventArgs as p when p.Kind = ActivationKind.OpenUri && not (isNull p.Uri) ->
+                                        Wanxiang.UI.ExternalLinks.post (p.Uri.ToString())
+                                    | _ -> ())
+                    with _ -> ())
                 let runDesktopUi (argv: string array) : int =
                     // 代码着色与公式排版跑在进程内的 JS 引擎上。基座脚本解析要几百毫秒，
                     // 放到后台线程先付掉；没预热完也只是第一次渲染慢，不影响正确性。
@@ -386,7 +432,7 @@ module Program =
                     AppBuilder
                         .Configure<Wanxiang.UI.App>()
                         .UsePlatformDetect()
-                        .StartWithClassicDesktopLifetime(argv)
+                        .StartWithClassicDesktopLifetime(argv |> Array.filter (fun a -> not (a.StartsWith("wanxiang://", StringComparison.OrdinalIgnoreCase))))
                 let code = runDesktopUi argv
                 stopServer ()
                 match sigterm with Some r -> r.Dispose() | None -> ()

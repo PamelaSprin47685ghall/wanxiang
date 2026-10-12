@@ -25,6 +25,7 @@
     <Compile Include="ToolRegistry.fs" />
     <Compile Include="ToolApproval.fs" />
     <Compile Include="TitleGenerator.fs" />
+    <Compile Include="PartialReplyStore.fs" />
     <Compile Include="ChatOrchestrator.fs" />
     <Compile Include="HostStatus.fs" />
     <Compile Include="WsConnection.fs" />
