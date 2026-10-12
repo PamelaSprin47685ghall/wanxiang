@@ -180,6 +180,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     /// 决策 313：导入入口与「新建对话」同属对话库，放在侧栏页脚、设置旁。由 AppShell 接线后才显示。
     let importButton = Ui.iconButton Icons.upload "导入对话（JSON）"
     let mutable importHandler: unit -> unit = ignore
+    /// 决策 374：命令面板在抽屉里的入口（手机没有 Ctrl+K）；桌面同样可见，作为快捷键的发现面。
+    let paletteButton = Ui.iconButton Icons.search "命令面板（Ctrl+K）"
+    let mutable paletteHandler: (unit -> unit) option = None
     let searchDebounce = DispatcherTimer(Interval = MotionLedger.searchInputDebounce)
     let conversationList =
         ListBox(
@@ -357,6 +360,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         Avalonia.Automation.AutomationProperties.SetName(importButton, "导入对话")
         Avalonia.Automation.AutomationProperties.SetHelpText(importButton, "从导出的 JSON 文件新建一个对话")
         Ui.onClick importButton (fun () -> importHandler ())
+        paletteButton.IsVisible <- false
+        paletteButton.Name <- "sidebar-palette"
+        Avalonia.Automation.AutomationProperties.SetName(paletteButton, "命令面板")
+        Avalonia.Automation.AutomationProperties.SetHelpText(paletteButton, "搜索对话、操作与设置（Ctrl+K）")
+        Ui.onClick paletteButton (fun () -> paletteHandler |> Option.iter (fun h -> h ()))
         Ui.onClick clearSearchButton (fun () -> this.ResetSearch true)
         // `Ui.textField` 创建时 TextBox 已挂在 shell 下。这里要把图标和清空按钮
         // 合进同一输入壳，必须先解除原父子关系，否则 Avalonia 会因重复视觉父级
@@ -584,6 +592,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         importHandler <- handler
 
     member _.ImportButton = importButton
+
+    member _.ConfigurePalette(handler: unit -> unit) =
+        paletteHandler <- Some handler
+        paletteButton.IsVisible <- true
+
+    member _.PaletteButton = paletteButton
+
+    /// 命令面板把全文搜索交接给侧栏（决策 371）。
+    member _.SetSearchText(text: string) = searchBox.Text <- text
 
     member _.SetLineage(value: Map<Guid, ForkLineage>) =
         lineage <- value
@@ -1383,7 +1400,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         if currentEmptyVariant = Some EmptyVariant.NotConnected then emptyActionButton.IsVisible <- value
         compactBackButton.IsVisible <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
-        for button in [ compactBackButton; settingsButton; clearSearchButton ] do
+        for button in [ compactBackButton; settingsButton; paletteButton; clearSearchButton ] do
             Ui.setSquareTarget button size
         newConversationButton.MinHeight <- if value then LayoutPolicy.compactActionTarget else ControlMetrics.textButtonMinHeight
         // 已渲染的行同步 compact 态：行菜单按钮常驻弱显（可见性两种模式同一路径），
@@ -1666,6 +1683,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             let dock = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(settingsButton, Dock.Right)
             dock.Children.Add settingsButton
+            DockPanel.SetDock(paletteButton, Dock.Right)
+            dock.Children.Add paletteButton
             dock.Children.Add statusRow
             Border(
                 Height = Tokens.barHeight,
