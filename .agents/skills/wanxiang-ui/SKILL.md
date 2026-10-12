@@ -555,3 +555,10 @@ Markdown 标题字号 = `fontReading + {1:10, 2:6.5, 3:4, 4:2, 5+:1}`，属于�
 # 212. 触屏不替用户做键盘才需要的事（视觉走查 R3）
 `InputModality` 记录最近一次输入是触屏还是键盘/鼠标（无输入时浏览器按触屏、桌面按键盘）。
 触屏下：compact 抽屉打开不自动聚焦搜索框（避免软键盘遮列表）；图标按钮悬停提示（如「返回对话」）不弹出。键盘/桌面行为不变。
+
+# 213. PWA 移动端：高 DPR 画布、安全区、软键盘、恢复即重连（Track C）
+- **高 DPR 根因**：Avalonia.Browser 的 ResizeObserver 回调无条件信任 `devicePixelContentBoxSize`；部分引擎（Chrome 设备模拟、部分 WebView/缩放态）把它报成 CSS 像素而 `devicePixelRatio > 1`，画布后备缓冲停在 CSS 尺寸、`RenderScaling` 却按 DPR，整套界面被放大 DPR 倍（模型标签溢出、半宽布局）。`tools/patch_avalonia_js.py` 构建后加守卫：只有它与 `contentBoxSize × DPR` 相差 ≤2px 才采用，否则走 CSS×DPR。DPR 1/2/3 下画布 = CSS 尺寸 × DPR。
+- **安全区**：`#out` 直接 `position: fixed` 定位在 `env(safe-area-inset-*)` 之内；不得用 padding（canvas 是 absolute 100%，参照 padding box，padding 无效）。
+- **软键盘**：`main.js` 跟随 `visualViewport` 写 `--wx-vvh/--wx-vvtop`，键盘打开（差值 >80px）时底部安全区归零；双指缩放时不跟随。Chrome Android 仍靠 `interactive-widget=resizes-content`。
+- **离线/重连**：壳层离线条照旧；`online`、`visibilitychange→visible`、bfcache `pageshow` 使 `wxResumeEpoch` 加一，F# 侧轮询到变化时若有挂起的退避重连，立刻重连并把退避归零；已连接时不动作。
+- 改 avalonia.js 补丁或 main.js 后同时抬 `FrameworkAssetPathResolver` 版本查询与 `sw.js` 缓存名。
