@@ -71,6 +71,13 @@ type App() =
 
         this.FlattenTextBoxChrome()
 
+        // 弹出层（ToolTip 等）不在 AppShell 的可视树下，继承不到 AppShell.FontFamily；
+        // browser-wasm 又拿不到系统字体，中文提示会渲染成豆腐块（视觉走查：
+        // 「Enter □□ / Shift+Enter □□」）。这里给 ToolTip 显式指定内嵌字体。
+        let toolTipFont = Style(fun selector -> selector.OfType<ToolTip>())
+        toolTipFont.Setters.Add(Setter(TemplatedControl.FontFamilyProperty, Tokens.fontFamily))
+        this.Styles.Add toolTipFont
+
         // 选中/悬停一律走万象的强调浅底与暖灰，不用 Fluent 的糖果蓝
         this.Resources["SystemControlHighlightListAccentLowBrush"] <- Tokens.accentSoft
         this.Resources["SystemControlHighlightListAccentMediumBrush"] <- Tokens.accentSoft

@@ -338,7 +338,11 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
               if device.revoked then yield "已吊销" ]
         let title =
             TextBlock(
-                Text = (if String.IsNullOrWhiteSpace device.name then "未命名设备" else device.name),
+                // 保留名 wanxiang-desktop 是协议标识，给人看的是「本机桌面客户端」
+                Text =
+                    (if String.IsNullOrWhiteSpace device.name then "未命名设备"
+                     elif device.desktop && device.name = "wanxiang-desktop" then "本机桌面客户端"
+                     else device.name),
                 FontSize = Tokens.fontBody,
                 FontWeight = FontWeight.Medium,
                 Foreground = (if device.revoked then Tokens.textMuted else Tokens.text),

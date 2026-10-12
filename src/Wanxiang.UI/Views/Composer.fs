@@ -138,6 +138,10 @@ type Composer(actions: ComposerActions) as this =
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center)
 
+    /// 输入框正上方的附属位（工具审批卡）：与输入框同一列、同一最大宽度，占布局高度——
+    /// 不再浮在消息列表上遮住最后一条消息的操作行。
+    let accessorySlot = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
+
     let disabledNoticeText =
         TextBlock(
             Text = "",
@@ -220,8 +224,10 @@ type Composer(actions: ComposerActions) as this =
             shell.BorderBrush <- Tokens.hairline
             shell.BoxShadow <- BoxShadows()
         input.PlaceholderText <-
+            // 禁用原因只说一遍：输入框上方的说明条已经写了，占位文字不再重复同一句
+            // （视觉走查 01/02 号截图：同一句话上下各出现一次）。
             if not enabled && not (String.IsNullOrWhiteSpace disabledReason) then
-                disabledReason
+                ""
             elif isDraggingOver && enabled then
                 "释放文件以添加到当前对话附件"
             else
@@ -788,6 +794,11 @@ type Composer(actions: ComposerActions) as this =
     /// 模型芯片本身：快捷键打开选择器时用它做锚点，菜单与点击芯片时同源同位。
     member _.ModelAnchor() : Control = modelChip :> Control
 
+    /// 把一个控件放进输入框正上方的附属位（同列对齐、参与布局）。
+    member _.SetAccessory(control: Control) =
+        accessorySlot.Children.Clear()
+        accessorySlot.Children.Add control
+
     member _.SetEnterSends(value: bool) =
         enterSends <- value
         refreshSendState ()
@@ -968,6 +979,7 @@ type Composer(actions: ComposerActions) as this =
         this.AddHandler(DragDrop.DropEvent, EventHandler<DragEventArgs>(fun _ e -> handleDrop e))
 
         let outer = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd, MaxWidth = Tokens.readingWidth)
+        outer.Children.Add accessorySlot
         outer.Children.Add disabledNotice
         outer.Children.Add pendingContainer
         outer.Children.Add shell

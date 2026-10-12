@@ -309,7 +309,17 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 break
 
-        has_tool_result = any(m.get("role") == "tool" for m in msgs)
+        # 只看最后一条用户消息之后的工具结果：同一对话里第二次说 TOOL 也要再触发一次调用
+        last_user_idx = max((i for i, m in enumerate(msgs) if m.get("role") == "user"), default=-1)
+        has_tool_result = any(m.get("role") == "tool" for m in msgs[last_user_idx + 1:])
+        # 工具名跟随请求里实际提供的工具（主机可能把 builtin:echo 编成别的函数名），
+        # 否则 mock 发出的 tool_call 会被主机判为「tool not found」。
+        offered = [
+            (t.get("function") or {}).get("name", "")
+            for t in (body.get("tools") or [])
+            if isinstance(t, dict)
+        ]
+        tool_name = next((n for n in offered if "echo" in n), offered[0] if offered else "echo")
         want_tool = "TOOL" in last_user and not has_tool_result
         want_reason = "REASON" in last_user
         want_fail = "FAIL" in last_user
@@ -341,7 +351,7 @@ class Handler(BaseHTTPRequestHandler):
                             "id": "call_" + uuid.uuid4().hex[:16],
                             "type": "function",
                             "function": {
-                                "name": "echo",
+                                "name": tool_name,
                                 "arguments": json.dumps({"text": last_user[:80]}),
                             },
                         }
@@ -395,7 +405,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "id": "call_" + uuid.uuid4().hex[:16],
                                 "type": "function",
                                 "function": {
-                                    "name": "echo",
+                                    "name": tool_name,
                                     "arguments": json.dumps({"text": last_user[:80]}),
                                 },
                             }

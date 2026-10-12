@@ -58,7 +58,9 @@ type private CardKey =
       /// 附件丢失标记只影响带附件的卡片
       missingTag: int
       /// 同一消息的版本切换控件（W4）：只影响带该控件的用户卡，其余恒为 0
-      siblingTag: int }
+      siblingTag: int
+      /// 生成仍在进行、这条的工具调用还没有结果（等审批或执行中）
+      awaitingTools: bool }
 
 /// 聊天主区：顶栏（标题 / 模型 / 操作）+ 消息列表。
 type ChatView(actions: ChatActions, brandLogo: float -> Control) =
@@ -654,6 +656,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 logo.HorizontalAlignment <- HorizontalAlignment.Center
                 emptyPanel.Children.Add(
                     Ui.emptyStateWith true logo (Some title) hint None (Some emptyActionButton))
+        emptyPanel.HorizontalAlignment <- HorizontalAlignment.Center
         emptyPanel.IsVisible <- true
         scroller.IsVisible <- false
         this.HideSkeletonLoading()
@@ -672,6 +675,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             | _ -> ()
             emptyPanel.Children.Clear()
             emptyPanel.Children.Add content
+        // 内嵌卡片（首次连接）按列宽拉伸到 MaxWidth：Center 让宽度跟内容走，
+        // 出现一行错误提示整张卡就变宽。
+        emptyPanel.HorizontalAlignment <- HorizontalAlignment.Stretch
         emptyPanel.IsVisible <- true
         scroller.IsVisible <- false
         this.HideSkeletonLoading()
@@ -917,7 +923,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         merged
         |> List.iteri (fun index message ->
             if MessageView.hasVisibleBody message then
-                let ctx = ctxFor index false
+                // 生成还在进行（例如等工具审批）时，最后一条助手消息里没有结果的工具调用是「执行中」，
+                // 不是「结果未知」——后者只该在生成结束后出现（视觉走查 11 号截图）。
+                let awaitingTools =
+                    isGenerating
+                    && streamingMessage.IsNone
+                    && lastAssistantIndex = Some index
+                    && message.toolCalls |> List.exists (fun c -> c.result.IsNone)
+                let ctx = ctxFor index awaitingTools
                 let siblings = siblingsOf message
                 let key =
                     message.commitId
@@ -933,7 +946,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                           usageTag = (if ctx.isLastAssistant then hash ctx.usage else 0)
                           missingTag =
                             (if List.isEmpty message.attachments then 0 else hash ctx.missingAttachments)
-                          siblingTag = (match siblings with Some s -> hash (s.index, s.count, s.targets) | None -> 0) })
+                          siblingTag = (match siblings with Some s -> hash (s.index, s.count, s.targets) | None -> 0)
+                          awaitingTools = awaitingTools })
                 desired.Add(
                     key,
                     fun () ->
@@ -1399,7 +1413,17 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
         let body = Grid()
         body.Children.Add scroller
-        body.Children.Add emptyPanel
+        // 空态/首次连接卡放进自己的滚动区：矮窗口里卡片比可用高度高时可以滚动，
+        // 而不是溢出到输入区上。可见性跟随 emptyPanel，隐藏时不挡消息列表的命中。
+        let emptyScroller =
+            ScrollViewer(
+                Content = emptyPanel,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                IsVisible = emptyPanel.IsVisible)
+        emptyPanel.PropertyChanged.Add(fun e ->
+            if e.Property = Visual.IsVisibleProperty then emptyScroller.IsVisible <- emptyPanel.IsVisible)
+        body.Children.Add emptyScroller
         body.Children.Add scrollToBottomButton
 
         breadcrumbAction.Child <-

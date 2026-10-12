@@ -389,6 +389,21 @@ module SearchHit =
         let s = hit.snippet
         s.Substring(0, hit.matchStart), s.Substring(hit.matchStart, hit.matchLength), s.Substring(hit.matchStart + hit.matchLength)
 
+    /// 片段里的 Markdown 记号给人看是噪音（视觉走查 12 号截图：`### 关于…`、`**Markdown 渲染**`）。
+    /// 只去掉标题井号、粗斜体星号/下划线对、行内代码反引号，并把换行折成空格；文字本身不动。
+    let plainSnippet (text: string) : string =
+        if String.IsNullOrEmpty text then text
+        else
+            let t = Text.RegularExpressions.Regex.Replace(text, @"(^|\n)\s{0,3}#{1,6}\s+", "$1")
+            let t = Text.RegularExpressions.Regex.Replace(t, @"(\*\*|__|`+)", "")
+            let t = Text.RegularExpressions.Regex.Replace(t, @"\s*\n\s*", " ")
+            t
+
+    /// 片段拆成「前 / 命中 / 后」三段，并各自去掉 Markdown 记号（命中位置不受影响）。
+    let splitPlain (hit: SearchHit) : string * string * string =
+        let before, matched, after = split hit
+        plainSnippet before, matched, plainSnippet after
+
     /// 截断/不完整时给用户的说明；None = 结果完整。
     let truncationNotice (page: SearchPageState) : string option =
         if page.truncated then Some "结果已截断：只显示了最近的一部分匹配，请换更具体的词。" else None

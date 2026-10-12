@@ -89,7 +89,7 @@ module ProviderPresets =
             baseUrl = "http://127.0.0.1:11434/v1"
             models = [ "qwen3"; "llama3.2"; "gemma3" ]
             needsApiKey = false
-            hint = "先在本机运行 ollama serve；模型名用 ollama list 里的名字。"
+            hint = "先在本机运行 ollama serve，连接后会自动读取已安装的模型。"
             alternate = None }
 
           { key = "deepseek"

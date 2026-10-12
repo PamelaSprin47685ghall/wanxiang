@@ -357,6 +357,8 @@ type MainView() as this =
                 chat.HideSkeletonLoading()
                 chat.HideEmpty()
                 let retry () = this.Regenerate()
+                // 先同步生成状态：渲染时要据此区分工具调用「执行中」与「结果未知」
+                chat.SetGenerating(generating, (if generating then "生成中" else ""))
                 chat.RenderMessages(
                     messages,
                     streaming,
@@ -498,9 +500,9 @@ type MainView() as this =
     /// 主机状态行：连接正常时带上「配置有误」提示。
     member private this.UpdateHostStatusLine() =
         if authenticated then
-            let host = try Uri(lastUrl).Host with _ -> lastUrl
+            // 主机地址已在上一行（serverCaption）显示，状态行只说状态，不重复主机名
             let suffix = if settings.Health.ConfigIssue.IsSome then " · 配置有误" else ""
-            sidebar.SetConnection(true, sprintf "已连接 · %s%s" host suffix)
+            sidebar.SetConnection(true, "已连接" + suffix)
 
     member private this.SavePrefs(next: UiPrefs) =
         let themeChanged = next.theme <> prefs.theme
@@ -1315,8 +1317,7 @@ type MainView() as this =
                 runs.ClearError s.id
             activeConvId |> Option.iter runs.ClearError
             if not (exportDialog |> Option.exists (fun dialog -> dialog.IsOpen)) then overlay.CloseDialog()
-            let host = try Uri(lastUrl).Host with _ -> lastUrl
-            sidebar.SetConnection(true, sprintf "已连接 · %s" host)
+            sidebar.SetConnection(true, "已连接")
             settings.SetConnection(instanceId, lastUrl)
             this.RestoreLocalDrafts()
             if settings.Devices.IsShown then settings.Devices.Refresh()
@@ -2000,13 +2001,9 @@ type MainView() as this =
         this.BuildOnboarding()
 
         chatColumn <- ConversationWorkspace(chat, composer)
-        // 审批卡浮在对话区底部、输入框正上方（与消息列表同一格，不占布局行）
-        (match chatColumn.Children |> Seq.tryPick (function :? Grid as g -> Some g | _ -> None) with
-         | Some workspaceGrid ->
-             Grid.SetRow(approvalPanel, 0)
-             approvalPanel.ZIndex <- 5
-             workspaceGrid.Children.Add approvalPanel
-         | None -> ())
+        // 审批卡放进输入框正上方的附属位：与输入框同列同宽、占布局高度，
+        // 不再浮层盖住消息列表最后一条的操作行（视觉走查 11 号截图）。
+        composer.SetAccessory approvalPanel
 
         let initialNavigation = navigation.State
         shellGrid <- Grid()

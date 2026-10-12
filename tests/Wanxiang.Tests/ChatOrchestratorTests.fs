@@ -244,12 +244,12 @@ module ChatOrchestratorTests =
     [<Fact>]
     let ``未找到工具时构造标准 JSON 错误格式并可被模型消费`` () =
         let toolName = "unknown_function_call"
-        let text = sprintf """{"error":"tool %s not found"}""" toolName
+        let text = sprintf """{"error":"找不到工具 %s：它可能已停用，或不在本对话启用的工具里。"}""" toolName
         Assert.Contains("unknown_function_call", text)
-        Assert.Contains("not found", text)
+        Assert.Contains("找不到工具", text)
         let parsed = JsonNode.Parse text
         Assert.NotNull parsed
-        Assert.Equal("tool unknown_function_call not found", parsed["error"].GetValue<string>())
+        Assert.StartsWith("找不到工具 unknown_function_call", parsed["error"].GetValue<string>())
 
     [<Fact>]
     let ``对话删除后内存运行时被移除且可重建（R5 无界集合）`` () =

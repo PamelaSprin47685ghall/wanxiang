@@ -398,7 +398,7 @@ let ``breadcrumb names the parent and falls back to deleted-original text`` () =
     // 多层：G 的父是 F1，不是根
     let gcrumb = ForkLineage.breadcrumb (summaries proj) lineage g |> Option.get
     Assert.Equal(f1, gcrumb.parentId)
-    Assert.Contains("根对话 (fork)", gcrumb.text)
+    Assert.Contains("根对话（分叉）", gcrumb.text)
     Assert.True((ForkLineage.breadcrumb (summaries proj) lineage r).IsNone)
     // 父对话已删除：显示“原对话已删除”，分叉本身仍在列表里、消息完整
     b.Delete r

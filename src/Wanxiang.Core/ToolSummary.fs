@@ -51,6 +51,14 @@ module ToolSummary =
         elif toolId.StartsWith("mcp:", StringComparison.Ordinal) then toolId.Substring 4
         else toolId
 
+    /// 函数名（`builtin_echo` / `mcp_<server>_<tool>`）的显示名：工具卡标题给人看，
+    /// 不直接露出 `builtin_` 前缀这种协议细节（视觉走查 11 号截图）。
+    let displayNameOfFunction (functionName: string) : string =
+        if isBuiltin functionName then
+            displayName ("builtin:" + functionName.Substring("builtin_".Length).Replace("_", "."))
+        elif functionName.StartsWith("mcp_", StringComparison.Ordinal) then functionName.Substring 4
+        else functionName
+
     /// 拒绝时写入工具结果的固定文案（含「用户拒绝」，模型据此理解并继续）。
     let userDeniedText = "用户拒绝了此次工具调用。"
     let userDeniedResult = """{"error":"用户拒绝了此次工具调用。"}"""
