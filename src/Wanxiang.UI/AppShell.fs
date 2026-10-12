@@ -89,6 +89,9 @@ type MainView() as this =
     let mutable setConnectStatus: string -> unit = ignore
     let mutable failConnectStatus: ConnectionIssue -> unit = ignore
     let mutable pageLoading = false
+    /// 决策 310：本次更早一页请求的发出时刻；超时检查据此判失败。
+    let mutable pageRequestedAt: DateTimeOffset option = None
+    let mutable olderPageWatchdog: Avalonia.Threading.DispatcherTimer option = None
     /// 设置关闭后焦点的回家点：打开设置时的触发控件（设置入口按钮等）。只记一个元素，
     /// 不经过 OverlayHost 的对话框记忆（对话框已有唯一的记忆路径，这里是视图显隐切换）。
     let mutable settingsReturnFocus: Control option = None
@@ -603,6 +606,7 @@ type MainView() as this =
         connectionIssue <- None
         runs.Disconnect()
         exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
+        this.FailOlderPage "连接已断开，更早的消息没有加载。重新连接后点「重试」。"
         outbox.Disconnect instanceId
         commandFeedback.RejectAll()
         configFeedback.RejectAll()
@@ -766,6 +770,7 @@ type MainView() as this =
             // 换对话：滚动状态归零（上一段对话的定位钉住不能带进新对话）
             chat.ResetScrollState()
             pageLoading <- false
+            pageRequestedAt <- None
         this.DisarmSkeletonLoading()
         let navBefore = navigation.State
         this.SetCompactNavigation false
@@ -1443,6 +1448,7 @@ type MainView() as this =
                 | null -> false
                 | tl -> (tl.FocusManager |> Option.ofObj |> Option.bind (fun fm -> fm.GetFocusedElement() |> Option.ofObj)) |> Option.exists (fun f -> match f with :? TextBox as tb -> not (String.IsNullOrEmpty tb.Text) | _ -> false)
             if not inTextBox && overlay.TryInvokeToastAction "撤销" then e.Handled <- true
+        | FocusToast -> if overlay.FocusToastAction() then e.Handled <- true
         | ExportConversation ->
             e.Handled <- true
             match activeSummary() with
@@ -1655,6 +1661,8 @@ type MainView() as this =
             state.Handle ev
             if activeConvId = Some d.conversationId then
                 pageLoading <- false
+                pageRequestedAt <- None
+                chat.HideOlderPageFailure()
                 this.Render()
                 chat.RestoreHistoryPrependAnchorDeferred()
         | SearchResults d ->
@@ -2003,7 +2011,10 @@ type MainView() as this =
         match activeConvId, activeConversation () with
         | Some convId, Some view when view.pageHasMore && not pageLoading ->
             chat.BeginHistoryPrependAnchor()
+            chat.HideOlderPageFailure()
             pageLoading <- true
+            pageRequestedAt <- Some DateTimeOffset.UtcNow
+            this.EnsureOlderPageWatchdog()
             // 分页没有骨架屏（会重置滚动）：一条 transient toast 给加载反馈。
             toast "正在加载更早消息…" Info
             send (
@@ -2012,6 +2023,33 @@ type MainView() as this =
                        beforeCommitId = view.pageEarliest
                        limit = 100 |})
         | _ -> ()
+
+    /// 决策 310：更早一页的等待有上限。超时 / 断线都收口到这里：
+    /// 解除 pageLoading、丢掉分页锚点、撤销挂起的「上一轮」，消息区顶部给原因 + 「重试」。
+    member private this.FailOlderPage(message: string) =
+        if pageLoading || pageRequestedAt.IsSome then
+            pageLoading <- false
+            pageRequestedAt <- None
+            chat.CancelHistoryPrependAnchor()
+            chat.ShowOlderPageFailure(message, fun () ->
+                if authenticated then this.RequestOlderHistory()
+                else this.FailOlderPage "还没有连接主机，更早的消息无法加载。连接后再点「重试」。")
+
+    /// 超时检查：只在有请求在途时有事做；tick 本身很轻，不必频繁启停。
+    member private this.CheckOlderPageTimeout(now: DateTimeOffset) =
+        match pageRequestedAt with
+        | Some at when pageLoading && now - at >= MotionLedger.olderPageTimeout ->
+            this.FailOlderPage "加载更早消息超时，主机没有回应。可以点「重试」。"
+        | _ -> ()
+
+    member private this.EnsureOlderPageWatchdog() =
+        if olderPageWatchdog.IsNone then
+            let timer = Avalonia.Threading.DispatcherTimer(Interval = MotionLedger.olderPageCheckTick)
+            timer.Tick.Add(fun _ ->
+                this.CheckOlderPageTimeout DateTimeOffset.UtcNow
+                if pageRequestedAt.IsNone then timer.Stop())
+            olderPageWatchdog <- Some timer
+        olderPageWatchdog |> Option.iter (fun t -> if not t.IsEnabled then t.Start())
 
     member private this.BuildComposer() =
         let actions =
@@ -2159,6 +2197,7 @@ type MainView() as this =
                     | Some link -> this.OpenMessageLink link
                     | None -> toast "无法识别这个链接。" Warning))
         this.BuildComposer()
+        overlay.SetToastFocusHome(fun () -> composer.Focus())
         this.BuildSettings()
         this.BuildOnboarding()
 
@@ -2226,6 +2265,7 @@ type MainView() as this =
                     chat.SetAwaitingApproval Set.empty
                     runs.Disconnect()
                     exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
+                    this.FailOlderPage "连接已断开，更早的消息没有加载。重新连接后点「重试」。"
                     outbox.Disconnect instanceId
                     commandFeedback.RejectAll()
                     configFeedback.RejectAll()

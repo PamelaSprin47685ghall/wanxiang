@@ -236,6 +236,42 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Avalonia.Automation.AutomationProperties.SetName(chip, label)
             row.Children.Add chip
         row :> Control
+    /// 决策 310：更早一页历史取不回来时的行内提示 + 重试（浮在消息区顶部，不进滚动内容，不改滚动锚点）。
+    let olderFailureText =
+        TextBlock(
+            Text = "",
+            FontSize = Tokens.fontSmall,
+            Foreground = Tokens.text,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center)
+    let mutable olderRetry: unit -> unit = ignore
+    let olderRetryButton = Ui.button Ui.Secondary "重试" (fun () -> olderRetry ())
+    let olderFailureBanner =
+        let row = Grid(ColumnSpacing = Spacing.spaceXl)
+        row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+        row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
+        Grid.SetColumn(olderFailureText, 0)
+        Grid.SetColumn(olderRetryButton, 1)
+        row.Children.Add olderFailureText
+        row.Children.Add olderRetryButton
+        let border =
+            Border(
+                Name = "older-page-failure",
+                Background = Tokens.surfaceRaised,
+                BorderBrush = Tokens.warning,
+                BorderThickness = Thickness ControlMetrics.borderWidth,
+                CornerRadius = CornerRadius Spacing.Radius.lg,
+                Padding = Thickness(Spacing.space2xl, Spacing.spaceMd),
+                Margin = Thickness(Spacing.space2xl, Spacing.spaceMd, Spacing.space2xl, 0.0),
+                MaxWidth = Tokens.readingWidth,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Top,
+                IsVisible = false,
+                Child = row)
+        border.BoxShadow <- Tokens.shadowPopup ()
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(olderFailureText, Avalonia.Automation.AutomationLiveSetting.Polite)
+        Avalonia.Automation.AutomationProperties.SetName(olderRetryButton, "重试加载更早消息")
+        border
     let skeletonPanel =
         StackPanel(
             Orientation = Orientation.Vertical,
@@ -877,6 +913,23 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member _.PendingJumpPrevious = pendingJumpPrevious
 
+    /// 决策 310：更早一页取失败（超时 / 断线 / 主机拒绝）。挂起的「上一轮」撤掉，
+    /// 消息区顶部给一句原因和「重试」；重试由调用方重新发页请求。
+    member _.ShowOlderPageFailure(message: string, retry: unit -> unit) =
+        pendingJumpPrevious <- false
+        olderRetry <- (fun () ->
+            olderFailureBanner.IsVisible <- false
+            retry ())
+        olderFailureText.Text <- message
+        Avalonia.Automation.AutomationProperties.SetName(olderFailureText, message)
+        olderFailureBanner.IsVisible <- true
+        syncExchangeNavState ()
+
+    member _.HideOlderPageFailure() = olderFailureBanner.IsVisible <- false
+    member _.OlderPageFailureVisible = olderFailureBanner.IsVisible
+    member _.OlderPageFailureText = olderFailureText.Text
+    member _.OlderPageRetryButton = olderRetryButton
+
     /// 当前因窗口未挂载的已加载消息数（测试 / 诊断用）
     member _.HiddenMessageCount = hiddenCommits.Length
 
@@ -910,6 +963,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         // 锚点跟着对话一起丢：换对话后旧锚引用的卡片已不在面板上。
         exchangeAnchor <- None
         pendingJumpPrevious <- false
+        olderFailureBanner.IsVisible <- false
         this.UpdateScrollToBottomAppearance()
         syncExchangeNavState ()
     /// 停止骨架呼吸动画。
@@ -1680,7 +1734,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 // （本帧偏移在减小），首屏布局时偏移本来就是 0，不能因此把整段历史一次挂满。
                 if hiddenCommits.Length > 0 then
                     if e.OffsetDelta.Y < -0.1 then this.ExpandMountWindow() |> ignore
-                else actions.requestOlderHistory ())
+                // 决策 310：上一页刚失败时不靠滚动静默重发——由行内「重试」显式触发。
+                elif not olderFailureBanner.IsVisible then actions.requestOlderHistory ())
         // 滚轮不论方向都是「用户此刻要动」：向上滚原本会打断平滑滚动，向下滚同理
         // （Avalonia 向下滚 Delta.Y 为负）。只截一半会让「上滚动画途中改主意往下滚」
         // 变成两个动画争抢 Offset——手势输了。
@@ -1725,6 +1780,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             if e.Property = Visual.IsVisibleProperty then emptyScroller.IsVisible <- emptyPanel.IsVisible)
         body.Children.Add emptyScroller
         body.Children.Add scrollToBottomButton
+        body.Children.Add olderFailureBanner
 
         breadcrumbAction.Child <-
             let icon = Icons.fork Tokens.textMuted
