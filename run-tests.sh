@@ -154,11 +154,7 @@ if [ "$MODE" != "ui" ]; then
   fi
   ./Wanxiang.Tests "${ARGS[@]}" > "$TMP/noui.out" 2>&1
   noui_rc=$?
-  if [ "$LARGE_HISTORY" = "0" ]; then
-    expect=$(python3 -c 'import json,sys;print(sum(1 for t in json.load(open(sys.argv[1])) if not (t.get("Traits") or {}).get("Category")))' "$TMP/all.json")
-  else
-    expect=$(python3 -c 'import json,sys;print(sum(1 for t in json.load(open(sys.argv[1])) if "UI" not in (t.get("Traits") or {}).get("Category",[])))' "$TMP/all.json")
-  fi
+  expect=$(python3 "$INV" noui "$TMP/all.json" "$LARGE_HISTORY")
   got=$(total_of "$TMP/noui.out")
   if [ "$expect" != "$got" ]; then
     FAILED=1
