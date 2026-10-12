@@ -93,9 +93,9 @@ if [ "$MODE" != "noui" ]; then
         args=()
         while read -r c; do
           [ -n "$c" ] || continue
-          # xunit 的 -class 用点分（`Ns.Outer+Inner` 的 `+` 要换成 `.`）；
-          # 保留原样会被当成不存在的类，进程静默跑成 0 个用例。
-          args+=(-class "${c//+/.}")
+          # r20 实测（xunit v3）：-class 要的是反射全名，嵌套类保留 `+`（`Outer+Inner`）。
+          # 换成 `.` 反而匹配不到，那几个用例一直被静默跳过，直到它单独成组跑出 Total: 0 才暴露。
+          args+=(-class "$c")
         done < "$g"
         ./Wanxiang.Tests -trait "Category=UI" "${args[@]}" > "$g.out" 2>&1
         echo $? > "$g.rc"
