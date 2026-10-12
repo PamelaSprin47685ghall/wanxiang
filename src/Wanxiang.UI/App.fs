@@ -10,6 +10,18 @@ open Avalonia.Media
 open Avalonia.Styling
 open Avalonia.Themes.Fluent
 
+/// 决策 261：输入框右键 / 长按菜单（Fluent 的 TextBox ContextFlyout）默认是英文
+/// Cut / Copy / Paste——r9 走查在手机 PWA 上截到。Fluent 的文案走资源键，这里统一改成中文。
+module TextFlyoutLocale =
+    let strings =
+        [ "StringTextFlyoutCutText", "剪切"
+          "StringTextFlyoutCopyText", "复制"
+          "StringTextFlyoutPasteText", "粘贴" ]
+
+    let apply (resources: IResourceDictionary) =
+        for key, text in strings do
+            resources[key] <- text
+
 /// 万象应用（clean-room：仅以原项目为灵感，UI 独立设计）。
 ///
 /// 视觉体系完全由 `Tokens` 决定，Fluent 只提供控件模板。
@@ -83,6 +95,12 @@ type App() =
               Style(fun selector -> selector.OfType<MenuItem>()) ] do
             popupFont.Setters.Add(Setter(TemplatedControl.FontFamilyProperty, Tokens.fontFamily))
             this.Styles.Add popupFont
+
+        TextFlyoutLocale.apply this.Resources
+        // 输入框菜单是 MenuFlyoutPresenter（不是 ContextMenu），同样拿不到内嵌字体。
+        let flyoutFont = Style(fun selector -> selector.OfType<MenuFlyoutPresenter>())
+        flyoutFont.Setters.Add(Setter(TemplatedControl.FontFamilyProperty, Tokens.fontFamily))
+        this.Styles.Add flyoutFont
 
         // 选中/悬停一律走万象的强调浅底与暖灰，不用 Fluent 的糖果蓝
         this.Resources["SystemControlHighlightListAccentLowBrush"] <- Tokens.accentSoft

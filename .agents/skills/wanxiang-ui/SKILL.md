@@ -610,7 +610,7 @@ AG-UI 的 `RUN_ERROR` 只有 message/code，没有 threadId/runId，也装不下
 切换模型改的是对话配置，已有回复不会被改写、正在生成的那条也不会中途换模型。浮层底部常驻「切换只影响之后的回复，已有回复不会改变。」；生成中打开时标题直接写「正在生成的这条回复不受影响，切换从下一条开始。」；确认提示为「已切换到 服务 · 模型，从下一条回复开始生效」。
 
 # 242. 限流 / 额度信号下发，错误卡给实时倒计时
-主机从模型服务的失败响应头读出限流信号（`ProviderRateLimit.ofHeaders`：`retry-after`、OpenAI `x-ratelimit-remaining/reset-requests|tokens`（Go 时长）、Anthropic `anthropic-ratelimit-*`（RFC 3339）、通用 `x-ratelimit-remaining/reset`（秒或纪元时间））。读到任何一项就在 `generation.finished` **之前**下发追加事件 `CUSTOM wanxiang.dev/provider.rate-limit`（threadId、runId、providerId、remainingRequests、remainingTokens、resetSeconds、retryAfterSeconds；缺项不上线，不编造 0）。等待秒数 = Retry-After 优先，否则已见底维度的 reset（都没见底取较晚者）。主机同时把它补进错误的 `retryAfterSeconds`（原本为空且可重试时），所以不认识新事件的客户端也能看到等待建议。客户端在收到 finished 的那一刻定下截止时刻（`RetryCountdown`，挂在错误实例上，卡片重建不会重新计时），错误卡显示每秒刷新的「1 分 05 秒后可重试。」，到点变成绿色「现在可以重试了。」；额度见底时多一行「这个模型服务当前时段的额度已用完。」。倒计时不禁用「重试」按钮：用户可能知道得比头更多。不可重试的错误永远不给倒计时。
+主机从模型服务的失败响应头读出限流信号（`ProviderRateLimit.ofHeaders`：`retry-after`、OpenAI `x-ratelimit-remaining/reset-requests|tokens`（Go 时长）、Anthropic `anthropic-ratelimit-*`（RFC 3339）、通用 `x-ratelimit-remaining/reset`（秒或纪元时间））。读到任何一项就在 `generation.finished` **之前**下发追加事件 `CUSTOM wanxiang.dev/provider.rate-limit`（threadId、runId、providerId、remainingRequests、remainingTokens、resetSeconds、retryAfterSeconds；缺项不上线，不编造 0）。等待秒数 = Retry-After 优先，否则已见底维度的 reset（都没见底取较晚者）。主机同时把它补进错误的 `retryAfterSeconds`（原本为空且可重试时），所以不认识新事件的客户端也能看到等待建议。客户端在收到 finished 的那一刻定下截止时刻（`RetryCountdown`，挂在错误实例上，卡片重建不会重新计时），错误卡显示每秒刷新的「1 分 05 秒后可重试。」，到点变成绿色「现在可以重试了。」；额度见底时多一行「这个模型服务当前时段的额度已用完。」。~~倒计时不禁用「重试」按钮~~（已被 §262 取代：倒计时内「重试」不可按）。不可重试的错误永远不给倒计时。
 
 # 243. 兼容性
 `provider.rate-limit` 只是追加的 `wanxiang.dev/*` 事件，不进日志；按 55.8 R1，旧客户端解码为「不认识」并丢弃，不断连。成功响应上的限流头暂不下发（只在失败时有用；主动预警留待后续）。
@@ -621,3 +621,17 @@ AG-UI 的 `RUN_ERROR` 只有 message/code，没有 threadId/runId，也装不下
 # 251. 桌面注册 `wanxiang://`，并且只开一个窗口
 §231 的消息链接在别的程序里点不开。桌面模式启动时按当前用户尽力注册：Linux 写 `~/.local/share/applications/wanxiang-url-handler.desktop`（`MimeType=x-scheme-handler/wanxiang`、`Exec=… %u`、`NoDisplay`）并 `xdg-mime default`；Windows 写 `HKCU\Software\Classes\wanxiang`；macOS 由 `.app` 的 `Info.plist` 声明 `CFBundleURLTypes`，链接经 `IActivatableLifetime` 的 OpenUri 激活进来。内容不变不重写；失败只记日志；`WANXIANG_NO_URL_SCHEME=1` 关闭（开发 / 测试）。打包模板在 `packaging/`。系统打开链接等于再启动一次：第二个进程先连配置目录下的 `ui.sock`，连上就把链接交给已开的窗口、唤起它并退出（不去抢数据锁、不弹第二个窗口）；连不上才自己当主实例。链接最终走 `OpenMessageLink`（与搜索命中、PWA 片段同一路径），认不出的提示「无法识别这个链接。」
 
+# 260. 首次连接直接进入配对码（新用户旅程 · r9 · 2026-10-12）
+r9 以全新用户走一遍：点「连接主机」后先看到的是「访问令牌」输入框和一句「通过 WebSocket 通信」，配对码藏在「没有令牌？改用配对码」后面——而新用户手里只可能有配对码。现在本机没有令牌、没有保存的凭据、也没有待说明的连接错误时（`ConnectDialogMode.pairingFirst`），连接对话框打开即发起配对、展开配对码区并聚焦，令牌框退场；切换入口改写为「已有访问令牌？改用令牌」，点回去令牌框恢复。说明改为人话：「主机是运行万象的那台电脑：模型、密钥和对话都在它上面。输入它显示的 6 位配对码即可连上。」有连接错误（含令牌失效 → 重新配对，§既有）时沿用原行为。
+
+# 261. 输入框菜单说中文
+Fluent 的 TextBox 右键 / 长按菜单（`MenuFlyoutPresenter`）默认是英文 Cut / Copy / Paste，r9 在手机 PWA 输入框上截到。`TextFlyoutLocale.apply` 把 `StringTextFlyoutCutText/CopyText/PasteText` 改成「剪切 / 复制 / 粘贴」，并给 `MenuFlyoutPresenter` 指定内嵌字体（与 ToolTip / ContextMenu 同理，否则 PWA 里是豆腐块）。
+
+# 262. 限流倒计时内「重试」不可按
+取代 §242 的「不禁用」：r9 实测倒计时还剩 43 秒时按「重试」只会再吃一次 429，并把等待重置。倒计时 > 0 时「重试」禁用并写成「重试（43 秒）」，读屏名仍是「重试生成」；到点恢复为「重试」。「换模型或调整参数」等恢复入口不受影响——想马上继续的人走那条路。没有倒计时的可重试错误照旧。
+
+# 263. 没收到回复的消息不再无声
+§250 只保存了半截回复；完全失败（例如限流、配置失效）时错误卡仍只活在当时那台客户端内存里，刷新或换设备后对话末尾只剩一句没人接的用户消息，看不出发生了什么、也没有入口。现在对话空闲、没有错误卡 / 半截回复 / 流式消息、且最后一条是落盘超过 20 秒的用户消息时（`ReplyTail.isUnanswered`，宽限期挡住刚发出的正常间隙），末尾补一张可重试卡「这条消息没有收到回复。」，「重试」走重新生成同一路径（尾部没有可丢内容，不再确认，§221）；技术细节说明失败详情只留在当时的设备上。纯客户端推断，不改协议。
+
+# 264. 桌面浏览器的安装引导不说「主屏幕」
+PWA 安装条在桌面浏览器上也写「安装到主屏幕」。现在按 `(pointer: coarse)` 区分：触屏仍是「安装到主屏幕，像应用一样全屏打开。」，否则「安装为桌面应用，在独立窗口中打开。」iOS 分享引导不变。

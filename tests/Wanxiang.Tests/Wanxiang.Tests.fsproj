@@ -107,6 +107,7 @@
     <Compile Include="VisualPassR3Tests.fs" />
     <Compile Include="PwaMobileTests.fs" />
     <Compile Include="VisualPassV4Tests.fs" />
+    <Compile Include="JourneyR9Tests.fs" />
     <Compile Include="DevicesTests.fs" />
     <Compile Include="DevicesUiTests.fs" />
     <Compile Include="ModelChipRateLimitTests.fs" />

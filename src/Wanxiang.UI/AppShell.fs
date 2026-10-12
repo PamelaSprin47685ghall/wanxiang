@@ -391,7 +391,12 @@ type MainView() as this =
                 chat.RenderMessages(
                     messages,
                     streaming,
-                    (run.error |> Option.map (fun e -> e, retry)),
+                    (match run.error with
+                     | Some e -> Some(e, retry)
+                     | None when not generating && streaming.IsNone && run.partial.IsNone
+                                 && ReplyTail.isUnanswered DateTimeOffset.UtcNow messages ->
+                         Some(ReplyTail.unansweredError, retry)
+                     | None -> None),
                     prefs.fontScale,
                     prefs.autoCollapseReasoning,
                     run.usage,
@@ -575,7 +580,11 @@ type MainView() as this =
         failConnectStatus <- handle.fail
         match connectionIssue with
         | Some issue -> handle.fail issue
-        | None -> connectionError |> Option.iter handle.info
+        | None ->
+            connectionError |> Option.iter handle.info
+            // 决策 260：本机从没连过（无令牌、无保存凭据）时，配对码就是唯一可走的路。
+            if ConnectDialogMode.pairingFirst lastToken hasSavedCredentials connectionError then
+                handle.startPairing ()
 
     /// 记录并呈现一次类型化的连接失败（对话框内联 + 空态入口）。
     member private this.ReportConnectionIssue(issue: ConnectionIssue) =
