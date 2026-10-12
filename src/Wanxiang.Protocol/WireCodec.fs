@@ -427,6 +427,9 @@ module WireCodec =
             p["pinned"] <- d.pinned
             p["archived"] <- d.archived
         | RegenerateResponse d -> putGuid p "threadId" d.conversationId
+        | ContinueResponse d ->
+            putGuid p "threadId" d.conversationId
+            p["message"] <- d.messageJson.DeepClone()
         o["payload"] <- p
         o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping))
 
@@ -551,6 +554,15 @@ module WireCodec =
                         | Some inv, Some cid -> Ok(RegenerateResponse {| invocationId = inv; conversationId = cid |})
                         | _ -> Error "chat.regenerate: missing invocationId/threadId"
                     | _ -> Error "chat.regenerate: missing payload"
+                | Some "chat.continue" ->
+                    match tryGet o "payload" with
+                    | Some (:? JsonObject as p) ->
+                        match tryGuid p "invocationId", tryGuid p "threadId", tryGet p "message" with
+                        | Some inv, Some cid, Some (:? JsonObject as m) ->
+                            Ok(ContinueResponse {| invocationId = inv; conversationId = cid; messageJson = m.DeepClone() |})
+                        | Some _, Some _, _ -> Error "chat.continue: missing message"
+                        | _ -> Error "chat.continue: missing invocationId/threadId"
+                    | _ -> Error "chat.continue: missing payload"
                 | _ -> Error notACommandError
             | _ -> Error "not a JSON object"
         with e ->

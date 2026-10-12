@@ -247,6 +247,11 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                             match orchestrator with
                             | Some o -> o.StartRegeneration d.conversationId
                             | None -> ()
+                        // 决策 230：半截回复已落盘，上下文以它收尾，模型从这里接着写。
+                        | ContinueResponse d ->
+                            match orchestrator with
+                            | Some o -> o.StartRegeneration d.conversationId
+                            | None -> ()
                         // 「编辑并分叉」：分叉末尾是用户刚改过的消息，用户要的是对它的新回答。
                         // 此前只落分叉不生成，新对话停在一条孤零零的用户消息上，也没有
                         // 「重新生成」可点（视觉走查 17 号截图）。

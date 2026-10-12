@@ -123,6 +123,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let moreButton = Ui.iconButton Icons.more "对话操作"
     let mutable showMore: Control -> unit = ignore
     let mutable awaitingApproval: Set<string> = Set.empty
+    let mutable partialReply: (MessageView * (unit -> unit)) option = None
     let mutable lastFlashedCommit: uint64 option = None
     let mutable highlightedCommit: uint64 option = None
     let mutable highlightTimer: (DispatcherTimer * (unit -> unit)) option = None
@@ -972,6 +973,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member _.SetAwaitingApproval(callIds: Set<string>) = awaitingApproval <- callIds
     member _.AwaitingApproval = awaitingApproval
 
+    /// 决策 230：中途失败留下的半截回复与「继续生成」动作；None 表示没有。
+    member _.SetPartialReply(partial: (MessageView * (unit -> unit)) option) = partialReply <- partial
+    member _.PartialReply = partialReply
+
     member this.RenderMessages
         (
             messages: MessageView list,
@@ -1067,8 +1072,19 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         | Some streaming when MessageView.hasVisibleBody streaming ->
             desired.Add(None, fun () -> MessageCard.render streaming (ctxFor -1 true) actions.message None)
         | _ -> ()
+        let partialNow =
+            match error with
+            | Some _ -> partialReply |> Option.filter (fun (p, _) -> streamingMessage.IsNone && MessageView.hasVisibleBody p)
+            | None -> None
+        match partialNow with
+        | Some(partial, _) ->
+            desired.Add(None, fun () ->
+                let card = MessageCard.render partial (ctxFor -1 false) actions.message None
+                Ui.vstack Spacing.spaceXs [ card; MessageCard.incompleteMarker () ] :> Control)
+        | None -> ()
         match error with
-        | Some(err, retry) -> desired.Add(None, fun () -> MessageCard.errorCard err retry None)
+        | Some(err, retry) ->
+            desired.Add(None, fun () -> MessageCard.errorCardWith err retry None (partialNow |> Option.map snd))
         | None -> ()
 
         // 只动前缀之后的部分。追加一条消息或刷新流式卡时，前面几十上百张卡不动。

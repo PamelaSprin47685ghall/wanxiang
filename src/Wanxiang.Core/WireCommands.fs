@@ -16,6 +16,8 @@ type ClientCommand =
     | SetConversationFlags of {| invocationId: Guid; conversationId: Guid; pinned: bool; archived: bool |}
     /// 重新生成：删除末尾的助手/工具消息（tombstone），再对同一批用户消息重跑一次生成。
     | RegenerateResponse of {| invocationId: Guid; conversationId: Guid |}
+    /// 继续生成（决策 230）：把中途失败留下的半截助手回复落盘，再从它接着生成。
+    | ContinueResponse of {| invocationId: Guid; conversationId: Guid; messageJson: JsonNode |}
 
 module ClientCommand =
 
@@ -30,6 +32,7 @@ module ClientCommand =
         | UpdateConversationConfig _ -> "conversation.config-update"
         | SetConversationFlags _ -> "conversation.flags-set"
         | RegenerateResponse _ -> "chat.regenerate"
+        | ContinueResponse _ -> "chat.continue"
 
     let invocationId (cmd: ClientCommand) : Guid =
         match cmd with
@@ -42,6 +45,7 @@ module ClientCommand =
         | UpdateConversationConfig d -> d.invocationId
         | SetConversationFlags d -> d.invocationId
         | RegenerateResponse d -> d.invocationId
+        | ContinueResponse d -> d.invocationId
 
     /// 命令针对的会话（写权限水位与广播目标）。
     let conversationId (cmd: ClientCommand) : Guid =
@@ -55,6 +59,7 @@ module ClientCommand =
         | UpdateConversationConfig d -> d.conversationId
         | SetConversationFlags d -> d.conversationId
         | RegenerateResponse d -> d.conversationId
+        | ContinueResponse d -> d.conversationId
 
     /// 规范化业务载荷（不含传输元数据），用于 commandId 计算。
     let canonicalPayload (cmd: ClientCommand) : string =
@@ -90,6 +95,9 @@ module ClientCommand =
             o["archived"] <- d.archived
         | RegenerateResponse d ->
             o["conversationId"] <- d.conversationId.ToString("D")
+        | ContinueResponse d ->
+            o["conversationId"] <- d.conversationId.ToString("D")
+            o["message"] <- d.messageJson.DeepClone()
         // RFC 8785 JCS 规范化。载荷不含裸大整数（commitId 一律字符串承载）——
         // JCS 会把超出 double 精度的整数按 double 改写（附录 D），此约束由 CodecTests 钉住。
         Wanxiang.Core.Ledger.Jcs.canonicalize (o.ToJsonString())

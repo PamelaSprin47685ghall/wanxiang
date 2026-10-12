@@ -217,6 +217,40 @@ module CommandEngine =
                                   archived = d.archived } ]
                     | r -> r
 
+        | ContinueResponse d ->
+            // 决策 230：只接受有正文的助手消息——这是把屏幕上已经看见的半截回复落盘，不是伪造任意角色。
+            let role, hasText =
+                match d.messageJson with
+                | :? System.Text.Json.Nodes.JsonObject as o ->
+                    let r = match o["role"] with null -> "" | n -> (try n.GetValue<string>() with _ -> "")
+                    let t =
+                        match o["contents"] with
+                        | :? System.Text.Json.Nodes.JsonArray as a ->
+                            a |> Seq.exists (fun c ->
+                                match c with
+                                | :? System.Text.Json.Nodes.JsonObject as co ->
+                                    match co["text"] with
+                                    | null -> false
+                                    | n -> (try not (String.IsNullOrWhiteSpace(n.GetValue<string>())) with _ -> false)
+                                | _ -> false)
+                        | _ -> false
+                    r, t
+                | _ -> "", false
+            if role <> "assistant" || not hasText then
+                Rejected(ValidationError "continue requires a non-empty assistant message")
+            else
+                match convOrErr proj d.conversationId with
+                | Error e -> Rejected e
+                | Ok conv ->
+                    match checkStale clientCursor (conversationWatermark conv) commandId ctype canonicalHash with
+                    | Planned p ->
+                        plannedWith
+                            p
+                            [ AgentMessageRecorded
+                                { conversationId = d.conversationId
+                                  payloadJson = d.messageJson } ]
+                    | r -> r
+
         | RegenerateResponse d ->
             match convOrErr proj d.conversationId with
             | Error e -> Rejected e

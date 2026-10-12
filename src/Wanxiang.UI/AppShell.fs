@@ -104,6 +104,9 @@ type MainView() as this =
     let mutable viewportTimer: DispatcherTimer option = None
     /// 上次看到的浏览器“恢复”计数（online / 回到前台，第 213 节）。
     let mutable lastResumeEpoch = 0
+    let mutable lastPageLink = ""
+    let mutable pendingLink: (Guid * uint64) option = None
+    let mutable listReceived = false
     let commandFeedback = CommandFeedbackTracker()
     let configFeedback = ConfigFeedbackTracker()
     let mutable exportDialog: ConversationExportDialog option = None
@@ -250,7 +253,8 @@ type MainView() as this =
                     if epoch <> lastResumeEpoch then
                         lastResumeEpoch <- epoch
                         this.ResumeReconnectNow()
-                with _ -> ())
+                with _ -> ()
+                this.CheckPageLink())
             viewportTimer <- Some timer
             timer.Start()
 
@@ -378,6 +382,7 @@ type MainView() as this =
                 let retry () = this.Regenerate()
                 // 先同步生成状态：渲染时要据此区分工具调用「执行中」与「结果未知」
                 chat.SetGenerating(generating, (if generating then "生成中" else ""))
+                chat.SetPartialReply(run.partial |> Option.map (fun p -> p, fun () -> this.ContinueGeneration(convId, p)))
                 chat.RenderMessages(
                     messages,
                     streaming,
@@ -807,6 +812,30 @@ type MainView() as this =
         this.OpenConversation target
         if activeConvId = Some target && activeConversation().IsSome then this.Render()
 
+    /// 决策 231：打开消息链接——与搜索命中同一路径（滚到那条消息并短暂着色）。
+    /// 对话列表还没到时先记下，快照到达后再开；对话已不存在则如实说。
+    member private this.OpenMessageLink((convId: Guid, commitId: uint64)) =
+        if not authenticated || List.isEmpty summaries && not listReceived then
+            pendingLink <- Some(convId, commitId)
+        else
+            pendingLink <- None
+            if summaries |> List.exists (fun s -> s.id = convId) then
+                pendingReveal <- Some(convId, RevealMessage commitId)
+                this.OpenConversation convId
+                if activeConversation().IsSome then this.Render()
+            else
+                toast "链接指向的对话不存在或已删除。" Warning
+
+    /// PWA：页面地址带 `#open?…` 时打开（启动、以及运行中地址栏改了片段）。
+    member private this.CheckPageLink() =
+        if OperatingSystem.IsBrowser() then
+            try
+                let href = BrowserBridge.PageUrl()
+                if href <> lastPageLink then
+                    lastPageLink <- href
+                    MessageLink.tryParse href |> Option.iter this.OpenMessageLink
+            with _ -> ()
+
     member private this.OpenConversation(id: Guid) =
         this.SelectConversation(Some id)
         send (ObserveConversation {| conversationId = id |})
@@ -835,6 +864,19 @@ type MainView() as this =
             | _ ->
                 outbox.SetState(id, SendingMessage)
                 sendCommand item.command
+
+    /// 决策 230：把半截回复落盘并从它接着生成。与「重试」相反，已写出的部分保留。
+    member private this.ContinueGeneration(convId: Guid, partial: MessageView) =
+        if not authenticated then toast "连接已断开，重新连接后可继续生成。" Warning
+        else
+            runs.ClearError convId
+            sendCommand (
+                ContinueResponse
+                    {| invocationId = newInvocation ()
+                       conversationId = convId
+                       messageJson = ConversationRuns.PartialMessageJson partial |})
+            this.Render()
+            composer.Focus()
 
     member private this.RetryPendingMessage(id: Guid) =
         match outbox.TryFind id with
@@ -1378,6 +1420,13 @@ type MainView() as this =
                 Info
         | CopyLastReply -> e.Handled <- true; this.CopyLatestReply()
         | RegenerateLast -> e.Handled <- true; this.RegenerateLatest()
+        | UndoPending ->
+            // 决策 232：只在「撤销」提示条可见时接管；输入框里的 Ctrl+Z 仍归文本撤销。
+            let inTextBox =
+                match topLevel () with
+                | null -> false
+                | tl -> (tl.FocusManager |> Option.ofObj |> Option.bind (fun fm -> fm.GetFocusedElement() |> Option.ofObj)) |> Option.exists (fun f -> match f with :? TextBox as tb -> not (String.IsNullOrEmpty tb.Text) | _ -> false)
+            if not inTextBox && overlay.TryInvokeToastAction "撤销" then e.Handled <- true
         | ExportConversation ->
             e.Handled <- true
             match activeSummary() with
@@ -1548,7 +1597,9 @@ type MainView() as this =
             sidebar.SetActive activeConvId
             state.AdvanceCursor()
             this.PruneDeletedConversationDrafts()
+            listReceived <- true
             this.Render()
+            pendingLink |> Option.iter this.OpenMessageLink
         | ConversationSnapshot d ->
             state.Handle ev
             state.AdvanceCursor()
@@ -1797,6 +1848,11 @@ type MainView() as this =
         // W4：消息正文搜索。查询在主机内存投影上完成；每次发出都换一个 queryId，旧结果迟到即丢。
         sidebar.SearchHandler <-
             Some(fun query includeArchived offset ->
+              match MessageLink.tryParse query with
+              | Some link ->
+                sidebar.ResetSearch()
+                this.OpenMessageLink link
+              | None ->
                 let queryId = Guid.CreateVersion7()
                 latestSearchQueryId <- Some queryId
                 send (
@@ -1821,6 +1877,12 @@ type MainView() as this =
         | _ -> toast "连接并选择对话后，可以调整上下文。" Warning
 
     member private this.BuildChat() =
+        MessageCard.setLinkSink (fun commitId ->
+            match activeConvId with
+            | Some convId ->
+                let pageUrl = if OperatingSystem.IsBrowser() then (try Some(BrowserBridge.PageUrl()) with _ -> None) else None
+                copyToClipboard (MessageLink.format pageUrl convId commitId)
+            | None -> ())
         MessageCard.setRecoverySink (fun recovery ->
             match recovery with
             | OpenProviderSettings ->
@@ -1845,7 +1907,8 @@ type MainView() as this =
                             sendCommandWithFeedback command (Some "消息已删除") ignore)
                     | None -> ()
               downloadAttachment = fun sha -> send (AttachmentDownloadRequest {| sha256 = sha |})
-              openLink = openLink }
+              // 决策 231：消息里的消息链接在应用内打开，不交给系统浏览器。
+              openLink = fun url -> match MessageLink.tryParse url with Some link -> this.OpenMessageLink link | None -> openLink url }
         let chatActions =
             { renameTitle =
                 fun title ->

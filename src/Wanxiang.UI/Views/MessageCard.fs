@@ -136,6 +136,9 @@ module MessageCard =
     /// §215：错误卡恢复动作的运行时绑定，由 AppShell 注入；未注入时不出按钮。
     let mutable private recoverySink: (ErrorRecovery -> unit) option = None
     let setRecoverySink (sink: ErrorRecovery -> unit) = recoverySink <- Some sink
+    /// 决策 231：「复制消息链接」的出口（AppShell 知道当前对话与页面地址）。
+    let mutable private linkSink: (uint64 -> unit) option = None
+    let setLinkSink (sink: uint64 -> unit) = linkSink <- Some sink
 
     /// 图标字形与脚注文本基线对齐：纯垂直居中，不加偏移。
     let private alignIconCentrally (button: Border) =
@@ -1312,7 +1315,28 @@ module MessageCard =
         else m
 
     /// 生成失败卡片：发生了什么 → 用户能做什么 → 是否可重试 → 技术细节按需。
-    let errorCard (error: GenerationError) (onRetry: unit -> unit) (copyText: (string -> unit) option) : Control =
+    /// 决策 230：半截回复卡下方的「未完成」标记——不是完整答案，不能让人当成已写完。
+    let incompleteMarker () : Control =
+        let icon = Icons.alert Tokens.warning
+        icon.VerticalAlignment <- VerticalAlignment.Center
+        let label =
+            TextBlock(
+                Text = "回复未完成：生成中途中断，以上是已写出的部分。",
+                FontSize = Tokens.fontCaption,
+                Foreground = Tokens.warning,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center)
+        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceSm)
+        row.Children.Add icon
+        row.Children.Add label
+        Avalonia.Automation.AutomationProperties.SetName(row, "回复未完成")
+        row :> Control
+
+    let rec errorCard (error: GenerationError) (onRetry: unit -> unit) (copyText: (string -> unit) option) : Control =
+        errorCardWith error onRetry copyText None
+
+    /// 决策 230：有半截回复时，「继续生成」排在「重试」之前——已经写出来的不必重来。
+    and errorCardWith (error: GenerationError) (onRetry: unit -> unit) (copyText: (string -> unit) option) (onContinue: (unit -> unit) option) : Control =
         let icon = Icons.alert Tokens.danger
         icon.VerticalAlignment <- VerticalAlignment.Top
         icon.Margin <- Thickness 0.0
@@ -1353,15 +1377,29 @@ module MessageCard =
                 Spacing = Spacing.spaceMd,
                 Margin = Thickness(0.0, Spacing.spaceXl, 0.0, 0.0))
         let detailContainer = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
+        match onContinue with
+        | Some go when error.retryable ->
+            let continueButton = Ui.button Ui.Secondary "继续生成" go
+            continueButton.Focusable <- true
+            continueButton.Margin <- Thickness 0.0
+            continueButton.Padding <- Thickness(Spacing.space2xl, ControlMetrics.textButtonPaddingY)
+            continueButton.Cursor <- handCursor.Value
+            Avalonia.Automation.AutomationProperties.SetName(continueButton, "继续生成")
+            Avalonia.Automation.AutomationProperties.SetHelpText(continueButton, "保留已写出的部分，从中断处接着生成")
+            actionRow.Children.Add continueButton
+        | _ -> ()
         if error.retryable then
-            let retryButton = Ui.button Ui.Secondary "重试" onRetry
+            let retryTone = if onContinue.IsSome then Ui.Ghost else Ui.Secondary
+            let retryButton = Ui.button retryTone "重试" onRetry
             retryButton.Focusable <- true
             retryButton.MinWidth <- ControlMetrics.retryButtonMinWidth
             retryButton.Margin <- Thickness 0.0
             retryButton.Padding <- Thickness(Spacing.space2xl, ControlMetrics.textButtonPaddingY)
             retryButton.Cursor <- handCursor.Value
             Avalonia.Automation.AutomationProperties.SetName(retryButton, "重试生成")
-            Avalonia.Automation.AutomationProperties.SetHelpText(retryButton, "重新尝试生成")
+            Avalonia.Automation.AutomationProperties.SetHelpText(
+                retryButton,
+                (if onContinue.IsSome then "丢弃已写出的部分，重新生成" else "重新尝试生成"))
             actionRow.Children.Add retryButton
         match ErrorRecovery.forKind error.kind, recoverySink with
         | Some recovery, Some sink ->
@@ -1753,6 +1791,11 @@ module MessageCard =
                 MenuEntry.create "重新生成" (fun () -> actions.regenerate ())
                 |> MenuEntry.withIcon Icons.refresh
                 |> MenuEntry.withHint "Ctrl+Shift+G"
+              match message.commitId, linkSink with
+              | Some commitId, Some copyLink ->
+                MenuEntry.create "复制消息链接" (fun () -> copyLink commitId)
+                |> MenuEntry.withIcon Icons.copy
+              | _ -> ()
               match message.commitId with
               | Some commitId ->
                 MenuEntry.create "删除这条消息" (fun () -> actions.deleteMessage commitId)
