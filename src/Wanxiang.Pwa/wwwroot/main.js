@@ -248,6 +248,9 @@ function setupShellStatus() {
     };
     if (standalone || recentlyDismissed()) return;
     let deferred = null;
+    const installLabel = () => matchMedia("(pointer: coarse)").matches
+        ? "安装到主屏幕，像应用一样全屏打开。"
+        : "安装为桌面应用，在独立窗口中打开。";
     const close = (remember) => {
         wantShow = false;
         bar.hidden = true;
@@ -267,7 +270,8 @@ function setupShellStatus() {
         e.preventDefault();
         deferred = e;
         go.hidden = false;
-        label.textContent = "安装到主屏幕，像应用一样全屏打开。";
+        // 决策 264：桌面浏览器没有「主屏幕」，文案按指针类型区分。
+        label.textContent = installLabel();
         reveal();
     });
     go.onclick = async () => {

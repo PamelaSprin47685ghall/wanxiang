@@ -1367,6 +1367,9 @@ module MessageCard =
         // 等待建议只跟可重试错误走：不可重试时给秒数等于指错路。
         // 决策 242：等待信号变成实时倒计时，到点改成「现在可以重试了」。
         // 截止时刻由 RetryCountdown 挂在错误实例上，卡片重建不会让倒计时重来。
+        // 决策 262：倒计时没走完时「重试」不可按——按了只会再吃一次 429，还会重置等待。
+        let mutable countdownLeft = 0
+        let mutable onCountdown: int -> unit = ignore
         match RetryCountdown.tryGet error DateTimeOffset.UtcNow with
         | Some info when error.retryable ->
             match info.limit with
@@ -1388,6 +1391,8 @@ module MessageCard =
                 let left = RetryCountdown.remainingSeconds info DateTimeOffset.UtcNow
                 countdown.Text <- ProviderRateLimit.countdownText left
                 countdown.Foreground <- if left <= 0 then Tokens.success else Tokens.warning
+                countdownLeft <- left
+                onCountdown left
                 left
             refresh () |> ignore
             let timer = DispatcherTimer(Interval = TimeSpan.FromSeconds 1.0)
@@ -1427,6 +1432,14 @@ module MessageCard =
             Avalonia.Automation.AutomationProperties.SetHelpText(
                 retryButton,
                 (if onContinue.IsSome then "丢弃已写出的部分，重新生成" else "重新尝试生成"))
+            let applyCountdown left =
+                let waiting = left > 0
+                Ui.setEnabled retryButton (not waiting)
+                match retryButton.Child with
+                | :? TextBlock as tb -> tb.Text <- (if waiting then sprintf "重试（%d 秒）" left else "重试")
+                | _ -> ()
+            onCountdown <- applyCountdown
+            applyCountdown countdownLeft
             actionRow.Children.Add retryButton
         match ErrorRecovery.forKind error.kind, recoverySink with
         | Some recovery, Some sink ->

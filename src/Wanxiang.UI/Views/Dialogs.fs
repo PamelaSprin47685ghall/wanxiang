@@ -18,6 +18,8 @@ open Wanxiang.Client
 type ConnectDialogHandle = {
     info: string -> unit
     fail: ConnectionIssue -> unit
+    /// 决策 260：首次连接（本机没有任何令牌）直接进入配对码模式——新用户手里只有配对码。
+    startPairing: unit -> unit
 }
 
 /// 连接对话框的回调。
@@ -27,6 +29,12 @@ type ConnectRequest = {
     /// true 表示走配对流程而不是直接用令牌
     usePairing: bool
 }
+
+/// 决策 260：连接对话框以哪种方式打开。
+module ConnectDialogMode =
+    /// 本机没有令牌、没有保存的凭据、也没有待说明的连接错误 → 首次连接，直接走配对码。
+    let pairingFirst (token: string option) (hasSavedCredentials: bool) (connectionError: string option) : bool =
+        token.IsNone && not hasSavedCredentials && connectionError.IsNone
 
 /// 应用内对话框。桌面与 PWA 共用，全部画在 OverlayHost 上。
 module Dialogs =
@@ -436,6 +444,8 @@ module Dialogs =
 
         let startPairing () =
             codeSection.IsVisible <- true
+            // 决策 260：配对模式下令牌框退场——两个输入框同时摆着，新用户不知道该填哪个。
+            tokenField.IsVisible <- false
             codeButton.IsVisible <- true
             pairingHint.Text <- pairingCodeHint (if isNull urlBox.Text then "" else urlBox.Text)
             onConnect
@@ -446,13 +456,22 @@ module Dialogs =
         startPairingRef <- startPairing
         urlBox.TextChanged.Add(fun _ -> pairingHint.Text <- pairingCodeHint urlBox.Text)
 
+        let mutable pairingToggleRef: Border option = None
+        let syncToggleText () =
+            pairingToggleRef
+            |> Option.iter (fun t ->
+                Ui.setButtonText t (if codeSection.IsVisible then "已有访问令牌？改用令牌" else "没有令牌？改用配对码"))
         let pairingToggle =
             Ui.button Ui.Ghost "没有令牌？改用配对码" (fun () ->
                 let show = not codeSection.IsVisible
                 if show then startPairing ()
                 else
                     codeSection.IsVisible <- false
-                    codeButton.IsVisible <- false)
+                    codeButton.IsVisible <- false
+                    tokenField.IsVisible <- true
+                    tokenBox.Focus() |> ignore
+                syncToggleText ())
+        pairingToggleRef <- Some pairingToggle
         pairingToggle.HorizontalAlignment <- HorizontalAlignment.Left
 
         let connectAction () =
@@ -494,7 +513,7 @@ module Dialogs =
                 [ Ui.vstack
                       Spacing.spaceXs
                       [ Ui.title "连接万象主机" :> Control
-                        Ui.caption "主机负责运行模型、保存对话与管理密钥；客户端只通过 WebSocket 与它通信。" :> Control ]
+                        Ui.caption "主机是运行万象的那台电脑：模型、密钥和对话都在它上面。输入它显示的 6 位配对码即可连上。" :> Control ]
                   :> Control
                   urlField
                   tokenField
@@ -517,7 +536,13 @@ module Dialogs =
         let target =
             if String.IsNullOrWhiteSpace (if isNull urlBox.Text then "" else urlBox.Text) then urlBox else tokenBox
         overlay.ShowDialog(content :> Control, 460.0, initialFocus = target, onClosed = onClosed)
-        { info = announce; fail = fail }
+        { info = announce
+          fail = fail
+          startPairing =
+            fun () ->
+                if not codeSection.IsVisible then
+                    startPairing ()
+                    syncToggleText () }
 
     let connect
         (overlay: OverlayHost)

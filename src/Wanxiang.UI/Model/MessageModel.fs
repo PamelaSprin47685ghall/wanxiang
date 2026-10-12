@@ -281,3 +281,20 @@ module ReplyTail =
             || not (System.String.IsNullOrWhiteSpace m.reasoning)
             || not (List.isEmpty m.toolCalls)
             || not (List.isEmpty m.toolResults))
+
+    /// 决策 263：最后一条是用户消息、落盘已超过宽限期、却没有任何回复——
+    /// 失败卡只活在当时那台客户端的内存里，换设备 / 刷新后用户只看见一句没人接的话。
+    /// 宽限期挡住「刚发出、生成还没开始」的正常间隙。
+    let unansweredGraceSeconds = 20.0
+
+    let isUnanswered (now: System.DateTimeOffset) (messages: MessageView list) : bool =
+        match List.tryLast messages with
+        | Some last when last.role = "user" ->
+            match last.committedAt with
+            | Some at -> (now - at).TotalSeconds >= unansweredGraceSeconds
+            | None -> false
+        | _ -> false
+
+    let unansweredError : Wanxiang.Core.GenerationError =
+        { Wanxiang.Core.GenerationError.create Wanxiang.Core.UnknownFailure "这条消息没有收到回复。" with
+            detail = Some "生成可能已在另一台设备上失败或被中断；失败详情只保留在当时的那台设备上。" }
