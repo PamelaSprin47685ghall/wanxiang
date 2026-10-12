@@ -295,6 +295,15 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable lastAnimatedOffset = nan
     let mutable headerBar: Border = Unchecked.defaultof<Border>
     let mutable pendingHistoryAnchor: (float * float) option = None
+    /// 决策 293：打开长对话只挂尾部一个窗口的卡片（首屏只排这几十张），
+    /// 往上滚到窗口顶再把已在本机的更早消息挂上来（与分页同一套 prepend 锚点），本机挂完了才向主机要更早一页。
+    /// 搜索命中 / 消息链接指向窗口外的消息时，窗口直接扩到那条。
+    let mutable mountWindow = ChatView.InitialMountWindow
+    /// 本帧被窗口隐藏（已加载但未挂载）的消息：按顺序的 commitId
+    let mutable hiddenCommits: uint64[] = [||]
+    let mutable lastFirstCommit: uint64 option = None
+    let mutable lastMergedCount = 0
+    let mutable rerenderLast: unit -> unit = ignore
     let mutable compactMode = false
     let mutable hasConversationChrome = false
     let mutable isGenerating = false
@@ -726,6 +735,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         highlightTimer |> Option.iter (fun (t: DispatcherTimer, restore) -> t.Stop(); restore ())
 
     member this.ScrollToMessage(commitId: uint64) : bool =
+        this.EnsureMounted commitId
         let indexOf () =
             mountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
         match indexOf () with
@@ -844,7 +854,33 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         messagePanel.IsVisible <- true
 
     /// 重置滚动到底状态与未读计数（换对话、加载骨架或切换视图时调用）。
+    /// 决策 293：首屏挂载窗口与每次向上扩展的步长
+    static member InitialMountWindow = 40
+    static member MountWindowStep = 60
+
+    /// 当前因窗口未挂载的已加载消息数（测试 / 诊断用）
+    member _.HiddenMessageCount = hiddenCommits.Length
+
+    /// 把窗口向上扩一步（已加载、未挂载的消息先挂）；返回是否真的扩了。
+    member this.ExpandMountWindow() : bool =
+        if hiddenCommits.Length = 0 then false
+        else
+            this.BeginHistoryPrependAnchor()
+            mountWindow <- mountWindow + ChatView.MountWindowStep
+            rerenderLast ()
+            this.RestoreHistoryPrependAnchorDeferred()
+            true
+
+    /// 确保某条消息已挂载（窗口外则扩到它）。
+    member private this.EnsureMounted(commitId: uint64) =
+        match Array.tryFindIndex ((=) commitId) hiddenCommits with
+        | Some index ->
+            mountWindow <- mountWindow + (hiddenCommits.Length - index) + 4
+            rerenderLast ()
+        | None -> ()
+
     member this.ResetScrollState() =
+        mountWindow <- ChatView.InitialMountWindow
         revealPinned <- false
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
@@ -1079,9 +1115,21 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 this.SiblingProvider commit prev
             | _ -> None
 
+        // 决策 293：只挂尾部窗口。分页回来的更早一页（prepend 锚点在途、首条变了）整页挂上——
+        // 那是用户滚到顶要看的内容。
+        let mergedCount = List.length merged
+        let firstCommit = merged |> List.tryHead |> Option.bind (fun m -> m.commitId)
+        if pendingHistoryAnchor.IsSome && firstCommit <> lastFirstCommit && mergedCount > lastMergedCount && lastMergedCount > 0 then
+            mountWindow <- max mountWindow (min mergedCount (lastMergedCount - hiddenCommits.Length + (mergedCount - lastMergedCount)))
+        lastFirstCommit <- firstCommit
+        lastMergedCount <- mergedCount
+        let firstMounted = max 0 (mergedCount - mountWindow)
+        hiddenCommits <- merged |> List.truncate firstMounted |> List.choose (fun m -> m.commitId) |> Array.ofList
+        rerenderLast <- fun () ->
+            this.RenderMessages(messages, streamingMessage, error, fontSize, autoCollapseReasoning, usage, missingAttachments)
         merged
         |> List.iteri (fun index message ->
-            if MessageView.hasVisibleBody message then
+            if index >= firstMounted && MessageView.hasVisibleBody message then
                 // 生成还在进行（例如等工具审批）时，最后一条助手消息里没有结果的工具调用是「执行中」，
                 // 不是「结果未知」——后者只该在生成结束后出现（视觉走查 11 号截图）。
                 let awaitingTools =
@@ -1593,7 +1641,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             this.UpdateScrollToBottomAppearance()
             // 骨架可见时不预取更早历史：对话切换中的 extent 抖动会误触发，
             // 等真实内容挂载后再按正常阈值取。
-            if offset <= 0.5 && extent > viewport && not skeletonPanel.IsVisible then actions.requestOlderHistory ())
+            if offset <= 0.5 && extent > viewport && not skeletonPanel.IsVisible then
+                // 决策 293：本机还有没挂的更早消息时先挂它们；只认「用户把视口往上推到了顶」
+                // （本帧偏移在减小），首屏布局时偏移本来就是 0，不能因此把整段历史一次挂满。
+                if hiddenCommits.Length > 0 then
+                    if e.OffsetDelta.Y < -0.1 then this.ExpandMountWindow() |> ignore
+                else actions.requestOlderHistory ())
         // 滚轮不论方向都是「用户此刻要动」：向上滚原本会打断平滑滚动，向下滚同理
         // （Avalonia 向下滚 Delta.Y 为负）。只截一半会让「上滚动画途中改主意往下滚」
         // 变成两个动画争抢 Offset——手势输了。
