@@ -712,7 +712,11 @@ module WsClientLiveNetworkTests =
             do! client.SendCommandAsync(cmd)
 
             // Wait brief moment for server to receive
-            do! Task.Delay(100)
+            // 按条件轮询（≤10s），不按墙钟固定等待：满载下接收循环可能晚于固定延时。
+            let mutable waitedMs = 0
+            while not (receivedMessages.Count >= 5) && waitedMs < 10000 do
+                do! Task.Delay 10
+                waitedMs <- waitedMs + 10
             Assert.True(receivedMessages.Count >= 5)
 
             client.Disconnect()
@@ -751,7 +755,11 @@ module WsClientLiveNetworkTests =
             Assert.All(results, fun success -> Assert.True(success))
 
             // Wait brief moment to verify server receives all 20 frames
-            do! Task.Delay(150)
+            // 按条件轮询（≤10s），不按墙钟固定等待：满载下接收循环可能晚于固定延时。
+            let mutable waitedMs = 0
+            while not (!receivedCount >= 20) && waitedMs < 10000 do
+                do! Task.Delay 10
+                waitedMs <- waitedMs + 10
             Assert.Equal(20, !receivedCount)
 
             client.Disconnect()
@@ -810,7 +818,12 @@ module WsClientLiveNetworkTests =
             do! serverWs.SendAsync(ArraySegment<byte>(pingBytes), WebSocketMessageType.Text, true, cts.Token)
 
             // Give client ReceiveLoop time to process
-            do! Task.Delay(200)
+            // 按条件轮询（≤10s），不按墙钟固定等待：满载下接收循环可能晚于固定延时。
+            let mutable waitedMs = 0
+            while not (receivedEvents.Count >= 3 && connectionEvents.Count >= 3) && waitedMs < 10000 do
+                do! Task.Delay 10
+                waitedMs <- waitedMs + 10
+            do! Task.Delay 100 // 再留一小段，抓多收
 
             // Must have received exactly the 3 valid ping events (normal + reassembled multi-chunk + final ping)
             Assert.Equal(3, receivedEvents.Count)
@@ -894,7 +907,11 @@ module WsClientLiveNetworkTests =
             let binBytes = [| 1uy; 2uy; 3uy; 4uy |]
             do! serverWs.SendAsync(ArraySegment<byte>(binBytes), WebSocketMessageType.Binary, true, cts.Token)
 
-            do! Task.Delay(150)
+            // 按条件轮询（≤10s），不按墙钟固定等待：满载下接收循环可能晚于固定延时。
+            let mutable waitedMs = 0
+            while not (closedFired) && waitedMs < 10000 do
+                do! Task.Delay 10
+                waitedMs <- waitedMs + 10
 
             Assert.True(closedFired)
             Assert.True(Option.isSome closedExn)
@@ -973,7 +990,11 @@ module WsClientLiveNetworkTests =
             serverWs.Abort()
             try (serverWs :> IDisposable).Dispose() with _ -> ()
 
-            do! Task.Delay(500)
+            // 按条件轮询（≤10s），不按墙钟固定等待：满载下接收循环可能晚于固定延时。
+            let mutable waitedMs = 0
+            while not (closedFired) && waitedMs < 10000 do
+                do! Task.Delay 10
+                waitedMs <- waitedMs + 10
 
             Assert.True(closedFired)
             Assert.True(Option.isSome closedExn)

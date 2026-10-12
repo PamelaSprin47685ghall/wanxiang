@@ -101,8 +101,10 @@ let ``多段代码同时算完只通知一次`` () =
     for code in blocks do
         Highlight.tokenize true "fsharp" code |> ignore
 
-    // 等到全部算完并过掉合并窗口
-    Thread.Sleep 700
+    // 等到全部算完（按调用计数轮询，不靠墙钟），再过掉合并窗口
+    let deadline = DateTime.UtcNow.AddSeconds 30.0
+    while backend.Calls < 20 && DateTime.UtcNow < deadline do Thread.Sleep 10
+    Thread.Sleep 400
     Assert.Equal(20, backend.Calls)
     Assert.True(notifications <= 3, $"二十段代码触发了 {notifications} 次通知，没有合并")
     // 而且结果都进了缓存

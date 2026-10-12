@@ -122,9 +122,11 @@ let ``config store reload keeps last valid configuration on invalid file`` () =
             | Error e -> failwith e
         File.WriteAllText(path, "configVersion = 2\ninvalid = true\n")
         store.TriggerReload()
-        System.Threading.Thread.Sleep 250
-        Assert.Equal(initial.instanceId, store.Current.instanceId)
+        // 等「拒绝」回调本身（事件），不按墙钟睡固定时长：满载下 debounce 计时器可能晚于 250ms 才触发。
+        let deadline = DateTime.UtcNow.AddSeconds 30.0
+        while rejected.Count = 0 && DateTime.UtcNow < deadline do System.Threading.Thread.Sleep 10
         Assert.NotEmpty rejected
+        Assert.Equal(initial.instanceId, store.Current.instanceId)
     finally
         if Directory.Exists dir then Directory.Delete(dir, true)
 
@@ -171,8 +173,9 @@ let ``rewrite 在 reload 失败时返回 Error 并保留旧配置`` () =
     try
         let initial = AppConfig.defaults (Guid.CreateVersion7())
         File.WriteAllText(path, TomlCodec.serialize initial)
+        use rejectedSignal = new System.Threading.ManualResetEventSlim(false)
         use store =
-            match ConfigStore.Open(path, ignore, ignore) with
+            match ConfigStore.Open(path, ignore, (fun _ -> rejectedSignal.Set())) with
             | Ok value -> value
             | Error e -> failwith e
         // 成功路径：Rewrite 后内存与磁盘一致（决策 44）
@@ -183,7 +186,8 @@ let ``rewrite 在 reload 失败时返回 Error 并保留旧配置`` () =
         // 制造磁盘文件非法（reload 失败）：外部写入非法内容后 watcher 触发 reload，保留旧配置
         File.WriteAllText(path, "configVersion = 2\ninstanceId = 1\n") // instanceId 非法 → reload 失败
         store.TriggerReload()
-        System.Threading.Thread.Sleep 250
+        // 等 reload 真的失败（拒绝回调），而不是睡 250ms 后假定它已发生。
+        Assert.True(rejectedSignal.Wait(TimeSpan.FromSeconds 30.0), "外部非法写入未触发拒绝")
         Assert.Equal("127.0.0.1:12345", store.Current.listen) // 保留最后有效配置
     finally
         if Directory.Exists dir then Directory.Delete(dir, true)
