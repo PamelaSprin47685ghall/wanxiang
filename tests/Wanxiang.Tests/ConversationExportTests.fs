@@ -444,7 +444,10 @@ let ``export ready state skips the hidden retry slot for arrow navigation`` () =
         let forward = key close Key.Right
         Dispatcher.UIThread.RunJobs()
         Assert.True(forward.Handled, "就绪态关闭按右必须移交焦点")
-        Assert.True(save.IsFocused, "焦点必须越过隐藏的重新导出落到保存")
+        // 决策 312：就绪态排布 [关闭, 保存 JSON, 保存 Markdown]；落点是可见可用的「保存 JSON」。
+        let focused = window.FocusManager.GetFocusedElement() :?> Control
+        Assert.Equal("保存 JSON", AutomationProperties.GetName focused)
+        let save = focused
         // 反向同样闭合：保存按左越过隐藏槽位回关闭。
         let back = key save Key.Left
         Dispatcher.UIThread.RunJobs()

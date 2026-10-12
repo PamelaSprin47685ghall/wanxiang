@@ -19,7 +19,10 @@ type ConversationExportDialog(
     conversationId: Guid,
     initialTitle: string,
     sendQuery: ConversationExportQuery -> Task<bool>,
-    topLevel: unit -> TopLevel) as this =
+    topLevel: unit -> TopLevel,
+    ?lineage: ExportLineage) as this =
+
+    let lineage = defaultArg lineage ConversationTransfer.rootLineage
 
     let controller = ConversationExportController(conversationId)
 
@@ -37,6 +40,9 @@ type ConversationExportDialog(
     let mutable saved = false
     let mutable saveError: string option = None
     let mutable output: byte[] option = None
+    /// 决策 312：同一次读取同时备好可再导入的 JSON。
+    let mutable outputJson: byte[] option = None
+    let mutable savedKind = ""
     let timer = DispatcherTimer(Interval = MotionLedger.exportExpiryCheckTick)
     do
         timer.Tick.Add(fun _ ->
@@ -56,7 +62,8 @@ type ConversationExportDialog(
         | ExportReading _ -> this.Cancel()
         | _ -> overlay.CloseDialog())
     let retryButton = Ui.button Ui.Secondary "重新导出" (fun () -> this.Start())
-    let saveButton = Ui.button Ui.Primary "保存 Markdown" (fun () -> this.Save())
+    let saveButton = Ui.button Ui.Primary "保存 Markdown" (fun () -> this.Save false)
+    let saveJsonButton = Ui.button Ui.Secondary "保存 JSON" (fun () -> this.Save true)
 
     // 立即渲染一帧进度：记下刷新时刻，并取消尚未落地的节流尾巴。
     // 这一层只把 controller.Status 同步到控件，不做任何时间判断。
@@ -79,7 +86,7 @@ type ConversationExportDialog(
                 status.Text <-
                     if empty then "当前对话没有已保存的消息，无需导出"
                     elif saving then "正在保存…"
-                    elif saved then sprintf "已保存完整记录（%d 条消息）。" count
+                    elif saved then sprintf "已保存完整记录（%d 条消息，%s）。可以再保存另一种格式。" count savedKind
                     else saveError |> Option.defaultValue (sprintf "已完整读取 %d 条消息，可以保存。" count)
                 // 终态文字色分级：
                 // 状态只切文字色：已保存=success，保存出错=danger，其余=正文 text。空态同样经过这里：按钮保持可见但禁用。
@@ -94,10 +101,13 @@ type ConversationExportDialog(
             | ExportIdle -> status.Text <- "正在准备导出…"; status.Foreground <- Tokens.text; false, false, false, false
         progress.IsVisible <- reading
         retryButton.IsVisible <- failed
-        let saveShown = ready && not saved
+        // 保存后两种格式都仍可再存一份（决策 312）：用户常常两种都要。
+        let saveShown = ready
         saveButton.IsVisible <- saveShown
+        saveJsonButton.IsVisible <- saveShown && outputJson.IsSome
         let saveUsable = ready && not saving && not isEmpty
         Ui.setEnabled saveButton saveUsable
+        Ui.setEnabled saveJsonButton (saveUsable && outputJson.IsSome)
         Ui.setButtonText closeButton (if reading then "取消导出" else "关闭")
         // 焦点宿主被禁用/藏掉时焦点直接掉 null（实测：Avalonia 不会自动迁到相邻键），
         // 键盘用户随后 Tab/Esc 无处可去。与方向键「落点必须同时可用」同一纪律
@@ -150,6 +160,7 @@ type ConversationExportDialog(
 
     member private this.Start() =
         output <- None
+        outputJson <- None
         saveError <- None
         saved <- false
         let query = controller.Start()
@@ -159,7 +170,7 @@ type ConversationExportDialog(
     member _.IsOpen = active
 
     member this.Show() =
-        let buttons = Ui.hstack Spacing.spaceMd [ closeButton :> Control; retryButton :> Control; saveButton :> Control ]
+        let buttons = Ui.hstack Spacing.spaceMd [ closeButton :> Control; retryButton :> Control; saveJsonButton :> Control; saveButton :> Control ]
         // 三按钮行补左右键导航：其余对话框（Dialogs.fs:48-57、SettingsProviders/Tools 页脚）都有，
         // 导出对话框此前只有 Tab 一条路，桌面端键盘用户按方向键无响应，交互节拍割裂。
         // 连线不按布局顺序写死相邻对，而是「沿行内下一个可见可用键」：重新导出 / 保存
@@ -168,7 +179,7 @@ type ConversationExportDialog(
         // close→retry→save 会把中间那个隐藏键当成必经之路，RIGHT/LEFT 直接断链。
         // 只看 IsEnabled 会把焦点交给一个不可见的按钮——焦点连同可见性一起消失，
         // 键盘用户下一步按键无的放矢，比不接线更糟，所以落点必须可见且可用。
-        let rowButtons = [ closeButton; retryButton; saveButton ]
+        let rowButtons = [ closeButton; retryButton; saveJsonButton; saveButton ]
         let step (from: Control) (dir: int) =
             match rowButtons |> List.tryFindIndex (fun b -> Object.ReferenceEquals(b, from)) with
             | None -> None
@@ -199,6 +210,10 @@ type ConversationExportDialog(
                             // 下面是静态说明与按钮，分层不靠间距硬猜。
                             Border(Height = ControlMetrics.borderWidth, Background = Tokens.hairline, HorizontalAlignment = HorizontalAlignment.Stretch) :> Control
                             Ui.caption "导出开始时已保存的消息、工具记录和附件说明。未完成的生成、排队消息及附件文件本体不包含在内；这不是完整备份。" :> Control
+                            Ui.caption "Markdown 适合阅读和分享；JSON 保留完整结构和分叉信息，可以在任意万象主机上「导入对话」。" :> Control
+                            (let privacy = Ui.caption ConversationTransfer.privacyNote
+                             privacy.Name <- "export-privacy-note"
+                             privacy :> Control)
                             buttons :> Control ]
         active <- true
         // D6：读屏需要按钮名称/说明与进度 live；初始焦点落在取消导出上（读取中唯一可用操作）。
@@ -209,13 +224,16 @@ type ConversationExportDialog(
         AutomationProperties.SetHelpText(retryButton, "重新读取并导出当前对话")
         AutomationProperties.SetName(saveButton, "保存 Markdown")
         AutomationProperties.SetHelpText(saveButton, "保存导出的 Markdown 文件")
+        AutomationProperties.SetName(saveJsonButton, "保存 JSON")
+        AutomationProperties.SetHelpText(saveJsonButton, "保存可再导入的 JSON 文件，含分叉与版本信息")
         overlay.ShowDialog(content :> Control, 480.0, onClosed = (fun () ->
             active <- false
             timer.Stop()
             throttleTimer.Stop()
             throttlePending <- false
             controller.Cancel()
-            output <- None))
+            output <- None
+            outputJson <- None))
         timer.Start()
         this.Start()
         Dispatcher.UIThread.Post(fun () ->
@@ -228,10 +246,17 @@ type ConversationExportDialog(
             match controller.Document, output with
             | Some document, None ->
                 try
-                    let markdown = Export.toMarkdown document.title document.messages
+                    let now = DateTimeOffset.Now
+                    let markdown =
+                        ConversationTransfer.withPreamble
+                            (Export.toMarkdown document.title document.messages)
+                            (ConversationTransfer.markdownPreamble lineage document.messages.Length now)
                     if int64 (Encoding.UTF8.GetByteCount markdown) > ConversationExportLimits.maxTranscriptBytes then
                         saveError <- Some "生成的 Markdown 超过 64 MiB 安全上限；没有保存不完整文件。"
                     else output <- Some(Encoding.UTF8.GetBytes markdown)
+                    let json = ConversationTransfer.toJson conversationId document.title document.atCommitId now lineage document.raw
+                    if int64 (Encoding.UTF8.GetByteCount json) <= ConversationTransfer.maxImportBytes then
+                        outputJson <- Some(Encoding.UTF8.GetBytes json)
                 with ex -> saveError <- Some("无法生成完整 Markdown：" + ex.Message)
             | _ -> ()
             this.Refresh()
@@ -247,8 +272,11 @@ type ConversationExportDialog(
             controller.Disconnect()
             this.Refresh(forceImmediate = true)
 
-    member private this.Save() =
-        match controller.Document, output with
+    member _.MarkdownText = output |> Option.map Encoding.UTF8.GetString
+    member _.JsonText = outputJson |> Option.map Encoding.UTF8.GetString
+
+    member private this.Save(asJson: bool) =
+        match controller.Document, (if asJson then outputJson else output) with
         | Some document, Some bytes when not saving ->
             let top = topLevel ()
             if isNull top then
@@ -266,10 +294,13 @@ type ConversationExportDialog(
                         top.StorageProvider.SaveFilePickerAsync(
                             FilePickerSaveOptions(
                                 Title = "导出对话",
-                                SuggestedFileName = Export.safeFileName document.title,
-                                DefaultExtension = "md",
+                                SuggestedFileName =
+                                    (if asJson then ConversationTransfer.safeJsonFileName document.title (Export.safeFileName document.title)
+                                     else Export.safeFileName document.title),
+                                DefaultExtension = (if asJson then "json" else "md"),
                                 FileTypeChoices =
-                                    [ FilePickerFileType("Markdown 文档", Patterns = [| "*.md" |]) ]))
+                                    [ if asJson then FilePickerFileType("万象对话 JSON", Patterns = [| "*.json" |])
+                                      else FilePickerFileType("Markdown 文档", Patterns = [| "*.md" |]) ]))
                     saving <- true
                     saveError <- None
                     this.Refresh()
@@ -285,7 +316,9 @@ type ConversationExportDialog(
                             Dispatcher.UIThread.Post(fun () ->
                                 if active then
                                     saving <- false
-                                    saved <- not (isNull file)
+                                    if not (isNull file) then
+                                        saved <- true
+                                        savedKind <- (if asJson then "JSON" else "Markdown")
                                     this.Refresh())
                         with ex ->
                             Dispatcher.UIThread.Post(fun () ->

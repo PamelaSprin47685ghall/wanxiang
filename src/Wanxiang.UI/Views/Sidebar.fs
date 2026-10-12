@@ -177,6 +177,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     // 文字按钮自带唯一 Invoke/Enter/Space 路径，不可先绑 ignore 再追加第二条 onClick。
     let newConversationButton = Ui.button Ui.Secondary "新建对话" actions.newConversation
     let settingsButton = Ui.iconButton Icons.gear "设置（Ctrl+,）"
+    /// 决策 313：导入入口与「新建对话」同属对话库，放在侧栏页脚、设置旁。由 AppShell 接线后才显示。
+    let importButton = Ui.iconButton Icons.upload "导入对话（JSON）"
+    let mutable importHandler: unit -> unit = ignore
     let searchDebounce = DispatcherTimer(Interval = MotionLedger.searchInputDebounce)
     let conversationList =
         ListBox(
@@ -349,6 +352,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         compactBackButton.IsVisible <- false
         Ui.onClick compactBackButton actions.closeNavigation
         Ui.onClick settingsButton actions.openSettings
+        importButton.IsVisible <- false
+        importButton.Name <- "sidebar-import"
+        Avalonia.Automation.AutomationProperties.SetName(importButton, "导入对话")
+        Avalonia.Automation.AutomationProperties.SetHelpText(importButton, "从导出的 JSON 文件新建一个对话")
+        Ui.onClick importButton (fun () -> importHandler ())
         Ui.onClick clearSearchButton (fun () -> this.ResetSearch true)
         // `Ui.textField` 创建时 TextBox 已挂在 shell 下。这里要把图标和清空按钮
         // 合进同一输入壳，必须先解除原父子关系，否则 Avalonia 会因重复视觉父级
@@ -570,6 +578,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
     /// 谱系随列表快照一起更新；只影响行的“分叉”标记与提示。
     /// 在 `SetConversations` 之前调用，随后那次重建就会带上新谱系（本方法自己不重建，避免一次快照两次重建）。
+    /// 决策 313：接上导入入口（未接线时按钮不出现）。
+    member _.ConfigureImport(handler: unit -> unit) =
+        importHandler <- handler
+        importButton.IsVisible <- true
+
+    member _.ImportButton = importButton
+
     member _.SetLineage(value: Map<Guid, ForkLineage>) =
         lineage <- value
 
@@ -930,7 +945,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                   MenuEntry.create (if live.archived then "取消归档" else "归档") (fun () -> actions.setArchived live (not live.archived))
                   |> MenuEntry.withIcon Icons.archive
                   MenuEntry.create "从此分叉" (fun () -> actions.duplicateAsFork live) |> MenuEntry.withIcon Icons.fork
-                  MenuEntry.create "导出为 Markdown" (fun () -> actions.exportConversation live) |> MenuEntry.withIcon Icons.download
+                  MenuEntry.create "导出（Markdown / JSON）…" (fun () -> actions.exportConversation live) |> MenuEntry.withIcon Icons.download
                   MenuEntry.create "删除 (Delete)" (fun () -> actions.deleteConversation live)
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ]
@@ -1639,6 +1654,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             let dock = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(settingsButton, Dock.Right)
             dock.Children.Add settingsButton
+            DockPanel.SetDock(importButton, Dock.Right)
+            dock.Children.Add importButton
             dock.Children.Add statusRow
             Border(
                 Height = Tokens.barHeight,
