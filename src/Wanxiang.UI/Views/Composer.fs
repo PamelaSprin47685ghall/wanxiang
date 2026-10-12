@@ -508,8 +508,10 @@ type Composer(actions: ComposerActions) as this =
             | :? Border as chip ->
                 let h = chip.Bounds.Height
                 if h > 0.0 then
-                    let rows = max 1 (int (LayoutPolicy.attachmentDraftMaxHeight / h))
-                    attachmentScroller.MaxHeight <- float rows * h
+                    // 行距也要算进去，否则第二行会被切掉一截（r15 手机宽度截图）。
+                    let gap = attachmentStrip.LineSpacing
+                    let rows = max 1 (int ((LayoutPolicy.attachmentDraftMaxHeight + gap) / (h + gap)))
+                    attachmentScroller.MaxHeight <- float rows * h + float (rows - 1) * gap
             | _ -> ()
 
     member private this.RenderAttachments() =

@@ -4,6 +4,7 @@ open System
 open Avalonia
 open Avalonia.Automation
 open Avalonia.Controls
+open Avalonia.Headless
 open Avalonia.Threading
 open Avalonia.VisualTree
 open Xunit
@@ -165,9 +166,11 @@ let private samplePhoto () =
         Avalonia.Media.LinearGradientBrush(
             StartPoint = RelativePoint(0.0, 0.0, RelativeUnit.Relative),
             EndPoint = RelativePoint(1.0, 1.0, RelativeUnit.Relative),
-            GradientStops = Avalonia.Media.GradientStops(
-                [ Avalonia.Media.GradientStop(Avalonia.Media.Color.Parse "#F2A65A", 0.0)
-                  Avalonia.Media.GradientStop(Avalonia.Media.Color.Parse "#4A7FB5", 1.0) ]))
+            GradientStops =
+                (let stops = Avalonia.Media.GradientStops()
+                 stops.Add(Avalonia.Media.GradientStop(Avalonia.Media.Color.Parse "#F2A65A", 0.0))
+                 stops.Add(Avalonia.Media.GradientStop(Avalonia.Media.Color.Parse "#4A7FB5", 1.0))
+                 stops))
     canvas.Measure(Size(160.0, 120.0)); canvas.Arrange(Rect(0.0, 0.0, 160.0, 120.0))
     use rtb = new Avalonia.Media.Imaging.RenderTargetBitmap(PixelSize(160, 120))
     rtb.Render canvas
