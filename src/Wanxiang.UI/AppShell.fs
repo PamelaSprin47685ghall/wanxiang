@@ -351,7 +351,7 @@ type MainView() as this =
                 // 也保留卡片，免得探测失败要撤销时它已被收起。
                 chat.ShowEmbeddedEmpty this.Onboarding.Root
                 this.Onboarding.StartDiscovery()
-                composer.SetEnabled(false, "先在上方连接一个模型，就能在这里输入。")
+                composer.SetEnabled(false, "先在上方添加一个模型服务，就能在这里输入。")
                 composer.SetModelLabel "未配置模型"
             else
                 chat.ShowEmpty(ChatEmptyState.NoConversation, None)
