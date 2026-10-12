@@ -133,6 +133,10 @@ module MessageCard =
     /// 绝不 fire-and-forget 直写后再假装“已复制”。
     let mutable private copyTextSink: (string -> unit) option = None
 
+    /// §215：错误卡恢复动作的运行时绑定，由 AppShell 注入；未注入时不出按钮。
+    let mutable private recoverySink: (ErrorRecovery -> unit) option = None
+    let setRecoverySink (sink: ErrorRecovery -> unit) = recoverySink <- Some sink
+
     /// 图标字形与脚注文本基线对齐：纯垂直居中，不加偏移。
     let private alignIconCentrally (button: Border) =
         match button.Child with
@@ -1359,6 +1363,19 @@ module MessageCard =
             Avalonia.Automation.AutomationProperties.SetName(retryButton, "重试生成")
             Avalonia.Automation.AutomationProperties.SetHelpText(retryButton, "重新尝试生成")
             actionRow.Children.Add retryButton
+        match ErrorRecovery.forKind error.kind, recoverySink with
+        | Some recovery, Some sink ->
+            let label = ErrorRecovery.label recovery
+            // 不可重试时它就是主路径；可重试时排在「重试」之后作为另一条路。
+            let tone = if error.retryable then Ui.Ghost else Ui.Secondary
+            let recoveryButton = Ui.button tone label (fun () -> sink recovery)
+            recoveryButton.Focusable <- true
+            recoveryButton.Margin <- Thickness 0.0
+            recoveryButton.Padding <- Thickness(Spacing.space2xl, ControlMetrics.textButtonPaddingY)
+            recoveryButton.Cursor <- handCursor.Value
+            Avalonia.Automation.AutomationProperties.SetName(recoveryButton, label)
+            actionRow.Children.Add recoveryButton
+        | _ -> ()
         match error.detail with
         | Some detail ->
             let detailText = technicalText detail Tokens.fontMicro Tokens.codeMuted

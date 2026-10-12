@@ -174,7 +174,7 @@ module GenerationErrorKind =
     let hint (k: GenerationErrorKind) : string =
         match k with
         | ProviderAuthFailed -> "请在设置中检查该模型服务的 API Key。"
-        | ProviderRateLimited -> "已触发模型服务限流，稍等一会儿再试。"
+        | ProviderRateLimited -> "模型服务限流或额度已用尽：稍等再试，或换个模型继续。"
         | ProviderTimeout -> "网络或模型服务响应过慢，可直接重试。"
         | ProviderUnavailable -> "模型服务暂时过载或网络异常，请检查网络设置或稍后重试。"
         | ProviderBadRequest -> "当前模型不接受这些生成参数，请到对话设置调整。"

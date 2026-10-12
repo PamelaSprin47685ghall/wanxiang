@@ -28,6 +28,8 @@
     <Compile Include="Model/MessageModel.fs" />
     <Compile Include="Model/ConversationExport.fs" />
     <Compile Include="Model/ConversationSummary.fs" />
+    <Compile Include="Model/PendingDeletion.fs" />
+    <Compile Include="Model/ErrorRecovery.fs" />
     <Compile Include="Model/Catalog.fs" />
     <Compile Include="Model/HostHealth.fs" />
     <Compile Include="Model/UiControllers.fs" />
