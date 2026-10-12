@@ -350,6 +350,8 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         // 审批只发给「声明了审批能力、且正在观察该对话」的客户端；没有这样的客户端时直接拒绝（决策 71）
         // 决策 250：半截回复落盘到数据目录，主机重启后仍可「继续生成」
         orchestrator.Value.Partials <- PartialReplyStore(Some(System.IO.Path.Combine(dataDir, "partials")))
+        // 决策 340：模型服务报告的看图能力落盘，重启后仍在
+        ModelCapabilities.configure (System.IO.Path.Combine(dataDir, "model-capabilities.json"))
         orchestrator.Value.Approvals.CapabilityProbe <-
             fun convId ->
                 match registry with
