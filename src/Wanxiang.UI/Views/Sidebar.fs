@@ -511,6 +511,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     member val OpenSearchHit: SearchHit -> unit = ignore with get, set
 
     member private this.BeginMessageSearch() =
+        // 停掉 TextChanged 已启动的防抖：手动触发（测试 / 回车）或防抖本身到期后，
+        // 若定时器再响一次会清空刚到的命中（CI 上 160ms 窗口内很容易撞上）。
+        searchDebounce.Stop()
         let q = (if isNull searchBox.Text then "" else searchBox.Text).Trim()
         searchHits <- []
         searchHasMore <- false
