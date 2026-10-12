@@ -660,6 +660,8 @@ type MainView() as this =
             composer.SetText((drafts.Get(instanceId, id)).text)
             composer.SetAttachments((attachmentDraft ()).Items)
             chat.CancelHistoryPrependAnchor()
+            // 换对话：滚动状态归零（上一段对话的定位钉住不能带进新对话）
+            chat.ResetScrollState()
             pageLoading <- false
         this.DisarmSkeletonLoading()
         let navBefore = navigation.State

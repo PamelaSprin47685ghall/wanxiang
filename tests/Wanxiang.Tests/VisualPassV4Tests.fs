@@ -135,3 +135,36 @@ let ``工具概览在等待批准时用警示色，不显示「完成」对勾�
         let run = overviewRun running
         Assert.Equal("调用 1 个工具 · 执行中", run.Text)
         Assert.Same(Tokens.accent, run.Foreground))
+
+[<Trait("Category", "UI")>]
+[<Fact>]
+let ``定位后的下一次重绘不把视口拉回底部`` () =
+    // 真浏览器走查：点搜索命中后 AppShell 立刻再 Render 一次（HideEmpty + RenderMessages），
+    // HideEmpty 每次都复位滚动状态 → atBottom=true、动画被停，视口回到底部，命中「点了没反应」。
+    Headless.run (fun () ->
+        let chat = ChatView(chatActions, fun _ -> Border() :> Control)
+        chat.Build()
+        chat.SetConversationChrome true
+        let window = Window(Width = 800.0, Height = 600.0, Content = chat)
+        window.Show()
+        try
+            let history = longHistory ()
+            chat.HideEmpty()
+            chat.RenderMessages(history, None, None, 14.0, false, None, Set.empty)
+            pump 300
+            let scroller = descendantsOf chat |> Seq.choose (function :? ScrollViewer as s -> Some s | _ -> None) |> Seq.maxBy (fun s -> s.Extent.Height)
+            scroller.Offset <- Vector(0.0, scroller.Extent.Height)
+            pump 100
+            let bottom = scroller.Offset.Y
+            Assert.True(chat.RevealAndHighlight 10UL)
+            // 与 AppShell.Render 同序：HideEmpty → RenderMessages
+            chat.HideEmpty()
+            chat.RenderMessages(history, None, None, 14.0, false, None, Set.empty)
+            pump 900
+            Assert.True(chat.RevealPinned, "reveal stays pinned across a re-render")
+            Assert.True(scroller.Offset.Y < bottom - 300.0, sprintf "viewport stays at the hit: bottom=%f now=%f" bottom scroller.Offset.Y)
+            // 换对话（AppShell 显式复位）后钉住解除
+            chat.ResetScrollState()
+            Assert.False(chat.RevealPinned)
+        finally
+            window.Close())
