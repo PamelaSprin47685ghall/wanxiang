@@ -1016,6 +1016,10 @@ type WsConnection(
                 | Error cmdErr ->
                     match WireCodec.tryDecode payload with
                     | Ok ev -> do! this.HandleEvent ev
+                    | Error evErr when WireCodec.isUnknownType (string cmdErr) (string evErr) ->
+                        // 55.8 R1：未知的 wanxiang.dev/* 事件类型（对端可能比本端新）：丢弃，不断连。
+                        if this.IsAuthenticated then
+                            Stderr.write "protocol-unknown-event-ignored" [ "address", remoteAddress ]
                     | Error evErr ->
                         // 两条路都解不出：真畸形。报两者中更相关的（命令优先）。
                         let detail = sprintf "command: %s; event: %s" (string cmdErr) (string evErr)

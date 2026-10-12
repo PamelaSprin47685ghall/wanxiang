@@ -485,3 +485,44 @@ let ``desktop token connects directly without any pairing event`` () =
         Assert.Contains("auth.accepted", seen)
         Assert.DoesNotContain(seen, fun t -> t.StartsWith "pairing.")
     finally s.Dispose()
+
+// ---------- 55.8 R1：未知 wanxiang.dev/* 事件被忽略，不断连 ----------
+
+let private unknownCustom (name: string) =
+    let o = JsonObject()
+    o["type"] <- "CUSTOM"
+    o["name"] <- name
+    let v = JsonObject()
+    v["x"] <- 1
+    o["value"] <- v
+    o
+
+[<Fact>]
+let ``authenticated host ignores unknown wanxiang.dev custom events and keeps the connection`` () =
+    let s = new DeviceServer(pickPort ())
+    try
+        use cts = timeout ()
+        let ct = cts.Token
+        use desktop = E2e.conn (s.Port) (s.DesktopToken) ct
+        E2e.send desktop (unknownCustom "wanxiang.dev/future.thing") ct
+        E2e.send desktop (unknownCustom "other.vendor/thing") ct
+        // 往返：连接仍活着，且后续已知请求照常应答
+        let snap = devices desktop ct
+        Assert.True(snap.ContainsKey "items")
+    finally s.Dispose()
+
+[<Fact>]
+let ``unknown custom event type is not decoded as an error on either side`` () =
+    match WireAgui.tryDecode (unknownCustom "wanxiang.dev/future.thing" |> fun o -> o.ToJsonString()) with
+    | Ok None -> ()
+    | other -> failwithf "expected Ok None, got %A" other
+    // 已知类型的畸形载荷仍是错误（55.8 R3）
+    let bad = JsonObject()
+    bad["type"] <- "CUSTOM"
+    bad["name"] <- "wanxiang.dev/device.rename"
+    bad["value"] <- JsonObject()
+    match WireAgui.tryDecode (bad.ToJsonString()) with
+    | Error _ -> ()
+    | other -> failwithf "expected Error, got %A" other
+    Assert.True(WireCodec.isUnknownType WireCodec.notACommandError (WireCodec.unknownEventTypePrefix + "x"))
+    Assert.False(WireCodec.isUnknownType "device.rename: missing requestId" "x")
