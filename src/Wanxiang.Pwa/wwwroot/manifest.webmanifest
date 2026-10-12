@@ -1,24 +1,21 @@
 {
-  "_note": "maskable 缺位说明：无带安全边距的专用 maskable 资产，/logo.png 仅声明 purpose any；如需 maskable 须新增专用 png，不可直接复用本图标。",
+  "id": "/",
   "name": "万象 wanxiang",
   "short_name": "万象",
-  "description": "万象聊天客户端（PWA，纯前端）",
+  "description": "万象聊天客户端（PWA，纯前端，通过配对码接入服务端）",
+  "lang": "zh-CN",
+  "dir": "ltr",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#f5f4ed",
   "theme_color": "#1B365D",
+  "categories": ["productivity", "utilities"],
   "icons": [
-    {
-      "src": "/logo.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/logo.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

@@ -250,3 +250,98 @@ html, body, #out, #out * {
        墨蓝会融进近黑径向外缘；浅色档同理由 --brand 承担 */
     .splash-bar::after { background: linear-gradient(90deg, transparent, #8FB4DE, transparent); }
 }
+
+/* ============================================================
+ * 移动端 / 触控 / 安装壳（PWA 专属，不碰 Avalonia 画布内部）
+ * ============================================================ */
+
+/* 刘海与手势条：viewport-fit=cover 后画布会铺到安全区之下，
+   这里把画布容器收进安全区，避免输入框、侧栏按钮被圆角/Home 条遮挡 */
+#out {
+    box-sizing: border-box;
+    padding:
+        env(safe-area-inset-top, 0px)
+        env(safe-area-inset-right, 0px)
+        env(safe-area-inset-bottom, 0px)
+        env(safe-area-inset-left, 0px);
+}
+#out canvas { touch-action: none; }
+
+/* 触控：禁止橡皮筋回弹与下拉刷新误触（画布自己处理滚动）、禁用长按选字与点击高亮、
+   阻止双击缩放；输入类控件保持可选 */
+html, body {
+    overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+}
+#out, #out canvas { -webkit-user-select: none; user-select: none; }
+/* Avalonia 的文本输入走隐藏 input：字号 ≥16px，防止 iOS Safari 聚焦自动放大页面 */
+#out input, #out textarea { font-size: 16px !important; -webkit-user-select: text; user-select: text; }
+
+/* 壳层状态条：离线 / 安装提示。Kami 纸感：近黑底 + ivory 字，与 .toast 同系 */
+.shell-bar {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9998;
+    box-sizing: border-box;
+    width: min(560px, calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px 10px 16px;
+    border-radius: 14px;
+    background: var(--near-black);
+    color: var(--ivory);
+    font-size: 13px;
+    line-height: 1.45;
+    border: 1px solid rgba(245,244,237,0.12);
+    box-shadow: 0 12px 32px -16px rgba(20,19,19,0.32), 0 2px 8px rgba(20,19,19,0.12);
+    animation: shellIn 200ms ease-out both;
+}
+.shell-bar[hidden] { display: none; }
+@keyframes shellIn { from { opacity: 0; margin-top: 6px; } to { opacity: 1; margin-top: 0; } }
+.shell-offline { top: calc(10px + env(safe-area-inset-top, 0px)); }
+.shell-install { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+.shell-text { flex: 1 1 auto; min-width: 0; }
+.shell-dot {
+    flex: none;
+    width: 8px; height: 8px;
+    border-radius: 999px !important;
+    background: #E0B85B; /* 警示点：离线是可恢复状态，不用 danger 红 */
+}
+.shell-btn {
+    flex: none;
+    min-height: 44px;           /* 触控目标 ≥44px（Apple HIG / WCAG 2.5.5） */
+    min-width: 44px;
+    padding: 0 14px;
+    border-radius: 999px !important;
+    border: 1px solid rgba(245,244,237,0.22);
+    background: transparent;
+    color: var(--ivory);
+    font: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 160ms ease, background-color 160ms ease;
+}
+.shell-btn:hover { border-color: rgba(245,244,237,0.4); }
+.shell-btn-primary { background: var(--ivory); color: var(--near-black); border-color: var(--ivory); }
+.shell-btn:focus-visible { outline: 2px solid #8FB4DE; outline-offset: 2px; }
+.shell-notice { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; background: var(--parchment); }
+/* toast 同样避让刘海 */
+.toast { top: calc(18px + env(safe-area-inset-top, 0px)); min-height: 44px; display: flex; align-items: center; }
+
+@media (max-width: 480px) {
+    .shell-bar { font-size: 12.5px; padding-left: 14px; }
+}
+@media (prefers-color-scheme: dark) {
+    .shell-bar { background: #22222A; color: #EDEBE4; border-color: rgba(237,235,228,0.12); }
+    .shell-btn { color: #EDEBE4; border-color: rgba(237,235,228,0.22); }
+    .shell-btn-primary { background: #EDEBE4; color: #15151A; border-color: #EDEBE4; }
+    .shell-notice { background: #15151A; color: #EDEBE4; }
+}
+@media (prefers-reduced-motion: reduce) { .shell-bar { animation: none; } }
+/* PWA 独立窗口：无浏览器地址栏，壳层不再需要额外让位 */
+@media (display-mode: standalone) { .shell-install { display: none !important; } }

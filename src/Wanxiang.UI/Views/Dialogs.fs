@@ -4,6 +4,7 @@ open Avalonia
 open Avalonia.Controls
 open Avalonia.Controls.Primitives
 open Avalonia.Input
+open Avalonia.Input.TextInput
 open Avalonia.Layout
 
 open Avalonia.Media
@@ -273,6 +274,9 @@ module Dialogs =
         codeBox.TextAlignment <- TextAlignment.Center
         codeBox.LetterSpacing <- 8.0
         codeBox.FontFamily <- Tokens.monoFontFamily
+        // 触屏：弹出数字键盘并把回车键标为“提交”（浏览器后端映射为 inputmode / enterkeyhint）。
+        TextInputOptions.SetContentType(codeBox, TextInputContentType.Digits)
+        TextInputOptions.SetReturnKeyType(codeBox, TextInputReturnKeyType.Done)
         let codeSectionInner =
             Ui.vstack
                 Spacing.spaceMd
@@ -344,6 +348,32 @@ module Dialogs =
             if e.Key = Key.Enter then
                 e.Handled <- true
                 submitCode ())
+        // 配对码只含数字：粘贴“123 456”“123-456”或带全角数字时归一化为纯数字，
+        // 凑满 6 位即自动提交，手机上不必再去够“提交配对码”按钮。
+        let mutable normalizingCode = false
+        // TextChanged 会在布局重排时重放同一文本：同一串 6 位码只自动提交一次，改动后才可再次触发。
+        let mutable autoSubmitted = ""
+        codeBox.TextChanged.Add(fun _ ->
+            if not normalizingCode then
+                let raw = if isNull codeBox.Text then "" else codeBox.Text
+                let digits =
+                    raw
+                    |> Seq.filter Char.IsDigit
+                    |> Seq.map (fun ch -> char (int '0' + int (Char.GetNumericValue ch)))
+                    |> Seq.truncate 6
+                    |> Seq.toArray
+                    |> String
+                if digits <> raw then
+                    normalizingCode <- true
+                    codeBox.Text <- digits
+                    codeBox.CaretIndex <- digits.Length
+                    normalizingCode <- false
+                if digits.Length = 6 then
+                    if digits <> autoSubmitted then
+                        autoSubmitted <- digits
+                        submitCode ()
+                else
+                    autoSubmitted <- "")
 
         let codeButton = Ui.button Ui.Secondary "提交配对码" submitCode
         codeButton.IsVisible <- false

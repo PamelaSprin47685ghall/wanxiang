@@ -120,6 +120,77 @@ async function registerServiceWorker() {
 }
 registerServiceWorker();
 
+// ---- 壳层状态：离线提示 + 安装引导（位于 canvas 之外，不依赖 .NET 运行时已启动）----
+// 连接/重连的权威状态仍在 F# 侧（AppShell + ReconnectBackoff）；这里只反映浏览器自身的网络与安装状态，
+// 并在网络恢复时提示用户“将自动重连”，不另造第二套重连逻辑。
+function setupShellStatus() {
+    const offlineBar = document.getElementById("shell-status");
+    const text = offlineBar && offlineBar.querySelector(".shell-text");
+    let wasOffline = false;
+    let hideTimer = 0;
+    const showOffline = () => {
+        wasOffline = true;
+        clearTimeout(hideTimer);
+        text.textContent = "网络已断开。已打开的页面可继续使用，网络恢复后会自动重连。";
+        offlineBar.hidden = false;
+    };
+    const showBack = () => {
+        if (!wasOffline) return;
+        wasOffline = false;
+        text.textContent = "网络已恢复，正在重新连接服务端…";
+        offlineBar.hidden = false;
+        hideTimer = setTimeout(() => { offlineBar.hidden = true; }, 3500);
+    };
+    if (offlineBar && text) {
+        if (!navigator.onLine) showOffline();
+        addEventListener("offline", showOffline);
+        addEventListener("online", showBack);
+    }
+
+    // 安装引导：Chromium 走 beforeinstallprompt；iOS Safari 没有该事件，给出“添加到主屏幕”文字说明。
+    const bar = document.getElementById("shell-install");
+    if (!bar) return;
+    const go = document.getElementById("shell-install-go");
+    const dismiss = document.getElementById("shell-install-dismiss");
+    const label = document.getElementById("shell-install-text");
+    const KEY = "wanxiang.installDismissedAt";
+    const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    const recentlyDismissed = () => {
+        try { return Date.now() - Number(localStorage.getItem(KEY) || 0) < 14 * 24 * 3600 * 1000; }
+        catch (_) { return false; }
+    };
+    if (standalone || recentlyDismissed()) return;
+    let deferred = null;
+    const close = (remember) => {
+        bar.hidden = true;
+        if (remember) { try { localStorage.setItem(KEY, String(Date.now())); } catch (_) { } }
+    };
+    dismiss.onclick = () => close(true);
+    addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        deferred = e;
+        go.hidden = false;
+        label.textContent = "安装到主屏幕，像应用一样全屏打开。";
+        bar.hidden = false;
+    });
+    go.onclick = async () => {
+        if (!deferred) return;
+        deferred.prompt();
+        try { await deferred.userChoice; } catch (_) { }
+        deferred = null;
+        close(false);
+    };
+    addEventListener("appinstalled", () => close(false));
+    const ua = navigator.userAgent || "";
+    const isIos = /iPhone|iPad|iPod/.test(ua) || (ua.includes("Mac") && navigator.maxTouchPoints > 1);
+    if (isIos) {
+        go.hidden = true;
+        label.textContent = "点底部「分享」按钮，选择「添加到主屏幕」即可安装。";
+        bar.hidden = false;
+    }
+}
+setupShellStatus();
+
 // ---- 运行时引导 ----
 const dotnetRuntime = await dotnet
     .withDiagnosticTracing(false)
