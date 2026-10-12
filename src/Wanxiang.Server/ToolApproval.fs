@@ -72,6 +72,21 @@ type ToolApprovalBroker(getConfig: unit -> AppConfig, broadcast: Guid -> WireEve
     /// 是否有具备审批能力的客户端正在观察该对话。由主机接线时设置；默认没有（保守地拒绝）。
     member val CapabilityProbe: Guid -> bool = (fun _ -> false) with get, set
 
+    /// 判「无人可批」前的短暂宽限：分叉/新建对话后立即生成时，发起操作的客户端
+    /// 往往还没来得及观察新对话（视觉走查：编辑并分叉后审批被秒拒）。宽限内一旦有
+    /// 具备审批能力的观察者出现就照常发起审批；仍无人则拒绝，旧客户端不会被挂住。
+    member val CapabilityGraceMs = 1500 with get, set
+
+    member private this.WaitForCapable(conversationId: Guid, ct: CancellationToken) : Task<bool> =
+        task {
+            let deadline = DateTimeOffset.UtcNow.AddMilliseconds(float this.CapabilityGraceMs)
+            let mutable ok = this.CapabilityProbe conversationId
+            while not ok && DateTimeOffset.UtcNow < deadline && not ct.IsCancellationRequested do
+                try do! Task.Delay(100, ct) with _ -> ()
+                ok <- this.CapabilityProbe conversationId
+            return ok
+        }
+
     /// 尝试以第一个有效决定结束一个审批。返回是否由本次调用结束。
     member private _.Resolve(approvalId: Guid, outcome: ApprovalOutcome) : bool =
         let taken =
@@ -147,7 +162,8 @@ type ToolApprovalBroker(getConfig: unit -> AppConfig, broadcast: Guid -> WireEve
         (conversationId: Guid, generationId: Guid, callId: string, toolName: string, toolId: string, args: JsonNode, ct: CancellationToken)
         : Task<ApprovalOutcome> =
         task {
-            if not (this.CapabilityProbe conversationId) then
+            let! capable = this.WaitForCapable(conversationId, ct)
+            if not capable then
                 return
                     Denied("这个工具需要先经用户批准，但此刻没有支持审批的客户端在线，所以调用被拒绝。请在支持审批的客户端里打开这个对话后重试。", false)
             else
@@ -177,6 +193,12 @@ type ToolApprovalBroker(getConfig: unit -> AppConfig, broadcast: Guid -> WireEve
                       tcs = TaskCompletionSource<ApprovalOutcome>(TaskCreationOptions.RunContinuationsAsynchronously) }
                 pending[approvalId] <- p
                 broadcast conversationId request
+                // 人话时长：300 秒说成「5 分钟」
+                let timeoutReason =
+                    let span =
+                        if seconds >= 60 && seconds % 60 = 0 then sprintf "%d 分钟" (seconds / 60)
+                        else sprintf "%d 秒" seconds
+                    sprintf "审批超时：%s内没有人处理，工具调用已自动拒绝。" span
                 use timeoutCts = CancellationTokenSource.CreateLinkedTokenSource ct
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(float seconds))
                 use _reg =
@@ -186,7 +208,7 @@ type ToolApprovalBroker(getConfig: unit -> AppConfig, broadcast: Guid -> WireEve
                             this.Resolve(
                                 approvalId,
                                 Denied(
-                                    sprintf "审批超时：%d 秒内没有人处理，工具调用已被拒绝。" seconds,
+                                    timeoutReason,
                                     false))
                             |> ignore)
                 return! p.tcs.Task

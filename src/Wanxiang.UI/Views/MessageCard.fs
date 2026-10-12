@@ -264,7 +264,7 @@ module MessageCard =
         let titleRun = Run()
         let durRun = Run()
         let syncStateText () =
-            let stateDesc = if bodyVisible then " (收起)" else " (展开)"
+            let stateDesc = if bodyVisible then "（收起）" else "（展开）"
             let baseText = if ctx.streaming then "正在思考" else "已深度思考"
             titleRun.Text <- baseText + stateDesc
             titleRun.Foreground <- Tokens.textMuted
@@ -652,8 +652,8 @@ module MessageCard =
         statusGlyph.Margin <- Thickness(0.0, 0.0, Spacing.spaceXs, 0.0)
         let name =
             TextBlock(
-                Text = call.name,
-                FontFamily = Tokens.monoFontFamily,
+                // 显示名而非函数名：「回显（调试）」而不是 `builtin_echo`
+                Text = ToolSummary.displayNameOfFunction call.name,
                 FontSize = Tokens.fontSmall,
                 // 等宽技术文本用 Medium 即可；SemiBold(600) 越出规范 §3.4 的两档字重。
                 FontWeight = FontWeight.Medium,
@@ -982,7 +982,7 @@ module MessageCard =
             rotateTransform.Angle <- if listVisible then 90.0 else 0.0
             titleRun.Text <- overviewBaseText
             titleRun.Foreground <- overviewBrush
-            stateRun.Text <- if listVisible then " (收起)" else " (展开)"
+            stateRun.Text <- if listVisible then "（收起）" else "（展开）"
             stateRun.Foreground <- Tokens.textMuted
 
         syncOverviewText ()

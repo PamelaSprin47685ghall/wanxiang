@@ -175,6 +175,8 @@ module Icons =
 
     /// 认证令牌
     let key : IBrush -> Control = glyph PackIconLucideKind.KeyRound
+    /// 设备（手机 + 显示器）：设置「设备」分区用；钥匙易被读成「密钥/API Key」
+    let devices : IBrush -> Control = glyph PackIconLucideKind.MonitorSmartphone
 
     /// 软换行
     let textWrap : IBrush -> Control = glyph PackIconLucideKind.TextWrap

@@ -113,8 +113,26 @@ module PwaToolApprovalUiTests =
             Assert.False((byId card "tool-approval-args-toggle").IsVisible))
 
     [<Fact>]
-    let ``审批面板：窄屏占满宽度，宽屏不超过 720`` () =
+    let ``审批面板：放在输入框正上方的附属位，与输入框同列同宽，不浮层遮挡消息`` () =
         Headless.run (fun () ->
             let panel = ToolApprovalPanel(fun _ _ -> ())
             Assert.Equal(HorizontalAlignment.Stretch, panel.HorizontalAlignment)
-            Assert.Equal(720.0, panel.MaxWidth))
+            // 宽度由宿主列决定，面板自己不另设上限（此前 720 与输入框 748 错位）
+            Assert.True(Double.IsPositiveInfinity panel.MaxWidth)
+            let composer =
+                Composer(
+                    { submit = fun _ -> true
+                      stopGeneration = ignore
+                      pickAttachment = ignore
+                      removeAttachment = ignore
+                      openModelPicker = ignore
+                      dropFiles = ignore
+                      pasteFromClipboard = fun () -> false })
+            composer.Build()
+            composer.SetAccessory panel
+            // 附属位在输入框外层列里，排在输入框之前：同一个 MaxWidth = 阅读宽度
+            match (panel.Parent :?> Control).Parent with
+            | :? StackPanel as outer ->
+                Assert.Equal(Tokens.readingWidth, outer.MaxWidth)
+                Assert.Equal(0, outer.Children.IndexOf(panel.Parent :?> Control))
+            | other -> failwithf "accessory slot not inside composer column: %A" other)

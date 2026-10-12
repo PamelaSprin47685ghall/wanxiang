@@ -2150,8 +2150,9 @@ let ``settings caps content width and centers it while exposing selected navigat
         // 而不是写死某个像素魔数（那会在 headless 测量口径下脆弱）。
         Assert.True(frame.Bounds.Width <= ControlMetrics.settingsContentMaxWidth + 0.5)
         Assert.True(frame.Bounds.Width <= settings.Bounds.Width + 0.5)
-        // 宽屏居中：MaxWidth 封顶之外，内容列在超宽窗口里必须居中而不是贴左。
-        Assert.Equal(HorizontalAlignment.Center, frame.HorizontalAlignment)
+        // 拉伸 + 封顶：宽屏封顶后居中，列宽不随分区内容变化（Center 会让列宽跟内容走、切分区时整列跳）。
+        Assert.Equal(HorizontalAlignment.Stretch, frame.HorizontalAlignment)
+        let widthOnProviders = frame.Bounds.Width
 
         let providers = byAutomationName settings "模型服务"
         let appearance = byAutomationName settings "外观与操作"
@@ -2161,6 +2162,7 @@ let ``settings caps content width and centers it while exposing selected navigat
         Dispatcher.UIThread.RunJobs()
         Assert.Equal("", AutomationProperties.GetItemStatus(providers))
         Assert.Equal("当前分区", AutomationProperties.GetItemStatus(appearance))
+        Assert.Equal(widthOnProviders, frame.Bounds.Width, 1)
 
         // 窄窗：内容列不超过窗口可用宽。headless 下窗口 Width 变更不会可靠地
         // 触发 layout 重测（frame.Bounds 可能仍是宽窗下的旧测量），所以这里只断言
@@ -2170,7 +2172,7 @@ let ``settings caps content width and centers it while exposing selected navigat
         Dispatcher.UIThread.RunJobs()
         Assert.True(frame.Bounds.Width <= root.Bounds.Width + 0.5)
         Assert.True(frame.Bounds.Width <= ControlMetrics.settingsContentMaxWidth + 0.5)
-        Assert.Equal(HorizontalAlignment.Center, frame.HorizontalAlignment)
+        Assert.Equal(HorizontalAlignment.Stretch, frame.HorizontalAlignment)
     finally
         window.Close()
     )

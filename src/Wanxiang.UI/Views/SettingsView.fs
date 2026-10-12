@@ -44,7 +44,7 @@ module SettingsSection =
         | Providers -> Icons.server
         | Tools -> Icons.wrench
         | Generation -> Icons.sliders
-        | Devices -> Icons.key
+        | Devices -> Icons.devices
         | Appearance -> Icons.sun
         | About -> Icons.info
 
@@ -382,9 +382,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                     [ Ui.vstack Spacing.spaceXs [ scopeCaption :> Control; targetCaption :> Control ] :> Control
                       contentHost :> Control ],
                 MaxWidth = ControlMetrics.settingsContentMaxWidth,
-                // 宽屏下内容列居中：MaxWidth 仍封顶 settingsContentMaxWidth，超宽窗口不再右侧留大片空白；
-                // 窄屏内容未触顶时居中与拉伸等价（可用宽度小于 MaxWidth 时两者渲染相同）。
-                HorizontalAlignment = HorizontalAlignment.Center)
+                // 拉伸 + MaxWidth：宽屏封顶后自动居中，窄屏占满。不能用 Center——Center 让列宽跟着
+                // 内容走，切分区或展开配对码时整列左右跳（视觉走查 14/15 号截图：左缘 397 → 237）。
+                HorizontalAlignment = HorizontalAlignment.Stretch)
         let content =
             ScrollViewer(
                 Content = contentFrame,

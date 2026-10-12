@@ -300,7 +300,9 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
         let card =
             Ui.groupingCard (Thickness(Spacing.space3xl, Spacing.space3xl)) form Spacing.Radius.lg
         card.MaxWidth <- ContentMetrics.emptyStateMaxWidth
-        card.HorizontalAlignment <- HorizontalAlignment.Center
+        // 拉伸到 MaxWidth（受限后自动居中）：宽度不随内容变化，
+        // 出现错误提示或切换服务商时卡片不再忽宽忽窄（视觉走查 06 号截图）。
+        card.HorizontalAlignment <- HorizontalAlignment.Stretch
         Avalonia.Automation.AutomationProperties.SetName(card, "连接一个模型")
         card :> Control
 

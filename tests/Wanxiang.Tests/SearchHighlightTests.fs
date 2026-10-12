@@ -387,3 +387,20 @@ let ``search highlight keeps readable contrast in both palettes`` () =
         // 选中行（当前对话）底色也要能压住命中色，否则选中的那行高亮会糊。
         Assert.True(contrast palette.accent palette.selected >= 4.5)
     )
+
+/// 视觉走查 12 号截图：消息命中片段里露出 `###`、`**`、反引号，读起来像源码。
+[<Fact>]
+let ``消息命中片段去掉 Markdown 记号，命中词保持原样`` () =
+    let hit : SearchHit =
+        { conversationId = Guid.NewGuid()
+          title = "排版验证"
+          archived = false
+          messageId = 1UL
+          role = "assistant"
+          snippet = "### 关于排版\n这是验证 **Markdown 渲染**、`行内代码`"
+          matchStart = 16
+          matchLength = 8 }
+    let before, matched, after = SearchHit.splitPlain hit
+    Assert.Equal("Markdown", matched)
+    Assert.Equal("关于排版 这是验证 ", before)
+    Assert.Equal(" 渲染、行内代码", after)

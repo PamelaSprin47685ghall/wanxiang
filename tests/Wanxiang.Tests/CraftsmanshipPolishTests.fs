@@ -435,7 +435,15 @@ let ``Composer drag over and drag leave updates visual affordance and resets cle
 
     // When disabled with a disabledReason
     composer.SetEnabled(false, "连接已断开，请检查网络")
-    Assert.Equal("连接已断开，请检查网络", input.PlaceholderText)
+    // 原因只在输入框上方的说明条里出现一次，占位文字不重复
+    Assert.Equal("", input.PlaceholderText)
+    let rec texts (c: Control) : string list =
+        match c with
+        | :? TextBlock as tb -> [ tb.Text ]
+        | :? Panel as p -> p.Children |> Seq.collect texts |> List.ofSeq
+        | :? Decorator as d when not (isNull d.Child) -> texts d.Child
+        | _ -> []
+    Assert.Contains("连接已断开，请检查网络", texts composer)
     )
 
 [<Trait("Category", "UI")>]
@@ -472,6 +480,9 @@ let ``ChatView empty state renders balanced optical layout and accessible primar
             for child in p.Children do yield! findButtons child
         | :? Decorator as d when not (isNull d.Child) ->
             yield! findButtons d.Child
+        // 空态卡包在自己的 ScrollViewer 里（矮窗口可滚动），要穿过 ContentControl
+        | :? ContentControl as cc when (cc.Content :? Control) ->
+            yield! findButtons (cc.Content :?> Control)
         | _ -> ()
     ]
     let buttons = findButtons chat

@@ -28,6 +28,21 @@ module ToolApprovalCard =
     /// 按钮行最大宽度：宽屏上不把两个按钮拉成横贯整卡的长条。
     let buttonRowMaxWidth = 360.0
 
+    /// 参数给人看：主机下发的 JSON 可能把中文转义成 \uXXXX（视觉走查 11 号截图），
+    /// 这里解析后用宽松编码重写，中文原样显示；解析失败就原样返回。
+    let displayArguments (json: string) : string =
+        if String.IsNullOrWhiteSpace json then json
+        else
+            try
+                match JsonNode.Parse json with
+                | null -> json
+                | node ->
+                    let options =
+                        System.Text.Json.JsonSerializerOptions(
+                            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping)
+                    node.ToJsonString options
+            with _ -> json
+
     let argsToggleText (expanded: bool) = if expanded then "收起参数" else "查看参数"
 
     /// 审批卡上给用户看的策略说明：批准会产生什么后续效果要说清楚。
@@ -117,7 +132,7 @@ module ToolApprovalCard =
         // 原始参数：默认一行省略；触屏没有悬停提示，所以给一个可点的「查看参数」展开全文（桌面同样可用）。
         let argsLine =
             TextBlock(
-                Text = (if hasArgs then req.argumentsJson else ""),
+                Text = (if hasArgs then displayArguments req.argumentsJson else ""),
                 FontFamily = Tokens.monoFontFamily,
                 FontSize = Tokens.fontMicro,
                 Foreground = Tokens.textFaint,
@@ -125,7 +140,7 @@ module ToolApprovalCard =
                 TextWrapping = TextWrapping.NoWrap,
                 IsVisible = hasArgs)
         Avalonia.Automation.AutomationProperties.SetAutomationId(argsLine, "tool-approval-args")
-        ToolTip.SetTip(argsLine, req.argumentsJson)
+        ToolTip.SetTip(argsLine, displayArguments req.argumentsJson)
         let mutable argsExpanded = false
         let mutable argsToggle: Border = null
         let toggleArgs () =
@@ -181,10 +196,8 @@ type ToolApprovalPanel(decide: Guid -> bool -> unit) as this =
         this.Orientation <- Orientation.Vertical
         this.Spacing <- Spacing.spaceMd
         this.VerticalAlignment <- VerticalAlignment.Bottom
-        // 拉伸 + MaxWidth：窄屏占满可用宽度，宽屏居中且不超过 720。
+        // 宽度与边距跟随宿主（输入框所在列），自己不再另定 MaxWidth / 水平边距。
         this.HorizontalAlignment <- HorizontalAlignment.Stretch
-        this.MaxWidth <- 720.0
-        this.Margin <- Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, Spacing.spaceXl)
         this.IsVisible <- false
 
     member _.Pending : ApprovalRequestView list = List.ofSeq pending

@@ -290,6 +290,22 @@ let ``[AC-5] 重启后挂起的审批消失：旧审批编号得到「已失效�
     | other -> failwithf "%A" other
 
 [<Fact>]
+let ``审批能力的观察者在宽限内出现（分叉后立即生成）：照常发起审批而不是秒拒`` () =
+    let conv = Guid.NewGuid()
+    let broker, sent = newBroker (policyConfig AskEach 300) false
+    let mutable capable = false
+    broker.CapabilityProbe <- fun _ -> capable
+    use cts = new CancellationTokenSource()
+    let task = request broker conv cts.Token
+    Thread.Sleep 300
+    capable <- true
+    let deadline = DateTime.UtcNow.AddSeconds 3.0
+    while DateTime.UtcNow < deadline && (lock sent (fun () -> sent.Count)) = 0 do Thread.Sleep 20
+    Assert.False task.IsCompleted
+    Assert.Contains(lock sent (fun () -> List.ofSeq sent), fun (_, ev) -> match ev with ToolApprovalRequested _ -> true | _ -> false)
+    cts.Cancel()
+
+[<Fact>]
 let ``[AC-6] 没有具备审批能力的客户端在线：立即拒绝并给出人话原因，不等待`` () =
     let conv = Guid.NewGuid()
     let broker, sent = newBroker (policyConfig AskEach 300) false

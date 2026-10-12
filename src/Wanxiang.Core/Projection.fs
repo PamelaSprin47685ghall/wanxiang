@@ -150,7 +150,8 @@ module Projection =
                                 else
                                     let conv =
                                         { conversationId = d.conversationId
-                                          title = parent.title + " (fork)"
+                                          // 中文界面用全角括注；分叉来源另有面包屑说明
+                                          title = parent.title + "（分叉）"
                                           createdAtUtc = commit.committedAtUtc
                                           lastActivityAtUtc = commit.committedAtUtc
                                           deleted = false

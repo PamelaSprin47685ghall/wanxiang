@@ -607,10 +607,12 @@ module Dialogs =
                     Ui.toggle
                         (selectedTools.Contains tool.id)
                         (fun value -> if value then selectedTools.Add tool.id |> ignore else selectedTools.Remove tool.id |> ignore)
-                Avalonia.Automation.AutomationProperties.SetName(toggle, sprintf "启用工具 %s" tool.label)
+                // 内置工具用人话名（「当前时间」而非 time），与工具卡、设置页一致（视觉走查）
+                let label = if tool.source = "mcp" then tool.label else ToolSummary.displayName tool.id
+                Avalonia.Automation.AutomationProperties.SetName(toggle, sprintf "启用工具 %s" label)
                 let caption =
                     TextBlock(
-                        Text = tool.label,
+                        Text = label,
                         FontSize = Tokens.fontSmall,
                         Foreground = Tokens.text,
                         VerticalAlignment = VerticalAlignment.Center)

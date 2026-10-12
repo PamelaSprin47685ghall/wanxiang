@@ -285,6 +285,8 @@ module DevicesUiTests =
             Assert.Contains("在线", text)
             Assert.Contains("已吊销", text)
             Assert.Contains("5 分钟前在线", text)
+            // 协议保留名不直接给人看
+            Assert.Contains("本机桌面客户端", text)
             // 当前设备与桌面设备没有吊销按钮；已吊销的没有任何按钮
             Assert.True((byId h.root "devices-revoke-dev-desktop").IsNone)
             Assert.True((byId h.root "devices-revoke-dev-phone").IsSome)

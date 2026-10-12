@@ -613,7 +613,8 @@ type ChatOrchestrator(
                 task {
                     match findTool call with
                     | None ->
-                        let text = sprintf """{"error":"tool %s not found"}""" call.Name
+                        // 人话：这段同时进模型上下文和工具卡错误行（视觉走查：卡片上露出英文 `tool echo not found`）
+                        let text = sprintf """{"error":"找不到工具 %s：它可能已停用，或不在本对话启用的工具里。"}""" call.Name
                         this.RecordSubmitOutcome(convId, this.SubmitMessage(convId, MessageSerde.toJsonNode (MessageSerde.toolResultMessage call text)))
                         return call, ToolResult text
                     | Some tool ->

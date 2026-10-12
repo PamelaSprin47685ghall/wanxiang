@@ -584,15 +584,19 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 TextWrapping = TextWrapping.Wrap,
                 MaxLines = 2,
                 TextTrimming = TextTrimming.CharacterEllipsis)
-        let before, matched, after = SearchHit.split hit
+        let before, matched, after = SearchHit.splitPlain hit
         if before <> "" then snippet.Inlines.Add(Run(before))
         if matched <> "" then
             let run = Run(matched)
             run.Foreground <- Tokens.accent
             run.FontWeight <- FontWeight.Medium
+            // 只换字色在浅色主题下几乎看不出来（强调色与正文都是深色）：加一层强调浅底
+            run.Background <- Tokens.accentSoft
             snippet.Inlines.Add run
         if after <> "" then snippet.Inlines.Add(Run(after))
         let column = Ui.vstack ControlMetrics.sidebarRowContentSpacing [ title :> Control; snippet :> Control ]
+        // 与对话行的文字列对齐（对话行左侧有状态位）：命中行此前顶格，和分组标题挤在一条线上。
+        column.Margin <- Thickness(ControlMetrics.sidebarStateSlotWidth + Spacing.spaceMd, 0.0, 0.0, 0.0)
         let host =
             ActionBorder(
                 Padding = Thickness(Spacing.spaceXl, ControlMetrics.sidebarRowPaddingY),
