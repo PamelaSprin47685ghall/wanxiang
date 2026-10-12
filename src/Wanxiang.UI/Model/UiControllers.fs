@@ -14,10 +14,12 @@ type ConversationRun = {
     message: MessageView option
     error: GenerationError option
     usage: GenerationUsage option
+    /// 决策 230：中途失败时已流出的半截回复（只在有正文时保留），供「继续生成」接着写。
+    partial: MessageView option
 }
 
 type ConversationRuns() =
-    let empty = { generationId = None; running = false; message = None; error = None; usage = None }
+    let empty = { generationId = None; running = false; message = None; error = None; usage = None; partial = None }
     let mutable items: Map<Guid, ConversationRun> = Map.empty
     // 退休台账防同代事件的重复记账（重复 Finish/迟到 Start）。generationId 是 GUID
     // 不复用，台账只需覆盖「同一次连接内可能的重复/迟到投递窗口」——游标协议本身
@@ -46,13 +48,14 @@ type ConversationRuns() =
                     running = running
                     generationId = if running then generationId else None
                     message = if running && current.generationId = generationId then current.message else None
-                    error = if running then None else current.error })
+                    error = if running then None else current.error
+                    partial = if running then None else current.partial })
 
     member this.Start(id: Guid, generationId: Guid) =
         let current = this.Get(Some id)
         if current.generationId <> Some generationId && not (retired.Contains(id, generationId)) then
             current.generationId |> Option.iter (fun previous -> retire id previous)
-            items <- items.Add(id, { current with generationId = Some generationId; running = true; message = None; error = None })
+            items <- items.Add(id, { current with generationId = Some generationId; running = true; message = None; error = None; partial = None })
 
     member this.Delta(id: Guid, generationId: Guid, message: MessageView) =
         let current = this.Get(Some id)
@@ -68,6 +71,10 @@ type ConversationRuns() =
         if applicable then
             items <- items.Add(id,
                 { current with generationId = None; running = false; message = None; error = error
+                               partial =
+                                   (match error, current.message with
+                                    | Some _, Some m when m.role = "assistant" && not (String.IsNullOrWhiteSpace m.text) -> Some m
+                                    | _ -> None)
                                usage = usage |> Option.orElse current.usage })
             true
         else false
@@ -76,10 +83,21 @@ type ConversationRuns() =
         items <- items.Add(id, { this.Get(Some id) with message = None })
 
     member this.ClearError(id: Guid) =
-        items <- items.Add(id, { this.Get(Some id) with error = None })
+        items <- items.Add(id, { this.Get(Some id) with error = None; partial = None })
 
     member _.Disconnect() =
         items <- items |> Map.map (fun _ item -> { item with generationId = None; running = false; message = None })
+
+    /// 决策 230：把半截回复编成可落盘的助手消息（去掉尾部空白：Anthropic 拒收以空白结尾的预填）。
+    static member PartialMessageJson(partial: MessageView) : JsonObject =
+        let node = JsonObject()
+        node["text"] <- partial.text.TrimEnd()
+        let contents = JsonArray()
+        contents.Add node
+        let message = JsonObject()
+        message["role"] <- "assistant"
+        message["contents"] <- contents
+        message
 
     /// 退休台账当前条目数（诊断/测试用：证明 FIFO 淘汰在生效）。
     member _.RetiredCount = retired.Count
@@ -634,6 +652,8 @@ type ShortcutAction =
     | CopyLastReply
     /// 重新生成最新回复。不用 Ctrl+Shift+R：浏览器里那是强制刷新，PWA 会丢掉页面状态（决策 220）。
     | RegenerateLast
+    /// 撤销提示条里待生效的动作（删除宽限期内的「撤销」，决策 232）。
+    | UndoPending
     | NoShortcut
 
 module ShortcutRouter =
@@ -659,6 +679,7 @@ module ShortcutRouter =
         elif ctrl && shift && e.Key = Key.E then ExportConversation
         elif ctrl && shift && e.Key = Key.C then CopyLastReply
         elif ctrl && shift && e.Key = Key.G then RegenerateLast
+        elif ctrl && not shift && e.Key = Key.Z then UndoPending
         elif ctrl && not shift && e.Key >= Key.D1 && e.Key <= Key.D9 then
             OpenConversationAt(int e.Key - int Key.D1)
         elif ctrl && (e.Key = Key.OemQuestion || e.Key = Key.Divide) then ShowShortcuts

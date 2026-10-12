@@ -108,6 +108,8 @@ type OverlayHost(root: Grid) =
     // 堆叠盖住内容或重复刷屏就违背了它存在的理由，因此新条挤掉最旧的、同文只留最新一条。
     let toastCap = 3
     let toastEntries = ResizeArray<string * (unit -> unit)>()
+    /// 可见提示条上的行内动作（按出现顺序）：Ctrl/⌘+Z 触发最新一条「撤销」（决策 232）。
+    let toastActions = ResizeArray<string * string * (unit -> unit)>()
 
     let currentFocus () =
         match TopLevel.GetTopLevel root with
@@ -540,6 +542,7 @@ type OverlayHost(root: Grid) =
                     expire.Stop()
                     // 去重/计数立即释放：同文再出或后续入条不再受本条约限。
                     toastEntries.RemoveAll(fun (text, _) -> text = message) |> ignore
+                    toastActions.RemoveAll(fun (text, _, _) -> text = message) |> ignore
                     // 同步移除节点：本仓库无显示测试制度无法确定性泵动 DispatcherTimer，
                     // 异步退场没有可重复验收路径（Manager 决策：退场改回同步，仅保留入场淡入）。
                     // Escape / 点击 / 超时 / 上限挤出四条路径行为一致。
@@ -556,6 +559,10 @@ type OverlayHost(root: Grid) =
                 dismissOldest ()
             removeRef <- remove
             toastEntries.Add(message, remove)
+            match action with
+            | Some(actionLabel, onAction) ->
+                toastActions.Add(message, actionLabel, fun () -> remove (); onAction ())
+            | None -> ()
             Ui.onClick toast remove
             // Escape 唯一归属 HandleEscape（topmost-first）：这里不再自带局部 Esc 处理。
             // 提示条 Focusable=false（见上）：永远无法获得焦点，GotFocus / LostFocus 以及
@@ -576,6 +583,15 @@ type OverlayHost(root: Grid) =
     /// Esc / 点击层外的统一关闭入口，由 AppShell 在根视图上转发按键。
     /// 唯一的 Escape 归属（topmost-first：popup → dialog → toast）：调用方消费返回的
     /// true，不再落到 AppShell 的 StopGeneration；守卫拦截的关闭同样消费，避免误停生成。
+    /// 触发最新一条仍可见、动作名为 label 的提示条动作；没有则返回 false（决策 232）。
+    member _.TryInvokeToastAction(label: string) : bool =
+        match toastActions |> Seq.filter (fun (_, l, _) -> l = label) |> Seq.tryLast with
+        | Some(_, _, invoke) -> invoke (); true
+        | None -> false
+
+    member _.HasToastAction(label: string) : bool =
+        toastActions |> Seq.exists (fun (_, l, _) -> l = label)
+
     member this.HandleEscape() : bool =
         if popupCard.IsVisible then
             this.ClosePopup()
