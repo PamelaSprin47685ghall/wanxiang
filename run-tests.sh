@@ -99,7 +99,10 @@ if [ "$MODE" != "noui" ]; then
       [ -f "$g.out" ] || continue
       # 只汇总结论行与失败明细，抑制 xunit 的进度噪音。
       grep -E "Total:|^\s+Wanxiang.*\[FAIL\]" "$g.out" || true
-      grep -qE "Failed: 0," "$g.out" || FAILED=1
+      if ! grep -qE "Failed: 0," "$g.out"; then
+        FAILED=1
+        sed 's/\x1b\[[0-9;]*m//g' "$g.out" | grep -A30 "\[FAIL\]" >&2 || true
+      fi
     done
   fi
 fi
@@ -113,7 +116,11 @@ if [ "$MODE" != "ui" ]; then
   fi
   ./Wanxiang.Tests "${ARGS[@]}" > "$TMP/noui.out" 2>&1
   grep -E "Total:|^\s+Wanxiang.*\[FAIL\]" "$TMP/noui.out" || true
-  grep -qE "Failed: 0," "$TMP/noui.out" || FAILED=1
+  if ! grep -qE "Failed: 0," "$TMP/noui.out"; then
+    FAILED=1
+    # 失败时输出明细（去掉 ANSI 颜色码再匹配），CI 日志里才看得到原因。
+    sed 's/\x1b\[[0-9;]*m//g' "$TMP/noui.out" | grep -A30 "\[FAIL\]" >&2 || true
+  fi
 fi
 
 exit $FAILED
