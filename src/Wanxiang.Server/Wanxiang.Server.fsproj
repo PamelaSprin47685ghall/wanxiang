@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="Stderr.fs" />
     <Compile Include="ServerModel.fs" />
+    <Compile Include="SearchService.fs" />
     <Compile Include="AttachmentStore.fs" />
     <Compile Include="Doctor.fs" />
     <Compile Include="SupportBundle.fs" />

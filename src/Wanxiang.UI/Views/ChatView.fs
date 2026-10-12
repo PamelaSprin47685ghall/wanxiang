@@ -56,7 +56,9 @@ type private CardKey =
       /// 用量只在末条助手消息上显示，其余卡片与它无关
       usageTag: int
       /// 附件丢失标记只影响带附件的卡片
-      missingTag: int }
+      missingTag: int
+      /// 同一消息的版本切换控件（W4）：只影响带该控件的用户卡，其余恒为 0
+      siblingTag: int }
 
 /// 聊天主区：顶栏（标题 / 模型 / 操作）+ 消息列表。
 type ChatView(actions: ChatActions, brandLogo: float -> Control) =
@@ -109,6 +111,28 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable canJumpPrevious = false
     let mutable canJumpNext = false
     let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl+B / ⌘B）"
+
+    // W4：分叉面包屑。只在“当前对话是某个对话的分叉”时出现；父对话在时可点击回到它，
+    // 父对话已删除时是纯文字（分叉本身仍完整可用，决策 76）。
+    let breadcrumbText =
+        TextBlock(
+            FontSize = Tokens.fontCaption,
+            Foreground = Tokens.textMuted,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center)
+    let breadcrumbAction =
+        ActionBorder(
+            Background = Brushes.Transparent,
+            CornerRadius = CornerRadius Spacing.Radius.sm,
+            Padding = Thickness(Spacing.spaceMd, Spacing.spaceXs),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Focusable = false)
+    let breadcrumbBar =
+        Border(
+            Padding = Thickness(Tokens.shellInset, 0.0, Tokens.shellInset, Spacing.spaceXs),
+            IsVisible = false)
+    let mutable breadcrumbTarget: Guid option = None
+    let mutable openBreadcrumbParent: Guid -> unit = ignore
 
     let messagePanel =
         StackPanel(
@@ -204,6 +228,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// None 表示还没跳转过，此时以当前所在的那一轮问答为基准（kelivo 的
     /// jump-to-question 语义；见 currentExchangeIndex）。
     let mutable exchangeAnchor: CardKey option = None
+    /// 搜索命中跳转（W4）：目标消息已定位后，“贴底自动滚到末尾”的延迟重试不得把它拽走。
+    /// 用户滚轮、回到最新、换对话时解除。
+    let mutable revealPinned = false
     let mutable headerBar: Border = Unchecked.defaultof<Border>
     let mutable pendingHistoryAnchor: (float * float) option = None
     let mutable compactMode = false
@@ -520,6 +547,63 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         if not (isNull (box headerBar)) then headerBar.IsVisible <- true
 
 
+    /// 版本切换所需的谱系查询：(这条用户消息的 commitId, 它前一条消息的 commitId) → 同位置的全部版本。
+    /// 返回 None 或不足 2 个版本时不画控件。默认无谱系：旧调用方行为不变。
+    member val SiblingProvider: uint64 -> uint64 option -> SiblingVersions option = (fun _ _ -> None) with get, set
+    /// 用户在版本控件上选定了另一个版本（对话 id）。
+    member val SiblingSelected: Guid -> unit = ignore with get, set
+
+    /// 设置（或清除）顶栏面包屑。crumb = None 时整条隐藏。
+    member this.SetBreadcrumb(crumb: ForkBreadcrumb option, openParent: Guid -> unit) =
+        openBreadcrumbParent <- openParent
+        match crumb with
+        | None ->
+            breadcrumbTarget <- None
+            breadcrumbBar.IsVisible <- false
+        | Some c ->
+            breadcrumbText.Text <- c.text
+            breadcrumbTarget <- if c.parentAvailable then Some c.parentId else None
+            breadcrumbAction.Focusable <- c.parentAvailable
+            breadcrumbAction.Cursor <- if c.parentAvailable then new Cursor(StandardCursorType.Hand) else null
+            ToolTip.SetTip(breadcrumbAction, c.description)
+            Avalonia.Automation.AutomationProperties.SetName(breadcrumbAction, c.text)
+            Avalonia.Automation.AutomationProperties.SetHelpText(breadcrumbAction, c.description)
+            if c.parentAvailable then Avalonia.Automation.AutomationProperties.SetRole(breadcrumbAction, AutomationRole.Button)
+            else Avalonia.Automation.AutomationProperties.SetControlTypeOverride(breadcrumbAction, Nullable Avalonia.Automation.Peers.AutomationControlType.Text)
+            breadcrumbBar.IsVisible <- true
+
+    /// 面包屑当前显示的文字（空串 = 不显示）。
+    member _.BreadcrumbText: string = if breadcrumbBar.IsVisible then breadcrumbText.Text else ""
+
+    /// 激活面包屑（回到父对话）；不可点击时什么也不做。返回是否发生了跳转。
+    member _.ActivateBreadcrumb() : bool =
+        match breadcrumbTarget with
+        | Some id ->
+            openBreadcrumbParent id
+            true
+        | None -> false
+
+    /// 把指定消息滚到视口。卡片不在已加载窗口里（更早的历史）时返回 false，由调用方先加载更早历史。
+    member this.ScrollToMessage(commitId: uint64) : bool =
+        let indexOf () =
+            mountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
+        match indexOf () with
+        | Some _ ->
+            revealPinned <- true
+            atBottom <- false
+            // 分页前置的锚点恢复会把偏移写回旧位置，这里的目标位置优先
+            pendingHistoryAnchor <- None
+            this.UpdateScrollToBottomAppearance()
+            // 卡片刚挂上时 Bounds 还没量好：等一次布局再量（按身份重新找，期间卡片序可能变）。
+            Dispatcher.UIThread.Post(
+                (fun () ->
+                    match indexOf () with
+                    | Some index when index < messagePanel.Children.Count -> smoothScrollToCard messagePanel.Children.[index]
+                    | _ -> ()),
+                DispatcherPriority.Background)
+            true
+        | None -> false
+
     member this.SetCompactMode(value: bool) =
         compactMode <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
@@ -604,6 +688,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     /// 重置滚动到底状态与未读计数（换会话、加载骨架或切换视图时调用）。
     member this.ResetScrollState() =
+        revealPinned <- false
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
         atBottom <- true
@@ -749,6 +834,32 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.IsMessagePanelVisible: bool = messagePanel.IsVisible
 
     /// 重绘全部消息。流式期间由 `streamingMessage` 追加一条临时消息。
+    /// 在用户消息卡下方加 `‹ n/m ›` 版本切换条（同一条消息的原文与各分叉）。
+    /// 条在卡外：卡片自身的内容、右键菜单与键盘行为不变。
+    member private this.WithSiblingBar(card: Control, s: SiblingVersions) : Control =
+        let go (delta: int) =
+            let target = s.index + delta
+            if target >= 0 && target < s.count then this.SiblingSelected(List.item target s.targets)
+        let previous = Ui.iconButton Icons.chevronLeft "上一个版本"
+        let next = Ui.iconButton Icons.chevronRight "下一个版本"
+        previous.IsEnabled <- s.index > 0
+        next.IsEnabled <- s.index < s.count - 1
+        Ui.onClick previous (fun () -> go -1)
+        Ui.onClick next (fun () -> go 1)
+        let label =
+            TextBlock(
+                Text = sprintf "%d/%d" (s.index + 1) s.count,
+                FontSize = Tokens.fontCaption,
+                Foreground = Tokens.textMuted,
+                VerticalAlignment = VerticalAlignment.Center)
+        let name = sprintf "这条消息的版本 %d / %d" (s.index + 1) s.count
+        Avalonia.Automation.AutomationProperties.SetName(label, name)
+        ToolTip.SetTip(label, "同一条消息编辑后产生的版本（每个版本是一个分叉）")
+        let bar = Ui.hstack Spacing.spaceXs [ previous :> Control; label :> Control; next :> Control ]
+        bar.HorizontalAlignment <- HorizontalAlignment.Right
+        Avalonia.Automation.AutomationProperties.SetName(bar, name)
+        Ui.vstack Spacing.spaceXs [ card; bar :> Control ] :> Control
+
     member this.RenderMessages
         (
             messages: MessageView list,
@@ -784,11 +895,30 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         // 先列出这一帧想要的卡片：已提交的带身份（可复用），
         // 流式卡与错误卡没有身份（每帧必然变，本来就该重建）
         let desired = ResizeArray<CardKey option * (unit -> Control)>()
+        // 同一消息的版本（W4）：前一条消息按原始顺序取，不用合并后的列表
+        // （工具结果会被折进调用消息，前一条身份会错位）。
+        let previousCommit =
+            let map = Dictionary<uint64, uint64 option>()
+            let mutable last: uint64 option = None
+            for m in messages do
+                match m.commitId with
+                | Some c ->
+                    map[c] <- last
+                    last <- Some c
+                | None -> ()
+            map
+        let siblingsOf (message: MessageView) : SiblingVersions option =
+            match message.commitId with
+            | Some commit when MessageView.isUser message ->
+                let prev = match previousCommit.TryGetValue commit with | true, p -> p | _ -> None
+                this.SiblingProvider commit prev
+            | _ -> None
 
         merged
         |> List.iteri (fun index message ->
             if MessageView.hasVisibleBody message then
                 let ctx = ctxFor index false
+                let siblings = siblingsOf message
                 let key =
                     message.commitId
                     |> Option.map (fun commit ->
@@ -802,8 +932,15 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                           lastAssistant = ctx.isLastAssistant
                           usageTag = (if ctx.isLastAssistant then hash ctx.usage else 0)
                           missingTag =
-                            (if List.isEmpty message.attachments then 0 else hash ctx.missingAttachments) })
-                desired.Add(key, fun () -> MessageCard.render message ctx actions.message (Some index)))
+                            (if List.isEmpty message.attachments then 0 else hash ctx.missingAttachments)
+                          siblingTag = (match siblings with Some s -> hash (s.index, s.count, s.targets) | None -> 0) })
+                desired.Add(
+                    key,
+                    fun () ->
+                        let card = MessageCard.render message ctx actions.message (Some index)
+                        match siblings with
+                        | Some s -> this.WithSiblingBar(card, s)
+                        | None -> card))
 
         match streamingMessage with
         | Some streaming when MessageView.hasVisibleBody streaming ->
@@ -944,7 +1081,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         let rec attempt (remaining: int) =
             Dispatcher.UIThread.Post(
                 (fun () ->
-                    scroller.ScrollToEnd()
+                    if not revealPinned then scroller.ScrollToEnd()
                     if remaining > 0 then attempt (remaining - 1)),
                 DispatcherPriority.Background)
         attempt 3
@@ -1020,6 +1157,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     /// 平滑滚动到底部
     member this.SmoothScrollToEnd() =
+        revealPinned <- false
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
         returningToLatest <- true
@@ -1234,6 +1372,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         // 变成两个动画争抢 Offset——手势输了。
         scroller.PointerWheelChanged.Add(fun e ->
             if abs e.Delta.Y > 0.0 then
+                revealPinned <- false
                 returningToLatest <- false
                 smoothScrollTimer |> Option.iter (fun t -> t.Stop())
                 smoothScrollTimer <- None)
@@ -1263,7 +1402,24 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         body.Children.Add emptyPanel
         body.Children.Add scrollToBottomButton
 
+        breadcrumbAction.Child <-
+            let icon = Icons.fork Tokens.textMuted
+            icon.Width <- Tokens.iconGlyph
+            icon.Height <- Tokens.iconGlyph
+            icon.VerticalAlignment <- VerticalAlignment.Center
+            Ui.hstack Spacing.spaceMd [ icon; breadcrumbText :> Control ]
+        Interaction.surface breadcrumbAction Interaction.HoverVariant.plain |> ignore
+        Interaction.reportFocusOrigin breadcrumbAction
+        Ui.onClick breadcrumbAction (fun () -> this.ActivateBreadcrumb() |> ignore)
+        breadcrumbBar.Child <- breadcrumbAction
         let layout = DockPanel()
+        // 面包屑放进头部容器（与标题共用水平留白档位）：DockPanel 子项仍是 [顶部; 主体]，既有布局契约不变。
+        let top = StackPanel()
+        let headerContent = header.Child
+        header.Child <- null
+        top.Children.Add headerContent
+        top.Children.Add breadcrumbBar
+        header.Child <- top
         DockPanel.SetDock(header, Dock.Top)
         layout.Children.Add header
         layout.Children.Add body

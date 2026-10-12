@@ -51,6 +51,10 @@ type MainView() as this =
     let mutable activeConvId: Guid option = None
     let runs = ConversationRuns()
     let mutable summaries: ConversationSummary list = []
+    /// W4：分叉谱系（随列表快照更新）、最近一次搜索的 queryId、待滚动到的消息。
+    let mutable lineage: Map<Guid, ForkLineage> = Map.empty
+    let mutable latestSearchQueryId: Guid option = None
+    let mutable pendingReveal: (Guid * RevealTarget) option = None
 
     let drafts = ComposerDrafts()
     let outbox = MessageOutbox()
@@ -288,6 +292,7 @@ type MainView() as this =
         match activeConvId, activeConversation () with
         | None, _ ->
             chat.SetConversationChrome false
+            chat.SetBreadcrumb(None, ignore)
             chat.SetTitle("新对话", false)
             if not authenticated then
                 match connectionError with
@@ -329,6 +334,7 @@ type MainView() as this =
             let streaming = this.StreamingMessage()
             let summary = activeSummary ()
             chat.SetConversationChrome true
+            chat.SetBreadcrumb(ForkLineage.breadcrumb summaries lineage convId, fun parentId -> this.OpenConversation parentId)
             chat.SetTitle((summary |> Option.map (fun s -> s.title) |> Option.defaultValue "会话"), true)
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
             if List.isEmpty messages && streaming.IsNone && run.error.IsNone then
@@ -346,6 +352,7 @@ type MainView() as this =
                     prefs.autoCollapseReasoning,
                     run.usage,
                     missingAttachments)
+                this.TryReveal(convId, view, messages)
             composer.SetEnabled(authenticated, (if authenticated then "" else "连接已断开，重新连接后可继续发送。"))
         composer.SetGenerating generating
         composer.SetCanStop(authenticated && run.generationId.IsSome)
@@ -665,6 +672,27 @@ type MainView() as this =
             // 新会话落定：焦点有家，直接进输入区（D3/D4）。
             composer.Focus()
             Some conversationId
+
+    /// 点击一条搜索命中：打开那段对话，并滚动到命中的消息（目标在更早历史里则先加载）。
+    member private this.OpenSearchHit(hit: SearchHit) =
+        pendingReveal <- Some(hit.conversationId, RevealMessage hit.messageId)
+        this.OpenConversation hit.conversationId
+        // 已经在这段对话里：不会有新快照来触发 Render，主动重试一次
+        if activeConversation().IsSome then this.Render()
+
+    /// 在同一消息位置的另一个版本（原文或某个分叉）之间切换，并滚到该位置。
+    member private this.SwitchVersion(target: Guid) =
+        let reveal =
+            match lineage.TryFind target with
+            | Some l -> l.forkFirstMessageId |> Option.map RevealMessage
+            | None ->
+                // 回到原文：定位到当前分叉的分叉点之后那一条
+                activeConvId
+                |> Option.bind lineage.TryFind
+                |> Option.map (fun l -> RevealAfter l.forkBaseMessageId)
+        pendingReveal <- reveal |> Option.map (fun r -> target, r)
+        this.OpenConversation target
+        if activeConvId = Some target && activeConversation().IsSome then this.Render()
 
     member private this.OpenConversation(id: Guid) =
         this.SelectConversation(Some id)
@@ -1353,6 +1381,8 @@ type MainView() as this =
         | ConversationListSnapshot d ->
             state.Handle ev
             summaries <- ConversationSummary.parseList d.items
+            lineage <- ForkLineage.parse d.items
+            sidebar.SetLineage lineage
             // SetConversations 即快照到达：侧栏加载中状态随数据一并解除。
             sidebar.SetConversations summaries
             sidebar.SetActive activeConvId
@@ -1392,6 +1422,19 @@ type MainView() as this =
                 pageLoading <- false
                 this.Render()
                 chat.RestoreHistoryPrependAnchorDeferred()
+        | SearchResults d ->
+            // 只认最近一次发出的查询：更早的结果（用户又改了词）迟到就丢掉。
+            if latestSearchQueryId = Some d.queryId then
+                sidebar.ApplySearchResults(
+                    { queryId = d.queryId
+                      query = d.query
+                      hits = SearchHit.parse d.items
+                      hasMore = d.hasMore
+                      truncated = d.truncated },
+                    d.offset)
+        | SearchFailed d ->
+            if latestSearchQueryId = Some d.queryId then
+                sidebar.ApplySearchFailure(sidebar.SearchQueryText, d.message)
         | ConversationExportPage page -> exportDialog |> Option.iter (fun dialog -> dialog.Handle page)
         | ConversationExportFailed d -> exportDialog |> Option.iter (fun dialog -> dialog.Fail(d.exportId, d.message))
         | GenerationStarted d ->
@@ -1656,6 +1699,19 @@ type MainView() as this =
               toggleArchivedVisibility = fun () -> this.SavePrefs { prefs with showArchived = not prefs.showArchived }
               closeNavigation = fun () -> this.SetCompactNavigation false }
         sidebar <- Sidebar(overlay, actions, Brand.logo)
+        // W4：消息正文搜索。查询在主机内存投影上完成；每次发出都换一个 queryId，旧结果迟到即丢。
+        sidebar.SearchHandler <-
+            Some(fun query includeArchived offset ->
+                let queryId = Guid.CreateVersion7()
+                latestSearchQueryId <- Some queryId
+                send (
+                    SearchQuery
+                        { queryId = queryId
+                          query = query
+                          includeArchived = includeArchived
+                          offset = offset
+                          limit = SearchLimits.defaultPageSize }))
+        sidebar.OpenSearchHit <- fun hit -> this.OpenSearchHit hit
         sidebar.Build()
         sidebar.SetShowArchived prefs.showArchived
 
@@ -1717,8 +1773,32 @@ type MainView() as this =
               focusHome = fun () -> composer.Focus()
               message = messageActions }
         chat <- ChatView(chatActions, Brand.logo)
+        chat.SiblingProvider <-
+            fun commit prev ->
+                match activeConvId with
+                | Some convId -> ForkLineage.siblings summaries lineage convId commit prev
+                | None -> None
+        chat.SiblingSelected <- fun target -> this.SwitchVersion target
         chat.ConfigureMenu(overlay, fun () -> activeSummary () |> Option.iter (fun summary -> this.ExportConversation summary))
         chat.Build()
+
+    /// 搜索命中 / 版本切换后把目标消息带进视口：目标在已加载窗口内就滚过去，
+    /// 更早就继续加载更早历史（HistoryPage 回来会再进 Render 重试）；到头仍找不到则放弃，不循环。
+    member private this.TryReveal(convId: Guid, view: ConversationView, messages: MessageView list) =
+        match pendingReveal with
+        | Some(target, reveal) when target = convId ->
+            let loaded = messages |> List.choose _.commitId
+            match RevealTarget.resolve reveal loaded with
+            | Some commit ->
+                pendingReveal <- None
+                chat.ScrollToMessage commit |> ignore
+            | None ->
+                let wanted = match reveal with RevealMessage c -> Some c | RevealAfter _ -> None
+                match wanted with
+                | Some c when view.pageHasMore && c < view.pageEarliest ->
+                    if not pageLoading then this.RequestOlderHistory()
+                | _ -> pendingReveal <- None
+        | _ -> ()
 
     member private this.RequestOlderHistory() =
         match activeConvId, activeConversation () with

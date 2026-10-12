@@ -202,6 +202,23 @@ module WireCodec =
         | ConversationExportFailed d ->
             putGuid p "exportId" d.exportId
             p["message"] <- d.message
+        | SearchQuery d ->
+            putGuid p "queryId" d.queryId
+            p["query"] <- d.query
+            p["includeArchived"] <- d.includeArchived
+            p["offset"] <- d.offset
+            p["limit"] <- d.limit
+        | SearchResults d ->
+            putGuid p "queryId" d.queryId
+            p["query"] <- d.query
+            p["offset"] <- d.offset
+            p["items"] <- d.items.DeepClone()
+            p["hasMore"] <- d.hasMore
+            p["truncated"] <- d.truncated
+            p["atCommitId"] <- d.atCommitId
+        | SearchFailed d ->
+            putGuid p "queryId" d.queryId
+            p["message"] <- d.message
         | CommandAccepted d -> putGuid p "invocationId" d.invocationId
         | CommandCommitted d ->
             putGuid p "invocationId" d.invocationId
@@ -593,6 +610,32 @@ module WireCodec =
                     match tryGuid p "exportId", tryString p "message" with
                     | Some exportId, Some message -> Ok(ConversationExportFailed {| exportId = exportId; message = message |})
                     | _ -> Error "conversation.export-failed: missing exportId/message"
+                | Some "search.query" ->
+                    match tryGuid p "queryId", tryString p "query" with
+                    | Some qid, Some q ->
+                        Ok(SearchQuery
+                            { queryId = qid; query = q
+                              includeArchived = (match tryGet p "includeArchived" with Some v -> v.GetValueKind() = JsonValueKind.True | None -> false)
+                              offset = tryInt p "offset" |> Option.defaultValue 0 |> max 0
+                              limit = tryInt p "limit" |> Option.defaultValue SearchLimits.defaultPageSize })
+                    | _ -> Error "search.query: missing queryId/query"
+                | Some "search.results" ->
+                    match tryGuid p "queryId", tryGet p "items" with
+                    | Some qid, Some (:? JsonArray as items) ->
+                        let flag k = match tryGet p k with Some v -> v.GetValueKind() = JsonValueKind.True | None -> false
+                        Ok(SearchResults
+                            { queryId = qid
+                              query = tryString p "query" |> Option.defaultValue ""
+                              offset = tryInt p "offset" |> Option.defaultValue 0
+                              items = items
+                              hasMore = flag "hasMore"
+                              truncated = flag "truncated"
+                              atCommitId = tryUInt64 p "atCommitId" |> Option.defaultValue 0UL })
+                    | _ -> Error "search.results: missing queryId/items"
+                | Some "search.failed" ->
+                    match tryGuid p "queryId" with
+                    | Some qid -> Ok(SearchFailed {| queryId = qid; message = tryString p "message" |> Option.defaultValue "" |})
+                    | None -> Error "search.failed: missing queryId"
                 | Some "command.committed" ->
                     match tryGuid p "invocationId" with
                     | Some inv -> Ok(CommandCommitted {| invocationId = inv; commandId = tryString p "commandId" |> Option.defaultValue ""; commitId = tryUInt64 p "commitId" |> Option.defaultValue 0UL |})

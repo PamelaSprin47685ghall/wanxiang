@@ -30,6 +30,50 @@ module ConversationExportLimits =
     let maxMessageBytes = 16 * 1024 * 1024
     let maxTranscriptBytes = 64L * 1024L * 1024L
 
+/// 全文搜索查询（W4，决策 75）。queryId 是客户端生成的业务标识，只关联这次查询与它的结果页，
+/// 不是通用传输 requestId；查询在服务端内存投影上完成，不建索引、不写日志。
+type SearchQueryData = {
+    queryId: Guid
+    query: string
+    /// 是否包含归档对话（缺省 false）
+    includeArchived: bool
+    /// 分页：跳过前 offset 条命中（缺省 0）
+    offset: int
+    /// 本页条数（缺省 SearchLimits.defaultPageSize，服务端钳到 maxPageSize）
+    limit: int
+}
+
+/// 搜索结果页。items 的每一项是 JsonObject：
+/// conversationId、title、archived、messageId（= 消息 commitId）、commitId（同值，提交序号）、
+/// role、snippet、matchStart、matchLength（相对 snippet 的 UTF-16 下标）。
+type SearchResultsData = {
+    queryId: Guid
+    query: string
+    offset: int
+    items: JsonArray
+    /// 本次查询之后还有更多可翻的命中（仍在预算内）
+    hasMore: bool
+    /// 预算耗尽而截断：命中数达上限，或扫描消息数达上限。截断时结果不完整，必须告知用户。
+    truncated: bool
+    /// 结果对应的投影水位
+    atCommitId: CommitId
+}
+
+/// 搜索的资源预算（权威数值；docs/contracts/resource-budgets.md 同步）。
+module SearchLimits =
+    let maxQueryChars = 200
+    let defaultPageSize = 20
+    let maxPageSize = 50
+    /// 单次查询最多返回（含翻页累计）的命中数
+    let maxHits = 200
+    /// 单次查询最多扫描的消息数（最近活动的对话优先）
+    let maxScannedMessages = 200_000
+    /// 单条消息最多检查的文本字符数（超出部分不参与匹配）
+    let maxMessageChars = 64 * 1024
+    let snippetChars = 120
+    /// 同一连接上同时进行的查询数
+    let maxInFlightPerConnection = 2
+
 /// 线上协议事件（fire-and-forget 对称事件，决策 25）。
 /// C→S 与 S→C 使用同一外壳；权限差异由事件类型决定。
 type WireEvent =
@@ -62,6 +106,10 @@ type WireEvent =
     | ConversationExportRead of ConversationExportQuery
     | ConversationExportPage of ConversationExportPageData
     | ConversationExportFailed of {| exportId: Guid; message: string |}
+    // ---- 全文搜索（W4）：内存投影上的只读查询 ----
+    | SearchQuery of SearchQueryData
+    | SearchResults of SearchResultsData
+    | SearchFailed of {| queryId: Guid; message: string |}
     // ---- 命令（C→S）与确认 ----
     | Command of ClientCommand
     | CommandAccepted of {| invocationId: Guid |}
@@ -136,6 +184,9 @@ module WireEvent =
         | ConversationExportFailed _ -> "conversation.export-failed"
         | ConversationUpdated _ -> "conversation.updated"
         | MessageCommitted _ -> "conversation.message-committed"
+        | SearchQuery _ -> "search.query"
+        | SearchResults _ -> "search.results"
+        | SearchFailed _ -> "search.failed"
         | Command c -> ClientCommand.commandType c
         | CommandAccepted _ -> "command.accepted"
         | CommandCommitted _ -> "command.committed"

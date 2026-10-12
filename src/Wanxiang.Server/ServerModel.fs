@@ -53,6 +53,27 @@ module ServerModel =
             o["updatedAt"] <- c.lastActivityAtUtc.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
             o["messageCount"] <- (Projection.effectiveMessages proj c |> List.length)
             o["isFork"] <- c.parent.IsSome
+            // W4（决策 77）：分叉谱系，全部由已有 fork 事实派生，不写新事实；字段缺省即“根对话”，旧客户端忽略它们。
+            match c.parent with
+            | Some(parentId, forkAfter) ->
+                o["parentId"] <- parentId.ToString("D")
+                forkAfter |> Option.iter (fun id -> o["forkBaseMessageId"] <- id)
+                c.messages |> List.tryHead |> Option.iter (fun m -> o["forkFirstMessageId"] <- m.commitId)
+                match proj.conversations.TryFind parentId with
+                | Some parent ->
+                    o["parentTitle"] <- parent.title
+                    o["parentDeleted"] <- parent.deleted
+                    // 被编辑的是父对话里的第几条消息（1 起）：分叉点之前的继承前缀长度 + 1
+                    match c.forkBaseCommitId with
+                    | Some baseId ->
+                        let prefix =
+                            Projection.effectiveMessagesAtMap proj.conversations parentId baseId
+                            |> List.filter (fun m -> match forkAfter with Some a -> m.commitId <= a | None -> false)
+                            |> List.length
+                        o["forkOrdinal"] <- prefix + 1
+                    | None -> ()
+                | None -> o["parentDeleted"] <- true
+            | None -> ()
             o["lastMessage"] <- lastMessageText proj c
             o["runtimeState"] <- runtimeStateOf c.conversationId
             let cfg = JsonObject()
