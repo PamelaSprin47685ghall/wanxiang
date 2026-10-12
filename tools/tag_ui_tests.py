@@ -135,27 +135,23 @@ def process(path: Path, check: bool) -> tuple[bool, str]:
     # 容器级 trait 只覆盖**容器内部**的方法。文件里同时还有顶层 `[<Fact>]`
     # （MathBaselineTests 就是这种：容器 Baseline + 一个顶层 fact）时，顶层那个
     # 必须自己带 trait——否则它会被漏进 UI 分组之外的进程。
-    container = _class_container(lines)
-    container_range = None
-    if container is not None:
-        idx, _ = container
-        end = len(lines)
-        for j in range(idx + 1, len(lines)):
-            stripped = lines[j].strip()
-            indent = len(lines[j]) - len(lines[j].lstrip())
-            # 容器在缩进 0 处结束；`[<Trait>]` / `[<Fact>]` 在缩进 0 处是
-            # **容器自己的**属性或新的顶层测试，不能据此判定容器结束。
-            if stripped and indent == 0 and (stripped.startswith("type") or stripped.startswith("module")):
-                end = j
-                break
-        container_range = (idx, end)
+    # 文件里可能有多个容器（例如 PwaToolApprovalTests：先是纯逻辑 module，
+    # 再是带容器级 trait 的 UI module）。每个 fact 按**最近的外层容器**判定，
+    # 不能只看文件里第一个容器。容器在缩进 0 处以 `type`/`module` 开头。
+    container_starts = [
+        i for i, l in enumerate(lines)
+        if (len(l) - len(l.lstrip())) == 0
+        and (re.match(r"^type\s+(?!private\b|internal\b)[A-Za-z0-9_]+\s*(?:\([^)]*\))?\s*=", l.strip())
+             or re.match(r"^module\s+[A-Za-z0-9_.]+\s*=", l.strip()))
+    ]
 
     def covered_by_container(start: int) -> bool:
-        if container_range is None:
+        enclosing = [i for i in container_starts if i < start]
+        if not enclosing:
             return False
-        lo, hi = container_range
+        lo = enclosing[-1]
         probe = lines[lo - 1] if lo > 0 else ""
-        return lo < start < hi and probe.strip() == MARKER
+        return probe.strip() == MARKER
 
     uncovered = [start for start, _, tagged in ui_facts if not tagged and not covered_by_container(start)]
     if not uncovered:
@@ -173,8 +169,6 @@ def process(path: Path, check: bool) -> tuple[bool, str]:
     for start in sorted(uncovered, reverse=True):
         indent = len(lines[start]) - len(lines[start].lstrip())
         lines.insert(start, " " * indent + MARKER)
-    else:
-        return False, f"{path.name}: trait 标注不一致，需人工确认"
 
     path.write_text("\n".join(lines), encoding="utf-8")
     return True, f"{path.name}: 标注 {len(ui_facts)} 个 UI 测试"
