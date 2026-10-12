@@ -43,6 +43,7 @@
     <Compile Include="Model/DraftStore.fs" />
     <Compile Include="Model/ProviderPresets.fs" />
     <!-- Interaction 必须先于 Primitives：Primitives 的基控件挂 Interaction.surface。 -->
+    <Compile Include="Controls/ImeGuard.fs" />
     <Compile Include="Controls/Interaction.fs" />
     <Compile Include="Controls/Primitives.fs" />
     <Compile Include="Controls/OverlayHost.fs" />

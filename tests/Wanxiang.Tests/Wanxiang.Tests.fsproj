@@ -106,6 +106,7 @@
     <Compile Include="R14TransferTests.fs" />
     <Compile Include="R19SimplifyTests.fs" />
     <Compile Include="R20PaletteTests.fs" />
+    <Compile Include="R21ImeTests.fs" />
     <Compile Include="PartialPersistAndUrlSchemeTests.fs" />
     <Compile Include="VisualPassR3Tests.fs" />
     <Compile Include="PwaMobileTests.fs" />

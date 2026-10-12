@@ -79,6 +79,7 @@ type App() =
         // 交互状态走 Avalonia 原生伪类（:focus-visible / :pointerover / :pressed /
         // :disabled），全应用唯一注册处。MUST 在视图树构建之前调用。
         Interaction.register this.Styles
+        ImeGuard.install ()
         // 画布主题固定为浅色变体：万象自己的深色由 Tokens 提供，
         // 若让 Fluent 也切深色，两套配色会互相打架。
         this.RequestedThemeVariant <- ThemeVariant.Light

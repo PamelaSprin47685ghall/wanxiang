@@ -61,6 +61,7 @@ type TestApp() =
             System.IO.Directory.CreateDirectory home |> ignore
             Environment.SetEnvironmentVariable("WANXIANG_HOME", home)
         this.Styles.Add(FluentTheme())
+        ImeGuard.install ()
 
 /// 测试用 Avalonia 装配：Skia 真实字形度量 + headless 平台。
 ///

@@ -228,10 +228,7 @@ type Composer(actions: ComposerActions) as this =
 
     /// IME 组合中（CJK 候选选择）时 Up/Down/Enter 归输入法：TextPresenter.PreeditText 非空即让路，
     /// 不做历史召回与提交。Shift+选择本就要求 Modifiers=None，已天然绕行。
-    let isImeComposing () =
-        input.GetVisualDescendants()
-        |> Seq.tryPick (function :? Avalonia.Controls.Presenters.TextPresenter as p -> Some p | _ -> None)
-        |> Option.exists (fun presenter -> not (String.IsNullOrEmpty presenter.PreeditText))
+    let isImeComposing () = ImeGuard.isComposing input
 
     let tryFocusInput () =
         let act () =
