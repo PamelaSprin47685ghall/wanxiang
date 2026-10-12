@@ -16,11 +16,76 @@ module ModelCapabilities =
 
     open System.Collections.Concurrent
 
-    let private detected = ConcurrentDictionary<string, bool>(StringComparer.Ordinal)
+    /// 决策 340：探测到的能力连同时间戳落盘（`<dataDir>/model-capabilities.json`），主机重启后仍在；
+    /// 每次「获取模型列表」成功时整组替换该模型服务的条目（刷新，旧模型不残留）。
+    let private detected = ConcurrentDictionary<string, bool * DateTimeOffset>(StringComparer.Ordinal)
     let private key (p: ProviderConfig) (model: string) = p.id + "\n" + p.baseUrl.TrimEnd('/') + "\n" + model
+    let private prefix (p: ProviderConfig) = p.id + "\n" + p.baseUrl.TrimEnd('/') + "\n"
+    let mutable private storePath: string option = None
+    let private gate = obj ()
+
+    let private save () =
+        match storePath with
+        | None -> ()
+        | Some path ->
+            lock gate (fun () ->
+                try
+                    let root = JsonObject()
+                    root["version"] <- 1
+                    let items = JsonObject()
+                    for KeyValue(k, (v, at)) in detected do
+                        let o = JsonObject()
+                        o["vision"] <- v
+                        o["at"] <- at.ToString("o")
+                        items[k] <- o
+                    root["entries"] <- items
+                    let tmp = path + ".tmp"
+                    IO.File.WriteAllText(tmp, root.ToJsonString())
+                    IO.File.Move(tmp, path, true)
+                with ex -> eprintfn "[wanxiang] 保存模型能力缓存失败：%s" ex.Message)
+
+    /// 指定落盘位置并读回上次的缓存；文件损坏时忽略（只是缓存，下次获取模型列表会重建）。
+    let configure (path: string) =
+        storePath <- Some path
+        try
+            if IO.File.Exists path then
+                match JsonNode.Parse(IO.File.ReadAllText path) with
+                | :? JsonObject as root ->
+                    match root["entries"] with
+                    | :? JsonObject as items ->
+                        for KeyValue(k, n) in items do
+                            match n with
+                            | :? JsonObject as o when not (isNull o["vision"]) ->
+                                let v = o["vision"].GetValueKind() = JsonValueKind.True
+                                let at =
+                                    match o["at"] with
+                                    | null -> DateTimeOffset.MinValue
+                                    | a -> match DateTimeOffset.TryParse(a.ToString()) with | true, t -> t | _ -> DateTimeOffset.MinValue
+                                detected[k] <- (v, at)
+                            | _ -> ()
+                    | _ -> ()
+                | _ -> ()
+        with ex -> eprintfn "[wanxiang] 读取模型能力缓存失败，已忽略：%s" ex.Message
 
     let record (p: ProviderConfig) (pairs: (string * bool) list) =
-        for (m, v) in pairs do detected[key p m] <- v
+        let now = DateTimeOffset.UtcNow
+        for (m, v) in pairs do detected[key p m] <- (v, now)
+        if not (List.isEmpty pairs) then save ()
+
+    /// 获取模型列表成功后整组替换该模型服务的能力条目。
+    let replaceFor (p: ProviderConfig) (pairs: (string * bool) list) =
+        let pre = prefix p
+        for k in detected.Keys |> Seq.toList do
+            if k.StartsWith(pre, StringComparison.Ordinal) then detected.TryRemove k |> ignore
+        let now = DateTimeOffset.UtcNow
+        for (m, v) in pairs do detected[key p m] <- (v, now)
+        save ()
+
+    /// 某条能力的探测时间（测试与诊断用）。
+    let detectedAt (p: ProviderConfig) (model: string) =
+        match detected.TryGetValue(key p model) with
+        | true, (_, at) -> Some at
+        | _ -> None
 
     /// Anthropic 原生接口不返回能力字段；Claude 3 起全系能看图，更早的只吃文字。
     let anthropicKnown (model: string) : bool option =
@@ -34,7 +99,7 @@ module ModelCapabilities =
     /// 某模型的服务端信息：内存里探测到的优先，其次 Anthropic 已知清单。
     let tryGet (p: ProviderConfig) (model: string) : bool option =
         match detected.TryGetValue(key p model) with
-        | true, v -> Some v
+        | true, (v, _) -> Some v
         | _ -> if p.kind = "anthropic" then anthropicKnown model else None
 
     let private strings (n: JsonNode) =
@@ -114,18 +179,28 @@ module ModelCapabilities =
             | _ -> None
         with _ -> None
 
-    /// OpenAI 兼容地址是否像本地 Ollama（默认端口 11434 或地址里带 ollama）。
-    let looksLikeOllama (p: ProviderConfig) =
-        p.kind = "openai"
-        && (p.baseUrl.Contains(":11434", StringComparison.Ordinal)
-            || p.baseUrl.Contains("ollama", StringComparison.OrdinalIgnoreCase))
+    /// 决策 341：是不是 Ollama 由 provider 种类或 `/api/version` 的回应决定，不再看端口或地址里的字样。
+    let isOllamaKind (p: ProviderConfig) = p.kind = "ollama"
+
+    /// `/api/version` 响应是否是 Ollama 的（`{"version":"0.x.y"}`）。
+    let ofOllamaVersion (body: string) : bool =
+        try
+            match JsonNode.Parse body with
+            | :? JsonObject as root ->
+                match root["version"] with
+                | null -> false
+                | v -> v.GetValueKind() = JsonValueKind.String && root.Count <= 3
+            | _ -> false
+        with _ -> false
 
     let ollamaRoot (p: ProviderConfig) =
         let t = p.baseUrl.TrimEnd '/'
         if t.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) then t.Substring(0, t.Length - 3) else t
 
     /// 清空（测试用）。
-    let clear () = detected.Clear()
+    let clear () =
+        detected.Clear()
+        storePath <- None
 
 /// 可选 provider / 模型 / 工具的目录。
 ///
@@ -395,10 +470,26 @@ module ProviderCatalog =
                 else
                     match modelIdsFromProbe body with
                     | Ok ids ->
-                        ModelCapabilities.record p (ModelCapabilities.ofModelsBody body)
-                        if ModelCapabilities.looksLikeOllama p then
+                        let fromList = ModelCapabilities.ofModelsBody body
+                        let fromShow = Collections.Generic.List<string * bool>()
+                        let root = ModelCapabilities.ollamaRoot p
+                        let! isOllama =
+                            task {
+                                if ModelCapabilities.isOllamaKind p then return true
+                                elif p.kind <> "openai" then return false
+                                else
+                                    try
+                                        use cts = CancellationTokenSource.CreateLinkedTokenSource ct
+                                        cts.CancelAfter(TimeSpan.FromSeconds 3.0)
+                                        let! r = client.GetAsync(root + "/api/version", cts.Token)
+                                        if not r.IsSuccessStatusCode then return false
+                                        else
+                                            let! b = r.Content.ReadAsStringAsync cts.Token
+                                            return ModelCapabilities.ofOllamaVersion b
+                                    with _ -> return false
+                            }
+                        if isOllama then
                             // 逐个问 Ollama 的 /api/show；失败或旧版本没有 capabilities 就跳过，不影响探测结果。
-                            let root = ModelCapabilities.ollamaRoot p
                             for m in ids |> List.truncate 50 do
                                 try
                                     use show = new HttpRequestMessage(HttpMethod.Post, root + "/api/show")
@@ -411,9 +502,10 @@ module ProviderCatalog =
                                     if r.IsSuccessStatusCode then
                                         let! b = r.Content.ReadAsStringAsync cts.Token
                                         match ModelCapabilities.ofOllamaShow b with
-                                        | Some v -> ModelCapabilities.record p [ m, v ]
+                                        | Some v -> fromShow.Add((m, v))
                                         | None -> ()
                                 with _ -> ()
+                        ModelCapabilities.replaceFor p (fromList @ List.ofSeq fromShow)
                         return Ok ids
                     | Error reason -> return Error(BadResponse, describeFailure p BadResponse reason)
             with
