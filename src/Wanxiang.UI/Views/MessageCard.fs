@@ -1361,13 +1361,36 @@ module MessageCard =
         topRow.Children.Add icon
         topRow.Children.Add column
         // 等待建议只跟可重试错误走：不可重试时给秒数等于指错路。
-        match error.retryAfterSeconds with
-        | Some seconds when error.retryable ->
-            column.Children.Add(
+        // 决策 242：等待信号变成实时倒计时，到点改成「现在可以重试了」。
+        // 截止时刻由 RetryCountdown 挂在错误实例上，卡片重建不会让倒计时重来。
+        match RetryCountdown.tryGet error DateTimeOffset.UtcNow with
+        | Some info when error.retryable ->
+            match info.limit with
+            | Some limit when ProviderRateLimit.isExhausted limit ->
+                column.Children.Add(
+                    TextBlock(
+                        Text = "这个模型服务当前时段的额度已用完。",
+                        FontSize = Tokens.fontCaption,
+                        Foreground = Tokens.textMuted,
+                        TextWrapping = TextWrapping.Wrap))
+            | _ -> ()
+            let countdown =
                 TextBlock(
-                    Text = sprintf "建议等待约 %d 秒后重试。" seconds,
                     FontSize = Tokens.fontCaption,
-                    Foreground = Tokens.warning))
+                    Foreground = Tokens.warning,
+                    TextWrapping = TextWrapping.Wrap)
+            Avalonia.Automation.AutomationProperties.SetName(countdown, "重试倒计时")
+            let refresh () =
+                let left = RetryCountdown.remainingSeconds info DateTimeOffset.UtcNow
+                countdown.Text <- ProviderRateLimit.countdownText left
+                countdown.Foreground <- if left <= 0 then Tokens.success else Tokens.warning
+                left
+            refresh () |> ignore
+            let timer = DispatcherTimer(Interval = TimeSpan.FromSeconds 1.0)
+            timer.Tick.Add(fun _ -> if refresh () <= 0 then timer.Stop())
+            countdown.AttachedToVisualTree.Add(fun _ -> if refresh () > 0 then timer.Start())
+            countdown.DetachedFromVisualTree.Add(fun _ -> timer.Stop())
+            column.Children.Add countdown
         | _ -> ()
         // 恢复动作紧跟说明：告诉用户「可以重试」却不给按钮，
         // 等于逼他把刚才那句话重新打一遍。

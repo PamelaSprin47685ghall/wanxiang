@@ -602,3 +602,16 @@ AG-UI 的 `RUN_ERROR` 只有 message/code，没有 threadId/runId，也装不下
 
 # 232. Ctrl/⌘+Z 撤销刚才的删除
 「撤销」提示条可见时，Ctrl/⌘+Z 等同点它（取最新一条）；提示条一关就不再接管。焦点在有文字的输入框里时 Ctrl+Z 仍是文本撤销。列入快捷键帮助。
+
+# 240. 顶栏常驻当前模型芯片 + 快速切换（模型旅程 · r7 · 2026-10-12）
+回答质量最直接的变量是「用的哪个模型」，不能只藏在输入区左下角。对话顶栏标题右侧常驻一个强调色胶囊，写模型名（服务名进 tooltip 与读屏名「当前模型 X · Y，切换模型」）；窄屏收窄到 120 但不收起。点击（以及 `Ctrl+M`、输入区芯片）打开同一个**快速切换**浮层：顶部搜索框（按空白拆词，模型名或服务名都能命中，模型名前缀命中排前），每行两层「模型名 / 模型服务」，标出「默认」（`Catalog.defaultSelection` 同一规则）与当前（对勾）；回车选第一条命中，↓ 进入列表，选当前项不发命令。纯逻辑在 `ModelSwitcher`，视图在 `ModelSwitcherView`。
+
+# 241. 切换从下一条回复开始生效，并且要说出来
+切换模型改的是对话配置，已有回复不会被改写、正在生成的那条也不会中途换模型。浮层底部常驻「切换只影响之后的回复，已有回复不会改变。」；生成中打开时标题直接写「正在生成的这条回复不受影响，切换从下一条开始。」；确认提示为「已切换到 服务 · 模型，从下一条回复开始生效」。
+
+# 242. 限流 / 额度信号下发，错误卡给实时倒计时
+主机从模型服务的失败响应头读出限流信号（`ProviderRateLimit.ofHeaders`：`retry-after`、OpenAI `x-ratelimit-remaining/reset-requests|tokens`（Go 时长）、Anthropic `anthropic-ratelimit-*`（RFC 3339）、通用 `x-ratelimit-remaining/reset`（秒或纪元时间））。读到任何一项就在 `generation.finished` **之前**下发追加事件 `CUSTOM wanxiang.dev/provider.rate-limit`（threadId、runId、providerId、remainingRequests、remainingTokens、resetSeconds、retryAfterSeconds；缺项不上线，不编造 0）。等待秒数 = Retry-After 优先，否则已见底维度的 reset（都没见底取较晚者）。主机同时把它补进错误的 `retryAfterSeconds`（原本为空且可重试时），所以不认识新事件的客户端也能看到等待建议。客户端在收到 finished 的那一刻定下截止时刻（`RetryCountdown`，挂在错误实例上，卡片重建不会重新计时），错误卡显示每秒刷新的「1 分 05 秒后可重试。」，到点变成绿色「现在可以重试了。」；额度见底时多一行「这个模型服务当前时段的额度已用完。」。倒计时不禁用「重试」按钮：用户可能知道得比头更多。不可重试的错误永远不给倒计时。
+
+# 243. 兼容性
+`provider.rate-limit` 只是追加的 `wanxiang.dev/*` 事件，不进日志；按 55.8 R1，旧客户端解码为「不认识」并丢弃，不断连。成功响应上的限流头暂不下发（只在失败时有用；主动预警留待后续）。
+

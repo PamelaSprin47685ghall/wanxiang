@@ -852,3 +852,7 @@ MAF ⇄ AG-UI 消息往返对文本/工具调用/工具结果/推理/图片/混�
 # 70–74（W3 指针）：工具审批事件是 wanxiang.dev 加法
 
 2026-10-12：新增 `tool.approval-capability`、`tool.approval-requested`、`tool.approval-decision`、`tool.approval-resolved`、`config.tools-update` 五个 `wanxiang.dev/*` CUSTOM 事件，语义与兼容性见 `wanxiang-tools` 第 70–74 节。它们不进日志，旧客户端忽略。
+
+# 242（r7 指针）：`provider.rate-limit` 是 wanxiang.dev 加法
+
+2026-10-12：新增主机 → 客户端的 `CUSTOM wanxiang.dev/provider.rate-limit`（threadId、runId、providerId，及可选的 remainingRequests / remainingTokens / resetSeconds / retryAfterSeconds），总在对应失败的 `generation.finished` 之前下发。语义见 `wanxiang-ui` 第 242–243 节。不进日志，旧客户端忽略。

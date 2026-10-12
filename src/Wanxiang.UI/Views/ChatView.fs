@@ -119,6 +119,28 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Foreground = Tokens.accent,
             VerticalAlignment = VerticalAlignment.Center)
 
+    // 决策 240：顶栏常驻「当前模型」芯片——回答质量最直接的变量不该藏在输入区角落。
+    // 点开是可搜索的快速切换；切换只影响之后的回复。
+    let headerModelCaption =
+        TextBlock(
+            Text = "",
+            FontSize = Tokens.fontSmall,
+            FontWeight = FontWeight.Medium,
+            Foreground = Tokens.accent,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 220.0)
+    let headerModelChip =
+        ActionBorder(
+            Name = "HeaderModelChip",
+            Background = Tokens.accentFaint,
+            CornerRadius = CornerRadius Spacing.Radius.pill,
+            Padding = Thickness(ControlMetrics.chipPaddingX * 1.5, ControlMetrics.chipPaddingY),
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Focusable = true,
+            IsVisible = false)
+    let mutable openModelSwitcher: Control -> unit = ignore
     // 顶栏只交代“正在看哪段对话”。低频管理与阅读导航进入有文字的菜单。
     let moreButton = Ui.iconButton Icons.more "对话操作"
     let mutable showMore: Control -> unit = ignore
@@ -590,6 +612,25 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 用户在版本控件上选定了另一个版本（对话 id）。
     member val SiblingSelected: Guid -> unit = ignore with get, set
 
+    /// 顶栏模型芯片（决策 240）。model 为空时隐藏；providerLabel 进 tooltip 与读屏名。
+    member _.SetHeaderModel(model: string, providerLabel: string, enabled: bool) =
+        if String.IsNullOrWhiteSpace model then
+            headerModelChip.IsVisible <- false
+        else
+            headerModelChip.IsVisible <- true
+            headerModelCaption.Text <- model
+            let full = if String.IsNullOrWhiteSpace providerLabel then model else sprintf "%s · %s" providerLabel model
+            ToolTip.SetTip(headerModelChip, sprintf "当前模型：%s。点击切换，从下一条回复开始生效" full)
+            Avalonia.Automation.AutomationProperties.SetName(headerModelChip, sprintf "当前模型 %s，切换模型" full)
+            Ui.setEnabled headerModelChip enabled
+
+    /// 顶栏模型芯片点击后的去处（AppShell 注入）。
+    member _.SetModelSwitcherHandler(handler: Control -> unit) = openModelSwitcher <- handler
+
+    member _.HeaderModelAnchor : Control = headerModelChip :> Control
+    member _.HeaderModelText : string = headerModelCaption.Text
+    member _.HeaderModelVisible : bool = headerModelChip.IsVisible
+
     /// 设置（或清除）顶栏面包屑。crumb = None 时整条隐藏。
     member this.SetBreadcrumb(crumb: ForkBreadcrumb option, openParent: Guid -> unit) =
         openBreadcrumbParent <- openParent
@@ -706,6 +747,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         for button in [ sidebarToggleButton; moreButton; scrollToBottomButton ] do
             Ui.setSquareTarget button size
         moreButton.IsVisible <- hasConversationChrome
+        // 手机窄屏：芯片收窄但不收起——标题可以截断，当前模型不能看不见。
+        headerModelCaption.MaxWidth <- if value then 120.0 else 220.0
+        headerModelChip.MinHeight <- if value then LayoutPolicy.compactActionTarget else 0.0
         this.UpdateScrollToBottomAppearance()
         this.SyncGeneratingChipVisibility()
 
@@ -1444,6 +1488,19 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
         leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
         leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
+        leftGroup.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
+        headerModelChip.Child <-
+            let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXs, VerticalAlignment = VerticalAlignment.Center)
+            let spark = Icons.chevronDown Tokens.accent
+            spark.VerticalAlignment <- VerticalAlignment.Center
+            row.Children.Add headerModelCaption
+            row.Children.Add spark
+            row
+        Interaction.surface headerModelChip Interaction.HoverVariant.plain |> ignore
+        Interaction.reportFocusOrigin headerModelChip
+        Ui.onClick headerModelChip (fun () -> openModelSwitcher (headerModelChip :> Control))
+        Grid.SetColumn(headerModelChip, 3)
+        leftGroup.Children.Add headerModelChip
         titleHost.MinWidth <- 0.0
         titleHost.HorizontalAlignment <- HorizontalAlignment.Stretch
         titleHost.VerticalAlignment <- VerticalAlignment.Center

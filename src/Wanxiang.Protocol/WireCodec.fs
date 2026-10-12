@@ -374,6 +374,14 @@ module WireCodec =
         | DevicesSnapshot d ->
             p["items"] <- d.items.DeepClone()
             p["canInvite"] <- d.canInvite
+        | ProviderRateLimitNotice d ->
+            putGuid p "threadId" d.conversationId
+            putGuid p "runId" d.generationId
+            p["providerId"] <- d.providerId
+            d.limit.remainingRequests |> Option.iter (fun v -> p["remainingRequests"] <- JsonValue.Create v)
+            d.limit.remainingTokens |> Option.iter (fun v -> p["remainingTokens"] <- JsonValue.Create v)
+            d.limit.resetSeconds |> Option.iter (fun v -> p["resetSeconds"] <- JsonValue.Create v)
+            d.limit.retryAfterSeconds |> Option.iter (fun v -> p["retryAfterSeconds"] <- JsonValue.Create v)
         | DeviceRename d ->
             putGuid p "requestId" d.requestId
             p["deviceId"] <- d.deviceId
@@ -891,6 +899,20 @@ module WireCodec =
                     match tryGuid p "requestId" with
                     | Some rid -> Ok(DeviceRevoke {| requestId = rid; deviceId = tryString p "deviceId" |> Option.defaultValue "" |})
                     | None -> Error "device.revoke: missing requestId"
+                | Some "provider.rate-limit" ->
+                    match tryGuid p "threadId", tryGuid p "runId" with
+                    | Some cid, Some gid ->
+                        let nonNeg key = tryInt p key |> Option.filter (fun v -> v >= 0)
+                        Ok(ProviderRateLimitNotice
+                            {| conversationId = cid
+                               generationId = gid
+                               providerId = tryString p "providerId" |> Option.defaultValue ""
+                               limit =
+                                 { remainingRequests = nonNeg "remainingRequests"
+                                   remainingTokens = nonNeg "remainingTokens"
+                                   resetSeconds = nonNeg "resetSeconds"
+                                   retryAfterSeconds = nonNeg "retryAfterSeconds" } |})
+                    | _ -> Error "provider.rate-limit: missing threadId/runId"
                 | Some other -> Error(unknownEventTypePrefix + other)
                 | None -> Error "missing type"
             | _ -> Error "not a JSON object"
