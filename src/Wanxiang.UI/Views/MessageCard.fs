@@ -47,7 +47,7 @@ type MessageContext = {
 /// 操作条悬停即现且不占文档流；用户气泡与助手正文在视觉重量上明确分层。
 module MessageCard =
 
-    let private handCursor = new Cursor(StandardCursorType.Hand)
+    let private handCursor = lazy (new Cursor(StandardCursorType.Hand))
 
     /// 大段详情统一使用“限高阅读窗 → 主动展开全文”的二阶段 contract。
     /// 首次展开不会把当前阅读位置瞬间推走数屏；需要全文时用户仍有明确入口。
@@ -69,7 +69,7 @@ module MessageCard =
         let mutable toggleFull: unit -> unit = ignore
         let expandButton = Ui.button Ui.Ghost "展开全部" (fun () -> toggleFull ())
         expandButton.HorizontalAlignment <- HorizontalAlignment.Left
-        expandButton.Cursor <- handCursor
+        expandButton.Cursor <- handCursor.Value
         expandButton.Focusable <- true
         expandButton.IsVisible <- false
         // 文字按钮自解释：tooltip 只会重复可见文案，不挂；无障碍名称保留。
@@ -146,7 +146,7 @@ module MessageCard =
         button.Focusable <- true
         button.Margin <- Thickness 0.0
         button.Padding <- Thickness 0.0
-        button.Cursor <- handCursor
+        button.Cursor <- handCursor.Value
         Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
         alignIconCentrally button
         ToolTip.SetTip(button, tipText)
@@ -294,7 +294,7 @@ module MessageCard =
                 tb.Inlines.Add durRun
             tb
         let headerRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
-        headerRow.Cursor <- handCursor
+        headerRow.Cursor <- handCursor.Value
         headerRow.Children.Add chevronHost
         headerRow.Children.Add caption
         // 思考过程与工具调用 / 错误详情同档：头部带独立复制入口。
@@ -314,7 +314,7 @@ module MessageCard =
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
                 BorderThickness = Thickness ControlMetrics.borderWidth,
-                Cursor = handCursor,
+                Cursor = handCursor.Value,
                 Focusable = true,
                 Transitions = Ui.surfaceBorderedTransitions (),
                 Child = headerRow)
@@ -825,7 +825,7 @@ module MessageCard =
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
                 BorderThickness = Thickness ControlMetrics.borderWidth,
-                Cursor = handCursor,
+                Cursor = handCursor.Value,
                 Focusable = true,
                 Transitions = Ui.surfaceBorderedTransitions (),
                 Child = headerContent)
@@ -1015,7 +1015,7 @@ module MessageCard =
         captionText.Inlines.Add stateRun
 
         let headerRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
-        headerRow.Cursor <- handCursor
+        headerRow.Cursor <- handCursor.Value
         headerRow.Children.Add chevronHost
         headerRow.Children.Add overviewIcon
         headerRow.Children.Add captionText
@@ -1028,7 +1028,7 @@ module MessageCard =
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
                 BorderThickness = Thickness ControlMetrics.borderWidth,
-                Cursor = handCursor,
+                Cursor = handCursor.Value,
                 Focusable = true,
                 Transitions = Ui.surfaceBorderedTransitions (),
                 Child = headerRow)
@@ -1127,7 +1127,7 @@ module MessageCard =
                     Padding = Thickness(Spacing.spaceXl, ControlMetrics.attachmentRowPaddingY),
                     Margin = Thickness(0.0, Spacing.spaceXs, 0.0, 0.0),
                     HorizontalAlignment = HorizontalAlignment.Left,
-                    Cursor = handCursor,
+                    Cursor = handCursor.Value,
                     Focusable = true,
                     Child = row)
         if not missing then
@@ -1190,7 +1190,7 @@ module MessageCard =
             button.Focusable <- true
             button.Margin <- Thickness 0.0
             button.Padding <- Thickness 0.0
-            button.Cursor <- handCursor
+            button.Cursor <- handCursor.Value
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             alignIconCentrally button
             ToolTip.SetTip(button, tip)
@@ -1209,7 +1209,7 @@ module MessageCard =
             button.Focusable <- true
             button.Margin <- Thickness 0.0
             button.Padding <- Thickness 0.0
-            button.Cursor <- handCursor
+            button.Cursor <- handCursor.Value
             Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
             alignIconCentrally button
             ToolTip.SetTip(button, "复制")
@@ -1355,7 +1355,7 @@ module MessageCard =
             retryButton.MinWidth <- ControlMetrics.retryButtonMinWidth
             retryButton.Margin <- Thickness 0.0
             retryButton.Padding <- Thickness(Spacing.space2xl, ControlMetrics.textButtonPaddingY)
-            retryButton.Cursor <- handCursor
+            retryButton.Cursor <- handCursor.Value
             Avalonia.Automation.AutomationProperties.SetName(retryButton, "重试生成")
             Avalonia.Automation.AutomationProperties.SetHelpText(retryButton, "重新尝试生成")
             actionRow.Children.Add retryButton
@@ -1435,7 +1435,7 @@ module MessageCard =
                     Background = Brushes.Transparent,
                     BorderBrush = Brushes.Transparent,
                     BorderThickness = Thickness ControlMetrics.borderWidth,
-                    Cursor = handCursor,
+                    Cursor = handCursor.Value,
                     Focusable = true,
                     Transitions = Ui.surfaceBorderedTransitions (),
                     Child = detailHeaderRow)
@@ -1976,7 +1976,7 @@ module MessageCard =
         // 右键菜单：桌面端「对某条消息发动作」的原生入口。hover 操作条在触屏上不存在、
         // 键盘也要 Tab 半天，右键一次抵达。菜单项与脚注行 hover 按钮逐项同源
         // （messageMenuEntries），换入口不加能力。
-        host.ContextMenu <- buildMessageContextMenu message ctx actions
+        let messageContextMenu = buildMessageContextMenu message ctx actions
         host.PointerPressed.Add(fun e ->
             match e.GetCurrentPoint(host).Properties with
             | p when p.IsRightButtonPressed ->
@@ -1993,11 +1993,13 @@ module MessageCard =
         buttons.PointerExited.Add(fun _ -> dim ())
         // 定位高亮的承载面（第 211 节）：host 是 StackPanel，直接刷背景会是一块贴边的直角色块，
         // 用户气泡下面还会透出整行。外包一层圆角 Border，内外边距相抵，布局不变；平时透明。
-        Border(
-            Name = revealHighlightName,
-            Background = Brushes.Transparent,
-            CornerRadius = CornerRadius Spacing.Radius.lg,
-            Padding = Thickness(Spacing.spaceMd, Spacing.spaceXs),
-            Margin = Thickness(-Spacing.spaceMd, -Spacing.spaceXs),
-            Child = host)
-        :> Control
+        let highlight =
+            Border(
+                Name = revealHighlightName,
+                Background = Brushes.Transparent,
+                CornerRadius = CornerRadius Spacing.Radius.lg,
+                Padding = Thickness(Spacing.spaceMd, Spacing.spaceXs),
+                Margin = Thickness(-Spacing.spaceMd, -Spacing.spaceXs),
+                Child = host,
+                ContextMenu = messageContextMenu)
+        highlight :> Control

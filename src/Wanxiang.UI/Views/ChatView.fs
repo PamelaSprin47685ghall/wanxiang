@@ -643,6 +643,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             true
         else false
 
+    /// 视口是否被定位钉住（搜索命中 / 版本切换后，直到用户滚动或回到底部）。
+    member _.RevealPinned = revealPinned
+
     /// 当前正高亮着的消息（高亮结束后为 None）。
     member _.HighlightedCommit = highlightedCommit
 
@@ -751,7 +754,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         lastEmptyState <- None
         currentPrimaryAction <- ignore
         emptyActionButton.IsVisible <- false
-        this.ResetScrollState()
+        // 每次重绘都会经过这里：定位（搜索命中 / 版本切换）刚把视口钉在目标消息上时不能复位，
+        // 否则紧随其后的重绘把 atBottom 改回 true、停掉滚动动画，视口又被拉回底部（v4 走查）。
+        // 换对话由 AppShell.SelectConversation 显式复位。
+        if not revealPinned then this.ResetScrollState()
         emptyPanel.IsVisible <- false
         scroller.IsVisible <- true
         messagePanel.IsVisible <- true
