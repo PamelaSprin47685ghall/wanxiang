@@ -53,6 +53,13 @@ type TestApp() =
     /// 图标不需要任何包内主题：`Icons` 走 `LucideImageExtension` 的纯 API 路径
     /// （返回 `DrawingImage` 放进原生 `Image`），不依赖 ControlTheme。
     override this.Initialize() =
+        // 本机偏好与草稿（ui.json / drafts.json / client.toml）默认落在 WANXIANG_HOME：
+        // 测试进程没有显式指定时指到进程私有的临时目录，绝不读写真实家目录，
+        // 也避免一个测试存下的草稿被另一个测试的外壳恢复。
+        if String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable "WANXIANG_HOME") then
+            let home = System.IO.Path.Combine(System.IO.Path.GetTempPath(), sprintf "wx-tests-home-%d" Environment.ProcessId)
+            System.IO.Directory.CreateDirectory home |> ignore
+            Environment.SetEnvironmentVariable("WANXIANG_HOME", home)
         this.Styles.Add(FluentTheme())
 
 /// 测试用 Avalonia 装配：Skia 真实字形度量 + headless 平台。

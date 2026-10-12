@@ -196,8 +196,10 @@ module Doctor =
         finally
             store.Dispose()
 
-    /// 只读诊断（决策 51：doctor 默认严格只读，不修复）。
-    let run (configPath: string, dataDir: string) : Diagnosis =
+    /// 只读诊断。`live = true` 表示诊断运行在**正在服务的主机进程内**（W5「检查主机」，决策 83）：
+    /// 监听端口与数据锁都是本进程自己持有的，不能当故障报；日志回放在发现损坏时复核一次，
+    /// 避免把写入者正在追加的半条记录误报为损坏。其余检查与命令行 doctor 完全一致，仍严格只读。
+    let private runWith (live: bool) (configPath: string, dataDir: string) : Diagnosis =
         let d =
             { checks = []
               configErrors = []
@@ -210,20 +212,25 @@ module Doctor =
             match TomlCodec.tryParse (File.ReadAllText configPath) with
             | Ok cfg ->
                 d.configErrors <- []
-                let port = { name = "listen-port"; ok = not (portInUse cfg.listen); detail = if portInUse cfg.listen then sprintf "port %s already in use" cfg.listen else "free" }
+                let port =
+                    if live then { name = "listen-port"; ok = true; detail = sprintf "listening on %s (this host)" cfg.listen }
+                    else { name = "listen-port"; ok = not (portInUse cfg.listen); detail = if portInUse cfg.listen then sprintf "port %s already in use" cfg.listen else "free" }
                 d.checks <- d.checks @ [ port; checkProviders cfg; checkMcp cfg ]
             | Error errs -> d.configErrors <- errs
         else
             d.configErrors <- [ sprintf "config file not found: %s" configPath ]
         d.checks <- d.checks @ [ formatVersionCheck (); checkDiskFree dataDir; checkPermissions dataDir ]
         // 数据锁
-        match DataLock.Acquire dataDir with
-        | Ok l ->
-            let pidDetail = match l.PidWarning with Some w -> sprintf "; %s" w | None -> ""
-            (l :> IDisposable).Dispose()
-            d.checks <- d.checks @ [ { name = "data-lock"; ok = true; detail = "free" + pidDetail } ]
-        | Error e ->
-            d.checks <- d.checks @ [ { name = "data-lock"; ok = false; detail = e } ]
+        if live then
+            d.checks <- d.checks @ [ { name = "data-lock"; ok = true; detail = "held by this host" } ]
+        else
+            match DataLock.Acquire dataDir with
+            | Ok l ->
+                let pidDetail = match l.PidWarning with Some w -> sprintf "; %s" w | None -> ""
+                (l :> IDisposable).Dispose()
+                d.checks <- d.checks @ [ { name = "data-lock"; ok = true; detail = "free" + pidDetail } ]
+            | Error e ->
+                d.checks <- d.checks @ [ { name = "data-lock"; ok = false; detail = e } ]
         // 快照状态
         let snap = checkSnapshot dataDir
         d.snapshotStatus <- snap.detail
@@ -243,7 +250,13 @@ module Doctor =
             d.checks <- d.checks @ [ { name = "log-replay"; ok = false; detail = d.replayError } ]
         // 只读检查（算法 R）；有无法识别的日志时跳过（上面已给出明确报错）
         if unrecognizedLogs.Length = 0 then
-            match Replay.inspect dataDir with
+            let inspected =
+                match Replay.inspect dataDir with
+                | RepairRequired _ when live ->
+                    System.Threading.Thread.Sleep 200
+                    Replay.inspect dataDir
+                | other -> other
+            match inspected with
             | Healthy outcome ->
                 let missingCheck, orphanCheck = checkAttachments dataDir outcome
                 d.attachmentsMissing <- []
@@ -269,6 +282,26 @@ module Doctor =
         elif not (d.checks |> List.exists (fun c -> c.name = "config")) then
             d.checks <- d.checks @ [ { name = "config"; ok = true; detail = "ok" } ]
         d
+
+    /// 命令行 doctor：独占数据目录前提下的完整诊断。
+    let run (configPath: string, dataDir: string) : Diagnosis = runWith false (configPath, dataDir)
+
+    /// 主机进程内的只读诊断（「检查主机」）。
+    let runLive (configPath: string, dataDir: string) : Diagnosis = runWith true (configPath, dataDir)
+
+    let isHealthy (d: Diagnosis) : bool = d.checks |> List.forall _.ok
+
+    /// 报告序列化（只增报告，不改检查本身）：[{name, ok, detail}]。detail 经 `redact` 处理，
+    /// 调用方传入 Stderr.redact，保证已注册的密钥值不会随报告离开主机。
+    let toChecksJson (redact: string -> string) (d: Diagnosis) : System.Text.Json.Nodes.JsonArray =
+        let arr = System.Text.Json.Nodes.JsonArray()
+        for c in d.checks do
+            let o = System.Text.Json.Nodes.JsonObject()
+            o["name"] <- c.name
+            o["ok"] <- c.ok
+            o["detail"] <- redact c.detail
+            arr.Add o
+        arr
 
     let print (d: Diagnosis) : unit =
         let mutable ok = true

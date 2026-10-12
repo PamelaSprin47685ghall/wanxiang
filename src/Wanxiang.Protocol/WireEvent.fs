@@ -99,6 +99,13 @@ type WireEvent =
     // ---- 配置与系统 ----
     | ConfigChanged of {| reason: string |}
     | ServerError of {| message: string |}
+    // ---- 主机状态（W5，决策 82/83；只读、只存内存、不入日志）----
+    /// 主机拒绝了一份外部/自身写入的配置并继续使用上一份有效配置。summary 与 errors 已脱敏、已截断。
+    | HostConfigRejected of {| summary: string; errors: string list |}
+    /// 「检查主机」请求（纯读）。
+    | DoctorRequest of {| requestId: Guid |}
+    /// doctor 只读诊断结果；checks 每项 {name, ok, detail}。
+    | DoctorReport of {| requestId: Guid; ok: bool; checks: JsonArray |}
     | Ping
     | Pong
 
@@ -160,5 +167,8 @@ module WireEvent =
         | ConfigApplied _ -> "config.applied"
         | ConfigChanged _ -> "config.changed"
         | ServerError _ -> "server.error"
+        | HostConfigRejected _ -> "config.rejected"
+        | DoctorRequest _ -> "doctor.request"
+        | DoctorReport _ -> "doctor.report"
         | Ping -> "protocol.ping"
         | Pong -> "protocol.pong"

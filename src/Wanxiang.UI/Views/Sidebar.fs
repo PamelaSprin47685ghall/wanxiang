@@ -1141,6 +1141,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             showArchived <- value
             this.Rebuild()
 
+    /// 当前主机状态行文字（测试与无障碍回归读取）。
+    member _.ConnectionText = statusText.Text
+
     member this.SetConnection(isConnected: bool, text: string) =
         connected <- isConnected
         // 连接状态翻转（含断连清空列表的既有路径）时，任何在途的列表加载都已失效：

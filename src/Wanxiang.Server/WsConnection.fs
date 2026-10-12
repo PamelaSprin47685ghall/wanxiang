@@ -77,6 +77,15 @@ type WsConnection(
     /// 耗尽后退出 catch-up 模式恢复实时推送，避免无限重试与悬挂连接）。
     let maxCatchUpRetries = 10
 
+    /// 主机状态（配置拒绝、检查主机）由 ServerApp 在构造后注入；缺省时这些只读能力静默不可用。
+    member val HostStatus: HostStatus option = None with get, set
+
+    /// 认证完成后补发主机当前的可见状态：断线期间发生的配置拒绝，重连后也要看得到。
+    member private this.AnnounceHostStatus() : unit =
+        match this.HostStatus |> Option.bind _.Current with
+        | Some ev -> this.TrySend ev |> ignore
+        | None -> ()
+
     member _.TrySend(ev: WireEvent) : bool =
         let ok = sendChannel.Writer.TryWrite ev
         ok
@@ -401,6 +410,7 @@ type WsConnection(
                             tokenHash <- Some(Auth.hashToken d.token))
                         let cfg = getConfig ()
                         this.TrySend(AuthAccepted {| instanceId = cfg.instanceId.ToString("D") |}) |> ignore
+                        this.AnnounceHostStatus()
                         // 决策 54：最近连接时间挂在该哈希记录下；认证成功后更新（节流：1 分钟内不重复写盘）
                         let now = DateTimeOffset.UtcNow
                         let stale =
@@ -460,6 +470,7 @@ type WsConnection(
                                     this.TrySend(PairingSucceeded {| token = token |}) |> ignore
                                     let serverCfg = getConfig ()
                                     this.TrySend(AuthAccepted {| instanceId = serverCfg.instanceId.ToString("D") |}) |> ignore
+                                    this.AnnounceHostStatus()
                                 | Error e ->
                                     this.TrySend(PairingFailed {| reason = e; frozen = false; freezeMinutes = 0 |}) |> ignore
                             | Error e ->
@@ -665,6 +676,19 @@ type WsConnection(
                                 |> ignore
                         }
                         |> this.Detach
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
+            | DoctorRequest d ->
+                // 纯读：不改任何状态；未认证的连接按协议违规处理，与其他业务事件一致。
+                match handshakeState with
+                | Authenticated ->
+                    match this.HostStatus with
+                    | Some status ->
+                        task {
+                            let! report = status.RunDoctor(d.requestId, Stderr.redact)
+                            this.TrySend report |> ignore
+                        }
+                        |> this.Detach
+                    | None -> ()
                 | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | ConfigUpsertProvider d -> do! this.ApplyConfig(d.requestId, ConfigMutation.upsertProvider, d.provider)
             | ConfigUpsertMcp d -> do! this.ApplyConfig(d.requestId, ConfigMutation.upsertMcp, d.server)

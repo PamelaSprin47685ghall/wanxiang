@@ -23,6 +23,18 @@ public static partial class BrowserBridge
     [JSImport("credDelete", "wanxiang")]
     public static partial Task CredDelete(string instanceId);
 
+    /// <summary>本地草稿快照（IndexedDB 单条记录，JSON 字符串；无则空串）。W5：只存本机，不上传。</summary>
+    [JSImport("draftGet", "wanxiang")]
+    public static partial Task<string> DraftGet();
+
+    /// <summary>保存本地草稿快照。</summary>
+    [JSImport("draftPut", "wanxiang")]
+    public static partial Task DraftPut(string json);
+
+    /// <summary>删除本地草稿快照。</summary>
+    [JSImport("draftDelete", "wanxiang")]
+    public static partial Task DraftDelete();
+
     /// <summary>当前页面 URL（用于推导同源 ws(s) 连接地址）。</summary>
     [JSImport("pageUrl", "wanxiang")]
     public static partial string PageUrl();

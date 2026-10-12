@@ -50,6 +50,9 @@ type UiPrefs = {
     reduceMotion: bool
     /// 发送键：true = Enter 发送，false = Ctrl+Enter 发送
     enterSends: bool
+    /// 在本机保存未发送的草稿与未确认的消息，重新打开后恢复（W5，决策 80）。
+    /// 默认开启；只存本机、不上传、不同步；关闭后立即删除已存草稿。
+    persistDrafts: bool
     /// 窗口几何（桌面端）
     windowWidth: float
     windowHeight: float
@@ -73,6 +76,7 @@ module UiPrefs =
           showArchived = false
           reduceMotion = false
           enterSends = true
+          persistDrafts = true
           windowWidth = 1240.0
           windowHeight = 800.0
           windowX = 0
@@ -140,6 +144,7 @@ module UiPrefs =
               showArchived = boolOf "showArchived" defaults.showArchived
               reduceMotion = boolOf "reduceMotion" defaults.reduceMotion
               enterSends = boolOf "enterSends" defaults.enterSends
+              persistDrafts = boolOf "persistDrafts" defaults.persistDrafts
               // 桌面最小宽与主窗口下限同源（C7）：LayoutPolicy.desktopMinWidth 是唯一事实来源。
               windowWidth = floatOf "windowWidth" defaults.windowWidth |> clamp LayoutPolicy.desktopMinWidth 6000.0
               windowHeight = floatOf "windowHeight" defaults.windowHeight |> clamp 600.0 4000.0
@@ -163,6 +168,7 @@ module UiPrefs =
             o["showArchived"] <- prefs.showArchived
             o["reduceMotion"] <- prefs.reduceMotion
             o["enterSends"] <- prefs.enterSends
+            o["persistDrafts"] <- prefs.persistDrafts
             o["windowWidth"] <- prefs.windowWidth
             o["windowHeight"] <- prefs.windowHeight
             o["windowX"] <- prefs.windowX

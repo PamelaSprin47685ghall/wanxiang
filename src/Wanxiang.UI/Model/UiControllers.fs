@@ -103,6 +103,14 @@ type PendingAttachment = {
     failed: bool
 }
 
+/// 重新打开后从本地草稿恢复出来的附件引用（W5，决策 81）：客户端无法确认文件仍在，
+/// 只保留名称与大小，必须由用户重新选择；同样占一条 chip、阻塞发送、可移除。
+/// 用独立登记而不是给 PendingAttachment 加字段：记录形状是既有契约，加字段会让所有构造点同时破坏。
+module RestoredAttachments =
+    let private ids = System.Collections.Concurrent.ConcurrentDictionary<Guid, unit>()
+    let mark (attachmentId: Guid) = ids[attachmentId] <- ()
+    let isRestored (attachmentId: Guid) = ids.ContainsKey attachmentId
+
 /// 附件传输所需元数据。协议层完成/失败事件通过 attachmentId 回来。
 type AttachmentUpload = {
     attachmentId: Guid
@@ -142,6 +150,12 @@ type AttachmentDraftController() =
     /// 用户从草稿中移除后，底层上传可以自然完成，但不会再重新出现在 Composer。
     member _.Remove(attachmentId: Guid) =
         items <- items |> List.filter (fun item -> item.attachmentId <> attachmentId)
+        items
+
+    /// 恢复本地草稿里的附件引用：以「需重新选择」的失败残留呈现，不假装文件还在（W5）。
+    member _.RestoreReferences(refs: PendingAttachment list) =
+        let known = items |> List.map _.attachmentId |> Set.ofList
+        items <- items @ (refs |> List.filter (fun r -> not (known.Contains r.attachmentId)))
         items
 
     /// 返回上传元数据，以及完成时这条附件是否仍在用户草稿里。
@@ -298,6 +312,13 @@ type ComposerDrafts() =
 
     member _.All = items |> Map.toSeq |> Seq.map snd
 
+    /// 带键枚举，供本地草稿落盘（W5）。
+    member _.Entries = items |> Map.toSeq
+
+    /// 删除一份草稿（对话被删除、或用户清除本地草稿时）。
+    member _.Remove(instanceId: string, conversationId: Guid option) =
+        items <- items.Remove((instanceId, conversationId))
+
 type DeliveryState =
     | PreparingConversation
     | SendingMessage
@@ -334,6 +355,8 @@ module PendingMessage =
 type MessageOutbox() =
     let mutable items: Map<Guid, PendingMessage> = Map.empty
 
+    member _.AllInstances() = items |> Map.toList |> List.map (fun (_, i) -> i.instanceId) |> List.distinct
+
     member _.ForInstance(instanceId: string) =
         items |> Map.toList |> List.map snd |> List.filter (fun item -> item.instanceId = instanceId)
 
@@ -344,7 +367,7 @@ type MessageOutbox() =
     member _.TryFind(id: Guid) = items.TryFind id
     member _.Count = items.Count
 
-    member _.Stage(instanceId: string, conversationId: Guid, text: string, attachments: PendingAttachment list, creation: ClientCommand option) =
+    static member private BuildMessage(text: string, attachments: PendingAttachment list) =
         let contents = JsonArray()
         if not (String.IsNullOrWhiteSpace text) then
             let node = JsonObject()
@@ -361,6 +384,10 @@ type MessageOutbox() =
         let message = JsonObject()
         message["role"] <- "user"
         message["contents"] <- contents
+        message
+
+    member _.Stage(instanceId: string, conversationId: Guid, text: string, attachments: PendingAttachment list, creation: ClientCommand option) =
+        let message = MessageOutbox.BuildMessage(text, attachments)
         let id = Guid.CreateVersion7()
         let item =
             { instanceId = instanceId; conversationId = conversationId
@@ -371,6 +398,34 @@ type MessageOutbox() =
               lastAttemptAt = DateTimeOffset.UtcNow }
         items <- items.Add(id, item)
         item
+
+    /// 重新打开后从本地恢复一条未确认的发送（W5，决策 80）：沿用**原 invocationId** 与原附件引用，
+    /// 重试时服务端按幂等核对，不会重复保存；状态恒为「未确认」，由用户显式点重试——
+    /// 服务端从不把排队当事实（原则 2），客户端也不自动重发（原则 5）。
+    /// 只恢复会话已确认创建的消息；已在 outbox 的同 id 条目不被覆盖。
+    member _.Restore(instanceId: string, conversationId: Guid, invocationId: Guid, text: string, attachments: PendingAttachment list, reason: string) =
+        if items.ContainsKey invocationId then
+            items.[invocationId]
+        else
+            let message = MessageOutbox.BuildMessage(text, attachments)
+            let item =
+                { instanceId = instanceId; conversationId = conversationId
+                  command = SendUserMessage {| invocationId = invocationId; conversationId = conversationId; messageJson = message |}
+                  creation = None; creationConfirmed = true
+                  text = text; attachments = attachments
+                  state = UnconfirmedMessage reason
+                  lastAttemptAt = DateTimeOffset.UtcNow }
+            items <- items.Add(invocationId, item)
+            item
+
+    /// 对话被删除：它名下的未发送消息已无处可发（本地丢弃，服务端从未知道它们）。
+    member _.DiscardConversation(instanceId: string, conversationId: Guid) =
+        items <- items |> Map.filter (fun _ item -> not (item.instanceId = instanceId && item.conversationId = conversationId))
+
+    /// 清除本地草稿时一并丢弃本实例所有未确认的发送（仅限「未确认/被拒」，进行中的不动）。
+    member _.DiscardUnsent(instanceId: string) =
+        items <- items |> Map.filter (fun _ item ->
+            not (item.instanceId = instanceId && PendingMessage.canRetry item))
 
     member _.SetState(id: Guid, state: DeliveryState) =
         items <- items |> Map.change id (Option.map (fun item ->
