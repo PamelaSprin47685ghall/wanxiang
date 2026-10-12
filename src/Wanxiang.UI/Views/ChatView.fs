@@ -639,7 +639,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                       MenuEntry.create "重命名" (fun () -> this.BeginTitleEdit()) |> MenuEntry.withIcon Icons.pencil
                   MenuEntry.create "对话上下文" actions.openSessionSettings |> MenuEntry.withIcon Icons.sliders
                   MenuEntry.create "从当前分叉" actions.forkFromHere |> MenuEntry.withIcon Icons.fork
-                  MenuEntry.create "导出为 Markdown" exportConversation |> MenuEntry.withIcon Icons.download ]
+                  MenuEntry.create "导出（Markdown / JSON）…" exportConversation |> MenuEntry.withIcon Icons.download ]
             let reading =
                 [ if canJumpPrevious then
                       MenuEntry.create "上一条提问" (fun () -> this.JumpExchange -1) |> MenuEntry.withIcon Icons.chevronsUp

@@ -1,6 +1,7 @@
 namespace Wanxiang.Core
 
 open System
+open System.Text.Json.Nodes
 
 /// 命令执行规划：一次命令 -> 事件列表 + 幂等信息 + 涉及投影水位。
 type CommandPlan = {
@@ -97,6 +98,42 @@ module CommandEngine =
                             { conversationId = d.conversationId
                               title = d.title.Trim()
                               config = d.config } ]
+                | r -> r
+
+        | ImportConversation d ->
+            // 决策 313：导入 = 新建 + 逐条记录；载荷只收 role 合法的消息对象，条数有上限。
+            let validRoles = set [ "user"; "assistant"; "tool"; "system" ]
+            let messageOk (n: JsonNode) =
+                match n with
+                | :? JsonObject as o ->
+                    match o["role"] with
+                    | :? JsonValue as v ->
+                        match v.TryGetValue<string>() with
+                        | true, r -> validRoles.Contains r
+                        | _ -> false
+                    | _ -> false
+                | _ -> false
+            if not (SessionConfig.isValid d.config) then
+                Rejected(ValidationError "invalid session config")
+            elif Projection.tryConversation proj d.conversationId |> Option.isSome then
+                Rejected(ConversationIdTaken d.conversationId)
+            elif isNull d.messages || d.messages.Count = 0 then
+                Rejected(ValidationError "import has no messages")
+            elif d.messages.Count > ImportLimits.maxMessages then
+                Rejected(ValidationError (sprintf "import exceeds %d messages" ImportLimits.maxMessages))
+            elif not (d.messages |> Seq.forall messageOk) then
+                Rejected(ValidationError "import contains an invalid message")
+            else
+                match checkStale clientCursor proj.latestCommitId commandId ctype canonicalHash with
+                | Planned p ->
+                    plannedWith
+                        p
+                        (ConversationCreated
+                            { conversationId = d.conversationId
+                              title = d.title.Trim()
+                              config = d.config }
+                         :: [ for m in d.messages ->
+                                AgentMessageRecorded { conversationId = d.conversationId; payloadJson = m.DeepClone() } ])
                 | r -> r
 
         | ForkConversation d ->

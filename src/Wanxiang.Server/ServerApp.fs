@@ -200,6 +200,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                             | _ -> { cfg with provider = p.id; model = ProviderConfig.resolveModel cfg.model p }
                 match cmd with
                 | CreateConversation d -> CreateConversation {| d with config = fill d.config |}
+                | ImportConversation d -> ImportConversation {| d with config = fill d.config |}
                 // UpdateConversationConfig：仅当客户端 config 无效/为空时注入 TOML 默认 provider；
                 // 显式有效的 config（含用户选定 provider/model）绝不改写（决策 86 完整快照语义）
                 | UpdateConversationConfig d -> UpdateConversationConfig {| d with config = fill d.config |}

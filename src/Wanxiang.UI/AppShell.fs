@@ -113,6 +113,7 @@ type MainView() as this =
     let commandFeedback = CommandFeedbackTracker()
     let configFeedback = ConfigFeedbackTracker()
     let mutable exportDialog: ConversationExportDialog option = None
+    let mutable importDialog: ConversationImportDialog option = None
 
     let toast message tone = overlay.Toast(message, tone)
     let topLevel () = TopLevel.GetTopLevel this
@@ -1337,6 +1338,43 @@ type MainView() as this =
             }
             |> Async.Start
 
+    /// 决策 313：导入对话。未连接时不打开（导入要写到主机上）。
+    member private this.ImportConversation() =
+        if not authenticated then toast "连接主机后才能导入对话。" Warning
+        elif importDialog |> Option.exists (fun d -> d.IsOpen) then ()
+        else
+            let ownerInstance = instanceId
+            let dialog =
+                ConversationImportDialog(
+                    overlay,
+                    topLevel,
+                    fun preview onDone ->
+                        if not authenticated || instanceId <> ownerInstance then onDone false
+                        else
+                            let conversationId = Guid.CreateVersion7()
+                            let config =
+                                match this.MakeConversationCommand conversationId with
+                                | CreateConversation d -> d.config
+                                | _ -> SessionConfig.empty
+                            let messages = System.Text.Json.Nodes.JsonArray()
+                            for m in preview.messages do messages.Add(m.DeepClone())
+                            let cmd =
+                                ImportConversation
+                                    {| invocationId = newInvocation ()
+                                       conversationId = conversationId
+                                       title = ConversationTransfer.importedTitle preview.title
+                                       config = config
+                                       messages = messages |}
+                            sendCommandWithCompletion
+                                cmd
+                                (Some(sprintf "已导入「%s」，共 %d 条消息" preview.title preview.messages.Length))
+                                (fun () ->
+                                    this.OpenConversation conversationId
+                                    send (ObserveConversation {| conversationId = conversationId |}))
+                                onDone)
+            importDialog <- Some dialog
+            dialog.Show()
+
     member private this.ExportConversation(summary: ConversationSummary) =
         if not authenticated then toast "连接主机后才能读取完整历史。" Warning
         elif exportDialog |> Option.exists (fun dialog -> dialog.IsOpen) then ()
@@ -1349,7 +1387,8 @@ type MainView() as this =
                         if authenticated && instanceId = ownerInstance then
                             client.TrySendAtGenerationAsync(client.ConnectionGeneration, ConversationExportRead query)
                         else System.Threading.Tasks.Task.FromResult false),
-                    topLevel)
+                    topLevel,
+                    ConversationTransfer.lineageOf summaries lineage summary.id)
             exportDialog <- Some dialog
             dialog.Show()
 
@@ -2031,9 +2070,12 @@ type MainView() as this =
             pageLoading <- false
             pageRequestedAt <- None
             chat.CancelHistoryPrependAnchor()
-            chat.ShowOlderPageFailure(message, fun () ->
-                if authenticated then this.RequestOlderHistory()
-                else this.FailOlderPage "还没有连接主机，更早的消息无法加载。连接后再点「重试」。")
+            this.ShowOlderPageRetry message
+
+    member private this.ShowOlderPageRetry(message: string) =
+        chat.ShowOlderPageFailure(message, fun () ->
+            if authenticated then this.RequestOlderHistory()
+            else this.ShowOlderPageRetry "还没有连接主机，更早的消息无法加载。连接后再点「重试」。")
 
     /// 超时检查：只在有请求在途时有事做；tick 本身很轻，不必频繁启停。
     member private this.CheckOlderPageTimeout(now: DateTimeOffset) =
@@ -2198,6 +2240,7 @@ type MainView() as this =
                     | None -> toast "无法识别这个链接。" Warning))
         this.BuildComposer()
         overlay.SetToastFocusHome(fun () -> composer.Focus())
+        sidebar.ConfigureImport(fun () -> this.ImportConversation())
         this.BuildSettings()
         this.BuildOnboarding()
 

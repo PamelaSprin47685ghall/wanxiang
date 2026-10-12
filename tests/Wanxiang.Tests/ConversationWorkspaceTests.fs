@@ -291,7 +291,7 @@ let ``compact conversation menu keeps fork export and reading actions reachable`
             Assert.True((named root "从当前分叉").IsEffectivelyVisible)
             Assert.True((named root "对话上下文").IsEffectivelyVisible)
             Assert.True((named root "回到对话开头").IsEffectivelyVisible)
-            press (named root "导出为 Markdown")
+            press (named root "导出（Markdown / JSON）…")
             Assert.Equal(1, exports)
             Assert.True(trigger.IsEffectivelyVisible)
         finally window.Close())

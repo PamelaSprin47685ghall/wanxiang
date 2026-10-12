@@ -443,6 +443,11 @@ module WireCodec =
         | ContinueResponse d ->
             putGuid p "threadId" d.conversationId
             p["message"] <- d.messageJson.DeepClone()
+        | ImportConversation d ->
+            putGuid p "threadId" d.conversationId
+            p["title"] <- d.title
+            p["config"] <- CommitCodec.configToJson d.config
+            p["messages"] <- d.messages.DeepClone()
         o["payload"] <- p
         o.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping))
 
@@ -576,6 +581,20 @@ module WireCodec =
                         | Some _, Some _, _ -> Error "chat.continue: missing message"
                         | _ -> Error "chat.continue: missing invocationId/threadId"
                     | _ -> Error "chat.continue: missing payload"
+                | Some "conversation.import" ->
+                    match tryGet o "payload" with
+                    | Some (:? JsonObject as p) ->
+                        match tryGuid p "invocationId", tryGuid p "threadId", tryGet p "messages" with
+                        | Some inv, Some cid, Some (:? JsonArray as msgs) ->
+                            let title = tryString p "title" |> Option.defaultValue ""
+                            let cfg =
+                                match tryGet p "config" with
+                                | Some (:? JsonObject as c) -> CommitCodec.configFromJson c
+                                | _ -> SessionConfig.empty
+                            Ok(ImportConversation {| invocationId = inv; conversationId = cid; title = title; config = cfg; messages = msgs.DeepClone().AsArray() |})
+                        | Some _, Some _, _ -> Error "conversation.import: missing messages"
+                        | _ -> Error "conversation.import: missing invocationId/threadId"
+                    | _ -> Error "conversation.import: missing payload"
                 | _ -> Error notACommandError
             | _ -> Error "not a JSON object"
         with e ->

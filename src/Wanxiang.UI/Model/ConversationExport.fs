@@ -17,6 +17,8 @@ type ConversationExportDocument = {
     title: string
     atCommitId: CommitId
     messages: MessageView list
+    /// 决策 312：原始提交（commitId / committedAt / payload），供 JSON 导出原样落盘。
+    raw: JsonObject list
 }
 
 /// 单次导出的内存状态。所有页验证完整后才允许取出文档，失败／取消立即释放不完整数据，不保存不完整文件。
@@ -25,6 +27,7 @@ type ConversationExportController(conversationId: Guid, ?maxBytes: int64) =
     let mutable query: ConversationExportQuery option = None
     let mutable status: ConversationExportStatus = ExportIdle
     let mutable pages: MessageView list list = []
+    let mutable rawPages: JsonObject list list = []
     let mutable received = 0
     let mutable total: int option = None
     let mutable bytes = 0L
@@ -36,6 +39,7 @@ type ConversationExportController(conversationId: Guid, ?maxBytes: int64) =
     let clear () =
         query <- None
         pages <- []
+        rawPages <- []
         document <- None
 
     let fail message =
@@ -116,6 +120,7 @@ type ConversationExportController(conversationId: Guid, ?maxBytes: int64) =
                     total <- Some page.totalMessages
                 received <- count
                 pages <- parsed :: pages
+                rawPages <- (page.items |> Seq.map (fun item -> item.DeepClone().AsObject()) |> List.ofSeq) :: rawPages
                 lastActivity <- DateTimeOffset.UtcNow
                 if page.hasMore then
                     let next = { expected with atCommitId = Some atCommitId; beforeCommitId = ids.Head }
@@ -123,8 +128,9 @@ type ConversationExportController(conversationId: Guid, ?maxBytes: int64) =
                     status <- ExportReading(received, total)
                     Some next
                 else
-                    document <- Some { title = title; atCommitId = atCommitId; messages = pages |> List.collect id }
+                    document <- Some { title = title; atCommitId = atCommitId; messages = pages |> List.collect id; raw = rawPages |> List.collect id }
                     pages <- []
+                    rawPages <- []
                     query <- None
                     status <- ExportReady received
                     None

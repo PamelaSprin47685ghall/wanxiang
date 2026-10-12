@@ -184,6 +184,9 @@ module Icons =
     /// 下载
     let download : IBrush -> Control = glyph PackIconLucideKind.Download
 
+    /// 导入（决策 313）
+    let upload : IBrush -> Control = glyph PackIconLucideKind.Upload
+
     /// 错误
     let alert : IBrush -> Control = glyph PackIconLucideKind.CircleAlert
 

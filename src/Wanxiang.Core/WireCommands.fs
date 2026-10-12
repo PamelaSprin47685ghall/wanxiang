@@ -3,6 +3,10 @@ namespace Wanxiang.Core
 open System
 open System.Text.Json.Nodes
 
+/// 导入上限（决策 313）：单次导入的消息条数。
+module ImportLimits =
+    let maxMessages = 5000
+
 /// 客户端写命令（fire-and-forget 事件 payload 的解码结果）。
 /// 所有命令由客户端预生成 invocationId（UUIDv7）；网络重试必须复用。
 type ClientCommand =
@@ -18,6 +22,8 @@ type ClientCommand =
     | RegenerateResponse of {| invocationId: Guid; conversationId: Guid |}
     /// 继续生成（决策 230）：把中途失败留下的半截助手回复落盘，再从它接着生成。
     | ContinueResponse of {| invocationId: Guid; conversationId: Guid; messageJson: JsonNode |}
+    /// 导入（决策 313）：用导出的 JSON 新建一个对话并按序记录消息；不触发生成、不恢复分叉关系。
+    | ImportConversation of {| invocationId: Guid; conversationId: Guid; title: string; config: SessionConfig; messages: JsonArray |}
 
 module ClientCommand =
 
@@ -33,6 +39,7 @@ module ClientCommand =
         | SetConversationFlags _ -> "conversation.flags-set"
         | RegenerateResponse _ -> "chat.regenerate"
         | ContinueResponse _ -> "chat.continue"
+        | ImportConversation _ -> "conversation.import"
 
     let invocationId (cmd: ClientCommand) : Guid =
         match cmd with
@@ -46,6 +53,7 @@ module ClientCommand =
         | SetConversationFlags d -> d.invocationId
         | RegenerateResponse d -> d.invocationId
         | ContinueResponse d -> d.invocationId
+        | ImportConversation d -> d.invocationId
 
     /// 命令针对的会话（写权限水位与广播目标）。
     let conversationId (cmd: ClientCommand) : Guid =
@@ -60,6 +68,7 @@ module ClientCommand =
         | SetConversationFlags d -> d.conversationId
         | RegenerateResponse d -> d.conversationId
         | ContinueResponse d -> d.conversationId
+        | ImportConversation d -> d.conversationId
 
     /// 规范化业务载荷（不含传输元数据），用于 commandId 计算。
     let canonicalPayload (cmd: ClientCommand) : string =
@@ -98,6 +107,11 @@ module ClientCommand =
         | ContinueResponse d ->
             o["conversationId"] <- d.conversationId.ToString("D")
             o["message"] <- d.messageJson.DeepClone()
+        | ImportConversation d ->
+            o["conversationId"] <- d.conversationId.ToString("D")
+            o["title"] <- d.title
+            o["config"] <- Wanxiang.Core.CommitCodec.configToJson d.config
+            o["messages"] <- d.messages.DeepClone()
         // RFC 8785 JCS 规范化。载荷不含裸大整数（commitId 一律字符串承载）——
         // JCS 会把超出 double 精度的整数按 double 改写（附录 D），此约束由 CodecTests 钉住。
         Wanxiang.Core.Ledger.Jcs.canonicalize (o.ToJsonString())
