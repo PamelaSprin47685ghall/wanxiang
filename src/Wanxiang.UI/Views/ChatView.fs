@@ -1445,7 +1445,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let offset = scroller.Offset.Y
             // 用户手动向上滚动（或滚轮/触控向上拉），立即打断平滑自动滚动，不与用户手势冲突
             let fromAnimation = abs (offset - lastAnimatedOffset) < 1.0
-            if e.OffsetDelta.Y < -0.1 then
+            if e.OffsetDelta.Y < -0.1 && not fromAnimation then
                 returningToLatest <- false
                 smoothScrollTimer |> Option.iter (fun t -> t.Stop())
                 smoothScrollTimer <- None
