@@ -208,8 +208,8 @@ module AppShellTests =
             let prefs: UiPrefs = getField view "prefs"
             invokeMethod<unit> view "SavePrefs" [| box { prefs with sidebarCollapsed = true } |]
 
-            // Ctrl+K 触发搜索 (ShortcutRouter.resolve: Ctrl+K)
-            let keyEvent = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.K, KeyModifiers = KeyModifiers.Control)
+            // Ctrl+Shift+F 触发侧栏搜索（决策 372：Ctrl+K 归命令面板）
+            let keyEvent = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.F, KeyModifiers = (KeyModifiers.Control ||| KeyModifiers.Shift))
             view.HandleShortcut keyEvent
             Assert.True(keyEvent.Handled)
 
