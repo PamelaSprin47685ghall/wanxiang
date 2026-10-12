@@ -156,6 +156,18 @@ type WireEvent =
     | DoctorReport of {| requestId: Guid; ok: bool; checks: JsonArray |}
     | Ping
     | Pong
+    // ---- 设备与配对邀请（W2，仅追加；旧端忽略这些 wanxiang.dev/* 事件）----
+    /// 已认证的桌面本机客户端 → 主机：请求一个配对邀请码。
+    | PairingInvite
+    /// 主机 → 发起者：邀请码与到期时间。码只在内存，不入日志。
+    | PairingInviteIssued of {| code: string; expiresAtUtc: DateTimeOffset; expiresInSeconds: int |}
+    /// 主机 → 发起者：邀请被拒绝。reason：`not-desktop` | `frozen`。
+    | PairingInviteRejected of {| reason: string |}
+    | DevicesRequest
+    /// 设备列表快照。`canInvite` 表示当前连接是否有权发配对邀请。
+    | DevicesSnapshot of {| items: JsonArray; canInvite: bool |}
+    | DeviceRename of {| requestId: Guid; deviceId: string; name: string |}
+    | DeviceRevoke of {| requestId: Guid; deviceId: string |}
 
 module WireEvent =
 
@@ -223,3 +235,10 @@ module WireEvent =
         | DoctorReport _ -> "doctor.report"
         | Ping -> "protocol.ping"
         | Pong -> "protocol.pong"
+        | PairingInvite -> "pairing.invite"
+        | PairingInviteIssued _ -> "pairing.invite-issued"
+        | PairingInviteRejected _ -> "pairing.invite-rejected"
+        | DevicesRequest -> "devices.request"
+        | DevicesSnapshot _ -> "devices.snapshot"
+        | DeviceRename _ -> "device.rename"
+        | DeviceRevoke _ -> "device.revoke"

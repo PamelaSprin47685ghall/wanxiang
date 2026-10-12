@@ -30,6 +30,11 @@ type HandshakeState =
     | NotStarted
     | Authenticated
 
+/// 设备管理动作（重命名 / 吊销）。
+type DeviceChange =
+    | Rename of string
+    | Revoke
+
 /// 连接状态与处理循环。
 /// 遵循：
 /// - fire-and-forget 对称事件协议（决策 25）；
@@ -53,6 +58,8 @@ type WsConnection(
     pairing: Auth.PairingState,
     failureTracker: Auth.FailureTracker,
     logPairingCode: string -> unit,
+    /// 当前已认证连接的令牌哈希（设备列表的“在线”状态；运行时状态，不落盘）。
+    onlineTokenHashes: unit -> string list,
     logInfo: string -> unit) =
 
     let channelOptions = BoundedChannelOptions(2048, FullMode = BoundedChannelFullMode.Wait)
@@ -435,14 +442,21 @@ type WsConnection(
                             this.TrySend(PairingFailed {| reason = "too many failed attempts; frozen"; frozen = true; freezeMinutes = cfg.pairingFreezeMinutes |}) |> ignore
                         else
                             pairingRequested <- true
-                            let code = pairing.Start(now, TimeSpan.FromMinutes 5.0)
-                            logPairingCode code
-                            this.TrySend(PairingStarted {| expiresInSeconds = 300 |}) |> ignore
+                            match pairing.ActiveInvite now with
+                            | Some expires ->
+                                // 桌面客户端已发出仍有效的邀请：沿用该码，不另生成、不覆盖、不打 stderr。
+                                let remaining = max 1 (int (Math.Ceiling (expires - now).TotalSeconds))
+                                this.TrySend(PairingStarted {| expiresInSeconds = remaining |}) |> ignore
+                            | None ->
+                                let code = pairing.Start(now, TimeSpan.FromMinutes 5.0)
+                                logPairingCode code
+                                this.TrySend(PairingStarted {| expiresInSeconds = 300 |}) |> ignore
             | PairingAttempted d ->
                 match handshakeState with
                 | Authenticated -> ()
                 | NotStarted ->
-                    if pairingRequested then
+                    // 邀请码可以直接提交（扫码/手输的设备不必先请求配对，否则会覆盖邀请码）。
+                    if pairingRequested || pairing.HasInviteSession then
                         let now = DateTimeOffset.UtcNow
                         if failureTracker.IsFrozen(now, remoteAddress) then
                             let cfg = getConfig ()
@@ -453,7 +467,8 @@ type WsConnection(
                                 // 决策 56：先持久化令牌哈希到 TOML 并 reload 成功，再下发令牌原文
                                 let token = Auth.generateToken ()
                                 let hash = Auth.hashToken token
-                                let name = d.clientName |> Option.defaultValue (sprintf "client-%s" remoteAddress)
+                                // 保留名（本机桌面）不得经配对码获得，否则远端可冒充桌面客户端
+                                let name = Auth.sanitizeClientName d.clientName (sprintf "client-%s" remoteAddress)
                                 // 原子读-改-写（决策 46/59）：并发配对/吊销不互相覆盖
                                 match updateConfig (fun cfg ->
                                     { cfg with
@@ -723,8 +738,102 @@ type WsConnection(
                 do! this.ApplyConfigWith(d.requestId, fun cfg -> ConfigMutation.deleteProvider cfg d.providerId)
             | ConfigDeleteMcp d ->
                 do! this.ApplyConfigWith(d.requestId, fun cfg -> ConfigMutation.deleteMcp cfg d.serverId)
+            | PairingInvite ->
+                match handshakeState with
+                | Authenticated ->
+                    let cfg = getConfig ()
+                    let record =
+                        lock cursorLock (fun () -> tokenHash)
+                        |> Option.bind (fun h -> cfg.authClients |> List.tryFind (fun c -> c.tokenHash = h))
+                    if Auth.isDesktopClient record remoteAddress then
+                        let now = DateTimeOffset.UtcNow
+                        let code, expires = pairing.StartInvite(now, TimeSpan.FromMinutes 5.0)
+                        // 邀请码只在内存与本条出站事件里：不写日志、不写 stderr。
+                        this.TrySend(PairingInviteIssued {| code = code; expiresAtUtc = expires; expiresInSeconds = 300 |}) |> ignore
+                    else
+                        this.TrySend(PairingInviteRejected {| reason = "not-desktop" |}) |> ignore
+                | NotStarted ->
+                    // 未认证连接发邀请：计入配对失败限流，并告知拒绝后关闭。
+                    failureTracker.RecordFailure(DateTimeOffset.UtcNow, remoteAddress) |> ignore
+                    do! this.SendAndClose(PairingInviteRejected {| reason = "not-authenticated" |}, "not authenticated")
+            | DevicesRequest ->
+                match handshakeState with
+                | Authenticated -> this.SendDevices()
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
+            | DeviceRename d ->
+                match handshakeState with
+                | Authenticated -> this.ChangeDevice(d.requestId, d.deviceId, DeviceChange.Rename d.name)
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
+            | DeviceRevoke d ->
+                match handshakeState with
+                | Authenticated -> this.ChangeDevice(d.requestId, d.deviceId, DeviceChange.Revoke)
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | _ -> ()
         }
+
+    /// 当前连接对应的令牌记录。
+    member private _.CurrentClientRecord() : ClientAuthRecord option =
+        let cfg = getConfig ()
+        lock cursorLock (fun () -> tokenHash)
+        |> Option.bind (fun h -> cfg.authClients |> List.tryFind (fun c -> c.tokenHash = h))
+
+    /// 下发设备列表（含运行时在线状态；令牌哈希不出主机，只给截断的稳定 id）。
+    member private this.SendDevices() : unit =
+        let cfg = getConfig ()
+        let online = onlineTokenHashes () |> Set.ofList
+        let me = lock cursorLock (fun () -> tokenHash)
+        let items = JsonArray()
+        for c in cfg.authClients do
+            let o = JsonObject()
+            o["id"] <- Auth.deviceId c.tokenHash
+            o["name"] <- c.name
+            o["createdAt"] <- c.createdAtUtc.UtcDateTime.ToString("o", Globalization.CultureInfo.InvariantCulture)
+            match c.lastSeenUtc with
+            | Some t -> o["lastSeen"] <- t.UtcDateTime.ToString("o", Globalization.CultureInfo.InvariantCulture)
+            | None -> ()
+            o["revoked"] <- c.revoked
+            o["online"] <- (not c.revoked && online.Contains c.tokenHash)
+            o["current"] <- (me = Some c.tokenHash)
+            o["desktop"] <- Auth.isReservedClientName c.name
+            items.Add o
+        let canInvite = Auth.isDesktopClient (this.CurrentClientRecord()) remoteAddress
+        this.TrySend(DevicesSnapshot {| items = items; canInvite = canInvite |}) |> ignore
+
+    /// 重命名/吊销设备：与其他配置写入同一条原子路径；结果以 config.applied 回执，随后下发新列表。
+    member private this.ChangeDevice(requestId: Guid, deviceId: string, change: DeviceChange) : unit =
+        let cfg = getConfig ()
+        let me = lock cursorLock (fun () -> tokenHash)
+        let reject (message: string) =
+            this.TrySend(ConfigApplied {| requestId = requestId; ok = false; errors = [ message ] |}) |> ignore
+        match cfg.authClients |> List.tryFind (fun c -> Auth.deviceId c.tokenHash = deviceId) with
+        | None -> reject "设备不存在"
+        | Some target ->
+            let isDesktop = Auth.isReservedClientName target.name
+            match change with
+            | DeviceChange.Rename name when String.IsNullOrWhiteSpace name -> reject "设备名称不能为空"
+            | DeviceChange.Rename name when name.Trim().Length > 64 -> reject "设备名称最多 64 个字符"
+            | DeviceChange.Rename name when Auth.isReservedClientName name -> reject "该名称为本机桌面客户端保留"
+            | DeviceChange.Rename _ when isDesktop -> reject "本机桌面客户端不能重命名"
+            | DeviceChange.Revoke when isDesktop -> reject "本机桌面客户端不能在这里吊销"
+            | DeviceChange.Revoke when me = Some target.tokenHash -> reject "不能吊销当前正在使用的设备"
+            | DeviceChange.Revoke when target.revoked -> reject "该设备已被吊销"
+            | _ ->
+                let result =
+                    updateConfig (fun current ->
+                        { current with
+                            authClients =
+                                current.authClients
+                                |> List.map (fun c ->
+                                    if c.tokenHash <> target.tokenHash then c
+                                    else
+                                        match change with
+                                        | DeviceChange.Rename name -> { c with name = name.Trim() }
+                                        | DeviceChange.Revoke -> { c with revoked = true }) })
+                match result with
+                | Ok () ->
+                    this.TrySend(ConfigApplied {| requestId = requestId; ok = true; errors = [] |}) |> ignore
+                    this.SendDevices()
+                | Error e -> reject e
 
     /// 下发目录快照（可用服务商 / 模型 / 工具 / 生成默认值）。
     member private this.SendCatalog() : unit =

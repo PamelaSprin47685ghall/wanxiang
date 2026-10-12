@@ -404,6 +404,15 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                                 (fun code ->
                                     // 决策 46：配对码输出到 stderr，能读取 stderr 的用户有权批准
                                     Stderr.write "pairing-code" [ "code", code; "expiresInSeconds", 300 ]),
+                                (fun () ->
+                                    match registry with
+                                    | Some reg ->
+                                        [ for c in reg.All() do
+                                              if c.IsAuthenticated then
+                                                  match c.TokenHash with
+                                                  | Some h -> yield h
+                                                  | None -> () ]
+                                    | None -> []),
                                 logInfo)
                         conn.HostStatus <- Some hostStatus
                         match registry with

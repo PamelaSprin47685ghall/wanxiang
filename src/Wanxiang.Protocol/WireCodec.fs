@@ -341,6 +341,23 @@ module WireCodec =
             p["checks"] <- d.checks.DeepClone()
         | Ping -> ()
         | Pong -> ()
+        | PairingInvite -> ()
+        | PairingInviteIssued d ->
+            p["code"] <- d.code
+            p["expiresAt"] <- d.expiresAtUtc.UtcDateTime.ToString("o", CultureInfo.InvariantCulture)
+            p["expiresInSeconds"] <- d.expiresInSeconds
+        | PairingInviteRejected d -> p["reason"] <- d.reason
+        | DevicesRequest -> ()
+        | DevicesSnapshot d ->
+            p["items"] <- d.items.DeepClone()
+            p["canInvite"] <- d.canInvite
+        | DeviceRename d ->
+            putGuid p "requestId" d.requestId
+            p["deviceId"] <- d.deviceId
+            p["name"] <- d.name
+        | DeviceRevoke d ->
+            putGuid p "requestId" d.requestId
+            p["deviceId"] <- d.deviceId
         p.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General))
 
     let encode (ev: WireEvent) : string =
@@ -769,6 +786,26 @@ module WireCodec =
                     | None -> Error "doctor.report: missing requestId"
                 | Some "protocol.ping" -> Ok Ping
                 | Some "protocol.pong" -> Ok Pong
+                | Some "pairing.invite" -> Ok PairingInvite
+                | Some "pairing.invite-issued" ->
+                    Ok(PairingInviteIssued
+                        {| code = tryString p "code" |> Option.defaultValue ""
+                           expiresAtUtc = tryTimestamp p "expiresAt"
+                           expiresInSeconds = tryInt p "expiresInSeconds" |> Option.defaultValue 300 |})
+                | Some "pairing.invite-rejected" -> Ok(PairingInviteRejected {| reason = tryString p "reason" |> Option.defaultValue "" |})
+                | Some "devices.request" -> Ok DevicesRequest
+                | Some "devices.snapshot" ->
+                    Ok(DevicesSnapshot
+                        {| items = tryArray p "items"
+                           canInvite = (match tryGet p "canInvite" with Some v -> v.GetValueKind() = JsonValueKind.True | None -> false) |})
+                | Some "device.rename" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(DeviceRename {| requestId = rid; deviceId = tryString p "deviceId" |> Option.defaultValue ""; name = tryString p "name" |> Option.defaultValue "" |})
+                    | None -> Error "device.rename: missing requestId"
+                | Some "device.revoke" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(DeviceRevoke {| requestId = rid; deviceId = tryString p "deviceId" |> Option.defaultValue "" |})
+                    | None -> Error "device.revoke: missing requestId"
                 | Some other -> Error(sprintf "unknown event type %s" other)
                 | None -> Error "missing type"
             | _ -> Error "not a JSON object"
