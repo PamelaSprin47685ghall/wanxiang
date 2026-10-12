@@ -104,7 +104,8 @@ let ``262 限流倒计时未结束时重试按钮不可按并显示剩余秒数`
     Headless.run (fun () ->
         let err = { GenerationError.create ProviderRateLimited "「OpenAI」限流了这次请求。" with retryAfterSeconds = Some 30 }
         let card = MessageCard.errorCard err ignore None
-        let retry = byName card "重试生成" |> Option.get :?> Border
+        // 决策 302：等待中读屏名带剩余秒数
+        let retry = byName card "重试生成，30 秒后可用" |> Option.orElse (byName card "重试生成，29 秒后可用") |> Option.get :?> Border
         Assert.False(retry.IsEnabled)
         match retry.Child with
         | :? TextBlock as t -> Assert.StartsWith("重试（", t.Text)

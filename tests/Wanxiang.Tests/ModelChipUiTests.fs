@@ -86,7 +86,7 @@ module ModelChipUiTests =
             let card = MessageCard.errorCard err ignore None
             let countdown =
                 descendants card
-                |> Seq.tryPick (function :? TextBlock as t when AutomationProperties.GetName t = "重试倒计时" -> Some t | _ -> None)
+                |> Seq.tryPick (function :? TextBlock as t when (string (AutomationProperties.GetName t)).StartsWith "重试倒计时" -> Some t | _ -> None)
             match countdown with
             | Some t ->
                 Assert.EndsWith("后可重试。", t.Text)
@@ -94,7 +94,7 @@ module ModelChipUiTests =
             | None -> Assert.Fail "countdown missing"
             // 同一错误实例重建卡片：截止时刻不变（不会从头数）
             let again = MessageCard.errorCard err ignore None
-            Assert.True(descendants again |> Seq.exists (function :? TextBlock as t -> AutomationProperties.GetName t = "重试倒计时" | _ -> false)))
+            Assert.True(descendants again |> Seq.exists (function :? TextBlock as t -> (string (AutomationProperties.GetName t)).StartsWith "重试倒计时" | _ -> false)))
 
     [<Fact>]
     let ``chat header model chip is visible with the model and names the provider`` () =
