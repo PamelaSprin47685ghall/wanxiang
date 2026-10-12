@@ -23,8 +23,17 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-          # 与 global.json 一致：MTP 原生测试运行器
-          cache: true
+
+      # 不用 setup-dotnet 的 cache（它要求 packages.lock.json）；按项目文件哈希缓存 NuGet 包。
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '**/Directory.*.props', '**/Directory.*.targets', 'NuGet.config', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Install wasm-tools workload (Wanxiang.Pwa 为 browser-wasm)
+        run: dotnet workload install wasm-tools --skip-manifest-update || dotnet workload install wasm-tools
 
       - name: Restore
         run: dotnet restore wanxiang.slnx
@@ -55,7 +64,17 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-          cache: true
+
+      # 不用 setup-dotnet 的 cache（它要求 packages.lock.json）；按项目文件哈希缓存 NuGet 包。
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '**/Directory.*.props', '**/Directory.*.targets', 'NuGet.config', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Install wasm-tools workload (Wanxiang.Pwa 为 browser-wasm)
+        run: dotnet workload install wasm-tools --skip-manifest-update || dotnet workload install wasm-tools
 
       - name: Build (Release)
         run: dotnet build wanxiang.slnx -c Release --verbosity minimal
@@ -73,7 +92,17 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-          cache: true
+
+      # 不用 setup-dotnet 的 cache（它要求 packages.lock.json）；按项目文件哈希缓存 NuGet 包。
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '**/Directory.*.props', '**/Directory.*.targets', 'NuGet.config', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Install wasm-tools workload (Wanxiang.Pwa 为 browser-wasm)
+        run: dotnet workload install wasm-tools --skip-manifest-update || dotnet workload install wasm-tools
 
       - name: Build (Release)
         run: dotnet build wanxiang.slnx -c Release --verbosity minimal
