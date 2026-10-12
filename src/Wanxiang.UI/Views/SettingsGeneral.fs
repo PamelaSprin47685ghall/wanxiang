@@ -246,17 +246,17 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             Ui.switchRow "自动生成对话标题" "首轮对话后用同一个模型起一个短标题；失败时回落到你的第一句话。" catalog.generation.autoTitle (fun _ -> markGenerationDirty ())
         readAutoTitle <- readAuto
         setAutoTitle <- writeAuto
-        let saveButton = Ui.button Ui.Primary "保存生成设置" (fun () -> this.SaveGeneration())
+        let saveButton = Ui.button Ui.Primary "保存默认值" (fun () -> this.SaveGeneration())
         // 键盘位与文案都在按钮上自描述：本地表单（模型服务、MCP、对话参数）
         // 一律「Ctrl/⌘+Enter 保存」，这里此前只响应鼠标点击。
-        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, "保存生成设置 (Ctrl+Enter)")
-        ToolTip.SetTip(saveButton, "保存生成设置 (Ctrl+Enter)")
+        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, "保存默认值 (Ctrl+Enter)")
+        ToolTip.SetTip(saveButton, "保存默认值 (Ctrl+Enter)")
         Ui.preparePendingButton saveButton
         saveButton.HorizontalAlignment <- HorizontalAlignment.Left
         let discardButton = Ui.button Ui.Ghost "放弃修改" (fun () -> this.DiscardGenerationChanges())
         setGenerationPending <- fun pending ->
             generationSaving <- pending
-            Ui.setButtonPending saveButton pending "保存生成设置" "正在保存…"
+            Ui.setButtonPending saveButton pending "保存默认值" "正在保存…"
             if not pending then Ui.setEnabled saveButton (not generationDirty || draftScope = generationScope)
             Ui.setEnabled discardButton (not pending)
         let temperatureField = Ui.inputFieldGroup "Temperature" "越高越发散。留空则用模型服务默认值。" temperatureBox

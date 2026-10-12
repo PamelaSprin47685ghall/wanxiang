@@ -351,7 +351,7 @@ let ``save acknowledgement never overwrites edits made while the request is pend
         general.SetCatalog Catalog.empty
         let context = field form "200"
         context.Text <- "300"
-        press (named form "保存生成设置")
+        press (named form "保存默认值")
         Assert.Equal(1, count)
         context.Text <- "400"
         complete true
@@ -375,11 +375,11 @@ let ``switching servers keeps the old draft but cannot submit it to the new serv
         general.SetCatalog Catalog.empty
         let context = field form "200"
         context.Text <- "345"
-        press (named form "保存生成设置")
+        press (named form "保存默认值")
         general.SetGenerationScope "server-b"
         general.SetCatalog { Catalog.empty with generation = { Catalog.empty.generation with maxContextMessages = 222 } }
         complete true
-        press (named form "保存生成设置")
+        press (named form "保存默认值")
         Assert.Equal(1, count)
         Assert.Equal("345", context.Text)
         Assert.True(general.HasUnsavedGeneration)
@@ -387,6 +387,6 @@ let ``switching servers keeps the old draft but cannot submit it to the new serv
         general.DiscardGenerationChanges()
         Assert.Equal("222", context.Text)
         context.Text <- "223"
-        press (named form "保存生成设置")
+        press (named form "保存默认值")
         Assert.Equal(2, count))
 

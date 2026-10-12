@@ -31,11 +31,12 @@ module CommandPaletteView =
                     Foreground = Tokens.textMuted,
                     TextTrimming = TextTrimming.CharacterEllipsis))
         let right = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
+        // 触屏没有键盘：不显示键位列，省出标题宽度（读屏 HelpText 仍带键位）。
         match item.shortcut with
-        | Some keys ->
+        | Some keys when not (InputModality.prefersTouch ()) ->
             right.Children.Add(
-                TextBlock(Text = keys, FontSize = Tokens.fontMicro, FontFamily = Tokens.monoFontFamily, Foreground = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center))
-        | None -> ()
+                TextBlock(Text = CommandPalette.compactKeys keys, FontSize = Tokens.fontMicro, FontFamily = Tokens.monoFontFamily, Foreground = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center))
+        | _ -> ()
         right.Children.Add(
             TextBlock(Text = CommandPalette.kindLabel item.kind, FontSize = Tokens.fontMicro, Foreground = Tokens.textMuted, VerticalAlignment = VerticalAlignment.Center))
         let grid = Grid(ColumnSpacing = Spacing.spaceMd)

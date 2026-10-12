@@ -238,7 +238,7 @@ let ``editing a generation number stays local until explicitly saved`` () =
         Assert.True(general.HasUnsavedGeneration)
         general.SetCatalog Catalog.empty
         Assert.Equal("321", contextBox.Text)
-        let save = byAutomationName built "保存生成设置"
+        let save = byAutomationName built "保存默认值"
         save.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter))
         Assert.Equal(1, saved.Count)
         let payload = saved.[saved.Count - 1]
@@ -259,10 +259,10 @@ let ``generation save button advertises the ctrl enter shortcut`` () =
     // 单测必须由用户可观察的标识定位，不靠控件类型猜。
     let saveButton =
         descendants built
-        |> Seq.find (fun c -> AutomationProperties.GetName c = "保存生成设置")
+        |> Seq.find (fun c -> AutomationProperties.GetName c = "保存默认值")
         :?> Border
-    Assert.Equal<string>("保存生成设置 (Ctrl+Enter)", AutomationProperties.GetHelpText saveButton)
-    Assert.Equal<string>("保存生成设置 (Ctrl+Enter)", ToolTip.GetTip saveButton :?> string)
+    Assert.Equal<string>("保存默认值 (Ctrl+Enter)", AutomationProperties.GetHelpText saveButton)
+    Assert.Equal<string>("保存默认值 (Ctrl+Enter)", ToolTip.GetTip saveButton :?> string)
     )
 
 [<Trait("Category", "UI")>]
@@ -368,7 +368,7 @@ let ``generation save failure surfaces a failure toast instead of silence`` () =
     let built = general.BuildGeneration()
     general.SetCatalog Catalog.empty
     let saveButton =
-        tryByAutomationName built "保存生成设置"
+        tryByAutomationName built "保存默认值"
         |> Option.defaultWith (fun () -> failwith "生成表单缺少保存按钮")
     saveButton.RaiseEvent(
         KeyEventArgs(
@@ -378,7 +378,7 @@ let ``generation save failure surfaces a failure toast instead of silence`` () =
         toasts
         |> Seq.exists (fun (message, tone) -> message = "保存失败，请重试。" && tone = ToastTone.Failure),
         "保存失败必须给出 Failure 档提示，不能静默。")
-    Assert.Equal("保存生成设置", AutomationProperties.GetName(saveButton))
+    Assert.Equal("保存默认值", AutomationProperties.GetName(saveButton))
     )
 
 [<Trait("Category", "UI")>]
