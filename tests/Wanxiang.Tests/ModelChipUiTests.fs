@@ -36,7 +36,9 @@ module ModelChipUiTests =
 
     let private rowNames (root: Control) =
         descendants root
-        |> Seq.choose (function :? Border as b when b.Focusable -> Some(AutomationProperties.GetName b) | _ -> None)
+        |> Seq.choose (function
+            | :? Border as b when b.Focusable -> Some(AutomationProperties.GetName b + "，" + AutomationProperties.GetHelpText b)
+            | _ -> None)
         |> List.ofSeq
 
     [<Fact>]

@@ -60,11 +60,13 @@ module ModelSwitcherView =
                 Focusable = true,
                 MinHeight = ControlMetrics.menuItemMinHeight,
                 Child = grid)
+        // 读屏名就是模型名（与旧菜单同一可达名，键盘/自动化按名查找不变）；服务与标记进 HelpText。
         let spoken =
-            sprintf "%s，%s%s%s" option.model option.providerLabel
+            sprintf "%s%s%s" option.providerLabel
                 (if option.isDefault then "，默认" else "")
                 (if option.isCurrent then "，当前" else "")
-        Avalonia.Automation.AutomationProperties.SetName(host, spoken)
+        Avalonia.Automation.AutomationProperties.SetName(host, option.model)
+        Avalonia.Automation.AutomationProperties.SetHelpText(host, spoken)
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
             Nullable Avalonia.Automation.Peers.AutomationControlType.MenuItem)
