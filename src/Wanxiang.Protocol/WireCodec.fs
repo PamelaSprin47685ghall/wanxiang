@@ -432,6 +432,18 @@ module WireCodec =
 
     // ---------- 解码 ----------
 
+    /// `tryDecode` 对未知事件类型返回的错误前缀（55.8 R1：未知类型须被调用方忽略，而不是当作畸形）。
+    [<Literal>]
+    let unknownEventTypePrefix = "unknown event type "
+
+    /// 命令解码对非命令类型返回的错误文本。
+    [<Literal>]
+    let notACommandError = "not a command event"
+
+    /// 命令/事件两条解码路径是否都只是“不认识这个类型”（而非已知类型的畸形载荷）。
+    let isUnknownType (cmdErr: string) (evErr: string) : bool =
+        cmdErr = notACommandError && evErr.StartsWith unknownEventTypePrefix
+
     /// 从 JSON 文本解码命令事件（C→S）。
     let tryDecodeCommand (jsonText: string) : Result<ClientCommand, string> =
         try
@@ -539,7 +551,7 @@ module WireCodec =
                         | Some inv, Some cid -> Ok(RegenerateResponse {| invocationId = inv; conversationId = cid |})
                         | _ -> Error "chat.regenerate: missing invocationId/threadId"
                     | _ -> Error "chat.regenerate: missing payload"
-                | _ -> Error "not a command event"
+                | _ -> Error notACommandError
             | _ -> Error "not a JSON object"
         with e ->
             Error(sprintf "command decode failed: %s" e.Message)
@@ -867,7 +879,7 @@ module WireCodec =
                     match tryGuid p "requestId" with
                     | Some rid -> Ok(DeviceRevoke {| requestId = rid; deviceId = tryString p "deviceId" |> Option.defaultValue "" |})
                     | None -> Error "device.revoke: missing requestId"
-                | Some other -> Error(sprintf "unknown event type %s" other)
+                | Some other -> Error(unknownEventTypePrefix + other)
                 | None -> Error "missing type"
             | _ -> Error "not a JSON object"
         with e ->

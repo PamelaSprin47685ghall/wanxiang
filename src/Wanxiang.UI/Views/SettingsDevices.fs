@@ -413,6 +413,12 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
         timer |> Option.iter (fun t -> t.Stop())
         timer <- None
 
+    /// 读取设备列表的有界等待：旧主机忽略未知事件时不会回复，不能一直显示“正在读取”。
+    let mutable loadTimer: DispatcherTimer option = None
+    let stopLoadTimer () =
+        loadTimer |> Option.iter (fun t -> t.Stop())
+        loadTimer <- None
+
     let startTimer (tick: unit -> unit) =
         stopTimer ()
         let t = DispatcherTimer(Interval = TimeSpan.FromSeconds 1.0)
@@ -423,16 +429,33 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
     /// 绑定外壳动作（设置视图先构造面板，AppShell 随后接线）。
     member _.Bind(next: DeviceActions) = actions <- next
 
+    /// 请求设备列表时开始有界等待；超时无回复则提示主机版本可能较旧。
+    member private this.BeginLoad() =
+        loading <- true
+        loadNote <- None
+        stopLoadTimer ()
+        let t = DispatcherTimer(Interval = TimeSpan.FromSeconds 8.0)
+        t.Tick.Add(fun _ -> this.NotifyLoadTimeout())
+        t.Start()
+        loadTimer <- Some t
+
+    /// 等待超时（也供测试直接调用）：仍在读取则结束等待并提示。
+    member _.NotifyLoadTimeout() =
+        stopLoadTimer ()
+        if loading then
+            loading <- false
+            loadNote <- Some "主机没有返回设备列表。如果主机版本较旧，可能还不支持设备管理，请先升级主机。"
+            if built then render ()
+
     /// 测试注入局域网地址来源。
     member _.SetLanSource(source: unit -> string list) = lan <- source
 
-    member _.Build() : Control =
+    member this.Build() : Control =
         if not built then
             built <- true
             let refreshButton =
                 Ui.button Ui.Ghost "刷新" (fun () ->
-                    loading <- true
-                    loadNote <- None
+                    this.BeginLoad()
                     render ()
                     actions.request ())
             tag refreshButton "刷新设备列表" "devices-refresh"
@@ -446,8 +469,7 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
 
     /// 切进设备分区时调用：读取最新列表。
     member this.Refresh() =
-        loading <- true
-        loadNote <- None
+        this.BeginLoad()
         if built then render ()
         actions.request ()
 
@@ -459,6 +481,7 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
         devices <- items
         canInvite <- canInviteNow
         now <- DateTimeOffset.UtcNow
+        stopLoadTimer ()
         loading <- false
         loadNote <- None
         if built then render ()
@@ -487,6 +510,7 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
 
     /// 读取设备列表期间连接断开：旧版主机不认识设备事件时会直接断开。
     member _.NotifyDisconnected() =
+        stopLoadTimer ()
         if loading then
             loading <- false
             loadNote <- Some "读取设备列表时连接断开了。如果主机版本较旧，可能还不支持设备管理，请先升级主机。"

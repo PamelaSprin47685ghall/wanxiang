@@ -151,6 +151,7 @@ module WireAgui =
                     // value 已是 {type,payload} 形态
                     match WireCodec.tryDecode (value.ToJsonString()) with
                     | Ok ev -> Ok(Some ev)
+                    | Error e when e.StartsWith WireCodec.unknownEventTypePrefix -> Ok None    // 55.8 R1：未知类型忽略
                     | Error e -> Error(sprintf "custom %s: %s" wireType e)
                 | :? JsonObject as vo ->
                     // value 是扁平字段：折成 {type,payload}（字段名出入站一致）
@@ -159,6 +160,7 @@ module WireAgui =
                     wrapped["payload"] <- vo.DeepClone()
                     match WireCodec.tryDecode (wrapped.ToJsonString()) with
                     | Ok ev -> Ok(Some ev)
+                    | Error e when e.StartsWith WireCodec.unknownEventTypePrefix -> Ok None    // 55.8 R1：未知类型忽略
                     | Error e -> Error(sprintf "custom %s: %s" wireType e)
                 | _ ->
                     // CUSTOM value 不是对象（数组/裸值）：无法承载语义事件，忽略并告警（增量安全）。

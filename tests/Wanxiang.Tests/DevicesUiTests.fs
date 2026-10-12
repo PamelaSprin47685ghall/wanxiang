@@ -252,6 +252,17 @@ module DevicesUiTests =
             Assert.True view.Devices.IsBuilt)
 
     [<Fact>]
+    let ``device list read without a reply times out with the older host hint`` () =
+        Headless.run (fun () ->
+            let h = harness ()
+            h.panel.Refresh()
+            Assert.True h.panel.IsLoading
+            h.panel.NotifyLoadTimeout()
+            Assert.False h.panel.IsLoading
+            Dispatcher.UIThread.RunJobs()
+            Assert.Contains(descendants h.root, fun c -> match c with :? TextBlock as t -> t.Text.Contains "主机版本较旧" | _ -> false))
+
+    [<Fact>]
     let ``device list marks current desktop online and revoked and sorts revoked last`` () =
         Headless.run (fun () ->
             let h = harness ()
