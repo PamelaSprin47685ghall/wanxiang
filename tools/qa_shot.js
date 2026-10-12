@@ -51,22 +51,37 @@ function latestPairingCode() {
 const shots = [];
 
 // ---- WS 协议客户端（与 e2e_smoke 同语义：cursor 追平，否则写命令判 stale）----
+// AG-UI 承载（与 qa_r8 同）：CUSTOM wanxiang.dev/<type> → {type,payload}；标准面生成事件归一
+function normAgui(ev) {
+    if (ev.type === 'CUSTOM' && String(ev.name).startsWith('wanxiang.dev/')) {
+        return { type: ev.name.slice(13), payload: (ev.value && ev.value.type && ev.value.payload) ? ev.value.payload : ev.value };
+    }
+    const ids = { conversationId: ev.threadId, generationId: ev.runId };
+    if (ev.type === 'RUN_STARTED') return { type: 'generation.started', payload: { ...ev, ...ids } };
+    if (ev.type === 'RUN_FINISHED') {
+        const cancelled = ev.outcome && JSON.stringify(ev.outcome).includes('ancel');
+        return { type: 'generation.finished', payload: { ...ev, ...ids, status: cancelled ? 'cancelled' : 'completed' } };
+    }
+    return ev;
+}
+const aguiFrame = (type, payload) => JSON.stringify({ type: 'CUSTOM', name: 'wanxiang.dev/' + type, value: payload || {} });
 function makeClient(url) {
     const ws = new WebSocket(url);
     const events = [];
     const waiters = [];
     let cursor = 0n;
     ws.onmessage = (e) => {
-        const ev = JSON.parse(e.data);
+        const ev = normAgui(JSON.parse(String(e.data)));
+        if (/rejected|failed/.test(ev.type || '')) console.log('ws:', ev.type, JSON.stringify(ev.payload || {}).slice(0, 300));
         events.push(ev);
         const p = ev.payload || {};
         let top = cursor;
-        for (const c of [p.lastCommitId, p.commitId, p.toCommitId]) {
+        for (const c of [p.lastCommitId, p.commitId, p.toCommitId, ev.type === 'conversation.message-committed' ? p.messageId : undefined]) {
             if (typeof c === 'number' && BigInt(c) > top) top = BigInt(c);
         }
         if (top > cursor) {
             cursor = top;
-            ws.send(JSON.stringify({ type: 'cursor.advanced', payload: { id: Number(top) } }));
+            ws.send(aguiFrame('cursor.advanced', { id: Number(top) }));
         }
         for (let i = waiters.length - 1; i >= 0; i--) {
             if (waiters[i].match(ev)) {
@@ -82,7 +97,7 @@ function makeClient(url) {
             ws.onopen = resolve;
             ws.onerror = () => reject(new Error('websocket error'));
         }),
-        send: (type, payload) => ws.send(JSON.stringify(payload ? { type, payload } : { type })),
+        send: (type, payload) => ws.send(aguiFrame(type, payload)),
         waitFor: (match, timeoutMs, label) => {
             const existing = events.find(match);
             if (existing) return Promise.resolve(existing);
@@ -141,8 +156,7 @@ async function main() {
     const wsUrl = BASE.replace('http', 'ws') + '/ws';
     const ctl = makeClient(wsUrl);
     await ctl.open();
-    const hello = await ctl.waitFor((e) => e.type === 'protocol.hello', 15000, 'protocol.hello');
-    const instanceId = hello.payload.instanceId;
+    // ADR-001 方案 B：主机不再先发 protocol.hello；instanceId 取自 auth.accepted。
     ctl.send('protocol.hello', { protocol: 'wanxiang', version: 1 });
     ctl.send('pairing.requested', { clientName: 'qa' });
     await ctl.waitFor((e) => e.type === 'pairing.started', 15000, 'pairing.started');
@@ -151,8 +165,11 @@ async function main() {
     ctl.send('pairing.attempted', { code, clientName: 'qa' });
     const paired = await ctl.waitFor((e) => e.type === 'pairing.succeeded', 15000, 'pairing.succeeded');
     ctl.send('auth.present', { token: paired.payload.token });
-    await ctl.waitFor((e) => e.type === 'auth.accepted', 15000, 'auth.accepted');
+    const accepted = await ctl.waitFor((e) => e.type === 'auth.accepted', 15000, 'auth.accepted');
+    const instanceId = accepted.payload.instanceId;
     console.log('paired instance', instanceId);
+    // r11：工具默认要批准（决策 W3）；QA 控制端声明审批能力，由协议批准，浏览器只截图。
+    ctl.send('tool.approval-capability', { supported: true });
     ctl.send('catalog.request');
     await ctl.waitFor((e) => e.type === 'catalog.snapshot', 15000, 'catalog.snapshot');
     ctl.send('conversation-list.observe');
@@ -161,12 +178,12 @@ async function main() {
     const convId = randomUUID();
     ctl.send('conversation.create', {
         invocationId: randomUUID(),
-        conversationId: convId,
+        threadId: convId,
         title: `QA ${TAG}`,
         config: { provider: 'mock', model: 'mock-gpt-mini', tools: ['builtin:echo'] },
     });
     await ctl.waitFor((e) => e.type === 'command.committed', 15000, 'create committed');
-    ctl.send('conversation.observe', { conversationId: convId });
+    ctl.send('conversation.observe', { threadId: convId });
     await ctl.waitFor((e) => e.type === 'conversation.snapshot', 15000, 'conversation snapshot');
 
     // ---- 展现面：凭据写入 IndexedDB，浏览器自动连接同一对话列表 ----
@@ -301,8 +318,16 @@ async function main() {
             await page.mouse.click(geo.x + 20, geo.y + 26); // 汉堡按钮：打开抽屉
             await sleep(1000);
         }
-        for (const y of [150, 190, 230, 120]) {
-            try { await clickExpectChange(rowX, y, `open-qa-conversation@${y}`); return `row@${y}`; } catch { }
+        // r11：判据只看标题栏（侧栏 hover 也会改像素，曾把点空当成打开）；行 y 按侧栏密度扫描。
+        const header = compact
+            ? { x: geo.x + 60, y: geo.y, width: Math.min(400, geo.w - 120), height: 48 }
+            : { x: geo.x + 300, y: geo.y, width: Math.min(600, geo.w - 320), height: 48 };
+        const headerHash = async () => createHash('md5').update(await page.screenshot({ clip: header })).digest('hex');
+        for (const y of [222, 200, 245, 180, 265, 160]) {
+            const before = await headerHash();
+            await page.mouse.click(geo.x + rowX, geo.y + y);
+            await sleep(1200);
+            if ((await headerHash()) !== before) return `row@${y}`;
         }
         throw new Error('could not open the QA conversation');
     }
@@ -313,7 +338,7 @@ async function main() {
     // 03/04 LONG：流式中 vs 完成（主机 ack 即内容断言）
     ctl.send('chat.user-message.enqueue', {
         invocationId: randomUUID(),
-        conversationId: convId,
+        threadId: convId,
         message: { role: 'user', contents: [{ text: 'LONG show me full markdown layout' }] },
     });
     await ctl.waitFor((e) => e.type === 'generation.started', 20000, 'long started');
@@ -328,7 +353,7 @@ async function main() {
     const startsBefore = ctl.events.filter((e) => e.type === 'generation.started').length;
     ctl.send('chat.user-message.enqueue', {
         invocationId: randomUUID(),
-        conversationId: convId,
+        threadId: convId,
         message: { role: 'user', contents: [{ text: 'TOOL call echo' }] },
     });
     await ctl.waitFor(
@@ -336,23 +361,43 @@ async function main() {
         20000,
         'tool started',
     );
+    const finishedBefore = ctl.events.filter((e) => e.type === 'generation.finished').length;
+    const approval = await ctl.waitFor((e) => e.type === 'tool.approval-requested', 20000, 'tool approval requested');
+    await sleep(900);
+    await shot('05-tool-approval');
+    ctl.send('tool.approval-decision', { approvalId: approval.payload.approvalId, approved: true });
     await ctl.waitFor(
-        (e) => e.type === 'generation.finished' && e.payload.status === 'completed',
+        () => ctl.events.filter((e) => e.type === 'generation.finished').length > finishedBefore,
         60000,
         'tool finished',
     );
     await sleep(600);
-    await shot('05-tool-call');
+    await shot('05b-tool-call');
 
     // 06 FAIL：等 failed 终态
     ctl.send('chat.user-message.enqueue', {
         invocationId: randomUUID(),
-        conversationId: convId,
+        threadId: convId,
         message: { role: 'user', contents: [{ text: 'FAIL trigger upstream error' }] },
     });
     await ctl.waitFor((e) => e.type === 'generation.finished' && e.payload.status === 'failed', 60000, 'fail finished');
     await sleep(600);
     await shot('06-error-card');
+
+    // 06b RATE：429 + Retry-After，限流卡只说一遍（决策 277）+ 倒计时
+    const failedBefore = ctl.events.filter((e) => e.type === 'generation.finished' && e.payload.status === 'failed').length;
+    ctl.send('chat.user-message.enqueue', {
+        invocationId: randomUUID(),
+        threadId: convId,
+        message: { role: 'user', contents: [{ text: 'RATE trigger rate limit' }] },
+    });
+    await ctl.waitFor(
+        () => ctl.events.filter((e) => e.type === 'generation.finished' && e.payload.status === 'failed').length > failedBefore,
+        60000,
+        'rate finished',
+    );
+    await sleep(900);
+    await shot('06b-rate-limit');
 
     // 07 设置：齿轮常驻（wide）；compact 先确保抽屉打开再点齿轮
     const settingsX = compact ? geo.w - 26 : 264;
@@ -373,6 +418,10 @@ async function main() {
         console.error(`qa_shot: ${errors.length} browser/layout error(s)`);
         process.exitCode = 1;
     }
+    } catch (error) {
+        // finally 里 process.exit 会吞掉异常：这里先打印并计入失败（r11：曾静默 rc=0）
+        console.error('qa_shot FAILED:', error && error.stack ? error.stack : error);
+        errors.push(String(error));
     } finally {
         // SwANGLE 下 browser.close() 偶发挂起：2 秒关不掉就直接退出
         try {

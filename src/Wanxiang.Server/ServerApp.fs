@@ -385,12 +385,21 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         let app = builder.Build()
         if servePwa then app.UseResponseCompression() |> ignore
         app.UseWebSockets() |> ignore
+        let allowedHosts =
+            match Environment.GetEnvironmentVariable "WANXIANG_ALLOWED_HOSTS" with
+            | null -> []
+            | v -> v.Split(',', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries) |> List.ofArray
 
         app.Map(
             Constants.WsPath,
             Func<HttpContext, Task>(fun (ctx: HttpContext) ->
                 task {
-                    if ctx.WebSockets.IsWebSocketRequest then
+                    let origin = string ctx.Request.Headers.Origin
+                    if ctx.WebSockets.IsWebSocketRequest && (not (Auth.isAllowedWsOrigin origin (string ctx.Request.Host))
+                             || (origin <> "" && not (Auth.isAllowedWsHost (string ctx.Request.Host) allowedHosts))) then
+                        // 决策 281：跨源网页不得打开主机 WebSocket（含 DNS 重绑定）
+                        ctx.Response.StatusCode <- 403
+                    elif ctx.WebSockets.IsWebSocketRequest then
                         let! ws = ctx.WebSockets.AcceptWebSocketAsync()
                         let remote =
                             match ctx.Connection.RemoteIpAddress with

@@ -76,7 +76,7 @@ module DevicesUiTests =
                   TimedOut, Some "重试连接"
                   TokenInvalid, Some "重新配对"
                   PairingFrozen 5, None
-                  PairingRejected "invalid pairing code", Some "重试配对"
+                  PairingRejected "pairing code expired", Some "重试配对"
                   Disconnected "x", Some "重试连接" ]
             for issue, expected in cases do
                 let overlay, handle, _, _ = openDialog ()
@@ -87,6 +87,16 @@ module DevicesUiTests =
                 | None -> Assert.Empty visible
                 // 表与实现一致（防止有人改了其中一边）
                 Assert.Equal(expected, ConnectionIssue.retry issue |> Option.map Dialogs.retryLabel))
+
+    [<Fact>]
+    let ``wrong pairing code keeps a single primary action and no retry button`` () =
+        Headless.run (fun () ->
+            // 决策 285：码输错时会话仍有效，「提交配对码」就是下一步，不再并排「重试配对」
+            let overlay, handle, _, _ = openDialog ()
+            handle.fail (PairingRejected "invalid pairing code")
+            Dispatcher.UIThread.RunJobs()
+            Assert.Empty(visibleRetryButtons overlay.Root)
+            Assert.Contains("配对码不对", textOf overlay.Root))
 
     [<Fact>]
     let ``retry visibility does not depend on message keywords`` () =
@@ -506,7 +516,7 @@ module DevicesUiTests =
     let ``pairing failures map to retry pairing or frozen without retry`` () =
         Headless.run (fun () ->
             let view, _ = shell ()
-            dispatch view (PairingFailed {| reason = "invalid pairing code"; frozen = false; freezeMinutes = 0 |})
+            dispatch view (PairingFailed {| reason = "pairing code expired"; frozen = false; freezeMinutes = 0 |})
             showConnectDialog view
             let overlay = field<OverlayHost> view "overlay"
             Assert.Equal<string list>([ "重试配对" ], visibleRetryButtons overlay.Root |> List.map AutomationProperties.GetName)

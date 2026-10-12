@@ -58,6 +58,36 @@ module Auth =
         | Some r -> not r.revoked && isReservedClientName r.name && isLoopbackAddress remoteAddress
         | None -> false
 
+    /// WebSocket 握手的 Origin 检查（决策 281，防跨站 WebSocket 劫持 / DNS 重绑定）：
+    /// - 无 Origin（桌面客户端、脚本等原生连接）放行；令牌/配对码仍是唯一凭据；
+    /// - 有 Origin 时必须是 http(s)，且其 host:port 与本次请求的 Host 头完全一致（同源 PWA）；
+    /// - "null" 或解析失败一律拒绝。反向代理须原样转发 Host（nginx: proxy_set_header Host $host）。
+    let isAllowedWsOrigin (origin: string) (hostHeader: string) : bool =
+        if String.IsNullOrEmpty origin then true
+        elif String.IsNullOrWhiteSpace hostHeader then false
+        else
+            match Uri.TryCreate(origin, UriKind.Absolute) with
+            | true, u when (u.Scheme = "http" || u.Scheme = "https") && u.AbsolutePath = "/" && String.IsNullOrEmpty u.UserInfo ->
+                let defaultPort = if u.Scheme = "https" then 443 else 80
+                let originAuthority = if u.Port = defaultPort then u.Host else sprintf "%s:%d" u.Host u.Port
+                let host = hostHeader.Trim().ToLowerInvariant()
+                let host = if host.EndsWith(sprintf ":%d" defaultPort) then host.Substring(0, host.Length - (string defaultPort).Length - 1) else host
+                String.Equals(originAuthority.ToLowerInvariant(), host, StringComparison.Ordinal)
+            | _ -> false
+
+    /// 浏览器握手的 Host 白名单（决策 282，防 DNS 重绑定：重绑定后 Origin 与 Host 同为攻击者域名，Origin 检查拦不住）。
+    /// 放行：IP 字面量、localhost；其余主机名须列在 WANXIANG_ALLOWED_HOSTS（逗号分隔，反向代理域名在此登记）。
+    let isAllowedWsHost (hostHeader: string) (extraAllowed: string list) : bool =
+        if String.IsNullOrWhiteSpace hostHeader then false
+        else
+            let h = hostHeader.Trim().ToLowerInvariant()
+            let name =
+                if h.StartsWith "[" then (match h.IndexOf ']' with | i when i > 0 -> h.Substring(1, i - 1) | _ -> h)
+                else (match h.LastIndexOf ':' with | i when i > 0 && h.IndexOf ':' = i -> h.Substring(0, i) | _ -> h)
+            name = "localhost"
+            || (match System.Net.IPAddress.TryParse name with | true, _ -> true | _ -> false)
+            || extraAllowed |> List.exists (fun a -> String.Equals(a.Trim(), name, StringComparison.OrdinalIgnoreCase))
+
     /// 设备的稳定标识：令牌哈希的前 16 位十六进制。哈希本身不可逆，截断后不能用于认证。
     let deviceId (tokenHash: string) : string =
         if isNull tokenHash then "" elif tokenHash.Length <= 16 then tokenHash else tokenHash.Substring(0, 16)
