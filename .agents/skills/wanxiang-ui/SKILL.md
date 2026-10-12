@@ -709,7 +709,20 @@ r9 QA 工具待办：`tools/qa_shot.js` 在抽屉布局下坐标点行不可靠�
 搜索框帮助文字写明：回车选第一条、↓进入列表、Esc 关闭；「没有匹配的模型」为 polite live region。浮层打开即聚焦搜索、Tab 被困在浮层内、关闭后焦点回到芯片（OverlayHost 既有行为）。
 
 # 305. 撤销提示条的键盘路径
-提示条不进 Tab 序（不抢焦点），「撤销」按钮通过 `AcceleratorKey = Ctrl+Z` 告诉读屏可直接按快捷键。
+（r14 起由 311 修订）提示条出现时不抢焦点，「撤销」按钮通过 `AcceleratorKey = Ctrl+Z` 告诉读屏可直接按快捷键。
 
 # 306. r7–r12 新控件的对比度契约
 模型芯片（accent/accentFaint）、倒计时（warning/success 于 surface/surfaceRaised）、提示条与切换器浮层、选中行文字在浅色和深色主题下都过 4.5:1，由 `A11yRegressionTests` 守护。
+
+# 310. 更早一页历史：有超时、有行内重试，绝不无限挂起
+「上一轮」、滚到顶、搜索命中 / 消息链接触发的更早一页请求都记发出时刻；10 秒（`MotionLedger.olderPageTimeout`）没有 `history.page`、或连接断开，就判失败：解除 `pageLoading`、丢掉分页锚点、撤掉挂起的「上一轮」，消息区顶部浮出一条警示描边的行内提示（原因 + 「重试」，polite live region）。失败期间滚到顶不再静默重发，只由「重试」或再点「上一轮」显式重来；未连接时点重试只换说明，不发请求。迟到的页照常渲染并收起提示；换对话时提示随滚动状态一起清掉。
+
+# 311. 撤销提示条键盘可达
+动作按钮（「撤销」）进 Tab 序；F6 把焦点直接移到最新一条提示条的动作按钮（快捷键帮助里列出）。按钮获得焦点时倒计时暂停，失焦恢复；带焦点的提示条消失（点了撤销 / 超时 / 被挤出）时焦点回到输入框，不掉成 null。读屏帮助文字：「按 Ctrl+Z 直接撤销；按 F6 或 Tab 可移到这里」。
+
+# 312. 导出：Markdown 与 JSON 同一次读取，带分叉 / 版本信息和隐私说明
+入口不变（侧栏行菜单、对话「更多」、Ctrl/⌘+Shift+E），菜单项改名「导出（Markdown / JSON）…」。对话框读完整历史后同时备好两种文件：「保存 Markdown」（主按钮，适合阅读分享）和「保存 JSON」（可再导入）；存完一种仍可再存另一种。Markdown 在标题下加引用块：导出时间、条数、分叉说明（「这是「X」第 n 条消息的分叉」/「原对话已删除」/「从这个对话分出了 k 个分叉：…，分叉需要分别导出」）和隐私说明。JSON 格式 `wanxiang.conversation` v1：`conversation{id,title,atCommitId,messageCount}`、`lineage{kind,parentId,parentTitle,parentDeleted,forkOrdinal,forkBaseMessageId,forks[]}`、`messages[{commitId,committedAt,payload}]`（payload 原样）。谱系取自对话列表快照的只读派生，不加协议字段。隐私：导出物里从来没有 API 密钥、访问令牌、配对信息、主机地址或模型服务配置；载荷里若出现密钥类键（apiKey / authorization / token / secret / password 等，不分大小写）也会被剔除。对话框、Markdown 头、JSON `privacy` 字段、导入预览共用同一句说明，并提醒「包含对话全文，分享前请先检查」。
+
+# 313. 导入对话
+入口在侧栏页脚（设置旁的上传图标「导入对话」）——它和「新建对话」同属对话库，桌面与手机抽屉里都在。一个对话框三步：说明 → 「选择 JSON 文件…」（选择器在对话框内由点击直接打开，满足浏览器手势要求）→ 预览（标题、条数、导出时间、导入后标题「X（导入）」、分叉说明「导入后是独立的新对话，分叉关系不会恢复」、附件只有名称、跳过的无效条目、模型使用本机默认设置）→「导入为新对话」。预览通过前不发任何东西；Markdown、非万象文件、更高格式版本、空消息、超过 32 MiB 或 5000 条都在预览前给出可读原因。确认后发新命令 `conversation.import`（`ImportConversation`：新建 + 逐条 `AgentMessageRecorded`，只收 role 为 user/assistant/tool/system 的对象，不触发生成，配置由主机按新建规则填默认）；成功后打开该对话，失败留在对话框里可再试。
+
