@@ -369,3 +369,7 @@ GET /service-worker.js
 全局默认经 `ConfigUpdateGeneration`（`ConfigMutation.updateGeneration`）写入，与其余生成设置同一条
 「生成完整 TOML → 原子 rename → 重读」路径（原则 9）。键存在即覆盖，空串即清除；不带这两个键的更新保持原值。
 校验：`defaultModel` 需有 `defaultProvider`；服务必须存在；模型必须在该服务的列表中。
+
+# 70–74（W3 指针）：`[tools]` 追加键
+
+2026-10-12：`tools.approvalTimeoutSeconds`（缺省 300）、`tools.exposeDebug`（缺省 false）、`[tools.policy]`（缺省空 = 全自动）。既有配置缺省行为不变，仅全新安装写入“先询问”的默认。详见 `wanxiang-tools` 第 70–74 节。

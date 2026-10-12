@@ -133,7 +133,7 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
         if not (String.IsNullOrWhiteSpace dir) then
             Directory.CreateDirectory dir |> ignore
         if not (File.Exists path) then
-            let cfg = AppConfig.defaults (Guid.CreateVersion7())
+            let cfg = { AppConfig.defaults (Guid.CreateVersion7()) with tools = ToolsConfig.newInstall }
             let text = TomlCodec.serialize cfg
             let tmp = Path.Combine(dir, sprintf ".%s.tmp.%d" (Path.GetFileName path) Environment.ProcessId)
             do

@@ -149,6 +149,9 @@ module BuiltinTools =
     let listDirectory (roots: string list) (path: string) : string =
         BuiltinToolsCore.listDirectory roots path
 
+    /// 调试用工具：默认不进工具目录，`tools.exposeDebug = true` 才显示（第 72 节）。
+    let isDebug (stableId: string) : bool = stableId = "builtin:echo"
+
     let all (cfg: ToolsConfig) : AITool list =
         let echo = BuiltinEchoFunction() :> AITool
         let time = BuiltinTimeFunction() :> AITool

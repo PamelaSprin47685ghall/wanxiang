@@ -151,6 +151,10 @@ type MainView() as this =
     let mutable chatColumn: DockPanel = Unchecked.defaultof<DockPanel>
 
     let send (ev: WireEvent) = client.SendAsync ev |> ignore
+
+    /// 工具审批卡（第 71 节）：对话内、浮在输入框上方；状态只在内存里，由服务端事件驱动。
+    let approvalPanel =
+        ToolApprovalPanel(fun approvalId approved -> send (ToolApprovalDecision {| approvalId = approvalId; approved = approved |}))
     /// 发出会话列表观察：请求一经发出就置侧栏加载中，
     /// 快照到达时由 Sidebar.SetConversations 解除（AppShell 不重复清除，避免双写）。
     let observeConversationList () =
@@ -282,6 +286,7 @@ type MainView() as this =
         let run = runs.Get activeConvId
         let generating = run.running
         sidebar.SetServerUrl lastUrl
+        approvalPanel.SetConversation activeConvId
         let startReady =
             authenticated && Catalog.isReady catalog && not generating && run.error.IsNone
             && (match activeConvId, activeConversation () with
@@ -1296,6 +1301,8 @@ type MainView() as this =
                 sidebar.SetConversations []
                 composer.SetText((drafts.Get(d.instanceId, None)).text)
             authenticated <- true
+            // 声明本客户端能处理工具审批；旧客户端不发这条，服务端据此对需要审批的调用直接拒绝
+            send (ToolApprovalCapability {| supported = true |})
             hasSavedCredentials <- true
             connectionError <- None
             connectionIssue <- None
@@ -1377,6 +1384,19 @@ type MainView() as this =
         | DevicesSnapshot d -> settings.Devices.SetDevices(DevicesModel.parse d.items, d.canInvite)
         | PairingInviteIssued d -> settings.Devices.SetInvite(d.code, d.expiresAtUtc, DateTimeOffset.UtcNow)
         | PairingInviteRejected d -> settings.Devices.SetInviteRejected d.reason
+        | ToolApprovalRequested d ->
+            approvalPanel.Upsert
+                { approvalId = d.approvalId
+                  conversationId = d.conversationId
+                  toolName = d.toolName
+                  summary = d.summary
+                  argumentsJson = (if isNull d.arguments then "" else d.arguments.ToJsonString())
+                  policy = d.policy }
+            if activeConvId <> Some d.conversationId then toast "另一个对话里有工具调用在等你批准。" Info
+        | ToolApprovalResolved d ->
+            approvalPanel.Remove d.approvalId
+            if d.alreadyHandled then toast (ToolApprovalCard.alreadyHandledText d.status) Info
+        | ToolApprovalCapability _ | ToolApprovalDecision _ | ConfigUpdateTools _ -> ()
         | ProviderProbeResult d ->
             let models =
                 [ for item in d.models do
@@ -1980,6 +2000,13 @@ type MainView() as this =
         this.BuildOnboarding()
 
         chatColumn <- ConversationWorkspace(chat, composer)
+        // 审批卡浮在对话区底部、输入框正上方（与消息列表同一格，不占布局行）
+        (match chatColumn.Children |> Seq.tryPick (function :? Grid as g -> Some g | _ -> None) with
+         | Some workspaceGrid ->
+             Grid.SetRow(approvalPanel, 0)
+             approvalPanel.ZIndex <- 5
+             workspaceGrid.Children.Add approvalPanel
+         | None -> ())
 
         let initialNavigation = navigation.State
         shellGrid <- Grid()
@@ -2035,6 +2062,7 @@ type MainView() as this =
             Dispatcher.UIThread.Post(fun () ->
                 if epoch = client.ConnectionGeneration then
                     authenticated <- false
+                    approvalPanel.Clear()
                     runs.Disconnect()
                     exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
                     outbox.Disconnect instanceId

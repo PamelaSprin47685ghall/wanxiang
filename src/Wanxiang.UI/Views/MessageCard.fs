@@ -790,6 +790,19 @@ module MessageCard =
         headerDock.Children.Add headerActions
         let headerContent = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
         headerContent.Children.Add headerDock
+        // 人话摘要（第 72 节）：先说「做了什么」，原始参数留在下一行和展开详情里
+        let humanSummary =
+            let args =
+                try (if String.IsNullOrWhiteSpace call.argumentsJson then null else System.Text.Json.Nodes.JsonNode.Parse call.argumentsJson)
+                with _ -> null
+            TextBlock(
+                Text = ToolSummary.describe call.name args,
+                FontSize = Tokens.fontCaption,
+                Foreground = Tokens.text,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = Thickness(0.0, Spacing.spaceXs, 0.0, 0.0))
+        Avalonia.Automation.AutomationProperties.SetAutomationId(humanSummary, "tool-human-summary")
+        headerContent.Children.Add humanSummary
         headerContent.Children.Add summary
         if hasError then headerContent.Children.Add errorBanner
         // 与思考过程 / 错误详情同一机制：Ui.surfaceBorderedTransitions

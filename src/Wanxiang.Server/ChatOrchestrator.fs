@@ -94,6 +94,8 @@ type ChatOrchestrator(
     logInfo: string -> unit) =
 
     let runtimes = ConcurrentDictionary<Guid, ConversationRuntime>()
+    /// 工具审批（第 71 节）：只存内存，不写日志。
+    let approvals = ToolApprovalBroker(getConfig, broadcastToConversation)
     let mutable disposed = false
     /// 已尝试过自动标题的会话：一个会话只试一次，失败不反复烧 token
     let titledConversations = System.Collections.Concurrent.ConcurrentDictionary<Guid, bool>()
@@ -615,6 +617,36 @@ type ChatOrchestrator(
                         this.RecordSubmitOutcome(convId, this.SubmitMessage(convId, MessageSerde.toJsonNode (MessageSerde.toolResultMessage call text)))
                         return call, ToolResult text
                     | Some tool ->
+                      let toolId = toolRegistry.StableIdOf tool
+                      let! gate =
+                        task {
+                            if approvals.NeedsApproval(convId, toolId) then
+                                let argsNode =
+                                    let o = JsonObject()
+                                    if not (isNull call.Arguments) then
+                                        for KeyValue(k, v) in call.Arguments do
+                                            o[k] <-
+                                                match v with
+                                                | null -> null
+                                                | :? JsonNode as n -> n.DeepClone()
+                                                | :? JsonElement as e -> JsonNode.Parse(e.GetRawText())
+                                                | other -> JsonSerializer.SerializeToNode other
+                                    o :> JsonNode
+                                return! approvals.Request(convId, generationId, call.CallId, tool.Name, toolId, argsNode, g.cts.Token)
+                            else
+                                return Approved
+                        }
+                      match gate with
+                      | ApprovalCancelled -> return call, ToolCancelled
+                      | Denied(reason, _) ->
+                        // 拒绝也是一条完整 Tool Result：模型能读到原因并继续（第 71 节）
+                        let text =
+                            JsonSerializer.Serialize(
+                                {| error = reason |},
+                                JsonSerializerOptions(Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping))
+                        this.RecordSubmitOutcome(convId, this.SubmitMessage(convId, MessageSerde.toJsonNode (MessageSerde.toolResultMessage call text)))
+                        return call, ToolResult text
+                      | Approved ->
                         try
                             match tool with
                             | :? AIFunction as f ->
@@ -663,6 +695,9 @@ type ChatOrchestrator(
     member private this.OnAgentFailure(convId: Guid, ex: exn) =
         logInfo(sprintf "agent failure for %O: %s" convId ex.Message)
 
+    /// 工具审批代理：连接层用它收发审批事件、声明能力探测。
+    member _.Approvals : ToolApprovalBroker = approvals
+
     /// 取消生成（决策 88/89：合作式取消；不记账；已提交消息保留）。
     member this.CancelGeneration(convId: Guid, generationId: Guid) : Result<unit, WanxiangError> =
         let rt = getRuntime convId
@@ -671,6 +706,7 @@ type ChatOrchestrator(
             | Some g when g.generationId = generationId ->
                 g.cancelled <- true
                 g.cts.Cancel()
+                approvals.CancelGeneration(convId, generationId)
                 Ok()
             | _ -> Error(GenerationNotFound(convId, generationId)))
 
@@ -679,6 +715,7 @@ type ChatOrchestrator(
     /// pendingQueue/generation/cts 直到进程退出）。
     /// 活跃生成被取消（决策 88 合作式取消；删除后继续生成没有意义）。
     member this.OnConversationDeleted(convId: Guid) : unit =
+        approvals.ClearConversation convId
         match runtimes.TryRemove convId with
         | true, rt ->
             lock rt (fun () ->

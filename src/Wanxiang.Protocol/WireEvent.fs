@@ -144,6 +144,12 @@ type WireEvent =
     | ConfigDeleteMcp of {| requestId: Guid; serverId: string |}
     | ConfigUpdateGeneration of {| requestId: Guid; generation: JsonObject |}
     | ConfigApplied of {| requestId: Guid; ok: bool; errors: string list |}
+    | ConfigUpdateTools of {| requestId: Guid; tools: JsonObject |}
+    // ---- 工具审批（加法事件，第 71 节；只存内存，永不入日志）----
+    | ToolApprovalCapability of {| supported: bool |}
+    | ToolApprovalRequested of {| approvalId: Guid; conversationId: Guid; generationId: Guid; callId: string; toolName: string; summary: string; arguments: JsonNode; policy: string; expiresInSeconds: int |}
+    | ToolApprovalDecision of {| approvalId: Guid; approved: bool |}
+    | ToolApprovalResolved of {| approvalId: Guid; conversationId: Guid; status: string; reason: string; alreadyHandled: bool |}
     // ---- 配置与系统 ----
     | ConfigChanged of {| reason: string |}
     | ServerError of {| message: string |}
@@ -228,6 +234,11 @@ module WireEvent =
         | ConfigDeleteMcp _ -> "config.mcp-delete"
         | ConfigUpdateGeneration _ -> "config.generation-update"
         | ConfigApplied _ -> "config.applied"
+        | ConfigUpdateTools _ -> "config.tools-update"
+        | ToolApprovalCapability _ -> "tool.approval-capability"
+        | ToolApprovalRequested _ -> "tool.approval-requested"
+        | ToolApprovalDecision _ -> "tool.approval-decision"
+        | ToolApprovalResolved _ -> "tool.approval-resolved"
         | ConfigChanged _ -> "config.changed"
         | ServerError _ -> "server.error"
         | HostConfigRejected _ -> "config.rejected"

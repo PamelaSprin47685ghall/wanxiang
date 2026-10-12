@@ -74,7 +74,7 @@ description: 万象（wanxiang）SSOT 总纲：项目硬约束、全局术语、
 | `wanxiang-chat` | fork 语义深化 | 78–82 |
 | `wanxiang-chat` | 会话生命周期 | 83–87 |
 | `wanxiang-chat` | 生成取消与 generationId | 88–92 |
-| `wanxiang-tools` | Tool 执行 | 93–94 |
+| `wanxiang-tools` | Tool 执行（第 70–74 节补充决策 93：策略与审批） | 93–94 |
 | `wanxiang-tools` | Tool 来源与 MCP | 95–100 |
 
 ### B. 原则与规则（41–43）

@@ -30,6 +30,7 @@
     <Compile Include="SessionAndForkTests.fs" />
     <Compile Include="ServerE2eTests.fs" />
     <Compile Include="N1CompatTests.fs" />
+    <Compile Include="W3ToolPolicyTests.fs" />
     <Compile Include="SoakTests.fs" />
     <Compile Include="PerformanceBaselineTests.fs" />
     <Compile Include="AcceptanceScenarioTests.fs" />
@@ -92,6 +93,7 @@
     <Compile Include="UiModelTests.fs" />
     <Compile Include="DialogsTests.fs" />
     <Compile Include="MessageCardTests.fs" />
+    <Compile Include="W3ToolApprovalUiTests.fs" />
     <Compile Include="ToolCallStatusTests.fs" />
     <Compile Include="UiPureLogicTests.fs" />
     <Compile Include="A11yRegressionTests.fs" />
