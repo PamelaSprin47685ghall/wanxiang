@@ -75,7 +75,7 @@
 
 ## 8. 回归测试清单
 
-`A11yRegressionTests`（全部非 UI，毫秒级，随 `./run-tests.sh --no-ui` 运行，CI 另有独立步骤单独报告）：
+`A11yRegressionTests`（全部非 UI，毫秒级，随 `./run-tests.sh --no-ui` 运行；CI 通过现有 pr-gate 的非 UI 测试步骤执行）：
 
 - 代码块 13 种着色在 codeBg / codeHeaderBg 上 ≥ 4.5
 - text / textMuted 在 6 种内嵌底色上 ≥ 4.5
