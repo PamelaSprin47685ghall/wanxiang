@@ -346,16 +346,29 @@ module InteractabilityConvergenceTests =
             Assert.True(
                 menuTexts |> List.exists (fun text -> text.Contains "m-c"),
                 sprintf "空态模型菜单应列出 catalog 里的模型，实际浮层文本：%A" menuTexts)
-            // 菜单项是 ActionBorder，自动化名 = 模型名；Enter 走 Ui.onClick 的同一 action。
-            // ActionBorder 是 internal：按自动化名匹配任意 Control（菜单项名 = 模型名）。
+            // 决策 240：快速切换行仍是 ActionBorder，自动化名 = 模型名；读屏 HelpText 带服务名。
+            // GetVisualDescendants 有时绕过自定义 peer 拿不到 Name，改用 Focusable Border（与 ModelChipUiTests 同构）。
+            // 找不到行时走搜索框回车（新浮层主键盘路径）。
             let entry =
                 shell.GetVisualDescendants()
                 |> Seq.tryPick (function
-                    | :? Control as c when AutomationProperties.GetName c = "m-c" -> Some c
+                    | :? Border as b when b.Focusable && AutomationProperties.GetName b = "m-c" -> Some(b :> Control)
                     | _ -> None)
-            Assert.True(entry.IsSome, "应点得到 m-c 这一项")
-            entry.Value.RaiseEvent(
-                KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None, Source = entry.Value))
+            match entry with
+            | Some c ->
+                c.RaiseEvent(
+                    KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None, Source = c))
+            | None ->
+                let search =
+                    shell.GetVisualDescendants()
+                    |> Seq.tryPick (function
+                        | :? TextBox as t when t.Name = "ModelSwitcherSearch" || AutomationProperties.GetName t = "搜索模型" -> Some t
+                        | _ -> None)
+                Assert.True(search.IsSome, sprintf "应点得到 m-c 这一项，或搜索框；浮层文本：%A" menuTexts)
+                search.Value.Text <- "m-c"
+                Dispatcher.UIThread.RunJobs()
+                search.Value.RaiseEvent(
+                    KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None, Source = search.Value))
             Dispatcher.UIThread.RunJobs()
             let draft =
                 typeof<MainView>.GetField("draftModelSelection", flags).GetValue shell
