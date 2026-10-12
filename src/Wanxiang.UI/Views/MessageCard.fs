@@ -1361,7 +1361,10 @@ module MessageCard =
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceSm)
         column.Children.Add title
         column.Children.Add hint
-        let topRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXl)
+        // 决策 352：横向 StackPanel 给子项无限宽，说明文字不换行、手机上被截断；DockPanel 让正文吃剩余宽度。
+        let topRow = DockPanel(LastChildFill = true)
+        icon.Margin <- Thickness(0.0, 0.0, Spacing.spaceXl, 0.0)
+        DockPanel.SetDock(icon, Dock.Left)
         topRow.Children.Add icon
         topRow.Children.Add column
         // 等待建议只跟可重试错误走：不可重试时给秒数等于指错路。
@@ -1393,6 +1396,8 @@ module MessageCard =
                     announcedReady <- true
                     Avalonia.Automation.AutomationProperties.SetLiveSetting(countdown, AutomationLiveSetting.Polite)
                 countdown.Foreground <- if left <= 0 then Tokens.success else Tokens.warning
+                // 决策 352：等待中秒数只在「重试（N 秒）」按钮上说一遍；走完才显示「现在可以重试了」。
+                countdown.IsVisible <- left <= 0
                 countdownLeft <- left
                 onCountdown left
                 left

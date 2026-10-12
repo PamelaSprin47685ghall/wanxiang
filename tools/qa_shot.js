@@ -135,6 +135,9 @@ async function main() {
     try {
     const page = await browser.newPage();
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: THEME }]);
+    // r18：无头 Chrome 的 showOpenFilePicker 拦截后拿不到 DOM 节点（accept 抛 DOM.resolveNode），
+    // 去掉它让 Avalonia 退回 <input type=file>，puppeteer 的 FileChooser 才能塞文件。
+    await page.evaluateOnNewDocument(() => { try { delete window.showOpenFilePicker; window.showOpenFilePicker = undefined; } catch {} });
 
     const resizeChecks = [];
     page.on('console', (m) => {
@@ -362,10 +365,11 @@ async function main() {
         'tool started',
     );
     const finishedBefore = ctl.events.filter((e) => e.type === 'generation.finished').length;
-    const approval = await ctl.waitFor((e) => e.type === 'tool.approval-requested', 20000, 'tool approval requested');
+    // r18：echo 可能已被策略设为「总是允许」，这时没有审批请求；不当作失败。
+    const approval = await ctl.waitFor((e) => e.type === 'tool.approval-requested', 8000, 'tool approval requested').catch(() => null);
     await sleep(900);
-    await shot('05-tool-approval');
-    ctl.send('tool.approval-decision', { approvalId: approval.payload.approvalId, approved: true });
+    await shot(approval ? '05-tool-approval' : '05-tool-auto');
+    if (approval) ctl.send('tool.approval-decision', { approvalId: approval.payload.approvalId, approved: true });
     await ctl.waitFor(
         () => ctl.events.filter((e) => e.type === 'generation.finished').length > finishedBefore,
         60000,
@@ -398,6 +402,47 @@ async function main() {
     );
     await sleep(900);
     await shot('06b-rate-limit');
+
+    // 08 附件（r18）：点回形针，拦截文件选择器塞一张 PNG 和一个文本文件，截附件托盘态。
+    // 回形针位置随布局变：按候选坐标逐个试，拿到 file chooser 即止；拿不到只记日志不判失败。
+    {
+        const { writeFileSync } = require('node:fs');
+        const png = join(OUT, '.qa-attach.png');
+        const txt = join(OUT, '.qa-notes.txt');
+        // 64x48 纯色 PNG（无依赖手写）：zlib 压一行行扫描线
+        const zlib = require('node:zlib');
+        const w = 64, h = 48;
+        const raw = Buffer.alloc((w * 3 + 1) * h);
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+            const o = y * (w * 3 + 1) + 1 + x * 3; raw[o] = 40 + x * 3; raw[o + 1] = 120; raw[o + 2] = 200 - y * 2;
+        }
+        const crc = (b) => { let c = ~0; for (const v of b) { c ^= v; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return ~c >>> 0; };
+        const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
+        const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+        writeFileSync(png, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]));
+        writeFileSync(txt, '会议纪要\n- 附件 QA\n');
+        const candidates = compact
+            ? [[geo.w - 76, geo.h - 30], [geo.w - 60, geo.h - 30], [geo.w - 90, geo.h - 30], [geo.w - 76, geo.h - 50]]
+            : [[geo.w * 0.813, geo.h - 44], [geo.w * 0.813, geo.h - 38], [geo.w * 0.80, geo.h - 44]];
+        let attached = false;
+        for (const [x, y] of candidates) {
+            try {
+                const [chooser] = await Promise.all([
+                    page.waitForFileChooser({ timeout: 2500 }),
+                    page.mouse.click(geo.x + x, geo.y + y),
+                ]);
+                await chooser.accept(chooser.isMultiple() ? [png, txt] : [png]);
+                attached = true;
+                break;
+            } catch {
+                await page.keyboard.press('Escape');
+                await sleep(300);
+            }
+        }
+        console.log('attachment step:', attached ? 'attached' : 'no file chooser (skipped)');
+        await sleep(1500);
+        await shot(attached ? '08-attachment' : '08-attachment-skipped');
+    }
 
     // 07 设置：齿轮常驻（wide）；compact 先确保抽屉打开再点齿轮
     const settingsX = compact ? geo.w - 26 : 264;

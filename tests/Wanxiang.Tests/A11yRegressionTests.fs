@@ -255,3 +255,18 @@ let ``模型切换器写明键盘路径且空结果会播报`` () =
 let ``撤销提示条把 Ctrl+Z 告诉读屏`` () =
     let src = read "src/Wanxiang.UI/Controls/OverlayHost.fs"
     Assert.Contains("SetAcceleratorKey(actionButton, \"Ctrl+Z\")", src)
+
+// r18 一致性（决策 350–354）：同一动作同一个名字，快捷键走 hint 列而不是塞进标签；
+// 附件上传完成不再 toast；顶栏菜单不重复「回到最新」浮钮。
+[<Fact>]
+let ``r18 菜单与入口一致性`` () =
+    let sidebar = read "src/Wanxiang.UI/Views/Sidebar.fs"
+    let chat = read "src/Wanxiang.UI/Views/ChatView.fs"
+    let shell = read "src/Wanxiang.UI/AppShell.fs"
+    for bad in [ "\"重命名 (F2)\""; "置顶 (P)\""; "\"删除 (Delete)\""; "已归档对话 (%d)" ] do
+        Assert.DoesNotContain(bad, sidebar)
+    Assert.DoesNotContain("从当前分叉", chat)
+    Assert.Contains("\"从此分叉\"", chat)
+    Assert.Contains("\"从此分叉\"", sidebar)
+    Assert.DoesNotContain("MenuEntry.create \"回到最新\"", chat)
+    Assert.DoesNotContain("上传完成\" upload.fileName) Success", shell)

@@ -288,7 +288,7 @@ let ``compact conversation menu keeps fork export and reading actions reachable`
             Dispatcher.UIThread.RunJobs()
             let trigger = named root "对话操作"
             press trigger
-            Assert.True((named root "从当前分叉").IsEffectivelyVisible)
+            Assert.True((named root "从此分叉").IsEffectivelyVisible)
             Assert.True((named root "对话上下文").IsEffectivelyVisible)
             Assert.True((named root "回到对话开头").IsEffectivelyVisible)
             press (named root "导出（Markdown / JSON）…")

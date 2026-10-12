@@ -638,7 +638,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 [ if titleEditable then
                       MenuEntry.create "重命名" (fun () -> this.BeginTitleEdit()) |> MenuEntry.withIcon Icons.pencil
                   MenuEntry.create "对话上下文" actions.openSessionSettings |> MenuEntry.withIcon Icons.sliders
-                  MenuEntry.create "从当前分叉" actions.forkFromHere |> MenuEntry.withIcon Icons.fork
+                  MenuEntry.create "从此分叉" actions.forkFromHere |> MenuEntry.withIcon Icons.fork
                   MenuEntry.create "导出（Markdown / JSON）…" exportConversation |> MenuEntry.withIcon Icons.download ]
             let reading =
                 [ if canJumpPrevious then
@@ -646,8 +646,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                   if canJumpNext then
                       MenuEntry.create "下一条提问" (fun () -> this.JumpExchange 1) |> MenuEntry.withIcon Icons.chevronsDown
                   if messagePanel.Children.Count > 0 then
-                      MenuEntry.create "回到对话开头" (fun () -> this.SmoothScrollToBeginning())
-                      MenuEntry.create "回到最新" (fun () -> this.SmoothScrollToEnd()) ]
+                      MenuEntry.create "回到对话开头" (fun () -> this.SmoothScrollToBeginning()) ]
+                  // 决策 354：「回到最新」由右下角浮钮承担（离开底部才出现），菜单里不再重复一份。
             let groups =
                 [ "当前对话", conversation
                   if not (List.isEmpty reading) then "阅读位置", reading
@@ -674,7 +674,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         if String.IsNullOrWhiteSpace model then
             headerModelChip.IsVisible <- false
         else
-            headerModelChip.IsVisible <- true
+            // 决策 350：模型只在输入框里选一处（离「发送」最近、决定下一条回复）。
+            // 顶栏芯片与输入框芯片打开同一个切换器、显示同一个名字，两处同义入口只留一个。
+            headerModelChip.IsVisible <- false
             headerModelCaption.Text <- model
             let full = if String.IsNullOrWhiteSpace providerLabel then model else sprintf "%s · %s" providerLabel model
             ToolTip.SetTip(headerModelChip, sprintf "当前模型：%s。点击切换，从下一条回复开始生效" full)

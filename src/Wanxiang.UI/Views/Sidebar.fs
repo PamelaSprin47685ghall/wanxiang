@@ -668,7 +668,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let expanded = showArchived
         let labelText =
             if expanded then "收起已归档对话"
-            else sprintf "已归档对话 (%d)" archivedCount
+            else sprintf "已归档对话（%d）" archivedCount
         let archiveGlyph = Icons.archive Tokens.textMuted
         archiveGlyph.Width <- Tokens.iconGlyph
         archiveGlyph.Height <- Tokens.iconGlyph
@@ -936,17 +936,20 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 overlay
                 target
                 alignRight
-                [ MenuEntry.create "重命名 (F2)" (fun () -> actions.renameConversation live)
+                [ MenuEntry.create "重命名" (fun () -> actions.renameConversation live)
+                  |> MenuEntry.withHint "F2"
                   |> MenuEntry.withIcon Icons.pencil
                   MenuEntry.create "多选" (fun () -> this.EnterSelection(live.id))
                   |> MenuEntry.withIcon Icons.check
-                  MenuEntry.create (if live.pinned then "取消置顶 (P)" else "置顶 (P)") (fun () -> actions.setPinned live (not live.pinned))
+                  MenuEntry.create (if live.pinned then "取消置顶" else "置顶") (fun () -> actions.setPinned live (not live.pinned))
+                  |> MenuEntry.withHint "P"
                   |> MenuEntry.withIcon Icons.pin
                   MenuEntry.create (if live.archived then "取消归档" else "归档") (fun () -> actions.setArchived live (not live.archived))
                   |> MenuEntry.withIcon Icons.archive
                   MenuEntry.create "从此分叉" (fun () -> actions.duplicateAsFork live) |> MenuEntry.withIcon Icons.fork
                   MenuEntry.create "导出（Markdown / JSON）…" (fun () -> actions.exportConversation live) |> MenuEntry.withIcon Icons.download
-                  MenuEntry.create "删除 (Delete)" (fun () -> actions.deleteConversation live)
+                  MenuEntry.create "删除" (fun () -> actions.deleteConversation live)
+                  |> MenuEntry.withHint "Delete"
                   |> MenuEntry.withIcon Icons.trash
                   |> MenuEntry.asDanger ]
         Ui.onClick moreButton (fun () -> openMenu (moreButton :> Control) true)
@@ -1105,7 +1108,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
     /// 已归档开关复用：只刷文案/人字形/无障碍名，展开/收起的点击与键盘处理与状态无关，沿用旧链。
     member private _.RefreshArchivedToggle(host: Border, expanded: bool, count: int) =
-        let labelText = if expanded then "收起已归档对话" else sprintf "已归档对话 (%d)" count
+        let labelText = if expanded then "收起已归档对话" else sprintf "已归档对话（%d）" count
         match host.Child with
         | :? DockPanel as row when row.Children.Count >= 2 ->
             match row.Children.[1] with

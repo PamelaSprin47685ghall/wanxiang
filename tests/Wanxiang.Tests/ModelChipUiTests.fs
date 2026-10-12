@@ -91,6 +91,8 @@ module ModelChipUiTests =
             | Some t ->
                 Assert.EndsWith("后可重试。", t.Text)
                 Assert.StartsWith("1 分", t.Text)
+                // 决策 352：等待中秒数只在按钮上说一遍，这一行不可见。
+                Assert.False t.IsVisible
             | None -> Assert.Fail "countdown missing"
             // 同一错误实例重建卡片：截止时刻不变（不会从头数）
             let again = MessageCard.errorCard err ignore None
@@ -119,7 +121,8 @@ module ModelChipUiTests =
             chat.Build()
             chat.SetConversationChrome true
             chat.SetHeaderModel("o3", "OpenAI", true)
-            Assert.True chat.HeaderModelVisible
+            // 决策 350：顶栏不再显示模型芯片（唯一入口在输入框）。
+            Assert.False chat.HeaderModelVisible
             Assert.Equal("o3", chat.HeaderModelText)
             Assert.Contains("OpenAI", AutomationProperties.GetName chat.HeaderModelAnchor)
             let mutable opened = false
