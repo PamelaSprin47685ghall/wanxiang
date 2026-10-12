@@ -365,7 +365,10 @@ module Program =
                 if switches.client && effectiveServer then Task.Run(fun () -> startServer ())
                 else Task.FromResult(startServer ())
             Wanxiang.UI.LocalHostGate.ready <- (serverTask :> Task)
-            let serverApp () = try serverTask.Result with _ -> None
+            // 稳定性（r17）：主机启动卡住时，退出最多等 15 秒，不无限挂起
+            let serverApp () =
+                try if serverTask.Wait(TimeSpan.FromSeconds 15.0) then serverTask.Result else None
+                with _ -> None
             let stopServer () =
                 match serverApp () with
                 | Some app -> app.Stop()

@@ -540,7 +540,11 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             with _ -> ()
             try
                 match host with
-                | Some h -> h.StopAsync().GetAwaiter().GetResult()
+                | Some h ->
+                    // 稳定性（r17）：排空给 10 秒上限，卡住的连接不能让「退出」无限挂起
+                    use cts = new CancellationTokenSource(TimeSpan.FromSeconds 10.0)
+                    if not (h.StopAsync(cts.Token).Wait(TimeSpan.FromSeconds 12.0)) then
+                        logInfo "主机停止超时（12 秒），强制继续关闭"
                 | None -> ()
             with _ -> ()
             try
