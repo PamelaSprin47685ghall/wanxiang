@@ -28,7 +28,7 @@ module TomlCodec =
 
     let private knownGenerationKeys =
         set [ "temperature"; "topP"; "maxTokens"; "instructions"; "maxContextMessages"; "maxContextTokens"
-              "autoTitle"; "maxToolRounds"; "thinkingBudget" ]
+              "autoTitle"; "maxToolRounds"; "thinkingBudget"; "defaultProvider"; "defaultModel" ]
 
     let private knownToolsKeys = set [ "fileReadRoots"; "callTimeoutSeconds" ]
 
@@ -448,7 +448,15 @@ module TomlCodec =
                          | true, b -> asBool b |> Option.defaultValue d.autoTitle
                          | _ -> d.autoTitle)
                       maxToolRounds = getIntOpt "maxToolRounds" |> Option.defaultValue d.maxToolRounds
-                      thinkingBudget = getIntOpt "thinkingBudget" |> Option.defaultValue d.thinkingBudget }
+                      thinkingBudget = getIntOpt "thinkingBudget" |> Option.defaultValue d.thinkingBudget
+                      defaultProvider =
+                        match t.TryGetValue "defaultProvider" with
+                        | true, b -> asString b |> Option.filter (String.IsNullOrWhiteSpace >> not)
+                        | _ -> None
+                      defaultModel =
+                        match t.TryGetValue "defaultModel" with
+                        | true, b -> asString b |> Option.filter (String.IsNullOrWhiteSpace >> not)
+                        | _ -> None }
                 | None ->
                     errors.Add "generation: expected table"
                     GenerationDefaults.defaults
@@ -698,13 +706,15 @@ module TomlCodec =
 
             match configVersion with
             | 1 -> tryParseV1 top
-            | 2 -> tryParseV2 top
+            // 3 = 2 + `[generation] defaultProvider/defaultModel`；读入后统一视为当前结构，
+            // 写回时按是否设置了全局默认重新决定 2 或 3（`AppConfig.versionToWrite`）。
+            | 2 | 3 -> tryParseV2 top
             | v -> Error [ sprintf "configVersion %d not supported (expected %d)" v AppConfig.CurrentVersion ]
 
     /// 将配置完整重写为 TOML 文本（决策 42：不保留注释/未知字段/布局）。
     let serialize (cfg: AppConfig) : string =
         let top = TomlTable()
-        top.Add("configVersion", int64 cfg.configVersion)
+        top.Add("configVersion", int64 (AppConfig.versionToWrite cfg))
         top.Add("instanceId", cfg.instanceId.ToString("D"))
 
         let runtime = TomlTable()
@@ -739,6 +749,8 @@ module TomlCodec =
         generation.Add("maxToolRounds", int64 cfg.generation.maxToolRounds)
         if cfg.generation.thinkingBudget > 0 then
             generation.Add("thinkingBudget", int64 cfg.generation.thinkingBudget)
+        match cfg.generation.defaultProvider with Some p -> generation.Add("defaultProvider", p) | None -> ()
+        match cfg.generation.defaultModel with Some m -> generation.Add("defaultModel", m) | None -> ()
         top.Add("generation", generation)
 
         let toolsTable = TomlTable()

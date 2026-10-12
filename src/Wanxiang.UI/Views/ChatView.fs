@@ -575,6 +575,24 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         this.HideSkeletonLoading()
         messagePanel.IsVisible <- false
 
+    /// 在空态位置放一块自带交互的内容（首次运行的「连接一个模型」卡片）。
+    /// 只换 emptyPanel 的子项，不动滚动区与输入控件。
+    member this.ShowEmbeddedEmpty(content: Control) =
+        lastEmptyState <- None
+        currentPrimaryAction <- ignore
+        emptyActionButton.IsVisible <- false
+        let alreadyHosted = emptyPanel.Children.Count = 1 && obj.ReferenceEquals(emptyPanel.Children[0], content)
+        if not alreadyHosted then
+            match content.Parent with
+            | :? Panel as panel -> panel.Children.Remove content |> ignore
+            | _ -> ()
+            emptyPanel.Children.Clear()
+            emptyPanel.Children.Add content
+        emptyPanel.IsVisible <- true
+        scroller.IsVisible <- false
+        this.HideSkeletonLoading()
+        messagePanel.IsVisible <- false
+
     member this.HideEmpty() =
         lastEmptyState <- None
         currentPrimaryAction <- ignore

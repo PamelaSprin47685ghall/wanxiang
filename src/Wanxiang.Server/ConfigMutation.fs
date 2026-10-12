@@ -141,7 +141,14 @@ module ConfigMutation =
                 Error errors
 
     let deleteProvider (cfg: AppConfig) (id: string) : Result<AppConfig, string list> =
-        if cfg.providers.ContainsKey id then Ok { cfg with providers = cfg.providers.Remove id }
+        if cfg.providers.ContainsKey id then
+            // 全局默认指向被删的模型服务时一并清掉：留着只会写出悬空引用。
+            let generation =
+                if cfg.generation.defaultProvider = Some id then
+                    { cfg.generation with defaultProvider = None; defaultModel = None }
+                else
+                    cfg.generation
+            Ok { cfg with providers = cfg.providers.Remove id; generation = generation }
         else Error [ sprintf "provider %s 不存在" id ]
 
     let upsertMcp (cfg: AppConfig) (payload: JsonObject) : Result<AppConfig, string list> =
@@ -204,7 +211,10 @@ module ConfigMutation =
               maxContextTokens = intOf payload "maxContextTokens" |> Option.defaultValue current.maxContextTokens
               autoTitle = boolOf payload "autoTitle" current.autoTitle
               maxToolRounds = intOf payload "maxToolRounds" |> Option.defaultValue current.maxToolRounds
-              thinkingBudget = intOf payload "thinkingBudget" |> Option.defaultValue current.thinkingBudget }
+              thinkingBudget = intOf payload "thinkingBudget" |> Option.defaultValue current.thinkingBudget
+              // 全局默认模型：键存在即覆盖，空串 = 清除（回落为首个可用模型服务的 defaultModel）。
+              defaultProvider = if hasKey "defaultProvider" then str payload "defaultProvider" else current.defaultProvider
+              defaultModel = if hasKey "defaultModel" then str payload "defaultModel" else current.defaultModel }
         let toolsCfg =
             let mutable n: JsonNode = null
             if payload.TryGetPropertyValue("tools", &n) && not (isNull n) && n.GetValueKind() = JsonValueKind.Object then
@@ -226,6 +236,17 @@ module ConfigMutation =
               if generation.maxContextMessages < 0 then "generation.maxContextMessages: 不能为负"
               if generation.maxContextTokens < 0 then "generation.maxContextTokens: 不能为负"
               if generation.maxToolRounds <= 0 then "generation.maxToolRounds: 需为正整数"
+              match generation.defaultProvider, generation.defaultModel with
+              | None, Some _ -> "generation.defaultModel: 需要同时指定 defaultProvider"
+              | Some pid, model ->
+                  match cfg.providers |> Map.tryFind pid with
+                  | None -> sprintf "generation.defaultProvider: 模型服务 %s 不存在" pid
+                  | Some p ->
+                      match model with
+                      | Some m when not (ProviderConfig.hasModel m p) ->
+                          sprintf "generation.defaultModel: %s 不在 %s 的模型列表中" m pid
+                      | _ -> ()
+              | None, None -> ()
               if toolsCfg.callTimeoutSeconds <= 0 then "tools.callTimeoutSeconds: 需为正整数"
               for root in toolsCfg.fileReadRoots do
                   if not (IO.Path.IsPathRooted root) then sprintf "tools.fileReadRoots: %s 需为绝对路径" root ]

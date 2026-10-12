@@ -42,8 +42,9 @@ module VersionAuthority =
     [<Fact>]
     let ``配置版本常量唯一且 TomlCodec 拒绝未知版本`` () =
         Assert.Equal(2, AppConfig.CurrentVersion)
-        // v1/v2 显式识别；未知版本必须拒绝（不猜格式）
-        match TomlCodec.tryParse "configVersion = 3\n" with
+        // v1/v2/v3 显式识别（3 = 2 + 全局默认模型，见 wanxiang-config 决策 60）；未知版本必须拒绝（不猜格式）
+        Assert.Equal(3, AppConfig.GlobalDefaultVersion)
+        match TomlCodec.tryParse "configVersion = 4\n" with
         | Ok _ -> failwith "unknown config version must be rejected"
         | Error errs -> Assert.Contains("not supported", String.concat "; " errs)
 

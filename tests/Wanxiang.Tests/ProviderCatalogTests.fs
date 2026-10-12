@@ -190,7 +190,9 @@ module ProviderCatalogTests =
               maxContextTokens = 32000
               autoTitle = true
               maxToolRounds = 8
-              thinkingBudget = 500 }
+              thinkingBudget = 500
+              defaultProvider = None
+              defaultModel = None }
 
         let appCfg = { AppConfig.defaults (Guid.NewGuid()) with generation = gen }
 

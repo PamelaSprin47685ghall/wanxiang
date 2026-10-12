@@ -36,6 +36,8 @@
     <Compile Include="McpTests.fs" />
     <Compile Include="ServerAppTests.fs" />
     <Compile Include="ProviderCatalogTests.fs" />
+    <Compile Include="OnboardingConfigTests.fs" />
+    <Compile Include="OnboardingUiTests.fs" />
     <Compile Include="ServerStoreMutationTests.fs" />
     <Compile Include="ChatOrchestratorTests.fs" />
     <Compile Include="ServerConnectionsTests.fs" />
