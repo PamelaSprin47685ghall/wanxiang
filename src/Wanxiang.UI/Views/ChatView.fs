@@ -150,6 +150,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable highlightedCommit: uint64 option = None
     let mutable highlightTimer: (DispatcherTimer * (unit -> unit)) option = None
     let mutable canJumpPrevious = false
+    /// 决策 300：主机上还有更早的历史页（AppShell 按 pageHasMore 同步）。
+    let mutable olderOnHost = false
+    /// 决策 300：「上一轮」越过已加载历史时挂起的跳转，下一页渲染完再续跳。
+    let mutable pendingJumpPrevious = false
+    let mutable pendingJumpFirst: uint64 option = None
     let mutable canJumpNext = false
     let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl+B / ⌘B）"
 
@@ -390,6 +395,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         // 「下一条」仍可点，按下去只是原地跳一格再被自动跟随拽回底部。
         // 与 kelivo 的 hasNext 端点规则同向：target 越界即不可跳。
         let hasNext = hasNext && not atBottom
+        // 决策 300：窗口外还有未挂载 / 主机上还有更早的消息时，「上一轮」永远可用——
+        // 按下去先按需加载，再跳到真正的上一轮。
+        let hasPrev = hasPrev || (not (List.isEmpty cards) && (hiddenCommits.Length > 0 || olderOnHost))
         canJumpPrevious <- hasPrev
         canJumpNext <- hasNext
 
@@ -858,6 +866,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     static member InitialMountWindow = 40
     static member MountWindowStep = 60
 
+    /// 决策 300：主机上是否还有更早的历史页。没有了就撤掉挂起的「上一轮」。
+    member _.SetOlderAvailable(value: bool) =
+        olderOnHost <- value
+        if not value then pendingJumpPrevious <- false
+        syncExchangeNavState ()
+
+    member _.PendingJumpPrevious = pendingJumpPrevious
+
     /// 当前因窗口未挂载的已加载消息数（测试 / 诊断用）
     member _.HiddenMessageCount = hiddenCommits.Length
 
@@ -890,6 +906,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         previousRenderedMessageCount <- 0
         // 锚点跟着对话一起丢：换对话后旧锚引用的卡片已不在面板上。
         exchangeAnchor <- None
+        pendingJumpPrevious <- false
         this.UpdateScrollToBottomAppearance()
         syncExchangeNavState ()
     /// 停止骨架呼吸动画。
@@ -1242,6 +1259,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         | Some key when not (Array.contains (Some key) mountedKeys) -> exchangeAnchor <- None
         | _ -> ()
         syncExchangeNavState ()
+        if pendingJumpPrevious && lastFirstCommit <> pendingJumpFirst then
+            pendingJumpPrevious <- false
+            // 等分页锚点恢复（Background）之后再跳，免得被写回旧偏移。
+            Dispatcher.UIThread.Post((fun () -> this.JumpExchange -1), DispatcherPriority.ContextIdle)
 
         // 缓存只保留这一帧用到的身份：换对话、改字号都会让旧身份失效，
         // 留着只是占内存
@@ -1505,6 +1526,15 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 else
                     cards |> List.tryFind (fun index -> index > current)
             match target with
+            | None when direction < 0 && hiddenCommits.Length > 0 ->
+                // 决策 300：本机已加载、只是没挂载——先挂上一步再续跳（锚点不变，索引随之后移）。
+                if exchangeAnchor.IsNone && current >= 0 then exchangeAnchor <- mountedKeys.[current]
+                if this.ExpandMountWindow() then this.JumpExchange direction
+            | None when direction < 0 && olderOnHost ->
+                if exchangeAnchor.IsNone && current >= 0 then exchangeAnchor <- mountedKeys.[current]
+                pendingJumpPrevious <- true
+                pendingJumpFirst <- lastFirstCommit
+                actions.requestOlderHistory ()
             | Some index ->
                 match mountedKeys.[index] with
                 | Some key -> exchangeAnchor <- Some key
