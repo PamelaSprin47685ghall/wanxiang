@@ -10,7 +10,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # 定期分级（§24）：large-history + soak 每周跑一次（不进 PR gate）
+    # 定期分级（§24）：large-history + soak 每周跑一次；另见决策 301（PR 碰历史/渲染、push main 也跑）
     - cron: "0 4 * * 0"
 
 jobs:
@@ -85,8 +85,35 @@ jobs:
       - name: Integration + recovery + crash matrix (non-UI)
         run: ./run-tests.sh --no-ui
 
+  # 决策 301：large-history 不再只靠每周定时——碰了历史 / 渲染代码的 PR 与每次 push main 都跑，
+  # 不会被静默跳过。路径判断用 git diff，不引第三方 action。
+  history-changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      touched: ${{ steps.diff.outputs.touched }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          files=$(git diff --name-only "$base"...HEAD)
+          echo "$files"
+          if echo "$files" | grep -qE '^(src/Wanxiang\.(Store|Core|Protocol|Server)/|src/Wanxiang\.UI/(Views/(ChatView|MessageCard|Sidebar)\.fs|Rich/|Model/|AppShell\.fs)|tests/Wanxiang\.Tests/(PerformanceBaseline|Library|PerceivedPerf|WindowedNavigation)Tests\.fs|run-tests\.sh|\.github/workflows/)'; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          fi
+
   large-history-gate:
-    if: github.event_name == 'schedule'
+    needs: [history-changes]
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' && needs.history-changes.outputs.touched == 'true'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
