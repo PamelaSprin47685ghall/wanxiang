@@ -143,7 +143,17 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
                 fs.Write(bytes, 0, bytes.Length)
                 fs.Flush()
             File.Move(tmp, path, true)
-        match TomlCodec.tryParse (File.ReadAllText path) with
+        let text =
+            let raw = File.ReadAllText path
+            match TomlCodec.ensureInstanceId raw (Guid.CreateVersion7()) with
+            | Some patched ->
+                let tmp = Path.Combine(dir, sprintf ".%s.tmp.%d" (Path.GetFileName path) Environment.ProcessId)
+                File.WriteAllText(tmp, patched, UTF8Encoding(false))
+                try File.SetUnixFileMode(tmp, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
+                File.Move(tmp, path, true)
+                patched
+            | None -> raw
+        match TomlCodec.tryParse text with
         | Ok cfg ->
             // Q118：确保配置文件始终为最小用户权限（首建或外部创建时 umask 可能放宽）
             try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()

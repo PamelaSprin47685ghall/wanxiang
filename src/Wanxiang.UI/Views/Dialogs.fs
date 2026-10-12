@@ -330,7 +330,8 @@ module Dialogs =
         let codeShell, codeBox = Ui.textField "6 位配对码"
         codeBox.MaxLength <- 6
         codeBox.FontSize <- Tokens.fontTitle
-        codeBox.TextAlignment <- TextAlignment.Center
+        // 决策 273：居中对齐时空框的光标压在占位文字正中，像是已经输了一半；改为左对齐。
+        codeBox.TextAlignment <- TextAlignment.Left
         codeBox.LetterSpacing <- 8.0
         codeBox.FontFamily <- Tokens.monoFontFamily
         // 触屏：弹出数字键盘并把回车键标为“提交”（浏览器后端映射为 inputmode / enterkeyhint）。
@@ -439,14 +440,17 @@ module Dialogs =
                 else
                     autoSubmitted <- "")
 
-        let codeButton = Ui.button Ui.Secondary "提交配对码" submitCode
+        // 决策 273：配对模式下「提交配对码」是唯一主按钮，页脚「连接」退场，避免两个主次不清的按钮并存。
+        let codeButton = Ui.button Ui.Primary "提交配对码" submitCode
         codeButton.IsVisible <- false
+        let setFooterConnectVisible = ref (fun (_: bool) -> ())
 
         let startPairing () =
             codeSection.IsVisible <- true
             // 决策 260：配对模式下令牌框退场——两个输入框同时摆着，新用户不知道该填哪个。
             tokenField.IsVisible <- false
             codeButton.IsVisible <- true
+            setFooterConnectVisible.Value false
             pairingHint.Text <- pairingCodeHint (if isNull urlBox.Text then "" else urlBox.Text)
             onConnect
                 { url = (if isNull urlBox.Text then "" else urlBox.Text.Trim())
@@ -468,6 +472,7 @@ module Dialogs =
                 else
                     codeSection.IsVisible <- false
                     codeButton.IsVisible <- false
+                    setFooterConnectVisible.Value true
                     tokenField.IsVisible <- true
                     tokenBox.Focus() |> ignore
                 syncToggleText ())
@@ -504,6 +509,7 @@ module Dialogs =
             ToolTip.SetTip(cancelBtn, "取消并关闭连接对话框 (Esc)")
         | _ -> ()
         AutomationProperties.SetName(connectBtn, "连接")
+        setFooterConnectVisible.Value <- fun v -> connectBtn.IsVisible <- v
         AutomationProperties.SetHelpText(connectBtn, "连接至主机 (Enter)")
         ToolTip.SetTip(connectBtn, "连接至主机 (Enter)")
 
