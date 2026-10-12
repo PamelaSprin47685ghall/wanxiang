@@ -52,6 +52,7 @@ module R20PaletteTests =
         Assert.Equal("5", r2.Head)
         Assert.Equal(1, r2 |> List.filter ((=) "5") |> List.length)
 
+    [<Trait("Category", "UI")>]
     [<Fact>]
     let ``372 Ctrl+K 打开面板，Ctrl+Shift+F 归侧栏搜索，其他键不变`` () =
         Headless.run (fun () ->

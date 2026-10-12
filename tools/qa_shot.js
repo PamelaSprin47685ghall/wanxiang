@@ -456,6 +456,32 @@ async function main() {
     await shot('07-settings');
     await resizeSweep('settings');
 
+    // r20（决策 378）：经命令面板直达 设置 › 对话默认值，再截导入入口。
+    // 面板本身也是被测对象：Ctrl+K 打开、拼音首字母「dhmrz」检索、回车执行。
+    {
+        await page.keyboard.press('Escape');
+        await sleep(800);
+        const ctrlK = async () => {
+            await page.keyboard.down('Control');
+            await page.keyboard.press('KeyK');
+            await page.keyboard.up('Control');
+            await sleep(900);
+        };
+        await ctrlK();
+        await shot('10-command-palette-empty');
+        await page.keyboard.type('dhmrz', { delay: 60 });
+        await sleep(900);
+        await shot('10b-command-palette-pinyin');
+        await page.keyboard.press('Enter');
+        await sleep(1500);
+        await shot('09-settings-defaults');
+        // 导入入口在该页底部：滚到底再截一张。
+        await page.mouse.move(geo.x + geo.w * 0.65, geo.y + geo.h * 0.6);
+        for (let i = 0; i < 12; i++) { await page.mouse.wheel({ deltaY: 400 }); await sleep(80); }
+        await sleep(700);
+        await shot('09b-import-entry');
+    }
+
     ctl.close();
     const layout = await currentLayout();
     console.log(JSON.stringify({ shots, layout, resizeChecks, errors: errors.slice(0, 12) }, null, 2));
