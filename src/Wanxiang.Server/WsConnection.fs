@@ -70,6 +70,8 @@ type WsConnection(
     let mutable pairingRequested = false
     /// catch-up 进行中标记（Interlocked，防多入口并发发送重复批次）。
     let mutable catchUpRunning = 0
+    /// 全文搜索进行中的数量（W4，预算 SearchLimits.maxInFlightPerConnection）。
+    let mutable searchesInFlight = 0
 
     /// 快照携带的最大消息数（Q127/P1-2：长会话只带尾部，更早历史走 history.request 分页）。
     let snapshotMessageLimit = 200
@@ -637,6 +639,30 @@ type WsConnection(
                         | Ok page -> ConversationExportPage page
                         | Error message -> ConversationExportFailed {| exportId = d.exportId; message = message |}
                     this.TrySend ev |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
+            | SearchQuery d ->
+                match handshakeState with
+                | Authenticated ->
+                    // 只读查询：对不可变投影快照扫描，离开接收循环执行，不阻塞其它帧；
+                    // 同一连接并发有上限，超出直接说明原因（不排队、不静默丢）。
+                    if Interlocked.Increment(&searchesInFlight) > SearchLimits.maxInFlightPerConnection then
+                        Interlocked.Decrement(&searchesInFlight) |> ignore
+                        this.TrySend(SearchFailed {| queryId = d.queryId; message = "上一次搜索还没结束，请稍后再试。" |}) |> ignore
+                    else
+                        let proj = getProjection ()
+                        Task.Run(fun () ->
+                            try
+                                let ev =
+                                    try
+                                        match SearchService.search proj d with
+                                        | Ok page -> SearchResults page
+                                        | Error message -> SearchFailed {| queryId = d.queryId; message = message |}
+                                    with _ ->
+                                        SearchFailed {| queryId = d.queryId; message = "搜索失败，请重试。" |}
+                                this.TrySend ev |> ignore
+                            finally
+                                Interlocked.Decrement(&searchesInFlight) |> ignore)
+                        |> this.Detach
                 | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | ProviderProbeRequest d ->
                 match handshakeState with

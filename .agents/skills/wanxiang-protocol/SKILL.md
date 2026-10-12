@@ -815,3 +815,14 @@ MAF ⇄ AG-UI 消息往返对文本/工具调用/工具结果/推理/图片/混�
 - 客户端按 code 决定下一步（例如路径类错误才给「改用兼容端点」），**不再靠文案关键词**；没有前缀（旧服务端）或未知 code 时按「未分类」处理并原样显示文本。
 - 旧客户端读新服务端：只会在文本前多看到一个方括号 code，其余不变；不新增事件，不改 `ok` / `models` 语义。
 - 探测只在用户点击后触发（设置页「获取模型列表」或首次运行卡片「连接」）；服务端不在后台自动探测。
+# 75. 全文搜索协议：`search.query` / `search.results` / `search.failed`（W4 · 2026-10-12）
+
+> 来源：`docs/ux/redesign-proposal.md` W4。三个事件均为**加法**；旧客户端不发、旧主机不认时按未知事件忽略（决策 25），不影响其它功能。
+
+**问：消息正文搜索怎么走协议？**
+答：客户端发 `search.query`（`queryId`、`query`、可选 `includeArchived`/`offset`/`limit`），主机回 `search.results` 或 `search.failed`。
+- `queryId` 是客户端业务标识，只用来把结果页对回这次查询，**不是通用 requestId**，不引入请求-响应通道（决策 25 不变）。
+- 结果项含 `conversationId`、`title`、`archived`、`messageId`（= 消息 commitId）、`role`、`snippet`、`matchStart`/`matchLength`（相对 snippet 的 UTF-16 下标）。
+- `hasMore` 表示还能翻页；`truncated` 表示预算耗尽、结果不完整，**客户端必须明说**，不得当作“没有更多”。
+- 查询只读：不写日志、不推进 commitId、不改投影。分页用 `offset`，服务端无游标、无状态。
+- 数值预算的权威是 `Wanxiang.Protocol.SearchLimits`，同步见 `docs/contracts/resource-budgets.md` §10。

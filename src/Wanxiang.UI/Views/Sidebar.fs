@@ -39,11 +39,15 @@ type private SidebarListItem =
     | SectionHeader of string
     | ConversationRow of ConversationSummary
     | ArchivedToggle
+    /// W4：消息正文命中（只读派生，不是会话行：不进 visibleRowIds / 多选 / 行级菜单）
+    | MessageHitRow of SearchHit
+    /// W4：搜索状态行（搜索中 / 截断说明 / 失败 / 显示更多）
+    | SearchStatusRow of text: string * action: (string * (unit -> unit)) option
 
     member this.isItem =
         match this with
         | ConversationRow _ -> true
-        | SectionHeader _ | ArchivedToggle -> false
+        | SectionHeader _ | ArchivedToggle | MessageHitRow _ | SearchStatusRow _ -> false
 
     member this.IsItem = this.isItem
 
@@ -266,6 +270,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             TextTrimming = TextTrimming.CharacterEllipsis)
 
     let mutable summaries: ConversationSummary list = []
+    /// W4：分叉谱系（对话 id → 谱系）。根对话与旧服务端不在表里。
+    let mutable lineage: Map<Guid, ForkLineage> = Map.empty
+    /// W4：消息正文搜索的界面状态。命中只属于 `searchHitsQuery` 这个查询词，词变了就作废。
+    let mutable searchHits: SearchHit list = []
+    let mutable searchHitsQuery = ""
+    let mutable searchPending = false
+    let mutable searchHasMore = false
+    let mutable searchTruncated = false
+    let mutable searchError: string option = None
     /// 当前搜索词（Rebuild 时从搜索框快照）：行渲染与回收复用都据此上高亮。
     /// 只有 Rebuild 会写它，行渲染只是读者，所以防抖/立即两种时机不会互相打脸。
     let mutable searchQuery = ""
@@ -490,6 +503,142 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         if shouldFocus then
             this.FocusSearch()
 
+    // ---- W4：消息正文搜索（结果由 AppShell 经 search.query / search.results 取得）----
+
+    /// 发起查询的回调：(查询词, 含归档, 跳过条数)。未接线（测试里单独构造的侧栏）时不发查询、也不显示“搜索中”。
+    member val SearchHandler: (string -> bool -> int -> unit) option = None with get, set
+    /// 点击一条命中：打开对话并滚动到该消息。
+    member val OpenSearchHit: SearchHit -> unit = ignore with get, set
+
+    member private this.BeginMessageSearch() =
+        let q = (if isNull searchBox.Text then "" else searchBox.Text).Trim()
+        searchHits <- []
+        searchHasMore <- false
+        searchTruncated <- false
+        searchError <- None
+        match this.SearchHandler with
+        | Some handler when q <> "" && connected ->
+            searchHitsQuery <- q
+            searchPending <- true
+            this.Rebuild()
+            handler q showArchived 0
+        | _ ->
+            searchHitsQuery <- ""
+            searchPending <- false
+
+    member private this.LoadMoreMessageHits() =
+        match this.SearchHandler with
+        | Some handler when searchHitsQuery <> "" && not searchPending ->
+            searchPending <- true
+            this.Rebuild()
+            handler searchHitsQuery showArchived (List.length searchHits)
+        | _ -> ()
+
+    member private this.RetryMessageSearch() =
+        match this.SearchHandler with
+        | Some handler when searchHitsQuery <> "" ->
+            searchError <- None
+            searchPending <- true
+            this.Rebuild()
+            handler searchHitsQuery showArchived (List.length searchHits)
+        | _ -> ()
+
+    /// 一页结果到达。词已变（用户又改了输入）的迟到结果直接丢弃；offset > 0 是“显示更多”的追加页。
+    member this.ApplySearchResults(page: SearchPageState, offset: int) =
+        if page.query.Trim() = searchHitsQuery && searchHitsQuery <> "" then
+            searchHits <- if offset <= 0 then page.hits else searchHits @ page.hits
+            searchHasMore <- page.hasMore
+            searchTruncated <- page.truncated
+            searchPending <- false
+            searchError <- None
+            this.Rebuild()
+
+    member this.ApplySearchFailure(query: string, message: string) =
+        if query.Trim() = searchHitsQuery && searchHitsQuery <> "" then
+            searchPending <- false
+            searchError <- Some message
+            this.Rebuild()
+
+    /// 搜索框里当前的查询词（去首尾空白）。
+    member _.SearchQueryText: string = (if isNull searchBox.Text then "" else searchBox.Text).Trim()
+
+    /// 当前正在显示的消息命中（测试与 AppShell 取状态用）。
+    member _.MessageHits: SearchHit list = if searchHitsQuery <> "" then searchHits else []
+
+    /// 谱系随列表快照一起更新；只影响行的“分叉”标记与提示。
+    /// 在 `SetConversations` 之前调用，随后那次重建就会带上新谱系（本方法自己不重建，避免一次快照两次重建）。
+    member _.SetLineage(value: Map<Guid, ForkLineage>) =
+        lineage <- value
+
+    member private this.RenderMessageHit(hit: SearchHit) : Control =
+        let title =
+            TextBlock(
+                Text = (if hit.archived then hit.title + " · 已归档" else hit.title),
+                FontSize = Tokens.fontCaption,
+                Foreground = Tokens.textMuted,
+                TextTrimming = TextTrimming.CharacterEllipsis)
+        let snippet =
+            TextBlock(
+                FontSize = Tokens.fontSmall,
+                Foreground = Tokens.text,
+                TextWrapping = TextWrapping.Wrap,
+                MaxLines = 2,
+                TextTrimming = TextTrimming.CharacterEllipsis)
+        let before, matched, after = SearchHit.split hit
+        if before <> "" then snippet.Inlines.Add(Run(before))
+        if matched <> "" then
+            let run = Run(matched)
+            run.Foreground <- Tokens.accent
+            run.FontWeight <- FontWeight.Medium
+            snippet.Inlines.Add run
+        if after <> "" then snippet.Inlines.Add(Run(after))
+        let column = Ui.vstack ControlMetrics.sidebarRowContentSpacing [ title :> Control; snippet :> Control ]
+        let host =
+            ActionBorder(
+                Padding = Thickness(Spacing.spaceXl, ControlMetrics.sidebarRowPaddingY),
+                CornerRadius = CornerRadius Spacing.Radius.md,
+                Background = Brushes.Transparent,
+                Cursor = handCursor,
+                Focusable = true,
+                MinHeight = ControlMetrics.sidebarRowMinHeight,
+                Child = column)
+        host.Tag <- hit
+        host.Transitions <- Ui.surfaceTransitions ()
+        let name = sprintf "消息命中：%s，%s" hit.title hit.snippet
+        Avalonia.Automation.AutomationProperties.SetName(host, name)
+        Avalonia.Automation.AutomationProperties.SetRole(host, AutomationRole.Button)
+        ToolTip.SetTip(host, "打开对话并定位到这条消息")
+        Interaction.surface host Interaction.HoverVariant.plain |> ignore
+        Interaction.reportFocusOrigin host
+        Ui.onClick host (fun () -> this.OpenSearchHit hit)
+        host.KeyDown.Add(fun e ->
+            if e.Key = Key.Escape && not (String.IsNullOrEmpty searchBox.Text) then
+                e.Handled <- true
+                this.ResetSearch true)
+        host :> Control
+
+    member private this.RenderSearchStatus(text: string, action: (string * (unit -> unit)) option) : Control =
+        let label =
+            TextBlock(
+                Text = text,
+                FontSize = Tokens.fontCaption,
+                Foreground = Tokens.textMuted,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center)
+        Avalonia.Automation.AutomationProperties.SetName(label, text)
+        let children: Control list =
+            [ yield label :> Control
+              match action with
+              | Some(caption, run) ->
+                  let button = Ui.button Ui.Ghost caption run
+                  button.HorizontalAlignment <- HorizontalAlignment.Left
+                  yield button :> Control
+              | None -> () ]
+        Border(
+            Padding = Thickness(Spacing.spaceXl, Spacing.spaceMd),
+            Child = Ui.vstack Spacing.spaceMd children)
+        :> Control
+
     /// 已归档开关：与会话行同高同圆角的弱操作行。
     /// 折叠时显示计数（展开入口），展开时变成收起入口；
     /// 图标 + 文案 + 人字形指示器，键盘与自动化行为都是按钮。
@@ -598,17 +747,19 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 preview.Substring(title.Length).TrimStart(' ', '·', '—', '-', '，', '。')
             else
                 preview
-        if not (String.IsNullOrWhiteSpace withoutTitle) then withoutTitle
-        elif summary.messageCount > 0 then sprintf "%d 条消息" summary.messageCount
-        else "还没有消息"
+        let body =
+            if not (String.IsNullOrWhiteSpace withoutTitle) then withoutTitle
+            elif summary.messageCount > 0 then sprintf "%d 条消息" summary.messageCount
+            else "还没有消息"
+        // W4：分叉行用一个前缀标出身份（不改行结构，读屏与高亮沿用同一个文本块）。
+        if summary.isFork || lineage.ContainsKey summary.id then "分叉 · " + body else body
 
     member private _.RowTooltipFor(summary: ConversationSummary) =
-        let text =
-            sprintf
-                "%s\n%d 条消息%s"
-                summary.title
-                summary.messageCount
-                (if summary.isFork then " · 分叉会话" else "")
+        let provenance =
+            match ForkLineage.breadcrumb summaries lineage summary.id with
+            | Some crumb -> "\n" + crumb.text
+            | None -> if summary.isFork then " · 分叉" else ""
+        let text = sprintf "%s\n%d 条消息%s" summary.title summary.messageCount provenance
         RowToolTip text
 
     /// 状态槽内容：running 圆点 / pinned 图标 / idle 留空。槽位本身尺寸不变，
@@ -994,6 +1145,26 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             for item in group.items do
                 flatIndexByConversation[item.id] <- flattened.Count
                 flattened.Add(ConversationRow item)
+        // W4：消息正文命中（只在查询词与命中所属词一致时显示，词一变旧命中立即作废）。
+        let trimmedQuery = query.Trim()
+        let hitsCurrent = trimmedQuery <> "" && searchHitsQuery = trimmedQuery
+        let hitSection =
+            hitsCurrent && (searchPending || searchError.IsSome || not (List.isEmpty searchHits))
+        if hitSection then
+            flattened.Add(SectionHeader "消息内容")
+            for hit in searchHits do
+                flattened.Add(MessageHitRow hit)
+            match searchError with
+            | Some message ->
+                flattened.Add(SearchStatusRow(sprintf "消息搜索失败：%s" message, Some("重试", fun () -> this.RetryMessageSearch())))
+            | None ->
+                if searchPending then
+                    flattened.Add(SearchStatusRow((if List.isEmpty searchHits then "正在搜索消息…" else "正在加载更多…"), None))
+                else
+                    if searchHasMore then
+                        flattened.Add(SearchStatusRow("还有更多匹配的消息", Some("显示更多", fun () -> this.LoadMoreMessageHits())))
+                    if searchTruncated then
+                        flattened.Add(SearchStatusRow("结果已截断：只显示了最近的一部分匹配，请换更具体的词。", None))
         let archived = summaries |> List.filter (fun s -> s.archived)
         archivedCount <- archived.Length
         // 折叠时它是展开入口，展开时它是收起入口：两种状态都留在列表末尾，
@@ -1045,10 +1216,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     | _ -> ()),
                 DispatcherPriority.Input)
         | None -> ()
-        let isSearchEmpty = not (String.IsNullOrWhiteSpace query) && List.isEmpty visible
+        let isSearchEmpty = not (String.IsNullOrWhiteSpace query) && List.isEmpty visible && not hitSection
         searchEmptyHint.IsVisible <- isSearchEmpty
-        emptyStateHost.IsVisible <- List.isEmpty visible && not isSearchEmpty
-        if List.isEmpty visible then
+        emptyStateHost.IsVisible <- List.isEmpty visible && not isSearchEmpty && not hitSection
+        if List.isEmpty visible && not hitSection then
             // 空态三态互斥：未连接 / 列表加载中 / 确认无会话。
             // 「加载中」只在快照未达时出现——没有快照就没有资格宣判「还没有会话」。
             let setEmptyAction (label: string) (action: unit -> unit) =
@@ -1149,6 +1320,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 连接状态翻转（含断连清空列表的既有路径）时，任何在途的列表加载都已失效：
         // 快照只可能属于某一代连接，跨连接的 loading 不成立。
         listLoading <- false
+        // 搜索在途的结果只可能属于某一代连接：断开后不会再来，别让“正在搜索”挂着。
+        if not isConnected then searchPending <- false
         statusDot.Fill <- if isConnected then Tokens.success :> IBrush else Tokens.textFaint :> IBrush
         statusText.Text <- text
         this.Rebuild()
@@ -1408,6 +1581,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     this.FocusActiveConversation())
         searchDebounce.Tick.Add(fun _ ->
             searchDebounce.Stop()
+            this.BeginMessageSearch()
             this.Rebuild()
             // 结果刷新不碰滚动：首项可见由 Down 通路的 FocusRowAt/BringIntoView 保证。
             ())
@@ -1487,6 +1661,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                             | _ -> this.RenderRow summary
                         | _ -> this.RenderRow summary
 
+                    | MessageHitRow hit -> this.RenderMessageHit hit
+                    | SearchStatusRow(text, action) -> this.RenderSearchStatus(text, action)
                     | ArchivedToggle ->
                         match existing with
                         | :? Border as host when isNull host.Tag ->
