@@ -51,6 +51,49 @@ export async function credDelete(instanceId) {
     });
 }
 
+// ---- 本地草稿（W5）：独立数据库，不动凭据库的 schema；只存本机，永不上传 ----
+const WX_DRAFT_DB = "wanxiang-drafts";
+const WX_DRAFT_STORE = "drafts";
+const WX_DRAFT_KEY = "snapshot";
+
+function openDraftDb() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(WX_DRAFT_DB, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore(WX_DRAFT_STORE);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+export async function draftGet() {
+    const db = await openDraftDb();
+    return new Promise((resolve, reject) => {
+        const req = db.transaction(WX_DRAFT_STORE, "readonly").objectStore(WX_DRAFT_STORE).get(WX_DRAFT_KEY);
+        req.onsuccess = () => resolve(typeof req.result === "string" ? req.result : "");
+        req.onerror = () => reject(req.error);
+    });
+}
+
+export async function draftPut(json) {
+    const db = await openDraftDb();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(WX_DRAFT_STORE, "readwrite");
+        tx.objectStore(WX_DRAFT_STORE).put(json, WX_DRAFT_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+export async function draftDelete() {
+    const db = await openDraftDb();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(WX_DRAFT_STORE, "readwrite");
+        tx.objectStore(WX_DRAFT_STORE).delete(WX_DRAFT_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
 export function pageUrl() {
     return globalThis.location.href;
 }
@@ -198,7 +241,7 @@ const dotnetRuntime = await dotnet
     .create();
 
 dotnetRuntime.setModuleImports("wanxiang", {
-    credList, credPut, credDelete, pageUrl, wxViewportWidth,
+    credList, credPut, credDelete, draftGet, draftPut, draftDelete, pageUrl, wxViewportWidth,
     richLoad, richHighlight, richMath,
 });
 

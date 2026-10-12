@@ -310,6 +310,115 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         // 焦点移动只改变编辑位置，不提交；切换分区后仍使用同一张表单。
         generationForm :> Control
 
+    /// 主机状态与「检查主机」的状态源（AppShell 写入，关于页订阅）。
+    member val Health = HostHealth() with get
+
+    /// 「本机草稿」区与外壳之间的桥（清除动作与概况）。
+    member val LocalDrafts = LocalDraftControls() with get
+
+    /// 本机草稿：开关 + 清除。草稿只存本机、不上传不同步；关闭立即删除已存内容。
+    member private this.BuildLocalDrafts(setSwitch: (bool -> unit) -> unit) : Control =
+        let draftsRow, _, setPersist =
+            Ui.switchRow
+                "保存未发送的草稿"
+                "在这台设备上保存输入框里没发出的文字、附件名称和未确认的消息，重新打开后恢复。只存在本机，不会上传或同步。关闭后会立即删除已保存的内容。"
+                prefs.persistDrafts
+                (fun value ->
+                    prefs <- { prefs with persistDrafts = value }
+                    onPrefsChanged prefs)
+        setSwitch setPersist
+        let summaryText = Ui.caption this.LocalDrafts.Summary
+        Avalonia.Automation.AutomationProperties.SetAutomationId(summaryText, "local-drafts-summary")
+        let clearButton =
+            Ui.button Ui.Secondary "清除本地草稿" (fun () ->
+                // 确认框由外壳弹（Dialogs 在设置视图之后编译）；这里只发出请求。
+                this.LocalDrafts.ClearRequested())
+        clearButton.HorizontalAlignment <- HorizontalAlignment.Left
+        Avalonia.Automation.AutomationProperties.SetAutomationId(clearButton, "clear-local-drafts")
+        this.LocalDrafts.Changed.Add(fun () -> summaryText.Text <- this.LocalDrafts.Summary)
+        Ui.groupingCard
+            (Thickness(Spacing.space2xl, Spacing.space2xl))
+            (Ui.vstack
+                Spacing.spaceMd
+                [ draftsRow
+                  groupDivider () :> Control
+                  summaryText :> Control
+                  clearButton :> Control ])
+            Spacing.Radius.lg
+        :> Control
+
+    /// 主机状态：配置是否被拒绝 + 「检查主机」（doctor 的只读结果）。
+    member private this.BuildHostStatus() : Control =
+        let host = this.Health
+        let body = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
+        let render () =
+            body.Children.Clear()
+            // 配置状态
+            let issueLine =
+                match host.ConfigIssue with
+                | Some(summary, errors) ->
+                    let detail = errors |> String.concat "
+"
+                    let lines =
+                        [ Ui.label "配置有误" :> Control
+                          (let t = Ui.caption summary
+                           t.Foreground <- Tokens.danger
+                           Avalonia.Automation.AutomationProperties.SetAutomationId(t, "host-config-issue")
+                           t :> Control)
+                          (let t = Ui.caption detail
+                           Avalonia.Automation.AutomationProperties.SetAutomationId(t, "host-config-issue-detail")
+                           t :> Control)
+                          Ui.caption "修好配置文件后，这条提示会自动消失。" :> Control ]
+                    Ui.vstack Spacing.spaceXs lines :> Control
+                | None ->
+                    let t = Ui.caption "配置正常，主机正在使用最新一份配置。"
+                    Avalonia.Automation.AutomationProperties.SetAutomationId(t, "host-config-ok")
+                    t :> Control
+            body.Children.Add issueLine
+            body.Children.Add(Ui.hairline ())
+            // 检查主机
+            let checkButton =
+                Ui.button Ui.Secondary (match host.Doctor with Running -> "正在检查…" | _ -> "检查主机") (fun () ->
+                    match host.Doctor with
+                    | Running -> ()
+                    | _ -> host.BeginCheck())
+            checkButton.HorizontalAlignment <- HorizontalAlignment.Left
+            Avalonia.Automation.AutomationProperties.SetAutomationId(checkButton, "check-host")
+            (match host.Doctor with Running -> Ui.setEnabled checkButton false | _ -> ())
+            body.Children.Add checkButton
+            match host.Doctor with
+            | NotRun -> body.Children.Add(Ui.caption "只读检查：配置、磁盘、数据目录、事件日志与附件。不会修改任何内容。")
+            | Running -> body.Children.Add(Ui.caption "正在检查，可能需要几秒…")
+            | Unavailable reason -> body.Children.Add(Ui.caption reason)
+            | Report(ok, checks, at) ->
+                let headline = Ui.label (if ok then "全部通过" else "有项目需要处理")
+                Avalonia.Automation.AutomationProperties.SetAutomationId(headline, "doctor-headline")
+                body.Children.Add headline
+                for c in checks do
+                    let icon: Control = if c.ok then Icons.checkCircle Tokens.success else Icons.alert Tokens.danger
+                    let name = Ui.label (DoctorCheck.label c.name)
+                    name.MinWidth <- ControlMetrics.aboutKeyMinWidth
+                    let detail =
+                        SelectableTextBlock(
+                            Text = c.detail,
+                            FontSize = Tokens.fontCaption,
+                            Foreground = (if c.ok then Tokens.textMuted else Tokens.danger),
+                            TextWrapping = TextWrapping.Wrap,
+                            VerticalAlignment = VerticalAlignment.Center)
+                    let line = Ui.hstack Spacing.spaceMd [ icon; name :> Control; detail :> Control ]
+                    Avalonia.Automation.AutomationProperties.SetAutomationId(line, sprintf "doctor-check-%s" c.name)
+                    body.Children.Add line
+                body.Children.Add(Ui.caption (sprintf "检查时间 %s" (at.ToString "HH:mm:ss")))
+        render ()
+        let handler = Handler<unit>(fun _ () -> render ())
+        host.Changed.AddHandler handler
+        body.DetachedFromLogicalTree.Add(fun _ -> host.Changed.RemoveHandler handler)
+        Ui.groupingCard
+            (Thickness(Spacing.space2xl, Spacing.space2xl))
+            (Ui.vstack Spacing.spaceMd [ Ui.label "主机状态" :> Control; body :> Control ])
+            Spacing.Radius.lg
+        :> Control
+
     member this.BuildAppearance() : Control =
         let themeButton, setThemeText =
             Menu.selectButton
@@ -377,7 +486,11 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                 prefs <- { prefs with reduceMotion = value }
                 onPrefsChanged prefs)
 
+        let mutable setPersistDrafts: bool -> unit = ignore
+        let localDraftsCard = this.BuildLocalDrafts(fun setter -> setPersistDrafts <- setter)
+
         syncAppearance <- fun next ->
+            setPersistDrafts next.persistDrafts
             setThemeText (ThemePreference.label next.theme)
             fontSizeCaption.Text <- sprintf "%.1f pt" next.fontScale
             // 外部偏好同步（AppShell.SavePrefs → SettingsView.SetPrefs）同样刷新边界禁用态。
@@ -417,7 +530,13 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                         archivedRow
                         groupDivider () :> Control
                         motionRow ])
-                  Spacing.Radius.lg) :> Control ]
+                  Spacing.Radius.lg) :> Control
+              Ui.vstack
+                  Spacing.spaceXs
+                  [ Ui.heading "本机草稿" :> Control
+                    Ui.caption "草稿只保存在这台设备上，不会上传，也不会出现在对话记录里。" :> Control ]
+              :> Control
+              localDraftsCard ]
         :> Control
 
     member this.BuildAbout(instanceId: string, serverUrl: string) : Control =
@@ -477,6 +596,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                         copyDiagButton :> Control ])
                   Spacing.Radius.lg
               :> Control
+              this.BuildHostStatus()
               Ui.groupingCard
                   (Thickness(Spacing.space2xl, Spacing.space2xl))
                   (Ui.vstack

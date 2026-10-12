@@ -54,6 +54,15 @@ type MainView() as this =
 
     let drafts = ComposerDrafts()
     let outbox = MessageOutbox()
+    // ---- 本地草稿（W5，决策 80/81）：只存本机，不入日志、不上传、不同步 ----
+    let mutable draftStore = DraftStore.Default(fun () -> prefs.persistDrafts)
+    /// 启动时从本机读到的快照；保存时其中「尚未恢复的主机」原样保留。
+    let mutable storedDrafts = DraftSnapshot.empty
+    let mutable draftsLoaded = false
+    let restoredInstances = System.Collections.Generic.HashSet<string>()
+    /// 曾在列表或本地恢复里见过的对话 id：之后从列表里消失，才视为被删除并清理其草稿。
+    let mutable knownConversationIds: Set<Guid> = Set.empty
+    let unsentSavedAt = System.Collections.Generic.Dictionary<Guid, DateTimeOffset>()
     let attachmentDraft () = (drafts.Get(instanceId, activeConvId)).attachments
     // 附件下载在途缓冲：容量上限 + 断连整体丢弃，替代此前无上限的裸字典（R1）。
     let downloads = DownloadBuffers()
@@ -364,8 +373,113 @@ type MainView() as this =
     member private this.ApplyTheme() =
         Tokens.apply (UiPrefs.resolveTheme prefs (this.SystemPrefersDark()))
 
+    // ---- 本地草稿 ----
+
+    member private this.SyncActiveDraftText() =
+        if instanceId <> "" && not (isNull (box composer)) then
+            (drafts.Get(instanceId, activeConvId)).text <- composer.Text
+
+    member private this.CurrentDraftSnapshot() : DraftSnapshot =
+        this.SyncActiveDraftText()
+        let savedAtOf (id: Guid) =
+            match unsentSavedAt.TryGetValue id with
+            | true, t -> t
+            | _ ->
+                let t = DateTimeOffset.UtcNow
+                unsentSavedAt[id] <- t
+                t
+        let current = DraftPolicy.snapshotOf drafts outbox savedAtOf
+        DraftPolicy.mergeForSave storedDrafts (Set.ofSeq restoredInstances) current
+
+    member private this.UpdateDraftSummary() =
+        if not (isNull (box settings)) then
+            let snapshot = this.CurrentDraftSnapshot()
+            let texts = snapshot.drafts |> List.filter (fun d -> not (String.IsNullOrWhiteSpace d.text) || not (List.isEmpty d.attachments)) |> List.length
+            let unsent = snapshot.unsent |> List.length
+            settings.LocalDrafts.Summary <-
+                if not prefs.persistDrafts then "已关闭：不会在本机保存草稿。"
+                elif texts = 0 && unsent = 0 then "当前没有保存的草稿。"
+                else sprintf "已保存 %d 份草稿、%d 条未确认的消息。" texts unsent
+
+    /// 保存到本机。关闭保存、尚未读完磁盘、或内容没变时什么也不做。
+    member this.FlushDrafts() =
+        if draftsLoaded && prefs.persistDrafts then
+            draftStore.Save(this.CurrentDraftSnapshot()) |> ignore
+
+    /// 把本机保存的内容放回内存：只处理当前主机，且不覆盖用户这次已经输入的文字。
+    member private this.RestoreLocalDrafts() =
+        if draftsLoaded && prefs.persistDrafts && instanceId <> "" && restoredInstances.Add instanceId then
+            let unsentBefore = outbox.ForInstance instanceId |> List.length
+            DraftPolicy.restoreInto storedDrafts instanceId drafts outbox |> ignore
+            let unsentRestored = (outbox.ForInstance instanceId |> List.length) - unsentBefore
+            for d in storedDrafts.drafts do
+                if d.instanceId = instanceId then
+                    d.conversationId |> Option.iter (fun id -> knownConversationIds <- knownConversationIds.Add id)
+            for u in storedDrafts.unsent do
+                if u.instanceId = instanceId then knownConversationIds <- knownConversationIds.Add u.conversationId
+            let live = drafts.Get(instanceId, activeConvId)
+            if String.IsNullOrWhiteSpace composer.Text && not (String.IsNullOrWhiteSpace live.text) then
+                composer.SetText live.text
+            composer.SetAttachments((attachmentDraft ()).Items)
+            let hasDrafts =
+                storedDrafts.drafts |> List.exists (fun d -> d.instanceId = instanceId && (not (String.IsNullOrWhiteSpace d.text) || not (List.isEmpty d.attachments)))
+            if hasDrafts || unsentRestored > 0 then
+                let needsReselect =
+                    storedDrafts.drafts |> List.exists (fun d -> d.instanceId = instanceId && not (List.isEmpty d.attachments))
+                let message =
+                    if unsentRestored > 0 then "已恢复上次未发送的内容；未确认的消息可重试，不会重复保存。"
+                    else "已恢复上次未发送的草稿。"
+                toast (if needsReselect then message + "附件需要重新选择。" else message) Info
+            this.UpdateDraftSummary()
+
+    /// 清除本地草稿：本机落盘内容、内存里各对话的草稿、未确认的消息一并清空。
+    /// 已发送并保存的对话不受影响。
+    member private this.ClearLocalDrafts() =
+        for (instance, conversation), draft in drafts.Entries |> Seq.toList do
+            draft.text <- ""
+            for item in draft.attachments.Items |> Seq.toList do
+                draft.attachments.Remove item.attachmentId |> ignore
+            drafts.Remove(instance, conversation)
+        for instance in outbox.AllInstances() do
+            outbox.DiscardUnsent instance
+        storedDrafts <- DraftSnapshot.empty
+        unsentSavedAt.Clear()
+        composer.SetText ""
+        composer.SetAttachments []
+        draftStore.Clear() |> ignore
+        this.UpdateDraftSummary()
+        this.Render()
+        toast "本地草稿已清除。" Success
+
+    /// 列表里消失的对话 = 已被删除：它的草稿与未确认消息已无处可发，随之清理。
+    member private this.PruneDeletedConversationDrafts() =
+        if instanceId <> "" then
+            let listed = summaries |> List.map _.id |> Set.ofList
+            let inFlight =
+                outbox.ForInstance instanceId
+                |> List.filter (fun item -> not (PendingMessage.canRetry item))
+                |> List.map _.conversationId
+                |> Set.ofList
+            let gone = DraftPolicy.deletedConversations listed knownConversationIds inFlight
+            for id in gone do
+                if activeConvId <> Some id then
+                    drafts.Remove(instanceId, Some id)
+                outbox.DiscardConversation(instanceId, id)
+                storedDrafts <-
+                    { drafts = storedDrafts.drafts |> List.filter (fun d -> not (d.instanceId = instanceId && d.conversationId = Some id))
+                      unsent = storedDrafts.unsent |> List.filter (fun u -> not (u.instanceId = instanceId && u.conversationId = id)) }
+            knownConversationIds <- Set.union (Set.difference knownConversationIds gone) listed
+
+    /// 主机状态行：连接正常时带上「配置有误」提示。
+    member private this.UpdateHostStatusLine() =
+        if authenticated then
+            let host = try Uri(lastUrl).Host with _ -> lastUrl
+            let suffix = if settings.Health.ConfigIssue.IsSome then " · 配置有误" else ""
+            sidebar.SetConnection(true, sprintf "已连接 · %s%s" host suffix)
+
     member private this.SavePrefs(next: UiPrefs) =
         let themeChanged = next.theme <> prefs.theme
+        let draftsToggled = next.persistDrafts <> prefs.persistDrafts
         let motionChanged = next.reduceMotion <> prefs.reduceMotion
         prefs <- next
         UiPrefs.save prefs
@@ -376,6 +490,11 @@ type MainView() as this =
         MarkdownRenderer.DefaultCodeWrap <- prefs.codeWrap
         composer.SetEnterSends prefs.enterSends
         settings.SetPrefs prefs
+        // 关闭保存：立即删除本机已存的内容（之后不再写）；重新打开：下一次保存即生效。
+        if draftsToggled then
+            if not prefs.persistDrafts then draftStore.Clear() |> ignore
+            else this.FlushDrafts()
+            this.UpdateDraftSummary()
         this.Render()
 
     // ---- 连接 ----
@@ -402,6 +521,7 @@ type MainView() as this =
         let attempt = connectAttempt
         authenticated <- false
         connectionError <- None
+        settings.Health.Disconnected()
         runs.Disconnect()
         exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
         outbox.Disconnect instanceId
@@ -1107,6 +1227,7 @@ type MainView() as this =
                 runs.Clear()
                 catalog <- Catalog.empty
                 settings.SetCatalog catalog
+                settings.Health.Reset()
                 activeConvId <- None
                 summaries <- []
                 sidebar.SetConversations []
@@ -1126,6 +1247,7 @@ type MainView() as this =
             let host = try Uri(lastUrl).Host with _ -> lastUrl
             sidebar.SetConnection(true, sprintf "已连接 · %s" host)
             settings.SetConnection(instanceId, lastUrl)
+            this.RestoreLocalDrafts()
             if OperatingSystem.IsBrowser() then
                 match lastToken with
                 | Some token -> CredentialStore.saveBrowserConnectionAsync d.instanceId lastUrl token CredentialStore.clientName |> ignore
@@ -1171,7 +1293,21 @@ type MainView() as this =
                 this.CloseSettings()
                 composer.Focus()
             this.Render()
-        | ConfigChanged _ -> send CatalogRequest
+        | ConfigChanged _ ->
+            send CatalogRequest
+            // 配置重新加载成功：之前的「配置有误」随之消失。只在从有误恢复时提示一次。
+            if settings.Health.ClearConfigIssue() then
+                this.UpdateHostStatusLine()
+                toast "主机配置已恢复正常。" Success
+        | HostConfigRejected d ->
+            // 主机拒绝了一份配置并继续用上一份有效的；客户端必须看得见（决策 82）。
+            let first = settings.Health.ConfigIssue.IsNone
+            settings.Health.SetConfigIssue(d.summary, d.errors)
+            this.UpdateHostStatusLine()
+            if first then toast d.summary Warning
+        | DoctorReport d ->
+            settings.Health.SetReport(d.ok, DoctorCheck.parseChecks d.checks)
+        | DoctorRequest _ -> ()
         | ProviderProbeResult d ->
             let models =
                 [ for item in d.models do
@@ -1199,6 +1335,7 @@ type MainView() as this =
             sidebar.SetConversations summaries
             sidebar.SetActive activeConvId
             state.AdvanceCursor()
+            this.PruneDeletedConversationDrafts()
             this.Render()
         | ConversationSnapshot d ->
             state.Handle ev
@@ -1628,7 +1765,31 @@ type MainView() as this =
               savePrefs = fun next -> this.SavePrefs next
               toast = fun message tone -> toast message tone }
         settings <- SettingsView(overlay, actions, (fun next -> this.SavePrefs next), (fun () -> this.CloseSettings()))
+        // 检查主机：只读请求；旧主机不认识这个事件会直接忽略，所以要有超时说明。
+        settings.Health.RequestCheck <-
+            (fun () ->
+                if authenticated && client.IsConnected then
+                    send (DoctorRequest {| requestId = newInvocation () |})
+                    let timeout = DispatcherTimer(Interval = TimeSpan.FromSeconds 30.0)
+                    timeout.Tick.Add(fun _ ->
+                        timeout.Stop()
+                        match settings.Health.Doctor with
+                        | Running ->
+                            settings.Health.SetUnavailable "主机没有返回结果。主机版本可能较旧，或检查超时。"
+                        | _ -> ())
+                    timeout.Start()
+                else
+                    settings.Health.SetUnavailable "未连接到主机，连接后才能检查。")
+        settings.LocalDrafts.ClearRequested <-
+            (fun () ->
+                Dialogs.confirm
+                    overlay
+                    "清除本地草稿"
+                    "这台设备上保存的未发送文字、附件名称和未确认的消息会被删除，无法恢复。已发送并保存的对话不受影响。"
+                    "清除"
+                    (fun () -> this.ClearLocalDrafts()))
         settings.Build()
+        this.UpdateDraftSummary()
 
     member this.Build() =
         this.FontFamily <- Tokens.fontFamily
@@ -1740,13 +1901,37 @@ type MainView() as this =
         let deliveryTimer = DispatcherTimer(Interval = MotionLedger.outboxDeliveryCheckTick)
         deliveryTimer.Tick.Add(fun _ ->
             if outbox.Expire(DateTimeOffset.UtcNow, TimeSpan.FromSeconds 30.0) then this.Render())
+        // 本地草稿自动保存：内容没变不写盘，所以高频 tick 的代价只是一次快照比较。
+        let draftTimer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 800.0)
+        draftTimer.Tick.Add(fun _ -> this.FlushDrafts())
         this.AttachedToVisualTree.Add(fun _ ->
             deliveryTimer.Start()
+            draftTimer.Start()
             this.StartViewportWatcher())
         this.DetachedFromVisualTree.Add(fun _ ->
+            this.FlushDrafts()
             deliveryTimer.Stop()
+            draftTimer.Stop()
             this.StopViewportWatcher())
+        this.LoadLocalDrafts()
         this.AutoConnect()
+
+    /// 读本机保存的草稿。桌面是同步完成的文件读取；PWA 的 IndexedDB 读取完成后回到 UI 线程。
+    /// 读完之前不写盘，避免用空内存覆盖尚未读到的内容。
+    member private this.LoadLocalDrafts() =
+        let apply (snapshot: DraftSnapshot) =
+            storedDrafts <- snapshot
+            draftsLoaded <- true
+            this.RestoreLocalDrafts()
+            this.UpdateDraftSummary()
+        let task = draftStore.Load()
+        if task.IsCompleted then
+            apply (try task.Result with _ -> DraftSnapshot.empty)
+        else
+            task.ContinueWith(fun (t: System.Threading.Tasks.Task<DraftSnapshot>) ->
+                let snapshot = if t.IsFaulted then DraftSnapshot.empty else t.Result
+                Dispatcher.UIThread.Post(fun () -> apply snapshot))
+            |> ignore
 
     /// 已有凭据时自动连接：桌面读 client.toml，PWA 读 IndexedDB（决策 52/53、Q191）。
     member private this.AutoConnect() =

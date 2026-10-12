@@ -24,6 +24,7 @@
     <Compile Include="ToolRegistry.fs" />
     <Compile Include="TitleGenerator.fs" />
     <Compile Include="ChatOrchestrator.fs" />
+    <Compile Include="HostStatus.fs" />
     <Compile Include="WsConnection.fs" />
     <Compile Include="ServerApp.fs" />
   </ItemGroup>

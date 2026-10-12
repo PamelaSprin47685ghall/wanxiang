@@ -521,7 +521,10 @@ type Composer(actions: ComposerActions) as this =
                     VerticalAlignment = VerticalAlignment.Center)
             let size =
                 TextBlock(
-                    Text = (if attachment.ready || attachment.failed then AttachmentRef.formatSize attachment.size else "上传中"),
+                    Text =
+                        (if RestoredAttachments.isRestored attachment.attachmentId then "需重选"
+                         elif attachment.ready || attachment.failed then AttachmentRef.formatSize attachment.size
+                         else "上传中"),
                     FontSize = Tokens.fontMicro,
                     Foreground = (if attachment.failed then Tokens.danger else Tokens.textFaint),
                     Width = ControlMetrics.composerAttachmentStateWidth,
@@ -531,7 +534,9 @@ type Composer(actions: ComposerActions) as this =
                 if attachment.ready || attachment.failed then AttachmentRef.formatSize attachment.size else "上传中"
             ToolTip.SetTip(
                 size,
-                if attachment.failed then sprintf "上传失败：%s，可移除或重新添加" formattedSize else sprintf "文件大小：%s" formattedSize)
+                if RestoredAttachments.isRestored attachment.attachmentId then "附件需重新选择：重新打开后无法确认文件还在。可移除，或重新添加这个文件。"
+                elif attachment.failed then sprintf "上传失败：%s，可移除或重新添加" formattedSize
+                else sprintf "文件大小：%s" formattedSize)
             let removeLabel = sprintf "移除附件 %s" attachment.fileName
             let remove = Ui.iconButton Icons.close removeLabel
             ToolTip.SetTip(remove, removeLabel)
@@ -578,7 +583,9 @@ type Composer(actions: ComposerActions) as this =
             row.Children.Add size
             row.Children.Add remove
             let chipLabel =
-                if attachment.failed then
+                if RestoredAttachments.isRestored attachment.attachmentId then
+                    sprintf "附件需重新选择：%s，可移除或重新添加这个文件" attachment.fileName
+                elif attachment.failed then
                     sprintf "附件上传失败：%s（%s），可移除或重新添加" attachment.fileName (AttachmentRef.formatSize attachment.size)
                 else
                     // V34: 全角括号，与同文案“上传失败：%s（%s）”统一，不中英半角混排。

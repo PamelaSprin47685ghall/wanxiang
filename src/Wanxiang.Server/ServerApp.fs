@@ -102,6 +102,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
     let mutable host: IHost option = None
     let mutable stopping = false
 
+    let hostStatus = HostStatus()
     let pairing = Auth.PairingState()
     let mutable failureTracker = Auth.FailureTracker(TimeSpan.FromMinutes 1.0, 5, TimeSpan.FromMinutes 5.0)
 
@@ -124,6 +125,8 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 TimeSpan.FromMinutes(float cfg.pairingFreezeMinutes))
 
     let onConfigReloaded (cfg: AppConfig) =
+        // W5：配置重新加载成功，之前的「配置有误」状态随之消失（客户端由下面的 config.changed 清除）。
+        hostStatus.Clear()
         // 决策 41：配置热重载后新 apiKey 也纳入 stderr 脱敏集（Q164 密钥不落 stderr）
         Stderr.registerSecrets (
             cfg.providers
@@ -159,6 +162,14 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
 
     let onConfigRejected (errs: string) =
         Stderr.write "config-rejected" [ "errors", errs ]
+        // W5：同时让客户端看见。主机继续使用上一份有效配置；原因已脱敏、截断，不含密钥（决策 82）。
+        try
+            let ev = hostStatus.Reject(Stderr.redact, [ errs ])
+            match registry with
+            | Some reg -> reg.BroadcastToAll ev
+            | None -> ()
+        with e ->
+            Stderr.write "config-rejected-broadcast-failed" [ "message", e.Message ]
 
     // 类内 let 绑定恒为私有；此处仅为可读性拆分（S-001 只读降级分支）。
     let executePlanned (clientCursor: CommitId) (cmd: ClientCommand) : CommandExecutionResult =
@@ -282,6 +293,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
 
     /// 启动服务器（server 开关）。
     member this.Start(servePwa: bool) : unit =
+        hostStatus.DoctorRunner <- Some(fun () -> Doctor.runLive (configPath, dataDir))
         match ConfigStore.Open(configPath, onConfigReloaded, onConfigRejected) with
         | Error e -> failwith e
         | Ok cs ->
@@ -393,6 +405,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                                     // 决策 46：配对码输出到 stderr，能读取 stderr 的用户有权批准
                                     Stderr.write "pairing-code" [ "code", code; "expiresInSeconds", 300 ]),
                                 logInfo)
+                        conn.HostStatus <- Some hostStatus
                         match registry with
                         | Some reg -> reg.Set(id, conn)
                         | None -> ()

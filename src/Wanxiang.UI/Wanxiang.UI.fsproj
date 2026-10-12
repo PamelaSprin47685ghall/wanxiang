@@ -29,7 +29,9 @@
     <Compile Include="Model/ConversationExport.fs" />
     <Compile Include="Model/ConversationSummary.fs" />
     <Compile Include="Model/Catalog.fs" />
+    <Compile Include="Model/HostHealth.fs" />
     <Compile Include="Model/UiControllers.fs" />
+    <Compile Include="Model/DraftStore.fs" />
     <Compile Include="Model/ProviderPresets.fs" />
     <!-- Interaction 必须先于 Primitives：Primitives 的基控件挂 Interaction.surface。 -->
     <Compile Include="Controls/Interaction.fs" />

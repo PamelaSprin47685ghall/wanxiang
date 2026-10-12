@@ -42,8 +42,12 @@ type MainWindow() as this =
         Tokens.Changed.Publish.Add(fun _ -> this.Background <- Tokens.canvas)
 
         this.Closing.Add(fun _ ->
+            // 先落草稿：关窗口前最后一次输入也要在本机留下（W5，决策 80）。
+            view.FlushDrafts()
+            // 以磁盘上的最新偏好为底再写窗口几何：设置页改过的开关（如「保存未发送的草稿」）
+            // 不能被构造时读到的旧副本覆盖回去。
             prefs <-
-                { prefs with
+                { UiPrefs.load () with
                     windowWidth = this.Width
                     windowHeight = this.Height
                     windowX = this.Position.X

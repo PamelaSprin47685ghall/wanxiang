@@ -314,6 +314,14 @@ module WireCodec =
                 p["errors"] <- JsonArray([| for e in d.errors -> JsonNode.op_Implicit e |])
         | ConfigChanged d -> p["reason"] <- d.reason
         | ServerError d -> p["message"] <- d.message
+        | HostConfigRejected d ->
+            p["summary"] <- d.summary
+            p["errors"] <- JsonArray([| for e in d.errors -> JsonNode.op_Implicit e |])
+        | DoctorRequest d -> putGuid p "requestId" d.requestId
+        | DoctorReport d ->
+            putGuid p "requestId" d.requestId
+            p["ok"] <- d.ok
+            p["checks"] <- d.checks.DeepClone()
         | Ping -> ()
         | Pong -> ()
         p.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General))
@@ -700,6 +708,22 @@ module WireCodec =
                     | None -> Error "config.applied: missing requestId"
                 | Some "config.changed" -> Ok(ConfigChanged {| reason = tryString p "reason" |> Option.defaultValue "" |})
                 | Some "server.error" -> Ok(ServerError {| message = tryString p "message" |> Option.defaultValue "" |})
+                | Some "config.rejected" ->
+                    Ok(HostConfigRejected
+                        {| summary = tryString p "summary" |> Option.defaultValue ""
+                           errors = tryStringList p "errors" |})
+                | Some "doctor.request" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(DoctorRequest {| requestId = rid |})
+                    | None -> Error "doctor.request: missing requestId"
+                | Some "doctor.report" ->
+                    match tryGuid p "requestId" with
+                    | Some rid ->
+                        Ok(DoctorReport
+                            {| requestId = rid
+                               ok = (match tryGet p "ok" with Some v -> v.GetValueKind() = JsonValueKind.True | None -> false)
+                               checks = tryArray p "checks" |})
+                    | None -> Error "doctor.report: missing requestId"
                 | Some "protocol.ping" -> Ok Ping
                 | Some "protocol.pong" -> Ok Pong
                 | Some other -> Error(sprintf "unknown event type %s" other)
