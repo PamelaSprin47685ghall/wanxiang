@@ -1,6 +1,6 @@
 module Wanxiang.Tests.DevicesTests
 
-// W2（设备与配对）：邀请、设备列表、重命名、吊销的服务端 E2E 与纯逻辑测试。
+// W2（设备与配对）：邀请、设备列表、重命名、吊销的主机 E2E 与纯逻辑测试。
 
 open System
 open System.IO
@@ -16,7 +16,7 @@ open Wanxiang.Store
 open Wanxiang.Tests.Helpers
 open Wanxiang.Tests.ServerE2eTests
 
-/// 服务端夹具：一台“桌面”设备（保留名）与一台普通设备。
+/// 主机夹具：一台“桌面”设备（保留名）与一台普通设备。
 type DeviceServer(port: int) =
     let dir = tempDir ()
     let configPath = Path.Combine(dir, "config.toml")
@@ -238,7 +238,7 @@ let ``authenticated non desktop device cannot invite and stays connected`` () =
         // 没有任何邀请被创建：新连接直接提交任意码得到失败
         use fresh = anonymous (s.Port) ct
         sendEv fresh ct (PairingAttempted {| code = "123456"; clientName = None |})
-        // 无邀请且未请求配对：服务端不处理（不回事件），改为请求后再试以确认没有有效码
+        // 无邀请且未请求配对：主机不处理（不回事件），改为请求后再试以确认没有有效码
         sendEv fresh ct (PairingRequested {| clientName = None |})
         waitType fresh ct "pairing.started" |> ignore
     finally s.Dispose()

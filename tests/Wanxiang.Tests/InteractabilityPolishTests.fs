@@ -17,9 +17,9 @@ open Wanxiang.UI
 /// 第七轮收敛测试：键盘节律与多选模式下的单条入口收敛。
 ///
 /// 1. 滚轮不论方向都该打断平滑滚动（上滚原本会打断，下滚漏了）；
-/// 2. 服务商编辑表单的单行字段 Enter 被表单提交路径消费；
+/// 2. 模型服务编辑表单的单行字段 Enter 被表单提交路径消费；
 /// 3. 侧栏多选模式下，行右键不再开单条菜单，行内「更多」按钮整体下线；
-/// 4. 多选模式下焦点落在搜索框时，Escape 退出多选而不是空转到「聚焦当前会话」。
+/// 4. 多选模式下焦点落在搜索框时，Escape 退出多选而不是空转到「聚焦当前对话」。
 
 let private toasts = ResizeArray<string * ToastTone>()
 
@@ -223,7 +223,7 @@ let ``wheel moving either way stops an in-flight smooth scroll`` () =
         window.Close()
     )
 
-// ── 2. 服务商表单：单行字段 Enter 被消费 ───────────────────────────────────
+// ── 2. 模型服务表单：单行字段 Enter 被消费 ───────────────────────────────────
 
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -250,8 +250,8 @@ let ``provider form consumes enter from a single line field`` () =
     let window = show root 520.0 640.0
     try
         let addButton =
-            byName built "添加服务商"
-            |> Option.defaultWith (fun () -> failwith "服务商区缺少添加入口")
+            byName built "添加模型服务"
+            |> Option.defaultWith (fun () -> failwith "模型服务区缺少添加入口")
         let addEvent = privateKey addButton Key.Enter
         Assert.True(addEvent.Handled, "前置条件：Enter 能打开编辑对话框")
         Dispatcher.UIThread.RunJobs()
@@ -337,7 +337,7 @@ let ``row context menu stays closed while the sidebar is in selection mode`` () 
         Dispatcher.UIThread.RunJobs()
         let moreButton =
             rows sidebar
-            |> Seq.tryFind (fun control -> AutomationProperties.GetName control = "会话“Alpha”的操作菜单")
+            |> Seq.tryFind (fun control -> AutomationProperties.GetName control = "对话“Alpha”的操作菜单")
             |> Option.defaultWith (fun () -> failwith "侧栏行缺少更多操作按钮")
         // 前置条件：非多选态下 Enter 打开单条菜单，证明探针有效。
         privateKey moreButton Key.Enter |> ignore
@@ -370,7 +370,7 @@ let ``row more button leaves the hit tree in selection mode`` () =
         Dispatcher.UIThread.RunJobs()
         let moreButton =
             rows sidebar
-            |> Seq.tryFind (fun control -> AutomationProperties.GetName control = "会话“Alpha”的操作菜单")
+            |> Seq.tryFind (fun control -> AutomationProperties.GetName control = "对话“Alpha”的操作菜单")
             |> Option.defaultWith (fun () -> failwith (sprintf "行缺少更多操作按钮；已实现控件名=%A" (rows sidebar |> Seq.map (fun c -> AutomationProperties.GetName c) |> List.ofSeq)))
         Assert.True(moreButton.IsHitTestVisible, "前置条件：非多选态下更多按钮可命中")
         sidebar.EnterSelection id
@@ -397,7 +397,7 @@ let ``escape in the search box leaves selection mode first`` () =
         Dispatcher.UIThread.RunJobs()
         // 从列表首行按 Up 会落进搜索框：此时焦点确实可能停在搜索上。
         let searchBox =
-            byPlaceholder root "搜索会话"
+            byPlaceholder root "搜索对话"
             |> Option.defaultWith (fun () -> failwith "侧栏缺少搜索框")
         searchBox.Focus() |> ignore
         Assert.True(sidebar.IsSelectionMode, "前置条件：仍在多选模式")

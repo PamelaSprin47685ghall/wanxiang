@@ -25,7 +25,7 @@ module CrashMatrix =
 
     open FaultInjector
 
-    /// 固定历史：id 1..3（两个会话 + 一条消息），跨 UTC 日期文件。
+    /// 固定历史：id 1..3（两个对话 + 一条消息），跨 UTC 日期文件。
     let private prepareHistory (dir: string) : Guid * DateTime =
         DataPaths.ensureDataDirs dir
         let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
@@ -38,8 +38,8 @@ module CrashMatrix =
                                               Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c2) ])
         convId, day
 
-    /// 提交一条命令（新会话）。
-    /// `badProjection`：提交一条必然投影失败的命令（删除不存在的会话），用于触发截尾路径。
+    /// 提交一条命令（新对话）。
+    /// `badProjection`：提交一条必然投影失败的命令（删除不存在的对话），用于触发截尾路径。
     let private submitNewConversation (dir: string) (day: DateTime) (badProjection: bool) : SubmitResult =
         let outcome =
             match Replay.inspect dir with
@@ -50,7 +50,7 @@ module CrashMatrix =
             coord.SubmitEvents [ EventData.ConversationDeleted { conversationId = Guid.NewGuid() } ]
         else
             let convId = newConversationId ()
-            coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "新会话"; config = testConfig () } ]
+            coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "新对话"; config = testConfig () } ]
 
     /// 检查日志满足最长有效前缀且不变量成立。
     /// 返回 inspect 结果（供调用方断言具体故障点语义）。

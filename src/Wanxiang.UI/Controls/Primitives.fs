@@ -355,7 +355,7 @@ module Ui =
     ///
     /// 两档的分工：标准档（false）服务行内 / 分节内的空态——卡片只是所在区块的局部
     /// 内容，标题保持正文 label 档即可；强调档（true）服务整屏主空态（如聊天主区
-    /// 没有会话时占满内容区的那一张），此时标题是页面级主标题，用 title 档 + 宽字距。
+    /// 没有对话时占满内容区的那一张），此时标题是页面级主标题，用 title 档 + 宽字距。
     let emptyStateWith (prominentTitle: bool) (logo: Control) (title: string option) (hint: string) (extra: Control option) (action: Border option) : Control =
         let titleOf text =
             if prominentTitle then
@@ -385,8 +385,8 @@ module Ui =
     let emptyState (logo: Control) (title: string option) (hint: string) (extra: Control option) (action: Border option) : Control =
         emptyStateWith false logo title hint extra action
 
-    /// 正常的会话起点不是错误面板。输入区已经是主动作，不再重复品牌卡和按钮。
-    /// 连接与服务商不可用仍使用上面的可操作空态。
+    /// 正常的对话起点不是错误面板。输入区已经是主动作，不再重复品牌卡和按钮。
+    /// 连接与模型服务不可用仍使用上面的可操作空态。
     let conversationPrompt (title: string) (hint: string) (action: Border option) : Control =
         let heading =
             TextBlock(

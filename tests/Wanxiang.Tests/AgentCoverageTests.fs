@@ -522,7 +522,7 @@ module AgentCoverageTests =
         let contents = AttachmentContent.resolve noSupport (fun _ -> Some imgBytes) refImg
         Assert.Single(contents) |> ignore
         match contents.[0] with
-        | :? TextContent as tc -> Assert.Contains("当前服务商的传输不接受该类型", tc.Text)
+        | :? TextContent as tc -> Assert.Contains("当前模型服务的传输不接受该类型", tc.Text)
         | _ -> Assert.Fail("Expected TextContent")
 
         // 超过大小限制

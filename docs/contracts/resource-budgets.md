@@ -86,7 +86,7 @@
 
 ---
 
-## 10. 全文搜索（W4，`wanxiang-chat` 决策 75）
+## 10. 全文搜索（W4，`wanxiang-protocol` 决策 201）
 
 查询只读内存投影，不建索引、不落盘；数值的权威定义在 `Wanxiang.Protocol.SearchLimits`。
 

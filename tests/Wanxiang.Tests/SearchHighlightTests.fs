@@ -175,8 +175,8 @@ let private typeQuery (sidebar: Sidebar) (query: string) (items: ConversationSum
 [<Fact>]
 let ``empty query yields one plain segment covering the whole text`` () =
     Headless.run (fun () ->
-    let spans = SidebarText.segments "" "万象 会话标题"
-    Assert.Equal<string list>([ "万象 会话标题" ], spans |> List.map _.text)
+    let spans = SidebarText.segments "" "万象 对话标题"
+    Assert.Equal<string list>([ "万象 对话标题" ], spans |> List.map _.text)
     Assert.False(spans |> List.forall _.isMatch)
     )
 
@@ -258,8 +258,8 @@ let ``a term that does not occur leaves the text unstyled`` () =
     Headless.run (fun () ->
     // matches 会否掉这一行；万一调用方仍渲染它（例如调用顺序不同），
     // 也不能出现「什么都没匹配却整行上色」。
-    let spans = SidebarText.segments "不存在的词" "万象 会话"
-    Assert.Equal<string list>([ "万象 会话" ], spans |> List.map _.text)
+    let spans = SidebarText.segments "不存在的词" "万象 对话"
+    Assert.Equal<string list>([ "万象 对话" ], spans |> List.map _.text)
     Assert.False(spans |> List.forall _.isMatch)
     )
 
@@ -384,6 +384,6 @@ let ``search highlight keeps readable contrast in both palettes`` () =
         // 标题是 Medium 字重的小字（fontSmall），按 WCAG AA 正文 4.5 要求。
         Assert.True(contrast palette.accent palette.canvas >= 4.5)
         Assert.True(contrast palette.accent palette.surface >= 4.5)
-        // 选中行（当前会话）底色也要能压住命中色，否则选中的那行高亮会糊。
+        // 选中行（当前对话）底色也要能压住命中色，否则选中的那行高亮会糊。
         Assert.True(contrast palette.accent palette.selected >= 4.5)
     )

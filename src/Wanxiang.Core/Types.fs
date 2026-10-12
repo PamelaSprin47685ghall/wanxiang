@@ -6,7 +6,7 @@ open System
 type CommitId = uint64
 
 module Constants =
-    /// 协议版本：客户端与服务端必须完全相等。
+    /// 协议版本：客户端与主机必须完全相等。
     [<Literal>]
     let ProtocolVersion = 1
 
@@ -26,11 +26,11 @@ module Constants =
     [<Literal>]
     let WsPath = "/ws"
 
-    /// 提交来源默认值（诊断字段；服务端单写者会覆盖为真实实例标识）。
+    /// 提交来源默认值（诊断字段；主机单写者会覆盖为真实实例标识）。
     [<Literal>]
     let DefaultSource = "wanxiang"
 
-    /// 测试/无服务端场景下的哨兵 bootId：全零表示「未指定进程世代」。
+    /// 测试/无主机场景下的哨兵 bootId：全零表示「未指定进程世代」。
     /// 真实提交由单写者赋真实 bootId（RFC 5848 语义）。
     let DefaultBootId = Guid.Empty
 
@@ -105,7 +105,7 @@ type GenerationErrorKind =
     | ProviderRateLimited
     /// 请求超时或流中断
     | ProviderTimeout
-    /// 服务端不可用 / 网络失败（5xx、DNS、连接被拒）
+    /// 主机不可用 / 网络失败（5xx、DNS、连接被拒）
     | ProviderUnavailable
     /// 请求被拒（400）：参数不被该模型支持等
     | ProviderBadRequest
@@ -117,7 +117,7 @@ type GenerationErrorKind =
     | ContentFiltered
     /// 工具执行失败
     | ToolFailed
-    /// 会话配置指向的 provider/模型已不存在
+    /// 对话配置指向的 provider/模型已不存在
     | ConfigInvalid
     /// 未归类
     | UnknownFailure
@@ -165,25 +165,25 @@ module GenerationErrorKind =
         | "config-invalid" -> ConfigInvalid
         | _ -> UnknownFailure
 
-    /// 针对服务商不可用（5xx 服务端故障 vs 本地网络不可达）的细分建议。
+    /// 针对模型服务不可用（5xx 主机故障 vs 本地网络不可达）的细分建议。
     let hintUnavailable (isServerOutage: bool) : string =
-        if isServerOutage then "服务商暂时过载或维护中，稍等后可重试。"
-        else "无法连接到服务商网络，请检查网络设置。"
+        if isServerOutage then "模型服务暂时过载或维护中，稍等后可重试。"
+        else "无法连接到模型服务网络，请检查网络设置。"
 
     /// 该类别下用户能做什么（UI 在错误卡片里给出的行动建议）。
     let hint (k: GenerationErrorKind) : string =
         match k with
-        | ProviderAuthFailed -> "请在设置中检查该服务商的 API Key。"
-        | ProviderRateLimited -> "已触发服务商限流，稍等一会儿再试。"
-        | ProviderTimeout -> "网络或服务商响应过慢，可直接重试。"
-        | ProviderUnavailable -> "服务商暂时过载或网络异常，请检查网络设置或稍后重试。"
-        | ProviderBadRequest -> "当前模型不接受这些生成参数，请到会话设置调整。"
-        | ContextTooLong -> "对话太长了，可新建会话或删除部分早期消息。"
+        | ProviderAuthFailed -> "请在设置中检查该模型服务的 API Key。"
+        | ProviderRateLimited -> "已触发模型服务限流，稍等一会儿再试。"
+        | ProviderTimeout -> "网络或模型服务响应过慢，可直接重试。"
+        | ProviderUnavailable -> "模型服务暂时过载或网络异常，请检查网络设置或稍后重试。"
+        | ProviderBadRequest -> "当前模型不接受这些生成参数，请到对话设置调整。"
+        | ContextTooLong -> "对话太长了，可新建对话或删除部分早期消息。"
         | ModelNotFound -> "该模型不可用，请在设置中确认模型名称。"
-        | ContentFiltered -> "内容被服务商的安全策略拦截。"
+        | ContentFiltered -> "内容被模型服务的安全策略拦截。"
         | ToolFailed -> "工具执行失败，请检查工具配置。"
-        | ConfigInvalid -> "会话使用的服务商或模型已不存在，请到会话设置重新选择。"
-        | UnknownFailure -> "可以先重试；若持续失败请查看服务端日志。"
+        | ConfigInvalid -> "对话使用的模型服务或模型已不存在，请到对话设置重新选择。"
+        | UnknownFailure -> "可以先重试；若持续失败请查看主机日志。"
 
 module GenerationError =
 
@@ -204,7 +204,7 @@ module GenerationError =
         { e with detail = if System.String.IsNullOrWhiteSpace detail then None else Some detail }
 
     /// 根据具体失败信息与技术细节提供更有针对性的行动建议。
-    /// 区分 502/503/504 等服务商过载/维护，与本地连接断开/DNS 异常。
+    /// 区分 502/503/504 等模型服务过载/维护，与本地连接断开/DNS 异常。
     let hint (e: GenerationError) : string =
         match e.kind with
         | ProviderUnavailable ->

@@ -34,12 +34,12 @@ let ``export of an unopened conversation has its own progress view without navig
     let selected = Guid.NewGuid()
     typeof<MainView>.GetField("activeConvId", flags).SetValue(view, Some selected)
     let summary: ConversationSummary =
-        { id = Guid.NewGuid(); title = "从未打开的长会话"; preview = ""; running = false
+        { id = Guid.NewGuid(); title = "从未打开的长对话"; preview = ""; running = false
           pinned = false; archived = false; createdAt = DateTimeOffset.UtcNow; updatedAt = DateTimeOffset.UtcNow; messageCount = 450
           isFork = false; providerId = "mock"; model = "mock"; lastCommitId = 451UL }
     invoke "ExportConversation" [| box summary |] |> ignore
     let overlay = typeof<MainView>.GetField("overlay", flags).GetValue(view) :?> OverlayHost
-    Assert.True(overlay.IsDialogOpen, "导出必须有独立进度／失败视图，而不是要求用户先加载会话。")
+    Assert.True(overlay.IsDialogOpen, "导出必须有独立进度／失败视图，而不是要求用户先加载对话。")
     Assert.Equal(Some selected, typeof<MainView>.GetField("activeConvId", flags).GetValue(view) :?> Guid option)
     overlay.CloseDialog()
     )
@@ -319,7 +319,7 @@ let ``unrenderable messages retain their raw content in export`` () =
 [<Fact>]
 let ``export filenames stay a bounded filename including long emoji titles`` () =
     Headless.run (fun () ->
-    Assert.Equal("会话.md", Export.safeFileName "..")
+    Assert.Equal("对话.md", Export.safeFileName "..")
     let name = Export.safeFileName "../a\\b\nfile"
     Assert.DoesNotContain("/", name)
     Assert.DoesNotContain("\\", name)

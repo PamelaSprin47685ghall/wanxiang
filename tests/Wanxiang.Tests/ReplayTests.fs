@@ -213,7 +213,7 @@ let ``test_replay_projection_apply_error_fix_false`` () =
         let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
         let path = DataPaths.eventFilePath dir day
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
-        // commit 1 删除了一个根本不存在的会话 -> Projection.applyCommit 会返回 Error
+        // commit 1 删除了一个根本不存在的对话 -> Projection.applyCommit 会返回 Error
         let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ EventData.ConversationDeleted { conversationId = Guid.NewGuid() } ]
         let line = CommitCodec.commitToJsonLine c1
         let frame = Wanxiang.Core.Ledger.Frame.encode line

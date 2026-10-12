@@ -5,15 +5,15 @@ open System.Text.Json.Nodes
 open Wanxiang.Core
 open Wanxiang.Protocol
 
-/// 服务器模型辅助：投影 → 线上视图。
+/// 主机模型辅助：投影 → 线上视图。
 module ServerModel =
 
-    /// 从 Agent Framework 消息 JSON 中提取文本（用于会话摘要，决策 125）。
+    /// 从 Agent Framework 消息 JSON 中提取文本（用于对话摘要，决策 125）。
     let rec private messageTextOf (node: System.Text.Json.Nodes.JsonNode) (sb: System.Text.StringBuilder) : unit =
         match node with
         | null -> ()
         | :? JsonObject as o ->
-            // 思维链（reasoning）不并入会话摘要预览——预览应该让人能识别对话主题
+            // 思维链（reasoning）不并入对话摘要预览——预览应该让人能识别对话主题
             let mutable typeNode: JsonNode = null
             let isReasoning =
                 (o.TryGetPropertyValue("$type", &typeNode) && not (isNull typeNode) && typeNode.GetValueKind() = JsonValueKind.String && typeNode.GetValue<string>() = "reasoning")
@@ -38,7 +38,7 @@ module ServerModel =
             messageTextOf m.payloadJson sb
             PlainText.summarize 100 (sb.ToString())
 
-    /// 会话列表摘要（决策 125：含最后可见消息摘要、当前运行状态、有效配置摘要，不含完整消息正文）。
+    /// 对话列表摘要（决策 125：含最后可见消息摘要、当前运行状态、有效配置摘要，不含完整消息正文）。
     let conversationListItems (proj: Projection) (runtimeStateOf: System.Guid -> string) : JsonArray =
         let arr = JsonArray()
         for c in Projection.conversationList proj do
@@ -53,7 +53,7 @@ module ServerModel =
             o["updatedAt"] <- c.lastActivityAtUtc.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
             o["messageCount"] <- (Projection.effectiveMessages proj c |> List.length)
             o["isFork"] <- c.parent.IsSome
-            // W4（决策 77）：分叉谱系，全部由已有 fork 事实派生，不写新事实；字段缺省即“根对话”，旧客户端忽略它们。
+            // W4（决策 203）：分叉谱系，全部由已有 fork 事实派生，不写新事实；字段缺省即“根对话”，旧客户端忽略它们。
             match c.parent with
             | Some(parentId, forkAfter) ->
                 o["parentId"] <- parentId.ToString("D")
@@ -83,7 +83,7 @@ module ServerModel =
             arr.Add o
         arr
 
-    /// 会话完整快照消息数组（决策 27/79：每条消息带全局 commitId 作为消息标识）。
+    /// 对话完整快照消息数组（决策 27/79：每条消息带全局 commitId 作为消息标识）。
     let conversationMessages (proj: Projection) (conv: Conversation) : JsonArray =
         let arr = JsonArray()
         for m in Projection.effectiveMessages proj conv do
@@ -94,7 +94,7 @@ module ServerModel =
             arr.Add o
         arr
 
-    /// 快照尾部消息（Q127/P1-2：长会话快照只携带尾部，避免大帧；返回 items、最早 commitId、是否还有更早）。
+    /// 快照尾部消息（Q127/P1-2：长对话快照只携带尾部，避免大帧；返回 items、最早 commitId、是否还有更早）。
     /// limit <= 0 表示不截断。
     let conversationMessagesTail (proj: Projection) (conv: Conversation) (limit: int) : JsonArray * CommitId * bool =
         let all = conversationMessages proj conv
@@ -134,14 +134,14 @@ module ServerModel =
     let exportPage (proj: Projection) (query: ConversationExportQuery) : Result<ConversationExportPageData, string> =
         let at = query.atCommitId |> Option.defaultValue proj.latestCommitId
         match Projection.tryConversation proj query.conversationId with
-        | None -> Error "会话不存在，无法导出。"
-        | Some conv when conv.deleted -> Error "会话已删除，导出已停止；没有保存不完整文件。"
+        | None -> Error "对话不存在，无法导出。"
+        | Some conv when conv.deleted -> Error "对话已删除，导出已停止；没有保存不完整文件。"
         | Some _ when at > proj.latestCommitId -> Error "导出水位已失效，请重新开始导出。"
         | Some _ when query.atCommitId.IsNone && query.beforeCommitId <> 0UL -> Error "导出首页不能指定分页边界。"
         | Some conv ->
             let all = Projection.effectiveMessagesAt proj conv.conversationId at
             if query.beforeCommitId <> 0UL && not (all |> List.exists (fun m -> m.commitId = query.beforeCommitId)) then
-                Error "导出分页边界不属于这份会话，请重新开始导出。"
+                Error "导出分页边界不属于这份对话，请重新开始导出。"
             else
                 let mutable rest =
                     all |> List.rev
@@ -203,10 +203,10 @@ module ServerModel =
         walk payload
         List.ofSeq results
 
-    /// 仍需保留附件的会话集合。
+    /// 仍需保留附件的对话集合。
     ///
-    /// 「未删除的会话」不够：fork 只继承父会话在 forkBaseCommitId 时刻的消息，
-    /// 父会话被删后子分支照样展示那些消息，因此祖先链必须一并算作存活。
+    /// 「未删除的对话」不够：fork 只继承父对话在 forkBaseCommitId 时刻的消息，
+    /// 父对话被删后子分支照样展示那些消息，因此祖先链必须一并算作存活。
     let private conversationsKeepingAttachments (proj: Projection) : Set<System.Guid> =
         let rec walkUp (acc: Set<System.Guid>) (id: System.Guid) =
             if acc.Contains id then acc

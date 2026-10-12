@@ -62,7 +62,7 @@ let ``test_truncate_and_reuse_id`` () =
         let outcome = replayOutcome dir
         let truncated = ResizeArray<Events.Commit * WanxiangError>()
         use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun (c, e, _, _) -> truncated.Add(c, e)))
-        // 事件引用不存在的会话 → 投影失败 → 截尾
+        // 事件引用不存在的对话 → 投影失败 → 截尾
         let bad =
             coord.Submit
                 { events = [ AgentMessageRecorded { conversationId = Guid.NewGuid(); payloadJson = userMessageJson "x" } ]
@@ -144,7 +144,7 @@ let ``test_stale_client_rejected`` () =
             let submit = { events = p.events; commandId = Some p.commandId; commandType = Some p.commandType; commandHash = Some p.canonicalHash; nowUtc = None }
             coord.Submit submit |> ignore
         | _ -> failwith "plan failed"
-        // 客户端游标仍为 0，但最新提交为 1 → 对会话的写被拒绝
+        // 客户端游标仍为 0，但最新提交为 1 → 对对话的写被拒绝
         match CommandEngine.plan coord.Projection 0UL (RenameConversation {| invocationId = Guid.NewGuid(); conversationId = convId; title = "X" |}) with
         | Rejected (StaleProjection required) -> Assert.Equal(1UL, required)
         | _ -> failwith "expected stale rejection"
@@ -159,7 +159,7 @@ let ``test_coordinator_idempotency_binary_search_branches`` () =
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
-        // 注意：每个命令必须使用独立的 conversationId，避免因重复创建相同会话导致投影失败 (DuplicateConversation)
+        // 注意：每个命令必须使用独立的 conversationId，避免因重复创建相同对话导致投影失败 (DuplicateConversation)
         let mkCmd (title: string) =
             let convId = newConversationId ()
             let invId = Guid.NewGuid()

@@ -207,7 +207,7 @@ let ``preparing first message retains its original creation command for retry`` 
     let outbox = MessageOutbox()
     let conversationId = Guid.NewGuid()
     let creation = CreateConversation {| invocationId = Guid.NewGuid(); conversationId = conversationId
-                                         title = "新会话"; config = SessionConfig.empty |}
+                                         title = "新对话"; config = SessionConfig.empty |}
     let item = outbox.Stage("server", conversationId, "第一条不能丢", [], Some creation)
     outbox.Disconnect "server"
     let retained = (outbox.TryFind(PendingMessage.invocationId item)).Value
@@ -268,7 +268,7 @@ let ``configuration failure without a started event is still visible in its own 
     let id = Guid.NewGuid()
     select view id
     handle view (snapshot id)
-    let error = GenerationError.create ConfigInvalid "服务商已删除"
+    let error = GenerationError.create ConfigInvalid "模型服务已删除"
     handle view (
         GenerationFinished
             {| conversationId = id
@@ -338,7 +338,7 @@ let ``failed first messages remain reachable after switching away`` () =
         Dispatcher.UIThread.RunJobs()
         let button = controls composer |> Seq.find (fun c ->
             let name = AutomationProperties.GetName c
-            not (String.IsNullOrEmpty name) && name.StartsWith("查看另一个会话"))
+            not (String.IsNullOrEmpty name) && name.StartsWith("查看另一个对话"))
         let action = ControlAutomationPeer.CreatePeerForElement button |> Assert.IsAssignableFrom<IInvokeProvider>
         action.Invoke()
         Dispatcher.UIThread.RunJobs()
@@ -360,7 +360,7 @@ let ``selecting an unloaded conversation does not display the previous conversat
         GenerationDelta
             {| conversationId = a
                generationId = generation
-               payload = JsonNode.Parse("""{"role":"assistant","contents":[{"text":"只属于会话 A 的正文"}]}""") |})
+               payload = JsonNode.Parse("""{"role":"assistant","contents":[{"text":"只属于对话 A 的正文"}]}""") |})
     invoke view "SelectConversation" [| box (Some b) |] |> ignore
     let chat = (field view "chat").GetValue view :?> ChatView
     let visibleText =
@@ -368,9 +368,9 @@ let ``selecting an unloaded conversation does not display the previous conversat
             | :? SelectableTextBlock as text -> Some text.Text
             | :? TextBlock as text -> Some text.Text
             | _ -> None)
-    Assert.DoesNotContain("只属于会话 A 的正文", visibleText)
+    Assert.DoesNotContain("只属于对话 A 的正文", visibleText)
     let runs = (field view "runs").GetValue view :?> ConversationRuns
-    Assert.Equal("只属于会话 A 的正文", (runs.Get(Some a)).message.Value.text)
+    Assert.Equal("只属于对话 A 的正文", (runs.Get(Some a)).message.Value.text)
     )
 
 [<Trait("Category", "UI")>]
@@ -475,7 +475,7 @@ let ``the sole primary stop returns keyboard focus to input when a run finishes`
         window.Close()
     )
 
-/// 分叉落定后焦点必须回家：三条会话切换路径（新建 / 打开 / 分叉）共用同一归宿，
+/// 分叉落定后焦点必须回家：三条对话切换路径（新建 / 打开 / 分叉）共用同一归宿，
 /// 唯独 ForkFrom 漏了 composer.Focus()。兄弟路径（NewConversation:513 /
 /// OpenConversation:520）都在 send 之后无条件把焦点送回输入区（D3/D4），
 /// ForkFrom 此前不在其中：键盘用户在编辑弹窗确认后焦点悬在已关闭的对话框原位
@@ -507,8 +507,8 @@ let ``forking from a message hands keyboard focus back to the composer`` () =
                 | _ -> None) |> List.ofSeq
         Assert.True(cardTexts |> List.exists (fun t -> t.Contains "编辑并分叉"),
             sprintf "ForkFrom 应打开编辑对话框，实际文本：%A" cardTexts)
-        // 提交 → onConfirm 切换会话、发出 fork 命令；焦点回家一行在其后无条件执行
-        // （与 New/OpenConversation 同构，不依赖服务端确认回调）。Ui.onClick 造的
+        // 提交 → onConfirm 切换对话、发出 fork 命令；焦点回家一行在其后无条件执行
+        // （与 New/OpenConversation 同构，不依赖主机确认回调）。Ui.onClick 造的
         // ActionBorder 同时实现 IInvokeProvider（Primitives.fs:183-186），Invoke 与
         // 真人点击同一条 action，比合成指针事件更稳（合成事件对 dialog 层不可靠）。
         let confirm =
@@ -530,8 +530,8 @@ let ``forking from a message hands keyboard focus back to the composer`` () =
         window.Close()
     )
 
-// 单条删除有成功 toast（「会话「x」已删除」），批量删除此前一条命令都没挂
-// Track、也没有任何提示：删完 N 个会话界面无反馈，命令被拒时同样无声
+// 单条删除有成功 toast（「对话「x」已删除」），批量删除此前一条命令都没挂
+// Track、也没有任何提示：删完 N 个对话界面无反馈，命令被拒时同样无声
 // （CommandRejected 对未 Track 的 id 是空操作），用户以为删掉了，行还在列表里。
 // kelivo side_drawer.dart:752-756 删完即给汇总 snackbar，同一约定。
 [<Trait("Category", "UI")>]
@@ -583,12 +583,12 @@ let ``batch delete reports what it did instead of staying silent`` () =
         |> Seq.choose (function :? TextBlock as tb -> Some tb.Text | _ -> None)
         |> Seq.filter (fun s -> s.Contains "删除")
         |> List.ofSeq
-    Assert.True(toasts |> List.exists (fun s -> s.Contains "已删除 2 个会话"), sprintf "批量删除必须给一条汇总反馈，实际 %A" toasts)
+    Assert.True(toasts |> List.exists (fun s -> s.Contains "已删除 2 个对话"), sprintf "批量删除必须给一条汇总反馈，实际 %A" toasts)
     )
 
-// 重新生成服务端语义 = 删掉尾部整段回复链再重来
+// 重新生成主机语义 = 删掉尾部整段回复链再重来
 // （CommandEngine.fs:220-232 连续 assistant/tool 消息全删）。本项目其余每一个
-// 不可恢复操作（删会话、批量删、删消息、删服务商、删 MCP）都有确认框，
+// 不可恢复操作（删对话、批量删、删消息、删模型服务、删 MCP）都有确认框，
 // 唯独重新生成没有——误点一次，上一轮回复连内容带引用全部消失。
 // kelivo_chat_message_widget.dart:1346-1375 _confirmRegeneration 同一约定。
 [<Trait("Category", "UI")>]
@@ -604,7 +604,7 @@ let ``regenerate asks before discarding the last reply`` () =
     handle view (snapshot a)
     // 焦点先在别处：确认通过后 composer.Focus() 是「命令已发出」的可观察代理
     // （shell 在 Regenerate 的确认回调里唯一做的用户可见动作）。
-    (controls root |> Seq.tryFind (fun c -> AutomationProperties.GetName c = "新建会话"))
+    (controls root |> Seq.tryFind (fun c -> AutomationProperties.GetName c = "新建对话"))
         |> Option.iter (fun b -> b.Focus() |> ignore)
     Dispatcher.UIThread.RunJobs()
     invoke view "Regenerate" [||] |> ignore

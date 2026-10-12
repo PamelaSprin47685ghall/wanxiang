@@ -28,15 +28,15 @@ module WireCodecTests =
     [<Fact>]
     let ``CreateConversation command roundtrips perfectly`` () =
         let cfg = sampleConfig ()
-        let cmd = CreateConversation {| invocationId = invId; conversationId = convId; title = "新会话"; config = cfg |}
+        let cmd = CreateConversation {| invocationId = invId; conversationId = convId; title = "新对话"; config = cfg |}
         let encoded = WireCodec.encodeCommand cmd
         Assert.Contains("\"type\":\"conversation.create\"", encoded)
-        Assert.Contains("\"title\":\"新会话\"", encoded)
+        Assert.Contains("\"title\":\"新对话\"", encoded)
         match WireCodec.tryDecodeCommand encoded with
         | Ok (CreateConversation d) ->
             Assert.Equal(invId, d.invocationId)
             Assert.Equal(convId, d.conversationId)
-            Assert.Equal("新会话", d.title)
+            Assert.Equal("新对话", d.title)
             Assert.Equal(cfg.provider, d.config.provider)
             Assert.Equal(cfg.model, d.config.model)
         | other -> failwithf "Unexpected result: %A" other
@@ -419,7 +419,7 @@ module WireCodecTests =
         let snap =
             ConversationSnapshot
                 {| conversationId = convId
-                   title = "会话快照"
+                   title = "对话快照"
                    lastCommitId = 50UL
                    runtimeState = "active"
                    generationId = Some genId
@@ -430,7 +430,7 @@ module WireCodecTests =
         match WireCodec.tryDecode (WireCodec.encode snap) with
         | Ok (ConversationSnapshot d) ->
             Assert.Equal(convId, d.conversationId)
-            Assert.Equal("会话快照", d.title)
+            Assert.Equal("对话快照", d.title)
             Assert.Equal(50UL, d.lastCommitId)
             Assert.Equal("active", d.runtimeState)
             Assert.Equal(Some genId, d.generationId)

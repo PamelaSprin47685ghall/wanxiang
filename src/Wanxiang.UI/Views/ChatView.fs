@@ -32,11 +32,11 @@ type ChatEmptyState =
     | NotConnected
     /// 连接或认证失败，附失败原因
     | ConnectionFailed of reason: string
-    /// 已连接但没有可用服务商
+    /// 已连接但没有可用模型服务
     | NoProvider
-    /// 有服务商但没选会话
+    /// 有模型服务但没选对话
     | NoConversation
-    /// 会话是空的
+    /// 对话是空的
     | EmptyConversation
 
 /// 一张消息卡的身份。
@@ -72,7 +72,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Foreground = Tokens.text,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis)
-    let titleEditShell, titleEditBox = Ui.textField "会话标题"
+    let titleEditShell, titleEditBox = Ui.textField "对话标题"
     let titleHost = Grid()
     let titleAction =
         ActionBorder(
@@ -106,14 +106,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             VerticalAlignment = VerticalAlignment.Center)
 
     // 顶栏只交代“正在看哪段对话”。低频管理与阅读导航进入有文字的菜单。
-    let moreButton = Ui.iconButton Icons.more "会话操作"
+    let moreButton = Ui.iconButton Icons.more "对话操作"
     let mutable showMore: Control -> unit = ignore
     let mutable canJumpPrevious = false
     let mutable canJumpNext = false
     let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl+B / ⌘B）"
 
     // W4：分叉面包屑。只在“当前对话是某个对话的分叉”时出现；父对话在时可点击回到它，
-    // 父对话已删除时是纯文字（分叉本身仍完整可用，决策 76）。
+    // 父对话已删除时是纯文字（分叉本身仍完整可用，决策 202）。
     let breadcrumbText =
         TextBlock(
             FontSize = Tokens.fontCaption,
@@ -236,7 +236,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable compactMode = false
     let mutable hasConversationChrome = false
     let mutable isGenerating = false
-    /// 菜单的停止项只在服务端已确认生成身份、且连接允许操作时出现。
+    /// 菜单的停止项只在主机已确认生成身份、且连接允许操作时出现。
     let mutable canStop = false
     let mutable titleEditable = false
     let mutable editingTitle = false
@@ -402,7 +402,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         Avalonia.Automation.AutomationProperties.SetName(titleText, text)
         Avalonia.Automation.AutomationProperties.SetName(
             titleAction,
-            if titleEditable then sprintf "重命名会话：%s" text else text)
+            if titleEditable then sprintf "重命名对话：%s" text else text)
         updateTitleActionVisual ()
 
     // 把方向键与键盘焦点都送回标题按钮：先同步尝试一次，
@@ -476,7 +476,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member this.SetTitle(text: string, editable: bool) =
         titleEditable <- editable
-        // 服务端标题在用户改名途中到达（首答自动标题）时，不能丢弃输入框里的草稿：
+        // 主机标题在用户改名途中到达（首答自动标题）时，不能丢弃输入框里的草稿：
         // 隐藏标签跟进最新值（取消会露出它），提交仍以草稿为准。
         let editing = editable && editingTitle && titleEditShell.IsVisible
         editingTitle <- editing
@@ -521,7 +521,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let conversation =
                 [ if titleEditable then
                       MenuEntry.create "重命名" (fun () -> this.BeginTitleEdit()) |> MenuEntry.withIcon Icons.pencil
-                  MenuEntry.create "会话上下文" actions.openSessionSettings |> MenuEntry.withIcon Icons.sliders
+                  MenuEntry.create "对话上下文" actions.openSessionSettings |> MenuEntry.withIcon Icons.sliders
                   MenuEntry.create "从当前分叉" actions.forkFromHere |> MenuEntry.withIcon Icons.fork
                   MenuEntry.create "导出为 Markdown" exportConversation |> MenuEntry.withIcon Icons.download ]
             let reading =
@@ -530,16 +530,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                   if canJumpNext then
                       MenuEntry.create "下一条提问" (fun () -> this.JumpExchange 1) |> MenuEntry.withIcon Icons.chevronsDown
                   if messagePanel.Children.Count > 0 then
-                      MenuEntry.create "回到会话开头" (fun () -> this.SmoothScrollToBeginning())
+                      MenuEntry.create "回到对话开头" (fun () -> this.SmoothScrollToBeginning())
                       MenuEntry.create "回到最新" (fun () -> this.SmoothScrollToEnd()) ]
             let groups =
-                [ "当前会话", conversation
+                [ "当前对话", conversation
                   if not (List.isEmpty reading) then "阅读位置", reading
                   if isGenerating && canStop then
                       "执行", [ MenuEntry.create "停止生成" (fun () -> actions.stopGeneration (); actions.focusHome ()) |> MenuEntry.withIcon Icons.stop ] ]
             Menu.showGrouped overlay anchor false groups
 
-    /// 会话状态变化时同步顶栏功能按钮的可用性。
+    /// 对话状态变化时同步顶栏功能按钮的可用性。
     member this.SetConversationChrome(hasConversation: bool) =
         hasConversationChrome <- hasConversation
         moreButton.IsVisible <- hasConversation
@@ -628,11 +628,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             lastEmptyState <- Some currentStateKey
             let title, hint =
                 match state with
-                | NotConnected -> "需要连接服务器才能开始对话", "服务端负责运行模型与保存会话；客户端只是它的一个视图。"
-                | ConnectionFailed reason -> "连接服务器失败", sprintf "%s。请检查网络或重新配置连接。" reason
-                | NoProvider -> "还没有可用的模型", "添加一个服务商并填入密钥，就可以开始对话了。"
-                | NoConversation -> "今天想讨论什么？", "发出第一条消息后，会自动建立会话。"
-                | EmptyConversation -> "开始这段会话", "输入问题，或附上一份文件。"
+                | NotConnected -> "需要连接主机才能开始对话", "主机负责运行模型与保存对话；客户端只是它的一个视图。"
+                | ConnectionFailed reason -> "连接主机失败", sprintf "%s。请检查网络或重新配置连接。" reason
+                | NoProvider -> "还没有可用的模型", "添加一个模型服务并填入密钥，就可以开始对话了。"
+                | NoConversation -> "今天想讨论什么？", "发出第一条消息后，会自动建立对话。"
+                | EmptyConversation -> "开始这段对话", "输入问题，或附上一份文件。"
             match onPrimary with
             | Some(label, _) ->
                 Ui.setButtonText emptyActionButton label
@@ -686,7 +686,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         scroller.IsVisible <- true
         messagePanel.IsVisible <- true
 
-    /// 重置滚动到底状态与未读计数（换会话、加载骨架或切换视图时调用）。
+    /// 重置滚动到底状态与未读计数（换对话、加载骨架或切换视图时调用）。
     member this.ResetScrollState() =
         revealPinned <- false
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
@@ -695,7 +695,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         returningToLatest <- false
         unreadSinceScrolledUp <- 0
         previousRenderedMessageCount <- 0
-        // 锚点跟着会话一起丢：换会话后旧锚引用的卡片已不在面板上。
+        // 锚点跟着对话一起丢：换对话后旧锚引用的卡片已不在面板上。
         exchangeAnchor <- None
         this.UpdateScrollToBottomAppearance()
         syncExchangeNavState ()
@@ -810,7 +810,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             // 助手骨架 2
             skeletonPanel.Children.Add(makeAssistantSkeleton [ (14.0, 0.60); (13.0, 0.90); (13.0, 0.75); (13.0, 0.50) ])
 
-    /// 显示骨架屏（换会话或初次加载中，替代空白屏与“加载中…”）
+    /// 显示骨架屏（换对话或初次加载中，替代空白屏与“加载中…”）
     member this.ShowSkeletonLoading() =
         this.ResetScrollState()
         this.EnsureSkeletonBuilt()
@@ -984,7 +984,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         | _ -> ()
         syncExchangeNavState ()
 
-        // 缓存只保留这一帧用到的身份：换会话、改字号都会让旧身份失效，
+        // 缓存只保留这一帧用到的身份：换对话、改字号都会让旧身份失效，
         // 留着只是占内存
         let live = HashSet<CardKey>()
         for key in mountedKeys do
@@ -1142,7 +1142,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 DispatcherPriority.Background)
         attempt 3
 
-    /// 用户意图入口：回到会话开头。
+    /// 用户意图入口：回到对话开头。
     ///
     /// 与 Deferred/Smooth 两兄弟的分工同 ScrollToEnd：这个成员是「用户说要回到开头」，
     /// 因此把阅读位置相关的状态一起收口——锚点作废，让接下来的「上一条 / 下一条」
@@ -1364,7 +1364,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             // 所以端点禁用态必须跟着滚动走，只在渲染时刷一次会停在旧状态。
             syncExchangeNavState ()
             this.UpdateScrollToBottomAppearance()
-            // 骨架可见时不预取更早历史：会话切换中的 extent 抖动会误触发，
+            // 骨架可见时不预取更早历史：对话切换中的 extent 抖动会误触发，
             // 等真实内容挂载后再按正常阈值取。
             if offset <= 0.5 && extent > viewport && not skeletonPanel.IsVisible then actions.requestOlderHistory ())
         // 滚轮不论方向都是「用户此刻要动」：向上滚原本会打断平滑滚动，向下滚同理

@@ -102,7 +102,7 @@ module Snapshot =
                 | _ -> failwith "expected healthy"
             // 先写一个 throughCommitId=1 的快照，再篡改它
             let proj1 = { outcome.projection with latestCommitId = 1UL }
-            // 构造 throughCommitId=1 的投影（去掉第二个会话）
+            // 构造 throughCommitId=1 的投影（去掉第二个对话）
             let proj1 =
                 let c1conv = Projection.conversationList outcome.projection |> List.find (fun c -> c.conversationId = convId)
                 { conversations = Map.ofList [ convId, c1conv ]
@@ -194,7 +194,7 @@ module Snapshot =
             Assert.Equal(2UL, fullOutcome.lastCommitId)
             // 模拟：c1 之后创建快照（throughCommitId=1）
             let proj1 =
-                // 快照时刻 = c1 之后（会话已创建，尚无消息）
+                // 快照时刻 = c1 之后（对话已创建，尚无消息）
                 let conv =
                     { conversationId = convId
                       title = "快照启动"
@@ -298,7 +298,7 @@ module Snapshot =
             let convId = Guid.NewGuid()
             let path = DataPaths.eventFilePath dir day
             Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
-            // 写 3 条提交（1 会话 + 2 消息）
+            // 写 3 条提交（1 对话 + 2 消息）
             let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "v1"; config = SessionConfig.empty } ]
             let c2 = Events.Commit.create 2UL (DateTimeOffset(day.AddMinutes 1.0)) [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m1" } ]
             let c3 = Events.Commit.create 3UL (DateTimeOffset(day.AddMinutes 2.0)) [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m2" } ]

@@ -60,17 +60,17 @@ module Brand =
                     VerticalAlignment = VerticalAlignment.Center)
         tile :> Control
 
-/// 导出会话为 Markdown。
+/// 导出对话为 Markdown。
 module Export =
 
     /// 标题不是路径；不同平台统一处理分隔符、控制字符和过长文件名。
     let safeFileName (title: string) =
-        let source = if String.IsNullOrWhiteSpace title then "会话" else title
+        let source = if String.IsNullOrWhiteSpace title then "对话" else title
         let cleaned =
             source |> Seq.map (fun c -> if Char.IsControl c || "<>:\"/\\|?*".Contains c then '_' else c)
             |> Seq.toArray |> String
         let trimmed = cleaned.Trim().Trim('.')
-        let trimmed = if String.IsNullOrWhiteSpace trimmed then "会话" else trimmed
+        let trimmed = if String.IsNullOrWhiteSpace trimmed then "对话" else trimmed
         let elements = Globalization.StringInfo.GetTextElementEnumerator trimmed
         let builder = Text.StringBuilder()
         let mutable bytes = 0
@@ -82,7 +82,7 @@ module Export =
             else
                 builder.Append element |> ignore
                 bytes <- bytes + size
-        let bounded = if builder.Length = 0 then "会话" else builder.ToString()
+        let bounded = if builder.Length = 0 then "对话" else builder.ToString()
         bounded + ".md"
 
     let private roleTitle (role: string) =

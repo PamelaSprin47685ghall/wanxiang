@@ -113,7 +113,7 @@ module StateScan =
 /// - 聚焦 / 校验描边：`Tokens` 的笔是「切主题时原地改色」的活对象，
 ///   进 `BrushTransition` 会被补间改写并与全局令牌脱钩（实测红框读到中间色
 ///   `#ffd2cabc` 而非终点 `#ff8e3b2f`，切主题后不再变红）。
-/// - hover 底依赖业务状态（会话行选中 / 运行中、附件行已选）。
+/// - hover 底依赖业务状态（对话行选中 / 运行中、附件行已选）。
 /// - 非表面视觉：改 `TextBlock` 内联 `Run.Foreground`，不是控件表面状态。
 module StateConvergenceTests =
 
@@ -147,7 +147,7 @@ module StateConvergenceTests =
              的产物，不是控件表面；伪类无法按内联片段选择"
 
             "Wanxiang.UI/Views/Sidebar.fs", 2,
-            "会话行的 hover 底依赖 `isActive` / `isSelected`（选中 / 运行中 / 生成中）\
+            "对话行的 hover 底依赖 `isActive` / `isSelected`（选中 / 运行中 / 生成中）\
              ——业务状态，伪类表达不了；`:pointerover` 只负责无状态那一档"
         ]
 

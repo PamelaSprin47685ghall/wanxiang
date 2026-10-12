@@ -255,7 +255,7 @@ module Dialogs =
             Ui.vstack
                 Spacing.space2xl
                 [ Ui.title title :> Control
-                  Ui.caption "会以你编辑后的内容新建一个分叉会话，原会话保持不变。" :> Control
+                  Ui.caption "会以你编辑后的内容新建一个分叉对话，原对话保持不变。" :> Control
                   shell :> Control
                   buttons :> Control ]
         overlay.ShowDialog(content :> Control, 520.0)
@@ -314,7 +314,7 @@ module Dialogs =
         (onSubmitCode: string -> unit)
         (onClosed: unit -> unit)
         : ConnectDialogHandle =
-        let urlField, urlBox = Ui.labeledField "服务器地址" "ws://127.0.0.1:8765/ws"
+        let urlField, urlBox = Ui.labeledField "主机地址" "ws://127.0.0.1:8765/ws"
         urlBox.Text <- defaultUrl
         let tokenField, tokenBox = Ui.labeledField "访问令牌" "有令牌就粘贴，没有就用配对码"
         tokenBox.PasswordChar <- '●'
@@ -459,7 +459,7 @@ module Dialogs =
             let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
             let token = if isNull tokenBox.Text then "" else tokenBox.Text.Trim()
             if String.IsNullOrWhiteSpace url then
-                announce "请填写服务器地址。"
+                announce "请填写主机地址。"
             else
                 onConnect
                     { url = url
@@ -485,16 +485,16 @@ module Dialogs =
             ToolTip.SetTip(cancelBtn, "取消并关闭连接对话框 (Esc)")
         | _ -> ()
         AutomationProperties.SetName(connectBtn, "连接")
-        AutomationProperties.SetHelpText(connectBtn, "连接至服务器 (Enter)")
-        ToolTip.SetTip(connectBtn, "连接至服务器 (Enter)")
+        AutomationProperties.SetHelpText(connectBtn, "连接至主机 (Enter)")
+        ToolTip.SetTip(connectBtn, "连接至主机 (Enter)")
 
         let content =
             Ui.vstack
                 Spacing.space2xl
                 [ Ui.vstack
                       Spacing.spaceXs
-                      [ Ui.title "连接万象服务器" :> Control
-                        Ui.caption "服务端负责运行模型、保存会话与管理密钥；客户端只通过 WebSocket 与它通信。" :> Control ]
+                      [ Ui.title "连接万象主机" :> Control
+                        Ui.caption "主机负责运行模型、保存对话与管理密钥；客户端只通过 WebSocket 与它通信。" :> Control ]
                   :> Control
                   urlField
                   tokenField
@@ -528,7 +528,7 @@ module Dialogs =
         connectWithClosed overlay defaultUrl onConnect onSubmitCode ignore
 
 
-    /// 会话设置：模型、生成参数、系统指令、工具勾选。
+    /// 对话设置：模型、生成参数、系统指令、工具勾选。
     let sessionSettings
         (overlay: OverlayHost)
         (catalog: Catalog)
@@ -557,7 +557,7 @@ module Dialogs =
         setModelText <- setText
         modelButton.HorizontalAlignment <- HorizontalAlignment.Stretch
 
-        let instructionsShell, instructionsBox = Ui.textArea "留空则使用服务端默认指令" ControlMetrics.textAreaMinHeight
+        let instructionsShell, instructionsBox = Ui.textArea "留空则使用主机默认指令" ControlMetrics.textAreaMinHeight
         instructionsBox.Text <- current.instructions |> Option.defaultValue ""
 
         // 表单错误摘要：与 SettingsGeneral / SettingsTools 同款的可聚焦 live region，
@@ -600,7 +600,7 @@ module Dialogs =
         let selectedTools = System.Collections.Generic.HashSet<string>(current.tools)
         let toolsPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXs)
         if List.isEmpty catalog.tools then
-            toolsPanel.Children.Add(Ui.caption "服务端当前没有可用工具。")
+            toolsPanel.Children.Add(Ui.caption "主机当前没有可用工具。")
         else
             for tool in catalog.tools do
                 let toggle, _, _, _ =
@@ -677,8 +677,8 @@ module Dialogs =
                 revealParameters ()
                 Ui.applyValidationFeedback (List.ofSeq errors) (Some errorSummary) (fun message -> overlay.Toast(message, Warning))
 
-        let temperatureColumn = Ui.inputFieldGroup "Temperature" "0–2，留空跟随服务端默认" temperatureBox
-        let topPColumn = Ui.inputFieldGroup "Top P" "0–1，留空跟随服务端默认" topPBox
+        let temperatureColumn = Ui.inputFieldGroup "Temperature" "0–2，留空跟随主机默认" temperatureBox
+        let topPColumn = Ui.inputFieldGroup "Top P" "0–1，留空跟随主机默认" topPBox
         let maxTokensColumn = Ui.inputFieldGroup "最大输出 token" "限制单次回复，留空不限制" maxTokensBox
         let thinkingBudgetColumn = Ui.inputFieldGroup "思维链预算（token）" "0 关闭思维链，留空跟随默认" thinkingBudgetBox
         let paramGrid, applyParamLayout = Ui.twoColumnForm Spacing.space2xl Spacing.spaceXl 4 [ temperatureColumn; topPColumn; maxTokensColumn; thinkingBudgetColumn ]
@@ -704,7 +704,7 @@ module Dialogs =
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
                 ContentTransition = null)
-        AutomationProperties.SetName(tools, "会话工具")
+        AutomationProperties.SetName(tools, "对话工具")
         // 计数在展开/收起时更新，不重建工具开关，也不丢键盘位置。
         tools.PropertyChanged.Add(fun e ->
             if e.Property = Expander.IsExpandedProperty then
@@ -716,8 +716,8 @@ module Dialogs =
         ToolTip.SetTip(cancelButton, "取消并关闭对话框 (Esc)")
         let saveButton = Ui.button Ui.Primary "保存" save
         AutomationProperties.SetName(saveButton, "保存")
-        AutomationProperties.SetHelpText(saveButton, "保存会话设置 (Ctrl+Enter)")
-        ToolTip.SetTip(saveButton, "保存会话设置 (Ctrl+Enter)")
+        AutomationProperties.SetHelpText(saveButton, "保存对话设置 (Ctrl+Enter)")
+        ToolTip.SetTip(saveButton, "保存对话设置 (Ctrl+Enter)")
         Ui.preparePendingButton saveButton
         setPending <- fun value ->
             pending <- value
@@ -751,8 +751,8 @@ module Dialogs =
         let dialog = DockPanel(LastChildFill = true, MaxHeight = LayoutPolicy.dialogContentMaxHeight)
         let heading =
             Ui.vstack Spacing.spaceXs
-                [ Ui.heading "会话上下文" :> Control
-                  Ui.caption "只影响当前会话。保存后用于后续请求，不改动已有消息。" :> Control ]
+                [ Ui.heading "对话上下文" :> Control
+                  Ui.caption "只影响当前对话。保存后用于后续请求，不改动已有消息。" :> Control ]
         heading.Margin <- Thickness(0.0, 0.0, 0.0, Spacing.space2xl)
         footer.Margin <- Thickness(0.0, Spacing.space2xl, 0.0, 0.0)
         DockPanel.SetDock(heading, Dock.Top)
@@ -780,35 +780,35 @@ module Dialogs =
     let shortcuts (overlay: OverlayHost) =
         let sections =
             [ "全局与导航",
-              [ "Ctrl / ⌘ + N", "新建会话"
+              [ "Ctrl / ⌘ + N", "新建对话"
                 "Ctrl / ⌘ + W", "关闭窗口"
                 "Ctrl / ⌘ + B", "切换侧边栏展开 / 折叠"
                 "Ctrl / ⌘ + K", "快速聚焦搜索栏"
-                "Ctrl / ⌘ + 1 ~ 9", "按侧栏当前可见顺序快速跳转至对应会话"
+                "Ctrl / ⌘ + 1 ~ 9", "按侧栏当前可见顺序快速跳转至对应对话"
                 "Ctrl / ⌘ + ,", "打开全局设置"
-                "Ctrl / ⌘ + M", "切换本会话使用的模型"
+                "Ctrl / ⌘ + M", "切换本对话使用的模型"
                 "Ctrl / ⌘ + Shift + S", "切换主题（跟随系统 → 浅色 → 深色轮转）"
                 "Ctrl / ⌘ + /", "显示快捷键帮助"
                 "F1", "显示快捷键帮助" ]
-              // 端点滚动与问答跳转同组：三条都是「在会话里移动阅读位置」。
-              "输入与会话",
+              // 端点滚动与问答跳转同组：三条都是「在对话里移动阅读位置」。
+              "输入与对话",
               [ "Enter", "发送消息（或换行，按偏好）"
                 "Shift + Enter", "换行输入"
                 "Ctrl / ⌘ + Enter", "发送 / 换行（与 Enter 互补，按当前偏好）"
-                "Ctrl / ⌘ + Shift + E", "导出当前会话为 Markdown"
+                "Ctrl / ⌘ + Shift + E", "导出当前对话为 Markdown"
                 "Ctrl / ⌘ + 上 / 下", "跳到上一条 / 下一条提问（顶栏同款按钮）"
-                "Ctrl / ⌘ + Home", "滚到会话开头（最早的提问）"
-                "Ctrl / ⌘ + End", "滚到会话结尾（最新消息）"
+                "Ctrl / ⌘ + Home", "滚到对话开头（最早的提问）"
+                "Ctrl / ⌘ + End", "滚到对话结尾（最新消息）"
                 "Ctrl / ⌘ + L", "聚焦消息输入框"
                 "Esc", "关闭弹层 / 取消编辑 / 停止生成" ]
             // 行级快捷键此前只在右键菜单里，键盘用户无从得知：列在这里说明
             // 这些键位真实可用（Sidebar 行 / ChatView 标题的处理与此一一对应），
             // 不新增任何行为，只消除信息差。
-              "会话行",
-              [ "Enter", "打开当前会话（或提交重命名）"
-                "P", "置顶 / 取消置顶当前会话"
-                "F2", "重命名当前会话"
-                "Delete", "删除当前会话（多选模式下批量删除）" ] ]
+              "对话行",
+              [ "Enter", "打开当前对话（或提交重命名）"
+                "P", "置顶 / 取消置顶当前对话"
+                "F2", "重命名当前对话"
+                "Delete", "删除当前对话（多选模式下批量删除）" ] ]
         let contentPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXl)
         for (category, items) in sections do
             contentPanel.Children.Add(Ui.sectionLabel category :> Control)

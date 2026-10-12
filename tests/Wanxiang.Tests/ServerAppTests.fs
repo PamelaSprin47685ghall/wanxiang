@@ -133,7 +133,7 @@ module ServerAppTests =
             // 验证已记录启动监听日志
             Assert.Contains(loggedMessages, fun m -> m.Contains("wanxiang server listening on"))
 
-            // 停止服务器
+            // 停止主机
             app.Stop()
 
             // 验证 Stop 幂等：再次调用 Dispose 不会抛出异常

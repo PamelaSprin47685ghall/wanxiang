@@ -153,7 +153,7 @@ let ``streaming caret keeps opacity inside the breath band and pins to max under
     Assert.Equal(900.0, MotionLedger.caretBreathPhase.TotalMilliseconds, 3)
 
     // 呼吸运行原点现为进程级持久状态（MessageCard 模块级）：显式开启一段新运行，
-    // 固定「新会话第一枚光标从峰值起步」这一既有断言，使本测试不受其它测试
+    // 固定「新对话第一枚光标从峰值起步」这一既有断言，使本测试不受其它测试
     // 是否先渲染过流式卡的影响（流式卡每 delta 重建的契约由 IncrementalRenderTests 守护）。
     MessageCard.beginBreathRun ()
 
@@ -527,7 +527,7 @@ let ``disclosure headers share one bordered transition`` () =
     // 错误卡「技术细节」开关。
     let err : GenerationError =
         { kind = ProviderUnavailable
-          message = "无法连接服务商"
+          message = "无法连接模型服务"
           detail = Some "Connection refused at 127.0.0.1:8799"
           retryable = true
           retryAfterSeconds = Some 5 }
@@ -551,7 +551,7 @@ let ``export progress bar is determinate under reduced motion`` () =
             ConversationExportDialog(
                 overlay,
                 Guid.NewGuid(),
-                "测试会话",
+                "测试对话",
                 (fun _ -> Task.FromResult false),
                 (fun () -> Unchecked.defaultof<TopLevel>))
         let window = show root 480.0 360.0

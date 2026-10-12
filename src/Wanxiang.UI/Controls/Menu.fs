@@ -105,7 +105,7 @@ module Menu =
             Nullable Avalonia.Automation.Peers.AutomationControlType.MenuItem)
         // hover/focus 底色补间走 Ui.surfaceTransitions：与全应用基控件同一机制、同一时长。
         host.Transitions <- Ui.surfaceTransitions ()
-        // 危险项（删除会话等）用 danger 变体（dangerSoft 叠 hover 底），与常规 hover 拉开差距；
+        // 危险项（删除对话等）用 danger 变体（dangerSoft 叠 hover 底），与常规 hover 拉开差距；
         // 键盘激活（Enter/Space）由 Ui.onClick 统一绑定，Tab 焦点环由 ActionBorder 绘制。
         let hoverVariant = if entry.danger then Interaction.HoverVariant.danger else Interaction.HoverVariant.plain
         Interaction.surface host hoverVariant |> ignore
@@ -153,7 +153,7 @@ module Menu =
                     VerticalScrollBarVisibility = Primitives.ScrollBarVisibility.Auto)
             overlay.ShowPopup(anchor, scroller :> Control, alignRight, 200.0)
 
-    /// 带分组标题的菜单（模型选择器：按服务商分组）。
+    /// 带分组标题的菜单（模型选择器：按模型服务分组）。
     let showGrouped (overlay: OverlayHost) (anchor: Control) (alignRight: bool) (groups: (string * MenuEntry list) list) =
         let visible = groups |> List.filter (fun (_, items) -> not (List.isEmpty items))
         if not (List.isEmpty visible) then
@@ -236,7 +236,7 @@ module Menu =
         // 读屏可达：ComboBox 没有一个可播报的名字，盲用户 Tab 到这个下拉只会听到
         // 空的控件名。名字随显示文本同步刷新（Kelivo custom_dropdown.dart:45-52 同位语义）。
         // 区分「自己写的」与「调用方命名过的」：后者优先且此后不再被刷新（模型卡片
-        // 的按钮名是「切换本会话使用的模型」这种动作名，不是当前文件名）。
+        // 的按钮名是「切换本对话使用的模型」这种动作名，不是当前文件名）。
         Avalonia.Automation.AutomationProperties.SetName(host, initialText)
         host, (fun text ->
             caption.Text <- text

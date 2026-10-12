@@ -21,7 +21,7 @@ let private source (relativePath: string) : string =
 let private approx (expectedValue: float) (actual: float) = abs (expectedValue - actual) < 1e-9
 
 // ---------- 单一来源令牌的取值契约 ----------
-// 这些断言把「会话呈现面收敛」赖以成立的令牌阶梯钉住：任何一处值漂移都会在此变红，
+// 这些断言把「对话呈现面收敛」赖以成立的令牌阶梯钉住：任何一处值漂移都会在此变红，
 // 从而阻止调用点又回到魔法数。
 
 [<Fact>]

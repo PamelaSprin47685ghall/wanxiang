@@ -145,9 +145,9 @@ module ProviderFailure =
         | ProviderBadRequest -> sprintf "「%s」认为这次请求参数不合法。" providerLabel
         | ContextTooLong -> "本次上下文超出模型能接受的长度。"
         | ModelNotFound -> sprintf "「%s」上找不到模型 %s。" providerLabel model
-        | ContentFiltered -> "内容被服务商安全策略拦截。"
+        | ContentFiltered -> "内容被模型服务安全策略拦截。"
         | ToolFailed -> "工具执行失败。"
-        | ConfigInvalid -> "会话配置无效。"
+        | ConfigInvalid -> "对话配置无效。"
         | UnknownFailure -> sprintf "调用「%s」时发生未预期的错误。" providerLabel
 
     let rec private isNetworkException (ex: exn) : bool =
@@ -290,12 +290,12 @@ module private ProviderHttp =
                 client)
 
 /// Agent 运行时：构建与执行。
-/// 每个会话一个运行时 agent + session；消息历史由应用托管（投影），
-/// 不依赖 Provider 服务端会话状态（决策 20）。
+/// 每个对话一个运行时 agent + session；消息历史由应用托管（投影），
+/// 不依赖 Provider 侧的对话状态（决策 20）。
 ///
-/// 模型来自**会话配置**（`SessionConfig.model`），provider 只提供端点与凭据；
-/// provider 的 `defaultModel` 仅在会话未指定或指定了列表外模型时兜底。
-/// `thinkingBudget` 是**已解析**的有效值（会话覆盖 → [generation] 默认），
+/// 模型来自**对话配置**（`SessionConfig.model`），provider 只提供端点与凭据；
+/// provider 的 `defaultModel` 仅在对话未指定或指定了列表外模型时兜底。
+/// `thinkingBudget` 是**已解析**的有效值（对话覆盖 → [generation] 默认），
 /// 因为这一层看不到全局配置。0 表示不开思维链。
 type AgentRuntime(
     provider: ProviderConfig,
@@ -336,7 +336,7 @@ type AgentRuntime(
         chatOptions.Temperature <- (match session.temperature with Some t -> Nullable(float32 t) | None -> Nullable())
         chatOptions.TopP <- (match session.topP with Some p -> Nullable(float32 p) | None -> Nullable())
         chatOptions.MaxOutputTokens <- (match session.maxTokens with Some m -> Nullable m | None -> Nullable())
-        // 会话 extraJson 原样透传：模型专属参数（reasoning_effort、enable_thinking…）
+        // 对话 extraJson 原样透传：模型专属参数（reasoning_effort、enable_thinking…）
         // 不需要万象逐个建模即可使用。
         match session.extraJson with
         | Some node when not (isNull node) ->
@@ -355,13 +355,13 @@ type AgentRuntime(
 
     let agent = chatClient.AsAIAgent(agentOptions)
 
-    /// 实际生效的模型（会话请求 + provider 列表解析后的结果）。
+    /// 实际生效的模型（对话请求 + provider 列表解析后的结果）。
     member _.Model = resolvedModel
 
     /// 实际生效的 provider id。
     member _.ProviderId = provider.id
 
-    /// 创建会话并绑定 conversationId（运行时对象）。
+    /// 创建对话并绑定 conversationId（运行时对象）。
     member _.CreateSession(conversationId: Guid) : AgentSession =
         let session = agent.CreateSessionAsync().AsTask().GetAwaiter().GetResult()
         session.StateBag.SetValue<string>(WanxiangHistoryProvider.ConversationIdKey, conversationId.ToString("D"))

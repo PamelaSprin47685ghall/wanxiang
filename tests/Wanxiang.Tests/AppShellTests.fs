@@ -454,7 +454,7 @@ module AppShellTests =
         )
 
     // ==========================================
-    // 6. 会话选择、邻行计算与可见顺序 (Conversation Selection & Neighbor)
+    // 6. 对话选择、邻行计算与可见顺序 (Conversation Selection & Neighbor)
     // ==========================================
 
     [<Trait("Category", "UI")>]
@@ -479,21 +479,21 @@ module AppShellTests =
             setField view "summaries" summaries
             setField view "activeConvId" (Some id2)
 
-            // 当移除当前会话 id2 时，从可见顺序自顶向下排除 id2，首个存活的可见会话为 id3
+            // 当移除当前对话 id2 时，从可见顺序自顶向下排除 id2，首个存活的可见对话为 id3
             let neighbor: Guid option = invokeMethod view "NeighborExcluding" [| box [ id2 ] |]
             Assert.True(neighbor.IsSome)
             Assert.Equal(id3, neighbor.Value)
 
-            // 若同时移除 [ id3; id2 ]，则下一个可见会话落到 id1
+            // 若同时移除 [ id3; id2 ]，则下一个可见对话落到 id1
             let neighbor2: Guid option = invokeMethod view "NeighborExcluding" [| box [ id3; id2 ] |]
             Assert.True(neighbor2.IsSome)
             Assert.Equal(id1, neighbor2.Value)
 
-            // 若全部可见会话都被移除，则返回 None（主视图落回欢迎页）
+            // 若全部可见对话都被移除，则返回 None（主视图落回欢迎页）
             let noNeighborAll: Guid option = invokeMethod view "NeighborExcluding" [| box [ id1; id2; id3 ] |]
             Assert.True(noNeighborAll.IsNone)
 
-            // 若当前未激活被删除的会话，则返回 None（不触碰主视图）
+            // 若当前未激活被删除的对话，则返回 None（不触碰主视图）
             setField view "activeConvId" (Some id1)
             let noNeighbor: Guid option = invokeMethod view "NeighborExcluding" [| box [ id3 ] |]
             Assert.True(noNeighbor.IsNone)

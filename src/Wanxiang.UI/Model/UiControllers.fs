@@ -7,7 +7,7 @@ open System.Text.Json.Nodes
 open Avalonia.Input
 open Wanxiang.Core
 
-/// 临时生成状态按会话保存；导航只选择要显示哪一份，不拥有生成本身。
+/// 临时生成状态按对话保存；导航只选择要显示哪一份，不拥有生成本身。
 type ConversationRun = {
     generationId: Guid option
     running: bool
@@ -22,7 +22,7 @@ type ConversationRuns() =
     // 退休台账防同代事件的重复记账（重复 Finish/迟到 Start）。generationId 是 GUID
     // 不复用，台账只需覆盖「同一次连接内可能的重复/迟到投递窗口」——游标协议本身
     // 已按 cursor 去重，这里只是纵深防御。没有上限时每次生成都永久增加一个条目，
-    // 长会话用户会让集合单调增长（Phase 0 风险 R2），因此给 FIFO 总量上限。
+    // 长对话用户会让集合单调增长（Phase 0 风险 R2），因此给 FIFO 总量上限。
     let retiredCapacity = 1024
     let mutable retired: Set<Guid * Guid> = Set.empty
     let retiredOrder = Queue<Guid * Guid>()
@@ -124,8 +124,8 @@ type AttachmentUpload = {
 type AttachmentDraftController() =
     let uploads = Dictionary<Guid, AttachmentUpload>()
     let mutable items: PendingAttachment list = []
-    /// 所属会话键，由 ComposerDrafts 在创建/搬移草稿时维护；Complete 透出它，
-    /// AppShell 只在它等于当前可见会话时才 toast 上传完成。
+    /// 所属对话键，由 ComposerDrafts 在创建/搬移草稿时维护；Complete 透出它，
+    /// AppShell 只在它等于当前可见对话时才 toast 上传完成。
     let mutable ownerKey: string * Guid option = "", None
 
     member _.Items = items
@@ -159,7 +159,7 @@ type AttachmentDraftController() =
         items
 
     /// 返回上传元数据，以及完成时这条附件是否仍在用户草稿里。
-    /// 一并透出所属会话键：调用方只在它等于当前可见会话时才 toast，避免后台会话的完成误报。
+    /// 一并透出所属对话键：调用方只在它等于当前可见对话时才 toast，避免后台对话的完成误报。
     member _.Complete(attachmentId: Guid, committedSize: int64) : (AttachmentUpload * bool * (string * Guid option)) option =
         match uploads.TryGetValue attachmentId with
         | true, upload ->
@@ -177,7 +177,7 @@ type AttachmentDraftController() =
         | _ -> None
 
     /// 失败时保留一条 failed 残留（同槽位 chip 呈现，可移除、可重新添加重试）；相同 sha256 的其它附件不受影响。
-    /// 返回上传元数据（fileName 即 toast 用名）、是否仍在草稿里、所属会话键；同一 attachmentId 只报一次。
+    /// 返回上传元数据（fileName 即 toast 用名）、是否仍在草稿里、所属对话键；同一 attachmentId 只报一次。
     member _.Abort(attachmentId: Guid) : (AttachmentUpload * bool * (string * Guid option)) option =
         match uploads.TryGetValue attachmentId with
         | true, upload ->
@@ -217,7 +217,7 @@ type AttachmentDraftController() =
 
 /// 附件下载的在途接收缓冲，键为小写 sha256。
 ///
-/// 服务端按 chunk 推流，只有完成事件会消费缓冲。断连、重试或完成事件丢失时
+/// 主机按 chunk 推流，只有完成事件会消费缓冲。断连、重试或完成事件丢失时
 /// 缓冲必须能整体丢弃，否则每个半途而废的下载都会在内存里留下一个永不释放的
 /// MemoryStream（Phase 0 风险 R1）。单个下载另有硬上限，超限即丢弃缓冲并让
 /// 调用方给出一次性提示，内存不随异常流无限增长。不持久化任何内容；
@@ -289,7 +289,7 @@ type ComposerDraft = {
     attachments: AttachmentDraftController
 }
 
-/// 草稿仅在客户端内存中保存，按实例和会话隔离；不构成第二份业务数据库。
+/// 草稿仅在客户端内存中保存，按实例和对话隔离；不构成第二份业务数据库。
 type ComposerDrafts() =
     let mutable items: Map<string * Guid option, ComposerDraft> = Map.empty
 
@@ -344,14 +344,14 @@ module PendingMessage =
         match item.state with UnconfirmedMessage _ | RejectedMessage _ -> true | _ -> false
     let status item =
         match item.state with
-        | PreparingConversation -> "正在准备会话…"
+        | PreparingConversation -> "正在准备对话…"
         | SendingMessage -> "正在发送，等待保存确认…"
         | QueuedMessage -> "已排队，尚未保存"
         | UnconfirmedMessage reason -> "尚未确认保存：" + reason
         | RejectedMessage reason -> "未发送：" + reason
 
 /// 输入框只把内容交给这里；直到 command.committed 才释放。
-/// 重试始终使用原命令、原 invocationId 和原附件引用，不猜测服务端是否已写入。
+/// 重试始终使用原命令、原 invocationId 和原附件引用，不猜测主机是否已写入。
 type MessageOutbox() =
     let mutable items: Map<Guid, PendingMessage> = Map.empty
 
@@ -400,9 +400,9 @@ type MessageOutbox() =
         item
 
     /// 重新打开后从本地恢复一条未确认的发送（W5，决策 80）：沿用**原 invocationId** 与原附件引用，
-    /// 重试时服务端按幂等核对，不会重复保存；状态恒为「未确认」，由用户显式点重试——
-    /// 服务端从不把排队当事实（原则 2），客户端也不自动重发（原则 5）。
-    /// 只恢复会话已确认创建的消息；已在 outbox 的同 id 条目不被覆盖。
+    /// 重试时主机按幂等核对，不会重复保存；状态恒为「未确认」，由用户显式点重试——
+    /// 主机从不把排队当事实（原则 2），客户端也不自动重发（原则 5）。
+    /// 只恢复对话已确认创建的消息；已在 outbox 的同 id 条目不被覆盖。
     member _.Restore(instanceId: string, conversationId: Guid, invocationId: Guid, text: string, attachments: PendingAttachment list, reason: string) =
         if items.ContainsKey invocationId then
             items.[invocationId]
@@ -418,7 +418,7 @@ type MessageOutbox() =
             items <- items.Add(invocationId, item)
             item
 
-    /// 对话被删除：它名下的未发送消息已无处可发（本地丢弃，服务端从未知道它们）。
+    /// 对话被删除：它名下的未发送消息已无处可发（本地丢弃，主机从未知道它们）。
     member _.DiscardConversation(instanceId: string, conversationId: Guid) =
         items <- items |> Map.filter (fun _ item -> not (item.instanceId = instanceId && item.conversationId = conversationId))
 
@@ -470,7 +470,7 @@ type MessageOutbox() =
                 | RejectedMessage _ -> item
             else item)
 
-/// 一个命令对应的 UI 后续动作。只有服务端 CommandCommitted 后才执行。
+/// 一个命令对应的 UI 后续动作。只有主机 CommandCommitted 后才执行。
 type CommandFeedback = {
     successMessage: string option
     onCommitted: unit -> unit
@@ -618,13 +618,13 @@ type ShortcutAction =
     | ExportConversation
     | OpenConversationAt of int
     | ShowShortcuts
-    /// 打开当前会话的模型选择器（输入框内可直接换模型，不必先点芯片）。
+    /// 打开当前对话的模型选择器（输入框内可直接换模型，不必先点芯片）。
     | OpenModelPicker
-    /// 聚焦消息输入框：滚回长会话历史后想继续打字，不必先拿鼠标点一下输入框。
+    /// 聚焦消息输入框：滚回长对话历史后想继续打字，不必先拿鼠标点一下输入框。
     | FocusComposer
-    /// 跳到上一条 / 下一条用户提问：长会话里找上一个提问不必拖滚轮。
+    /// 跳到上一条 / 下一条用户提问：长对话里找上一个提问不必拖滚轮。
     | JumpExchange of int
-    /// 回到会话顶部 / 底部：长会话此前只有「回到最新」一条路，想看最早那个提问
+    /// 回到对话顶部 / 底部：长对话此前只有「回到最新」一条路，想看最早那个提问
     /// 只能一路拖滚轮，还没有锚点。端点两侧对称可达，翻回开头才有落脚处。
     | ScrollToBeginning
     | ScrollToEnd

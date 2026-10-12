@@ -151,7 +151,7 @@ let private buildCompactDrawer () =
 /// 抽屉内常驻的搜索框：作为 Tab 事件源，它自身不处理 Tab，必冒泡到侧栏的包含逻辑。
 let private drawerSearchBox (ring: Control[]) =
     ring
-    |> Array.find (fun c -> match c with :? TextBox as tb -> tb.PlaceholderText = "搜索会话" | _ -> false)
+    |> Array.find (fun c -> match c with :? TextBox as tb -> tb.PlaceholderText = "搜索对话" | _ -> false)
 
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -239,7 +239,7 @@ let ``非 compact 下侧栏不拦截 Tab，桌面态与主区互 Tab 如常`` ()
         window.Close()
     )
 
-/// 窄屏默认保留会话主区。用户显式打开抽屉后，焦点进入搜索框并在抽屉内循环。
+/// 窄屏默认保留对话主区。用户显式打开抽屉后，焦点进入搜索框并在抽屉内循环。
 /// 同时验证反例：仅改变视口宽度不得抢走输入焦点。
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -260,7 +260,7 @@ let ``窄屏不自动打开抽屉，显式打开后焦点留在抽屉内`` () =
         let before = nav.State
         let needsApply, compactState = nav.ApplyViewport(360.0, false)
         Assert.True(needsApply, "进入 compact 应触发一次布局投影")
-        Assert.False(compactState.compactNavigationOpen, "没有会话也先展示输入区，不自动盖上历史列表")
+        Assert.False(compactState.compactNavigationOpen, "没有对话也先展示输入区，不自动盖上历史列表")
         let state = nav.ToggleSidebar()
         Assert.True(state.compactMode, "窄视口下应为 compact")
         Assert.True(state.compactNavigationOpen, "显式打开才展示抽屉")
@@ -291,12 +291,12 @@ let ``窄屏不自动打开抽屉，显式打开后焦点留在抽屉内`` () =
             Assert.True(withinDrawer ring, "Tab 焦点必须始终落在抽屉内")
             Assert.False(background.IsFocused, "抽屉打开时背景键盘不可达")
 
-        // 反向守卫：聚焦归宿只在抽屉真的翻到打开时成立。有会话时 compact 视口不自动开抽屉，
+        // 反向守卫：聚焦归宿只在抽屉真的翻到打开时成立。有对话时 compact 视口不自动开抽屉，
         // 非 compact 更不开——两种情形下触发条件为假，焦点不因缩放被抢。
         let withConversation = NavigationController(false)
         let convBefore = withConversation.State
         let _, convState = withConversation.ApplyViewport(360.0, true)
-        Assert.False(convState.compactNavigationOpen, "有会话时 compact 视口不自动开抽屉")
+        Assert.False(convState.compactNavigationOpen, "有对话时 compact 视口不自动开抽屉")
         Assert.False(
             convState.compactMode && convState.compactNavigationOpen
             && not (convBefore.compactMode && convBefore.compactNavigationOpen),

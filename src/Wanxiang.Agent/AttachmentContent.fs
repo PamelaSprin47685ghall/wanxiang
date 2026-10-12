@@ -132,7 +132,7 @@ module AttachmentContent =
         /// 二进制媒体的共同路径：能力允许且不超限就真发，否则说清为什么没发。
         let binary (label: string) (allowed: bool) (limit: int) (bytes: byte[]) =
             if not allowed then
-                describe " — 当前服务商的传输不接受该类型，模型只看到这条说明。"
+                describe " — 当前模型服务的传输不接受该类型，模型只看到这条说明。"
             elif bytes.LongLength > int64 limit then
                 describe (sprintf " — 超过 %s 内联上限，未发送给模型。" (formatSize(int64 limit)))
             else

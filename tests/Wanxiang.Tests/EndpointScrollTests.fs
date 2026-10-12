@@ -17,7 +17,7 @@ open Wanxiang.UI
 /// 的 Home/End），但收敛到「两端的快捷键语义」，不加第二套悬浮按钮。
 ///
 /// 此前端位只有一个方向有路：右下角「回到最新」。想看最早的提问只能一路拖滚轮，
-/// 长会话里滚回去还要自己记住停在哪儿。这里锁三条可观察契约：
+/// 长对话里滚回去还要自己记住停在哪儿。这里锁三条可观察契约：
 /// - Ctrl+Home / Ctrl+End 解析成两个端点意图（且不与既有快捷键抢键）；
 /// - 两端都落位：到顶 offset = 0，到底 offset = 最大可滚量；
 /// - 端点位移会让「上一条 / 下一条」重新按新视口起算（不能接着半途的锚点跳）。
@@ -348,7 +348,7 @@ module EndpointScrollTests =
             let scroller, _ = scrollerOf chat
             scroller.Offset <- Vector(0.0, scroller.Extent.Height - scroller.Viewport.Height)
             settle chat
-            // 内容突然变短（例如切到只剩两轮的会话）：offset 可能超出新的最大可滚量。
+            // 内容突然变短（例如切到只剩两轮的对话）：offset 可能超出新的最大可滚量。
             chat.RenderMessages(exchanges 2, None, None, Tokens.fontReading, true, None, Set.empty)
             settle chat
             chat.ScrollToBeginning()

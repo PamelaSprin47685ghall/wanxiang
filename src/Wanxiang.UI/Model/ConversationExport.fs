@@ -85,7 +85,7 @@ type ConversationExportController(conversationId: Guid, ?maxBytes: int64) =
         | Some expected when expected.exportId <> page.exportId || expected.beforeCommitId <> page.beforeCommitId -> None
         | Some expected ->
             try
-                if page.conversationId <> conversationId then failwith "服务端返回了其他会话的内容。"
+                if page.conversationId <> conversationId then failwith "主机返回了其他对话的内容。"
                 if expected.atCommitId |> Option.exists ((<>) page.atCommitId) then failwith "导出水位发生变化。"
                 if total |> Option.exists ((<>) page.totalMessages) then failwith "导出消息数量发生变化。"
                 if isNull page.items || page.items.Count > ConversationExportLimits.pageMessages then failwith "导出分页大小无效。"
@@ -102,7 +102,7 @@ type ConversationExportController(conversationId: Guid, ?maxBytes: int64) =
                 if page.hasMore && (List.isEmpty ids || count >= page.totalMessages) then failwith "导出分页没有继续前进。"
                 if not page.hasMore && count <> page.totalMessages then failwith "导出内容不完整。"
                 bytes <- bytes + int64 (Encoding.UTF8.GetByteCount(page.items.ToJsonString()))
-                if bytes > byteLimit then failwith (sprintf "会话超过 %s 导出安全上限；已停止，没有保存不完整文件。" (AttachmentRef.formatSize byteLimit))
+                if bytes > byteLimit then failwith (sprintf "对话超过 %s 导出安全上限；已停止，没有保存不完整文件。" (AttachmentRef.formatSize byteLimit))
                 let parsed =
                     page.items |> Seq.map (fun item ->
                         let message = MessageView.ofSnapshotItem item

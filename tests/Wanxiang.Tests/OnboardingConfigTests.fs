@@ -56,10 +56,10 @@ module OnboardingConfigTests =
         let cfg = parseOk oldText
         Assert.Equal(None, cfg.generation.defaultProvider)
         Assert.Equal(None, cfg.generation.defaultModel)
-        // 行为不变：默认仍是首个可用服务商（按 id 排序）及其 defaultModel
+        // 行为不变：默认仍是首个可用模型服务（按 id 排序）及其 defaultModel
         let selection = AppConfig.defaultSelection cfg
         Assert.Equal(Some("alpha", "a1"), selection |> Option.map (fun (p, m) -> p.id, m))
-        // 没有设置全局默认：写回保持 2，旧版本服务端仍读得懂
+        // 没有设置全局默认：写回保持 2，旧版本主机仍读得懂
         Assert.Equal(oldText, TomlCodec.serialize cfg)
 
     [<Fact>]
@@ -96,16 +96,16 @@ module OnboardingConfigTests =
     // ---- 验收 5：新对话模型 = 全局默认；删键后回落 ----
 
     [<Fact>]
-    let ``新对话的模型取全局默认，删掉键后回落为服务商 defaultModel`` () =
+    let ``新对话的模型取全局默认，删掉键后回落为模型服务 defaultModel`` () =
         let cfg = twoProviders ()
         let withGlobal = cfg |> withDefault (Some "beta") (Some "b1")
         let sel = AppConfig.defaultSelection withGlobal |> Option.get
         Assert.Equal(("beta", "b1"), ((fst sel).id, snd sel))
-        // 服务端注入会话配置走 defaultProvider + resolveModel：同一结果
+        // 主机注入对话配置走 defaultProvider + resolveModel：同一结果
         let injected = AppConfig.defaultProvider withGlobal |> Option.get
         Assert.Equal("beta", injected.id)
         Assert.Equal("b1", ProviderConfig.resolveModel "" injected)
-        // 删掉全局默认键 → 首个可用服务商及其 defaultModel（与旧行为一致）
+        // 删掉全局默认键 → 首个可用模型服务及其 defaultModel（与旧行为一致）
         let removed = AppConfig.defaultProvider (withGlobal |> withDefault None None) |> Option.get
         Assert.Equal("alpha", removed.id)
         Assert.Equal("a1", ProviderConfig.resolveModel "" removed)
@@ -113,18 +113,18 @@ module OnboardingConfigTests =
     [<Fact>]
     let ``全局默认悬空或不可用时回落，不报错也不卡死`` () =
         let cfg = twoProviders ()
-        // 指向不存在的服务商
+        // 指向不存在的模型服务
         let dangling = cfg |> withDefault (Some "gone") (Some "x")
         Assert.Equal("alpha", (AppConfig.defaultSelection dangling |> Option.get |> fst).id)
-        // 模型不在该服务商列表里：回落该服务商自己的 defaultModel
+        // 模型不在该模型服务列表里：回落该模型服务自己的 defaultModel
         let wrongModel = cfg |> withDefault (Some "beta") (Some "not-there")
         Assert.Equal(("beta", "b2"), (let p, m = AppConfig.defaultSelection wrongModel |> Option.get in p.id, m))
-        // 服务商被停用：整体回落
+        // 模型服务被停用：整体回落
         let disabled =
             { cfg with providers = cfg.providers.Add("beta", { cfg.providers["beta"] with enabled = false }) }
             |> withDefault (Some "beta") (Some "b1")
         Assert.Equal("alpha", (AppConfig.defaultSelection disabled |> Option.get |> fst).id)
-        // 悬空引用的文件仍可读入（不会因删了服务商就让整份配置被拒）
+        // 悬空引用的文件仍可读入（不会因删了模型服务就让整份配置被拒）
         Assert.True(TomlCodec.tryParse (TomlCodec.serialize dangling) |> Result.isOk)
 
     [<Fact>]
@@ -155,7 +155,7 @@ module OnboardingConfigTests =
             match ConfigMutation.updateGeneration next unrelated with
             | Ok kept -> Assert.Equal(Some "beta", kept.generation.defaultProvider)
             | Error e -> failwithf "无关更新失败：%A" e
-            // 删除被指向的服务商时一并清掉默认
+            // 删除被指向的模型服务时一并清掉默认
             match ConfigMutation.deleteProvider next "beta" with
             | Ok afterDelete ->
                 Assert.Equal(None, afterDelete.generation.defaultProvider)
@@ -174,7 +174,7 @@ module OnboardingConfigTests =
         Assert.True(set orphanModel |> Result.isError)
 
     [<Fact>]
-    let ``目录快照下发全局默认，客户端与服务端选择规则一致`` () =
+    let ``目录快照下发全局默认，客户端与主机选择规则一致`` () =
         let cfg = twoProviders ()
         let snapshotOf (c: AppConfig) =
             Catalog.parse (ProviderCatalog.providers c) (JsonArray()) (ProviderCatalog.generation c)
@@ -266,7 +266,7 @@ module OnboardingConfigTests =
             stop2 ()
 
     [<Fact>]
-    let ``探测失败：限流、服务端错误、非清单响应都有各自类型`` () =
+    let ``探测失败：限流、模型服务错误、非清单响应都有各自类型`` () =
         let cases =
             [ 429, "{}", ProviderCatalog.RateLimited
               503, "oops", ProviderCatalog.ServerError
@@ -292,18 +292,18 @@ module OnboardingConfigTests =
             stop ()
 
     [<Fact>]
-    let ``错误码编码解码往返，客户端类型与服务端错误码一一对应`` () =
+    let ``错误码编码解码往返，客户端类型与主机错误码一一对应`` () =
         for f in ProviderCatalog.ProbeFailure.all do
             let wire = ProviderCatalog.ProbeFailure.encode f "说明文字"
             let decoded, text = ProviderCatalog.ProbeFailure.decode wire
             Assert.Equal(Some f, decoded)
             Assert.Equal("说明文字", text)
-            // 客户端解析器认得服务端每个错误码
+            // 客户端解析器认得主机每个错误码
             let kind, uiText = ProbeFailureKind.parse wire
             Assert.NotEqual(ProbeUnclassified, kind)
             Assert.Equal("说明文字", uiText)
             Assert.Equal(ProbeFailureKind.ofCode (ProviderCatalog.ProbeFailure.code f), kind)
-        // 旧服务端（无前缀）：类型未知，原文保留
+        // 旧主机（无前缀）：类型未知，原文保留
         let kind, text = ProbeFailureKind.parse "HTTP 401 · 凭据被拒绝"
         Assert.Equal(ProbeUnclassified, kind)
         Assert.Equal("HTTP 401 · 凭据被拒绝", text)
@@ -335,7 +335,7 @@ module OnboardingConfigTests =
         let gemini = ProviderPresets.tryFind "gemini" |> Option.get
         Assert.Equal("gemini", gemini.kind)
         Assert.True(gemini.alternate.IsSome)
-        // 已存在的兼容端点配置仍能反查到同一个预设（编辑旧服务商时不丢预设）
+        // 已存在的兼容端点配置仍能反查到同一个预设（编辑旧模型服务时不丢预设）
         Assert.Equal(Some "claude", ProviderPresets.matchByBaseUrl "https://api.anthropic.com/v1/" |> Option.map _.key)
         Assert.Equal(Some "gemini", ProviderPresets.matchByBaseUrl "https://generativelanguage.googleapis.com/v1beta/openai" |> Option.map _.key)
         // 每个预设（含 alternate）的 kind 都被配置层接受

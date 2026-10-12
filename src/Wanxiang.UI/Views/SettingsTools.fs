@@ -11,9 +11,9 @@ open Avalonia.Media
 open Avalonia.Threading
 open System.Text.RegularExpressions
 
-/// 工具与 MCP 设置面板。
+/// 工具设置面板。
 ///
-/// 工具清单由服务端发现后下发（内置 + 每个 MCP 服务器的 tools/list），
+/// 工具清单由主机发现后下发（内置 + 每个 MCP 服务的 tools/list），
 /// 因此这里展示的就是模型真正能调用的东西，不是一张手抄的名字表。
 type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
 
@@ -76,7 +76,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         o["enabled"] <- enabled
         o
 
-    /// 工具设置的写入载荷（走既有的 updateGeneration，服务端缺省字段保持原值；第 70 节）。
+    /// 工具设置的写入载荷（走既有的 updateGeneration，主机缺省字段保持原值；第 70 节）。
     let toolsPayload (roots: string list) (policyDefault: string) (policy: Map<string, string>) (exposeDebug: bool) : JsonObject =
         let tools = JsonObject()
         tools["fileReadRoots"] <- JsonArray([| for r in roots -> JsonNode.op_Implicit r |])
@@ -164,7 +164,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         // 行最小高与其它设置页同一来源；读取端取值与开关语义不变。
         let enabledRow, readEnabled, _ =
             Ui.switchRow
-                "启用这个服务器"
+                "启用这个 MCP 服务"
                 ""
                 (existing |> Option.map (fun s -> s.enabled) |> Option.defaultValue true)
                 ignore
@@ -256,13 +256,13 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         cancelButton.Margin <- Thickness 0.0
         cancelButton.Focusable <- true
         Avalonia.Automation.AutomationProperties.SetName(cancelButton, "取消")
-        Avalonia.Automation.AutomationProperties.SetHelpText(cancelButton, "取消并关闭 MCP 服务器编辑 (Esc)")
+        Avalonia.Automation.AutomationProperties.SetHelpText(cancelButton, "取消并关闭 MCP 服务编辑 (Esc)")
         ToolTip.SetTip(cancelButton, "取消并关闭 (Esc)")
         let saveButton = Ui.button Ui.Primary idleSaveText save
         saveButton.Margin <- Thickness 0.0
         saveButton.Focusable <- true
         Avalonia.Automation.AutomationProperties.SetName(saveButton, idleSaveText)
-        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, sprintf "确认%s MCP 服务器设置 (Ctrl+Enter)" idleSaveText)
+        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, sprintf "确认%s MCP 服务设置 (Ctrl+Enter)" idleSaveText)
         ToolTip.SetTip(saveButton, sprintf "确认%s (Ctrl+Enter)" idleSaveText)
         Ui.preparePendingButton saveButton
         setPending <- fun pending ->
@@ -292,8 +292,8 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         let form =
             Ui.vstack
                 Spacing.spaceXl
-                [ Ui.title (if existing.IsSome then "编辑 MCP 服务器" else "添加 MCP 服务器") :> Control
-                  Ui.caption "本地服务器以子进程方式启动（stdio）；远程服务器走 Streamable HTTP。" :> Control
+                [ Ui.title (if existing.IsSome then "编辑 MCP 服务" else "添加 MCP 服务") :> Control
+                  Ui.caption "本地 MCP 服务以子进程方式启动（stdio）；远程 MCP 服务走 Streamable HTTP。" :> Control
                   errorSummary :> Control
                   idField
                   labelField
@@ -320,7 +320,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             scroller :> Control,
             520.0,
             // 首焦落在主输入框（新建 → ID；编辑 → 名称，ID 取只读），而不是
-            // 被禁用的标识字段——与服务商编辑器同一 contract。
+            // 被禁用的标识字段——与模型服务编辑器同一 contract。
             initialFocus =
                 (match existing with
                  | Some _ -> labelBox
@@ -346,7 +346,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 Foreground = Tokens.textFaint)
         let description =
             TextBlock(
-                Text = (if String.IsNullOrWhiteSpace tool.description then "（服务器未提供描述）" else tool.description),
+                Text = (if String.IsNullOrWhiteSpace tool.description then "（MCP 服务未提供描述）" else tool.description),
                 FontSize = Tokens.fontCaption,
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
@@ -381,7 +381,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         row.Children.Add icon
         row.Children.Add column
         dock.Children.Add row
-        // 列表行卡内边距走行卡档 (space4, space3)：与同页 MCP 行、服务商行同一档。
+        // 列表行卡内边距走行卡档 (space4, space3)：与同页 MCP 行、模型服务行同一档。
         Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.spaceXl)) dock Spacing.Radius.md
         :> Control
 
@@ -492,7 +492,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 Ui.emptyState
                     (Brand.logo Tokens.logoEmpty)
                     None
-                    "当前没有可用工具。内置文件工具需要服务端配置沙箱根目录后才会出现。"
+                    "当前没有可用工具。内置文件工具需要主机配置沙箱根目录后才会出现。"
                     None
                     None)
         mcpPanel.Children.Clear()
@@ -503,7 +503,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 Ui.emptyState
                     (Brand.logo Tokens.logoEmpty)
                     None
-                    "还没有 MCP 服务器。添加后它提供的工具会自动出现在上面的清单里。"
+                    "还没有 MCP 服务。添加后它提供的工具会自动出现在上面的清单里。"
                     None
                     None)
         foldersPanel.Children.Clear()
@@ -544,7 +544,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         debugHost.Child <- debugRow
 
     member this.Build() : Control =
-        let addButton = Ui.button Ui.Primary "添加 MCP 服务器" (fun () -> this.ShowEditor None)
+        let addButton = Ui.button Ui.Primary "添加 MCP 服务" (fun () -> this.ShowEditor None)
         addButton.HorizontalAlignment <- HorizontalAlignment.Left
         let addFolderButton = Ui.button Ui.Secondary "授权文件夹" (fun () -> this.ShowAddFolder())
         addFolderButton.HorizontalAlignment <- HorizontalAlignment.Left
@@ -553,8 +553,8 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             Spacing.space4xl
             [ Ui.vstack
                   Spacing.spaceXs
-                  [ Ui.heading "工具与 MCP" :> Control
-                    Ui.caption "会话设置里勾选的工具会随请求交给模型；每个工具可以设为自动执行、首次询问或每次询问。工具清单来自服务端实际发现的结果。" :> Control ]
+                  [ Ui.heading "工具" :> Control
+                    Ui.caption "对话设置里勾选的工具会随请求交给模型；每个工具可以设为自动执行、首次询问或每次询问。工具清单来自主机实际发现的结果。" :> Control ]
               :> Control
               Ui.vstack Spacing.spaceMd [ Ui.sectionLabel "可用工具" :> Control; builtinPanel :> Control ] :> Control
               sandboxNote :> Control
@@ -565,6 +565,6 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
               Ui.hairline () :> Control
               Ui.vstack
                   Spacing.spaceMd
-                  [ Ui.sectionLabel "MCP 服务器" :> Control; addButton :> Control; mcpPanel :> Control ]
+                  [ Ui.sectionLabel "MCP 服务" :> Control; addButton :> Control; mcpPanel :> Control ]
               :> Control ]
         :> Control

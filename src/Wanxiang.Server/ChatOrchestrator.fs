@@ -42,10 +42,10 @@ module EmptyContextFinish =
 module ToolRoundLimit =
 
     let error (maxRounds: int) : GenerationError =
-        { GenerationError.create ToolFailed (sprintf "模型连续调用工具超过 %d 轮，已停止本次生成；如需继续，可在会话设置中提高 maxToolRounds 后重试。" maxRounds) with
+        { GenerationError.create ToolFailed (sprintf "模型连续调用工具超过 %d 轮，已停止本次生成；如需继续，可在对话设置中提高 maxToolRounds 后重试。" maxRounds) with
             retryable = true }
 
-/// 会话运行时的生成状态。
+/// 对话运行时的生成状态。
 type GenerationRuntime = {
     generationId: Guid
     startedAtUtc: DateTimeOffset
@@ -64,7 +64,7 @@ type GenerationRuntime = {
     mutable accumulatedUsage: GenerationUsage
 }
 
-/// 会话运行时（内存态，可随进程退出丢弃；排队消息允许丢失，决策 22）。
+/// 对话运行时（内存态，可随进程退出丢弃；排队消息允许丢失，决策 22）。
 type ConversationRuntime = {
     conversationId: Guid
     mutable generation: GenerationRuntime option
@@ -78,7 +78,7 @@ type private ToolOutcome =
     | ToolCancelled
 
 /// 聊天编排器（决策 12/13/22-24/37/38/87-92）：
-/// - 每会话单生成（串行），多会话并行；
+/// - 每对话单生成（串行），多对话并行；
 /// - 排队消息只在插入点落盘；
 /// - 一个 generationId 覆盖整段 Provider/Tool 循环；
 /// - 工具并行执行，全部完成后统一返回 Provider（保持原顺序）；
@@ -97,7 +97,7 @@ type ChatOrchestrator(
     /// 工具审批（第 71 节）：只存内存，不写日志。
     let approvals = ToolApprovalBroker(getConfig, broadcastToConversation)
     let mutable disposed = false
-    /// 已尝试过自动标题的会话：一个会话只试一次，失败不反复烧 token
+    /// 已尝试过自动标题的对话：一个对话只试一次，失败不反复烧 token
     let titledConversations = System.Collections.Concurrent.ConcurrentDictionary<Guid, bool>()
 
     let getRuntime (convId: Guid) : ConversationRuntime =
@@ -150,12 +150,12 @@ type ChatOrchestrator(
 
     let configInvalidError (providerId: string) =
         let label = if String.IsNullOrWhiteSpace providerId then "（未设置）" else providerId
-        GenerationError.create ConfigInvalid (sprintf "会话使用的服务商「%s」不在当前配置中。" label)
+        GenerationError.create ConfigInvalid (sprintf "对话使用的模型服务「%s」不在当前配置中。" label)
 
     let tryGetProjectionConversation (convId: Guid) : Conversation option =
         Projection.tryConversation (getProjection ()) convId
 
-    /// 当前会话所用传输吃得下哪些二进制媒体。
+    /// 当前对话所用传输吃得下哪些二进制媒体。
     /// 认不出 provider 时按最保守的 OpenAI 兼容能力算：宁可退化成一行说明，
     /// 也不要把对方不接受的字节递过去换一个 400。
     let mediaSupportOf (convId: Guid) : MediaSupport =
@@ -166,7 +166,7 @@ type ChatOrchestrator(
             | Some provider -> MediaSupport.ofProviderKind provider.kind
             | None -> MediaSupport.openAiCompatible
 
-    /// 有效思维链预算：会话显式设置优先，否则跟随 [generation] 默认。
+    /// 有效思维链预算：对话显式设置优先，否则跟随 [generation] 默认。
     let thinkingBudgetOf (config: SessionConfig) : int =
         config.thinkingBudget |> Option.defaultValue (getConfig ()).generation.thinkingBudget
 
@@ -178,7 +178,7 @@ type ChatOrchestrator(
             loadBlob
             convId
 
-    /// 会话当前运行状态（供 snapshot 的 runtimeState 字段）。
+    /// 对话当前运行状态（供 snapshot 的 runtimeState 字段）。
     member _.WithRuntimeSnapshot(convId: Guid, consume: string -> Guid option -> 'T) : 'T =
         let rt = getRuntime convId
         lock rt (fun () ->
@@ -192,8 +192,8 @@ type ChatOrchestrator(
     member this.RuntimeStateOf(convId: Guid) : string =
         this.RuntimeSnapshotOf convId |> fst
 
-    /// 内存运行时数量（R5 诊断：runtimes 随会话创建增长，删除会话是唯一移除点；
-    /// 长期运行后该值应约等于活跃会话数，而非历史会话总数）。
+    /// 内存运行时数量（R5 诊断：runtimes 随对话创建增长，删除对话是唯一移除点；
+    /// 长期运行后该值应约等于活跃对话数，而非历史对话总数）。
     member _.RuntimeCount : int = runtimes.Count
 
     /// 状态转换与通知同锁；快照不能排在 finished 后面却还声称正在生成。
@@ -226,7 +226,7 @@ type ChatOrchestrator(
                   nowUtc = None })
 
     /// 记账提交结果处理：失败必须可见（决策 10/17：只有 committed 才算成功），
-    /// 记 stderr 并向观察该会话的客户端广播 ServerError。
+    /// 记 stderr 并向观察该对话的客户端广播 ServerError。
     member private this.RecordSubmitOutcome(convId: Guid, submitResult: Result<Events.Commit, WanxiangError>) : unit =
         match submitResult with
         | Ok _ -> ()
@@ -246,7 +246,7 @@ type ChatOrchestrator(
               commandHash = Some canonicalHash
               nowUtc = None }
 
-    /// 处理发送消息命令：入队；会话空闲时启动生成。
+    /// 处理发送消息命令：入队；对话空闲时启动生成。
     member this.HandleSendUserMessage(cmd: ClientCommand) : unit =
         let data =
             match cmd with
@@ -289,7 +289,7 @@ type ChatOrchestrator(
                   yield invId, c.id
               | Error _ -> () ]
 
-    /// 启动生成（若会话空闲且队列非空）。
+    /// 启动生成（若对话空闲且队列非空）。
     member this.MaybeStartGeneration(convId: Guid) : unit =
         let rt = getRuntime convId
         let shouldStart =
@@ -321,7 +321,7 @@ type ChatOrchestrator(
                 | _ ->
                     let cts = new CancellationTokenSource()
                     let generationId = Guid.CreateVersion7()
-                    // 构建 agent（按会话当前配置）
+                    // 构建 agent（按对话当前配置）
                     let proj = getProjection ()
                     let conv = Projection.tryConversation proj convId
                     let config =
@@ -394,7 +394,7 @@ type ChatOrchestrator(
     /// 配置变更（决策 87）：同一 generation 内重建 agent 与 session，
     /// 下一次 Provider 调用使用最新配置；不取消在途调用、不篡改已完成结果。
     /// 若新配置引用的 Provider 已不存在（Q153/Q154）：不再用旧 agent 发起新调用，
-    /// 标记 agentConfig 为无效并在下一轮调用时失败结束，不篡改会话配置。
+    /// 标记 agentConfig 为无效并在下一轮调用时失败结束，不篡改对话配置。
     member private this.RebuildAgent(rt: ConversationRuntime, g: GenerationRuntime, newConfig: SessionConfig) : unit =
         let provider =
             match AppConfig.tryProvider newConfig.provider (getConfig ()) with
@@ -415,7 +415,7 @@ type ChatOrchestrator(
                     (fun cid msgs -> this.OnAgentResponse(cid, msgs)),
                     (fun cid ex -> this.OnAgentFailure(cid, ex)))
             let agentRuntime = AgentRuntime(p, newConfig, tools, historyProvider, thinkingBudgetOf newConfig)
-            // 会话 ID（conversationId）保留在 StateBag；新 session 绑定同一 conversationId
+            // 对话 ID（conversationId）保留在 StateBag；新 session 绑定同一 conversationId
             let conversationId =
                 match WanxiangHistoryProvider.ConversationIdOf g.agentSession with
                 | Some cid -> cid
@@ -454,7 +454,7 @@ type ChatOrchestrator(
                         // 3. 构造上下文（历史 + 已提交新消息 + 附件解析）
                         let context = loadContextMessages convId
                         if List.isEmpty context then
-                            // 上下文为空说明没有任何可回答的输入（会话已删空、或本批提交全部失败）。
+                            // 上下文为空说明没有任何可回答的输入（对话已删空、或本批提交全部失败）。
                             // 继续调 Provider 只会凭空生成一段无来由的回复。
                             if not (List.isEmpty batch) then
                                 logInfo(sprintf "generation %O aborted: empty context after draining %d message(s)" generationId (List.length batch))
@@ -470,7 +470,7 @@ type ChatOrchestrator(
                                 | Some c -> Some c.config
                                 | None -> None
                             if g.invalidConfig.IsSome then
-                                // Q153/Q154：配置引用的 Provider 已不存在 → 不发起新调用，失败结束（不篡改会话配置）
+                                // Q153/Q154：配置引用的 Provider 已不存在 → 不发起新调用，失败结束（不篡改对话配置）
                                 logInfo(sprintf "generation %O failed: provider %s not configured" generationId g.invalidConfig.Value)
                                 let ev =
                                     finishedEvent convId generationId "failed" (Some(configInvalidError g.invalidConfig.Value)) g.startedAtUtc None
@@ -545,7 +545,7 @@ type ChatOrchestrator(
                                         lock rt (fun () -> g.lastProviderMessages <- [])
         }
 
-    /// 首轮对话完成后自动命名会话（决策：标题是展示信息，用 rename 命令走同一提交路径）。
+    /// 首轮对话完成后自动命名对话（决策：标题是展示信息，用 rename 命令走同一提交路径）。
     /// 失败不影响对话：只记日志。
     member private this.MaybeGenerateTitle(convId: Guid, g: GenerationRuntime) : Task =
         task {
@@ -569,7 +569,7 @@ type ChatOrchestrator(
                 | _ -> ()
         }
 
-    /// 服务端发起的重命名：与客户端命令同一提交形态（带 commandId，幂等安全）。
+    /// 主机发起的重命名：与客户端命令同一提交形态（带 commandId，幂等安全）。
     member private _.SubmitRename(convId: Guid, title: string) : unit =
         let invocationId = Guid.CreateVersion7()
         let cmd = RenameConversation {| invocationId = invocationId; conversationId = convId; title = title |}
@@ -710,8 +710,8 @@ type ChatOrchestrator(
                 Ok()
             | _ -> Error(GenerationNotFound(convId, generationId)))
 
-    /// 会话删除后清理内存运行时（R5：runtimes 不得随会话创建无界增长；
-    /// 删除是唯一移除点——会话已从投影删除，残留 runtime 只会持有
+    /// 对话删除后清理内存运行时（R5：runtimes 不得随对话创建无界增长；
+    /// 删除是唯一移除点——对话已从投影删除，残留 runtime 只会持有
     /// pendingQueue/generation/cts 直到进程退出）。
     /// 活跃生成被取消（决策 88 合作式取消；删除后继续生成没有意义）。
     member this.OnConversationDeleted(convId: Guid) : unit =

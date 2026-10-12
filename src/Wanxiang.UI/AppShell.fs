@@ -40,8 +40,8 @@ type MainView() as this =
         MarkdownRenderer.DefaultCodeWrap <- prefs.codeWrap
         MotionPolicy.setReduced prefs.reduceMotion
     let mutable catalog = Catalog.empty
-    /// 还没有会话时用户在输入区芯片上挑的模型：草稿模型的暂存位。
-    /// 没有它，「空态里点芯片选模型」只能弹「先选择一个会话」，
+    /// 还没有对话时用户在输入区芯片上挑的模型：草稿模型的暂存位。
+    /// 没有它，「空态里点芯片选模型」只能弹「先选择一个对话」，
     /// 而输入区此刻是可用且显示着模型名的（AppShell.Render：NoConversation 分支）。
     /// 选了之后仍走原有创建路径，只是把 defaultSelection 换成这个暂存值。
     let mutable draftModelSelection: (string * string) option = None
@@ -90,9 +90,9 @@ type MainView() as this =
     /// 设置关闭后焦点的回家点：打开设置时的触发控件（设置入口按钮等）。只记一个元素，
     /// 不经过 OverlayHost 的对话框记忆（对话框已有唯一的记忆路径，这里是视图显隐切换）。
     let mutable settingsReturnFocus: Control option = None
-    /// 会话快照等待中的骨架屏延时器：300ms 内到达就不挂任何 loading chrome。
+    /// 对话快照等待中的骨架屏延时器：300ms 内到达就不挂任何 loading chrome。
     let mutable skeletonTimer: DispatcherTimer option = None
-    /// 骨架屏延时器已为哪个会话武装：Render 会被后台事件反复触发，不得重启它，一会话只武装一次（D1）。
+    /// 骨架屏延时器已为哪个对话武装：Render 会被后台事件反复触发，不得重启它，一对话只武装一次（D1）。
     let mutable skeletonArmedFor: Guid option = None
     /// 浏览器宿主的 CSS 像素视口宽（`wxViewportWidth` 轮询写入）。
     /// Browser 后端高 DPR 下 `Bounds.Width` 会被 DPR 除一次，不可做断点依据；
@@ -152,10 +152,10 @@ type MainView() as this =
 
     let send (ev: WireEvent) = client.SendAsync ev |> ignore
 
-    /// 工具审批卡（第 71 节）：对话内、浮在输入框上方；状态只在内存里，由服务端事件驱动。
+    /// 工具审批卡（第 71 节）：对话内、浮在输入框上方；状态只在内存里，由主机事件驱动。
     let approvalPanel =
         ToolApprovalPanel(fun approvalId approved -> send (ToolApprovalDecision {| approvalId = approvalId; approved = approved |}))
-    /// 发出会话列表观察：请求一经发出就置侧栏加载中，
+    /// 发出对话列表观察：请求一经发出就置侧栏加载中，
     /// 快照到达时由 Sidebar.SetConversations 解除（AppShell 不重复清除，避免双写）。
     let observeConversationList () =
         sidebar.SetConversationListLoading true
@@ -220,7 +220,7 @@ type MainView() as this =
             let needsApply, state = navigation.ApplyViewport(effective, activeConvId.IsSome)
             if needsApply then mainLayout.Apply state
             // compact 抽屉的焦点归宿与用户手动打开一致（D3/D4）：视口把抽屉自动带开时
-            // （进入 compact 且无会话），也先把焦点送进抽屉（搜索框），避免 Tab 漏到背景聊天/输入区。
+            // （进入 compact 且无对话），也先把焦点送进抽屉（搜索框），避免 Tab 漏到背景聊天/输入区。
             // 触发条件与 SetCompactNavigation 同口径：抽屉由「未开」翻到「compact 打开」才聚焦——
             // 关闭态、非 compact、以及开合状态未变的普通缩放都不抢焦点。
             if state.compactMode && state.compactNavigationOpen
@@ -250,10 +250,10 @@ type MainView() as this =
 
     member private _.StreamingMessage() : MessageView option =
         (runs.Get activeConvId).message
-    /// 会话快照到达前的本地 loading：300ms 内不挂任何 chrome，超时才挂骨架 + 标题。
+    /// 对话快照到达前的本地 loading：300ms 内不挂任何 chrome，超时才挂骨架 + 标题。
     /// 快照先到则定时器自证过期，不做任何事。
     member private this.ShowConversationLoadingDeferred(convId: Guid) =
-        // 一会话只武装一次：后台事件触发的 Render 若重启计时器，骨架屏会被无限顺延（D1）。
+        // 一对话只武装一次：后台事件触发的 Render 若重启计时器，骨架屏会被无限顺延（D1）。
         if skeletonArmedFor <> Some convId then
             skeletonArmedFor <- Some convId
             match skeletonTimer with
@@ -268,7 +268,7 @@ type MainView() as this =
             skeletonTimer <- Some timer
             timer.Start()
 
-    /// 快照到达或切换会话：解除骨架屏武装并停表。
+    /// 快照到达或切换对话：解除骨架屏武装并停表。
     member private _.DisarmSkeletonLoading() =
         match skeletonTimer with
         | Some timer -> timer.Stop()
@@ -315,12 +315,12 @@ type MainView() as this =
                     composer.SetModelLabel "未连接"
                 | None ->
                     if not hasSavedCredentials then
-                        chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
-                        composer.SetEnabled(false, "需要连接服务器才能开始对话。")
+                        chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接主机", fun () -> this.ShowConnectDialog()))
+                        composer.SetEnabled(false, "需要连接主机才能开始对话。")
                         composer.SetModelLabel "未连接"
                     else
-                        chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
-                        composer.SetEnabled(false, "正在连接服务器…草稿已保留。")
+                        chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接主机", fun () -> this.ShowConnectDialog()))
+                        composer.SetEnabled(false, "正在连接主机…草稿已保留。")
                         composer.SetModelLabel "正在连接"
             elif not (Catalog.isReady catalog) || this.Onboarding.IsBusy then
                 // 首次运行：卡片就在聊天界面里，不必先进设置页。连接进行中即使目录暂时就绪
@@ -340,7 +340,7 @@ type MainView() as this =
             // Loading 分级：快照 300ms 内到达就不闪任何 loading chrome，超时才在本地挂骨架；
             // 流式文本本身就是进度，这里不叠加任何页级 loading。
             this.ShowConversationLoadingDeferred convId
-            composer.SetEnabled(false, "正在加载会话…")
+            composer.SetEnabled(false, "正在加载对话…")
         | Some convId, Some view ->
             this.DisarmSkeletonLoading()
             let messages = messagesOf view
@@ -348,7 +348,7 @@ type MainView() as this =
             let summary = activeSummary ()
             chat.SetConversationChrome true
             chat.SetBreadcrumb(ForkLineage.breadcrumb summaries lineage convId, fun parentId -> this.OpenConversation parentId)
-            chat.SetTitle((summary |> Option.map (fun s -> s.title) |> Option.defaultValue "会话"), true)
+            chat.SetTitle((summary |> Option.map (fun s -> s.title) |> Option.defaultValue "对话"), true)
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
             if List.isEmpty messages && streaming.IsNone && run.error.IsNone then
                 chat.HideSkeletonLoading()
@@ -626,10 +626,10 @@ type MainView() as this =
             }
             |> Async.Start
 
-    // ---- 会话操作 ----
+    // ---- 对话操作 ----
 
-    /// 批量删除后的主视图归宿：删的集合里含当前会话时，从侧栏可见顺序排除待删集合
-    /// 取第一个存活会话（整列全删则 None → 欢迎页）。不含当前会话时 None = 不动主视图。
+    /// 批量删除后的主视图归宿：删的集合里含当前对话时，从侧栏可见顺序排除待删集合
+    /// 取第一个存活对话（整列全删则 None → 欢迎页）。不含当前对话时 None = 不动主视图。
     /// 与单条删除的 NeighborAfterDelete 同一意图，只是口径从「单个 id」扩到「一批 id」。
     member private this.NeighborExcluding(removedIds: Guid list) : Guid option =
         match activeConvId with
@@ -660,7 +660,7 @@ type MainView() as this =
 
     member private _.MakeConversationCommand(conversationId: Guid) =
         let provider, model =
-            // 草稿里显式挑过的模型优先：没有会话时的选择不该被「默认」抹掉。
+            // 草稿里显式挑过的模型优先：没有对话时的选择不该被「默认」抹掉。
             draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog) |> Option.defaultValue ("", "")
         let config =
             { SessionConfig.empty with
@@ -670,20 +670,20 @@ type MainView() as this =
                 topP = catalog.generation.topP
                 maxTokens = catalog.generation.maxTokens }
         CreateConversation
-            {| invocationId = newInvocation (); conversationId = conversationId; title = "新会话"; config = config |}
+            {| invocationId = newInvocation (); conversationId = conversationId; title = "新对话"; config = config |}
 
     member private this.CreateConversation() : Guid option =
         if not authenticated then
-            toast "连接服务器后才能新建会话；草稿会保留。" Warning
+            toast "连接主机后才能新建对话；草稿会保留。" Warning
             None
         elif not (Catalog.isReady catalog) then
-            toast "先添加一个服务商。" Warning
+            toast "先添加一个模型服务。" Warning
             this.ShowAddProvider()
             None
         else
             let conversationId = Guid.CreateVersion7()
-            // 草稿选择已在新会话的 config 里落地，暂存位清掉，
-            // 否则下一个新会话会接着用上一个的残留（会话已有自己的 config）。
+            // 草稿选择已在新对话的 config 里落地，暂存位清掉，
+            // 否则下一个新对话会接着用上一个的残留（对话已有自己的 config）。
             draftModelSelection <- None
             this.SelectConversation(Some conversationId)
             sendCommandWithCompletion
@@ -692,7 +692,7 @@ type MainView() as this =
                 (fun () -> send (ObserveConversation {| conversationId = conversationId |}))
                 (fun ok ->
                     if not ok && activeConvId = Some conversationId then this.SelectConversation None)
-            // 新会话落定：焦点有家，直接进输入区（D3/D4）。
+            // 新对话落定：焦点有家，直接进输入区（D3/D4）。
             composer.Focus()
             Some conversationId
 
@@ -720,13 +720,13 @@ type MainView() as this =
     member private this.OpenConversation(id: Guid) =
         this.SelectConversation(Some id)
         send (ObserveConversation {| conversationId = id |})
-        // 会话激活（键盘/可见顺序/分叉入口统一走这里）：焦点回家到输入区（D3/D4）。
+        // 对话激活（键盘/可见顺序/分叉入口统一走这里）：焦点回家到输入区（D3/D4）。
         composer.Focus()
 
     member private this.DispatchPendingMessage(item: PendingMessage) =
         let id = PendingMessage.invocationId item
         if item.instanceId <> instanceId || not authenticated then
-            outbox.SetState(id, UnconfirmedMessage "请连接原服务器后重试。")
+            outbox.SetState(id, UnconfirmedMessage "请连接原主机后重试。")
         else
             match item.creation with
             | Some creation when not item.creationConfirmed ->
@@ -737,7 +737,7 @@ type MainView() as this =
                         send (ObserveConversation {| conversationId = item.conversationId |}))
                     (fun ok ->
                         if not ok then
-                            outbox.SetState(id, UnconfirmedMessage "会话尚未确认创建；原文已保留。")
+                            outbox.SetState(id, UnconfirmedMessage "对话尚未确认创建；原文已保留。")
                             this.Render())
             | _ when not (state.Conversations.ContainsKey item.conversationId) ->
                 outbox.SetState(id, PreparingConversation)
@@ -769,7 +769,7 @@ type MainView() as this =
             false
         elif String.IsNullOrWhiteSpace text && not draft.HasReady then false
         elif activeConvId.IsNone && not (Catalog.isReady catalog) then
-            toast "还没有可用的模型，先添加一个服务商。" Warning
+            toast "还没有可用的模型，先添加一个模型服务。" Warning
             false
         else
             let isNew = activeConvId.IsNone
@@ -792,9 +792,9 @@ type MainView() as this =
         match activeConvId with
         | None -> ()
         | Some convId ->
-            // 重新生成不可恢复：服务端会删掉尾部整段回复链
+            // 重新生成不可恢复：主机会删掉尾部整段回复链
             // （CommandEngine.fs:220-232 连续 assistant/tool 消息全删）再重新生成。
-            // 本项目每一个不可恢复操作——删会话、批量删、删消息、删服务商、删
+            // 本项目每一个不可恢复操作——删对话、批量删、删消息、删模型服务、删
             // MCP——全部有确认框，此前唯独重新生成没有；误点一次，上一轮回复
             // 连内容带引用全部消失。kelivo 同样确认（chat_message_widget.dart:1346-1375
             // _confirmRegeneration，默认开启）。
@@ -851,14 +851,14 @@ type MainView() as this =
                 sendCommandWithFeedback command None (fun () ->
                     this.SelectConversation(Some newId)
                     send (ObserveConversation {| conversationId = newId |}))
-                // 分叉落定与新建/打开会话同一归宿：焦点回家到输入区（D3/D4）。
+                // 分叉落定与新建/打开对话同一归宿：焦点回家到输入区（D3/D4）。
                 // 漏这一句时，分叉后焦点悬在已关闭的编辑弹窗原位（对话框关掉时
                 // 焦点宿主一并消失），键盘用户得摸鼠标点回输入区；NewConversation
                 // 与 OpenConversation 两条兄弟路径都带着这条无条件的一行。
                 // 同步而非 Post：editText 的 submit 先 CloseDialog() 再 onConfirm，
                 // 还原焦点发生在内、发生在前，这一行随后落地不为空转（实测验证）。
                 composer.Focus())
-        | _ -> toast "当前没有可分叉的会话。" Warning
+        | _ -> toast "当前没有可分叉的对话。" Warning
 
     member private _.CurrentFocusControl() : Control option =
         try
@@ -911,7 +911,7 @@ type MainView() as this =
                     match control with
                     | :? ActionBorder as ab when
                         (match ab.Child with
-                         | :? TextBlock as tb -> tb.Text = "添加服务商"
+                         | :? TextBlock as tb -> tb.Text = "添加模型服务"
                          | _ -> false) -> Some ab
                     | :? Panel as panel ->
                         panel.Children |> Seq.tryPick findAddButton
@@ -963,16 +963,16 @@ type MainView() as this =
                                     this.Render()))
                             |> MenuEntry.markSelected (provider.id = view.config.provider && model = view.config.model) ] ]
             if List.isEmpty groups then
-                // 空态不是死路：点模型入口就直接进入“添加服务商”，与空态主按钮同一出口。
-                toast "还没有可用的模型，先添加一个服务商。" Warning
+                // 空态不是死路：点模型入口就直接进入“添加模型服务”，与空态主按钮同一出口。
+                toast "还没有可用的模型，先添加一个模型服务。" Warning
                 this.ShowAddProvider()
             else
                 Menu.showGrouped overlay anchor false groups
         | _ ->
-            // 没有会话也要能挑模型：这一刻输入区是启用的（Render 的空态分支），
-            // 芯片上正亮着默认模型名，点了却弹「先选择一个会话」是把可用面拔掉。
-            // kelivo model_select_sheet.dart:216：模型选择不依赖已有会话。
-            // 选择只落草稿暂存位，建会话时作为 config 的 provider/model 起手。
+            // 没有对话也要能挑模型：这一刻输入区是启用的（Render 的空态分支），
+            // 芯片上正亮着默认模型名，点了却弹「先选择一个对话」是把可用面拔掉。
+            // kelivo model_select_sheet.dart:216：模型选择不依赖已有对话。
+            // 选择只落草稿暂存位，建对话时作为 config 的 provider/model 起手。
             let groups =
                 [ for provider in Catalog.usableProviders catalog ->
                       provider.label,
@@ -982,8 +982,8 @@ type MainView() as this =
                                 composer.SetModelLabel(Catalog.describeModel provider.id model catalog)
                                 toast (sprintf "已选择 %s · %s" provider.label model) Info) ] ]
             if List.isEmpty groups then
-                // 空态不是死路：点模型入口就直接进入“添加服务商”，与空态主按钮同一出口。
-                toast "还没有可用的模型，先添加一个服务商。" Warning
+                // 空态不是死路：点模型入口就直接进入“添加模型服务”，与空态主按钮同一出口。
+                toast "还没有可用的模型，先添加一个模型服务。" Warning
                 this.ShowAddProvider()
             else
                 Menu.showGrouped overlay anchor false groups
@@ -1010,7 +1010,7 @@ type MainView() as this =
                         Dispatcher.UIThread.Post(fun () ->
                             if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
                                 this.BeginUpload(owner, file.Name, bytes)
-                            else toast "连接已断开，请重新选择附件；文件没有发送到其他服务器。" Warning)
+                            else toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning)
                     Dispatcher.UIThread.Post(fun () -> composer.Focus())
                 with ex ->
                     Dispatcher.UIThread.Post(fun () ->
@@ -1038,7 +1038,7 @@ type MainView() as this =
                             Dispatcher.UIThread.Post(fun () ->
                                 if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
                                     this.BeginUpload(owner, sf.Name, bytes)
-                                else toast "连接已断开，请重新选择附件；文件没有发送到其他服务器。" Warning)
+                                else toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning)
                         | _ ->
                             let path = item.TryGetLocalPath()
                             if not (String.IsNullOrEmpty path) && File.Exists path then
@@ -1047,7 +1047,7 @@ type MainView() as this =
                                 Dispatcher.UIThread.Post(fun () ->
                                     if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
                                         this.BeginUpload(owner, name, bytes)
-                                    else toast "连接已断开，请重新选择附件；文件没有发送到其他服务器。" Warning)
+                                    else toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning)
                     Dispatcher.UIThread.Post(fun () -> composer.Focus())
                 with ex ->
                     Dispatcher.UIThread.Post(fun () ->
@@ -1094,7 +1094,7 @@ type MainView() as this =
                                         let owner = attachmentDraft ()
                                         Dispatcher.UIThread.Post(fun () ->
                                             if authenticated then this.BeginUpload(owner, name, bytes)
-                                            else toast "连接已断开，请重新选择附件；文件没有发送到其他服务器。" Warning
+                                            else toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning
                                             composer.Focus())
                                 with ex ->
                                     Dispatcher.UIThread.Post(fun () ->
@@ -1162,7 +1162,7 @@ type MainView() as this =
             |> Async.Start
 
     member private this.ExportConversation(summary: ConversationSummary) =
-        if not authenticated then toast "连接服务器后才能读取完整历史。" Warning
+        if not authenticated then toast "连接主机后才能读取完整历史。" Warning
         elif exportDialog |> Option.exists (fun dialog -> dialog.IsOpen) then ()
         else
             let ownerInstance = instanceId
@@ -1267,7 +1267,7 @@ type MainView() as this =
             e.Handled <- true
             match activeSummary() with
             | Some summary -> this.ExportConversation summary
-            | None -> toast "没有打开的会话可导出" Warning
+            | None -> toast "没有打开的对话可导出" Warning
         | OpenConversationAt index ->
             // Ctrl+1..9 走侧栏当前可见顺序（C2）；打开后焦点经 OpenConversation 回家（D3/D4）。
             let order = sidebar.GetVisibleOrder()
@@ -1284,7 +1284,7 @@ type MainView() as this =
     member private this.HandleEvent(ev: WireEvent) =
         match ev with
         // ADR-001 方案 B：Hello/UpgradeRequired 无生产路径（版本 in-band）。
-        // 保留匹配分支仅为兼容 reader（旧服务端可能发送）；不改变任何状态。
+        // 保留匹配分支仅为兼容 reader（旧主机可能发送）；不改变任何状态。
         | Hello _ | UpgradeRequired _ -> ()
         | AuthAccepted d ->
             if instanceId <> "" && instanceId <> d.instanceId then
@@ -1301,7 +1301,7 @@ type MainView() as this =
                 sidebar.SetConversations []
                 composer.SetText((drafts.Get(d.instanceId, None)).text)
             authenticated <- true
-            // 声明本客户端能处理工具审批；旧客户端不发这条，服务端据此对需要审批的调用直接拒绝
+            // 声明本客户端能处理工具审批；旧客户端不发这条，主机据此对需要审批的调用直接拒绝
             send (ToolApprovalCapability {| supported = true |})
             hasSavedCredentials <- true
             connectionError <- None
@@ -1498,7 +1498,7 @@ type MainView() as this =
                     match d.error with
                     | Some _ as error -> error
                     | None ->
-                        Some(GenerationError.create GenerationErrorKind.UnknownFailure "生成失败，但服务端没有返回错误详情。")
+                        Some(GenerationError.create GenerationErrorKind.UnknownFailure "生成失败，但主机没有返回错误详情。")
                 | unknown ->
                     Some(
                         GenerationError.create GenerationErrorKind.UnknownFailure "生成结束状态未知，已按失败处理。"
@@ -1507,14 +1507,14 @@ type MainView() as this =
                 state.Handle ev
                 match d.status, error with
                 | "cancelled", _ when activeConvId = Some d.conversationId -> toast "已停止" Info
-                // 非当前会话的失败只 toast（卡片看不见）；当前会话的失败只进卡片，不叠 toast。
+                // 非当前对话的失败只 toast（卡片看不见）；当前对话的失败只进卡片，不叠 toast。
                 | _, Some err when activeConvId <> Some d.conversationId ->
                     toast (GenerationError.display err) Failure
                 | _ -> ()
                 if activeConvId = Some d.conversationId then this.Render()
         | AttachmentCommitted d ->
             match drafts.All |> Seq.tryPick (fun draft -> draft.attachments.Complete(d.attachmentId, d.size)) with
-            // 完成 toast 只给当前可见会话：后台会话的翻转由 chip 自证，不叠 toast（C5）。
+            // 完成 toast 只给当前可见对话：后台对话的翻转由 chip 自证，不叠 toast（C5）。
             | Some(upload, stillDrafted, key) when stillDrafted && key = (instanceId, activeConvId) ->
                 composer.SetAttachments((attachmentDraft ()).Items)
                 toast (sprintf "附件「%s」上传完成" upload.fileName) Success
@@ -1570,14 +1570,14 @@ type MainView() as this =
                     missingAttachments <- missingAttachments.Add(parts[1].ToLowerInvariant())
                     this.Render()
             elif d.message.StartsWith("消息记账失败", StringComparison.Ordinal) && activeConvId.IsSome then
-                // 可行动的服务端错误进持久面：错误卡片自带重试，不再叠 toast（D9）。
+                // 可行动的主机错误进持久面：错误卡片自带重试，不再叠 toast（D9）。
                 // 若正有生成在跑（槽位被占），退回 toast，避免踩掉进行中的状态。
                 let convId = activeConvId.Value
                 let failure = GenerationError.create GenerationErrorKind.UnknownFailure d.message
                 if runs.Finish(convId, Guid.CreateVersion7(), Some failure, None) then this.Render()
-                else toast (sprintf "服务端错误：%s" d.message) Failure
+                else toast (sprintf "主机错误：%s" d.message) Failure
             else
-                toast (sprintf "服务端错误：%s" d.message) Failure
+                toast (sprintf "主机错误：%s" d.message) Failure
         | _ -> ()
 
     // ---- 组装 ----
@@ -1588,7 +1588,7 @@ type MainView() as this =
               openConversation = fun id -> this.OpenConversation id
               renameConversation =
                 fun summary ->
-                    Dialogs.prompt overlay "重命名会话" "会话标题" summary.title "保存" (fun title onCompleted ->
+                    Dialogs.prompt overlay "重命名对话" "对话标题" summary.title "保存" (fun title onCompleted ->
                         let command =
                             RenameConversation
                                 {| invocationId = newInvocation (); conversationId = summary.id; title = title |}
@@ -1597,7 +1597,7 @@ type MainView() as this =
                 fun summary ->
                     Dialogs.confirm
                         overlay
-                        "删除会话"
+                        "删除对话"
                         (sprintf "「%s」及其消息将不再出现在列表里。此操作无法撤销。" summary.title)
                         "删除"
                         (fun () ->
@@ -1605,14 +1605,14 @@ type MainView() as this =
                                 DeleteConversation {| invocationId = newInvocation (); conversationId = summary.id |}
                             sendCommandWithFeedback
                                 command
-                                (Some(sprintf "会话「%s」已删除" summary.title))
+                                (Some(sprintf "对话「%s」已删除" summary.title))
                                 (fun () ->
                                     // 删除后焦点有家：邻行，否则搜索框（C3）。
                                     sidebar.FocusAfterDelete(summary.id.ToString())
                                     if activeConvId = Some summary.id then
-                                        // 删的正是正在看的会话时，落到邻行继续，不进空屏：
+                                        // 删的正是正在看的对话时，落到邻行继续，不进空屏：
                                         // 焦点已经瞄准邻位（FocusAfterDelete），打开同一行，
-                                        // 键盘与指针看到的是同一个会话，不必再点一次。
+                                        // 键盘与指针看到的是同一个对话，不必再点一次。
                                         // 列表空了（None）才退回欢迎页。
                                         let neighbor = sidebar.NeighborAfterDelete(summary.id.ToString())
                                         this.SelectConversation neighbor
@@ -1661,7 +1661,7 @@ type MainView() as this =
                                        archived = summary.archived |}
                             sendCommand command
                         | None -> ()
-                    toast (sprintf "%s %d 个会话" (if pin then "已置顶" else "已取消置顶") (List.length ids)) Info
+                    toast (sprintf "%s %d 个对话" (if pin then "已置顶" else "已取消置顶") (List.length ids)) Info
                     sidebar.ExitSelection()
               setArchivedMany =
                 fun ids archived ->
@@ -1676,7 +1676,7 @@ type MainView() as this =
                                        archived = archived |}
                             sendCommand command
                         | None -> ()
-                    toast (sprintf "%s %d 个会话" (if archived then "已归档" else "已取消归档") (List.length ids)) Info
+                    toast (sprintf "%s %d 个对话" (if archived then "已归档" else "已取消归档") (List.length ids)) Info
                     sidebar.ExitSelection()
               deleteMany =
                 fun ids ->
@@ -1684,19 +1684,19 @@ type MainView() as this =
                     if count > 0 then
                         Dialogs.confirm
                             overlay
-                            "删除会话"
-                            (sprintf "选中的 %d 个会话及其消息将不再出现在列表里。此操作无法撤销。" count)
+                            "删除对话"
+                            (sprintf "选中的 %d 个对话及其消息将不再出现在列表里。此操作无法撤销。" count)
                             "删除"
                             (fun () ->
-                                // 批量删除若包含正在看的会话，主视图不能挂在已删会话上：
-                                // 发送消息/停止生成都会撞上服务端「会话不存在」。单条删除
+                                // 批量删除若包含正在看的对话，主视图不能挂在已删对话上：
+                                // 发送消息/停止生成都会撞上主机「对话不存在」。单条删除
                                 // 早已落在邻位（FocusAfterDelete + SelectConversation neighbor），
                                 // 批量这条路此前直接漏掉了。邻位口径与单条同源：从可见顺序里
                                 // 排除掉待删集合后取当前位置的下一行；整列全删则退回欢迎页。
                                 // kelivo side_drawer.dart:744-762 批量删除同样先判定
                                 // deletingCurrent 再 _handlePostDeleteNavigation 落到邻位。
                                 let neighbor = this.NeighborExcluding ids
-                                // 与单条删除（会话「x」已删除）对称：批量也走
+                                // 与单条删除（对话「x」已删除）对称：批量也走
                                 // commandFeedback 的同一张挂号单，否则删除全程无声——
                                 // 成功没有汇总，被拒时 CommandRejected 又只对挂号过的
                                 // id 有效，用户以为删掉了，行还在列表里。
@@ -1714,7 +1714,7 @@ type MainView() as this =
                                         if reported then None
                                         else
                                             reported <- true
-                                            Some(sprintf "已删除 %d 个会话" count)
+                                            Some(sprintf "已删除 %d 个对话" count)
                                     commandFeedback.TrackWithCompletion(
                                         command,
                                         message,
@@ -1731,7 +1731,7 @@ type MainView() as this =
               duplicateAsFork =
                 fun summary ->
                     this.OpenConversation summary.id
-                    toast "已打开会话，可从任意消息分叉。" Info
+                    toast "已打开对话，可从任意消息分叉。" Info
               exportConversation = fun summary -> this.ExportConversation summary
               openSettings = fun () -> this.ShowSettings()
               reconnect =
@@ -1765,8 +1765,8 @@ type MainView() as this =
                 let command =
                     UpdateConversationConfig
                         {| invocationId = newInvocation (); conversationId = convId; config = config |}
-                sendCommandWithCompletion command (Some "会话设置已更新") ignore onCompleted)
-        | _ -> toast "连接并选择会话后，可以调整上下文。" Warning
+                sendCommandWithCompletion command (Some "对话设置已更新") ignore onCompleted)
+        | _ -> toast "连接并选择对话后，可以调整上下文。" Warning
 
     member private this.BuildChat() =
         let messageActions =
@@ -1777,7 +1777,7 @@ type MainView() as this =
                 fun commitId ->
                     match activeConvId with
                     | Some convId ->
-                        Dialogs.confirm overlay "删除消息" "这条消息会从会话中移除，后续生成不再看到它。" "删除" (fun () ->
+                        Dialogs.confirm overlay "删除消息" "这条消息会从对话中移除，后续生成不再看到它。" "删除" (fun () ->
                             let command =
                                 DeleteMessage
                                     {| invocationId = newInvocation ()
@@ -1808,7 +1808,7 @@ type MainView() as this =
                             |> Option.map (fun m -> m.text)
                             |> Option.defaultValue ""
                         this.ForkFrom(None, seed)
-                    | None -> toast "当前没有可分叉的会话。" Warning
+                    | None -> toast "当前没有可分叉的对话。" Warning
               stopGeneration = fun () -> this.StopGeneration()
               requestOlderHistory = fun () -> this.RequestOlderHistory()
               retryLast = fun () -> this.Regenerate()
@@ -1877,14 +1877,14 @@ type MainView() as this =
             { upsertProvider =
                 fun payload onCompleted ->
                     sendConfigWithFeedback
-                        "服务商设置已保存"
+                        "模型服务设置已保存"
                         (fun requestId -> ConfigUpsertProvider {| requestId = requestId; provider = payload |})
                         onCompleted
               deleteProvider =
                 fun id ->
-                    Dialogs.confirm overlay "删除服务商" (sprintf "「%s」将从配置中移除，使用它的会话需要重新选择模型。" id) "删除" (fun () ->
+                    Dialogs.confirm overlay "删除模型服务" (sprintf "「%s」将从配置中移除，使用它的对话需要重新选择模型。" id) "删除" (fun () ->
                         sendConfigWithFeedback
-                            "服务商已删除"
+                            "模型服务已删除"
                             (fun requestId -> ConfigDeleteProvider {| requestId = requestId; providerId = id |})
                             ignore)
               probeProvider = fun id -> send (ProviderProbeRequest {| requestId = newInvocation (); providerId = id |})
@@ -1896,9 +1896,9 @@ type MainView() as this =
                         onCompleted
               deleteMcp =
                 fun id ->
-                    Dialogs.confirm overlay "删除 MCP 服务器" (sprintf "「%s」提供的工具将不再可用。" id) "删除" (fun () ->
+                    Dialogs.confirm overlay "删除 MCP 服务" (sprintf "「%s」提供的工具将不再可用。" id) "删除" (fun () ->
                         sendConfigWithFeedback
-                            "MCP 服务器已删除"
+                            "MCP 服务已删除"
                             (fun requestId -> ConfigDeleteMcp {| requestId = requestId; serverId = id |})
                             ignore)
               updateGeneration =

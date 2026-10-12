@@ -94,7 +94,7 @@ let ``排队消息重试窗口：DrainQueue 清空后同 invocationId 不重复�
         let committed = ResizeArray<Events.Commit>()
         use coord = new CommitCoordinator(dir, outcome, committed.Add, (fun _ -> ()))
         let convId = newConversationId ()
-        // 创建会话
+        // 创建对话
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
         let invId = Guid.NewGuid()
         let msgJson = userMessageJson "hello"
@@ -222,7 +222,7 @@ let ``replay 正确解码含中文的日志行`` () =
     try
         DataPaths.ensureDataDirs dir
         let convId = newConversationId ()
-        let c1 = Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = convId; title = "会话标题中文"; config = testConfig () } ]
+        let c1 = Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = convId; title = "对话标题中文"; config = testConfig () } ]
         let c2 = Events.Commit.create 2UL DateTimeOffset.UtcNow [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "你好，万象！这是中文消息。" } ]
         let path = DataPaths.eventFilePath dir DateTime.UtcNow.Date
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
@@ -232,7 +232,7 @@ let ``replay 正确解码含中文的日志行`` () =
         Assert.Equal(2UL, outcome.lastCommitId)
         let conv = Projection.conversationList outcome.projection |> List.head
         // 标题中文不丢失
-        Assert.Equal("会话标题中文", conv.title)
+        Assert.Equal("对话标题中文", conv.title)
         // 消息 payload 中文不丢失（读取 contents[0].text 字段）
         let msg = conv.messages.Head
         match msg.payloadJson with
@@ -439,7 +439,7 @@ let ``CommitCoordinator 提交非法事件触发 ApplyFailed 截尾并复用 com
         let truncated = ResizeArray<Events.Commit * WanxiangError * int64 * string>()
         use coord = new CommitCoordinator(dir, outcome, ignore, (fun t -> truncated.Add(t)))
         let badSubmit =
-            { events = [ EventData.ConversationDeleted { conversationId = Guid.NewGuid() } ] // 不存在的会话，apply 失败
+            { events = [ EventData.ConversationDeleted { conversationId = Guid.NewGuid() } ] // 不存在的对话，apply 失败
               commandId = None
               commandType = None
               commandHash = None

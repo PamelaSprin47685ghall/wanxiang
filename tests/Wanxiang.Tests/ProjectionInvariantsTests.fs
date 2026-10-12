@@ -25,7 +25,7 @@ module ProjectionInvariants =
 
     /// 断言投影全部不变量；返回最新投影。
     let private assertInvariants (proj: Projection) (step: int) : unit =
-        // I4/I5/I6：会话级
+        // I4/I5/I6：对话级
         for KeyValue(_, conv) in proj.conversations do
             match conv.lastCommitId with
             | Some l -> Assert.True(l <= proj.latestCommitId, sprintf "step %d: conv %O lastCommitId %d > latest %d" step conv.conversationId l proj.latestCommitId)
@@ -48,14 +48,14 @@ module ProjectionInvariants =
             |> Seq.toList
         Assert.True(idemPairs.Length = (idemPairs |> Set.ofList |> Set.count), sprintf "step %d: commandId maps to multiple canonicalHash" step)
 
-    /// 生成确定性操作序列：创建/改名/删除会话、记录消息、删除消息、fork。
+    /// 生成确定性操作序列：创建/改名/删除对话、记录消息、删除消息、fork。
     /// 返回 (commitId, events) 列表。
     let private generateOps (count: int) : (int * EventData list) list =
         let mutable convs = ResizeArray<Guid>()
         let mutable msgByConv = System.Collections.Generic.Dictionary<Guid, ResizeArray<uint64>>()
         // 已被删除的消息（MessageDeleted 后从跟踪中移除，避免重复删除）
         let mutable deletedMsgs = System.Collections.Generic.HashSet<uint64>()
-        // 已删除的会话（fork 只能选存活父会话）
+        // 已删除的对话（fork 只能选存活父对话）
         let mutable deletedConvs = System.Collections.Generic.HashSet<Guid>()
         let mutable nextId = 1UL
         let mutable result = []
@@ -65,7 +65,7 @@ module ProjectionInvariants =
             let pick (xs: ResizeArray<_>) = if xs.Count = 0 then None else Some xs[rng.Next xs.Count]
             let events =
                 if convs.Count = 0 then
-                    // 必须先创建会话
+                    // 必须先创建对话
                     let convId = Guid.NewGuid()
                     convs.Add convId
                     msgByConv[convId] <- ResizeArray()
@@ -90,17 +90,17 @@ module ProjectionInvariants =
                         let convId = pick (ResizeArray(msgByConv |> Seq.filter (fun kv -> kv.Value.Count > 0) |> Seq.map (fun kv -> kv.Key))) |> Option.get
                         let live = msgByConv[convId] |> Seq.filter (fun m -> not (deletedMsgs.Contains m)) |> ResizeArray
                         if live.Count = 0 then
-                            // 该会话消息已全部删除：退化为改名
+                            // 该对话消息已全部删除：退化为改名
                             [ ConversationRenamed { conversationId = convId; title = sprintf "renamed-%d" id } ]
                         else
                             let target = live[rng.Next live.Count]
                             deletedMsgs.Add target |> ignore
                             [ MessageDeleted { conversationId = convId; messageCommitId = target } ]
                     | 4 ->
-                        // fork 现有**存活**会话（forkAfterId 取父会话最近一条存活消息）
+                        // fork 现有**存活**对话（forkAfterId 取父对话最近一条存活消息）
                         let liveConvs = convs |> Seq.filter (fun c -> not (deletedConvs.Contains c)) |> ResizeArray
                         if liveConvs.Count = 0 then
-                            // 全部已删除：退化创建新会话
+                            // 全部已删除：退化创建新对话
                             let convId = Guid.NewGuid()
                             convs.Add convId
                             msgByConv[convId] <- ResizeArray()
@@ -111,7 +111,7 @@ module ProjectionInvariants =
                             convs.Add forkId
                             msgByConv[forkId] <- ResizeArray()
                             let forkAfter =
-                                // 只取仍存活的消息（被删除的消息不在父会话可见前缀中）
+                                // 只取仍存活的消息（被删除的消息不在父对话可见前缀中）
                                 let live =
                                     msgByConv[parentId]
                                     |> Seq.filter (fun m -> not (deletedMsgs.Contains m))
@@ -188,7 +188,7 @@ module ProjectionInvariants =
             let invId = Guid.NewGuid()
             let cmd1 = Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ]
             let cmd2 = Events.Commit.create 2UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ]
-            // 同 conversationId 重复创建 → 投影拒绝（I2 变体：会话唯一）
+            // 同 conversationId 重复创建 → 投影拒绝（I2 变体：对话唯一）
             match Projection.applyCommit Projection.empty cmd1 with
             | Ok p1 ->
                 match Projection.applyCommit p1 cmd2 with

@@ -134,7 +134,7 @@ module ConfigMutation =
                       "provider.defaultModel: 必须是 models 中的一项"
                   if provider.timeoutSeconds <= 0 then "provider.timeoutSeconds: 需为正整数"
                   if provider.maxRetries < 0 then "provider.maxRetries: 不能为负"
-                  if cfg.mcpServers.ContainsKey id then sprintf "provider.id: 与 MCP 服务器 %s 冲突" id ]
+                  if cfg.mcpServers.ContainsKey id then sprintf "provider.id: 与 MCP 服务 %s 冲突" id ]
             if List.isEmpty errors then
                 Ok { cfg with providers = cfg.providers.Add(id, provider) }
             else
@@ -184,7 +184,7 @@ module ConfigMutation =
                   match server.maxConcurrency with
                   | Some c when c <= 0 -> "mcp.maxConcurrency: 需为正整数"
                   | _ -> ()
-                  if cfg.providers.ContainsKey id then sprintf "mcp.id: 与服务商 %s 冲突" id ]
+                  if cfg.providers.ContainsKey id then sprintf "mcp.id: 与模型服务 %s 冲突" id ]
             if List.isEmpty errors then
                 Ok { cfg with mcpServers = cfg.mcpServers.Add(id, server) }
             else
@@ -192,7 +192,7 @@ module ConfigMutation =
 
     let deleteMcp (cfg: AppConfig) (id: string) : Result<AppConfig, string list> =
         if cfg.mcpServers.ContainsKey id then Ok { cfg with mcpServers = cfg.mcpServers.Remove id }
-        else Error [ sprintf "MCP 服务器 %s 不存在" id ]
+        else Error [ sprintf "MCP 服务 %s 不存在" id ]
 
     /// 更新工具设置（第 70/71 节）：授权文件夹、每个工具的审批策略、审批超时、调试工具开关。
     /// 缺省字段保持原值；`policy` 给出时整体替换（`default` 是兜底，其余键是工具稳定标识）。

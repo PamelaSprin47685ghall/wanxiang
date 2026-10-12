@@ -142,7 +142,7 @@ let private buildSidebar () =
           deleteConversation = ignore
           setPinned = fun _ _ -> ()
           setArchived = fun _ _ -> ()
-          // 此夹具里没有任何会话预先置顶 → 键面显示「置顶」，动作为置顶。
+          // 此夹具里没有任何对话预先置顶 → 键面显示「置顶」，动作为置顶。
           selectionAllPinned = fun _ -> false
           setPinnedMany = fun ids pin -> pinned.Add(ids, pin)
           setArchivedMany = fun ids value -> archived.Add(ids, value)
@@ -158,7 +158,7 @@ let private buildSidebar () =
     root.Children.Add sidebar
     root, sidebar, opened, pinned, archived, deleted
 
-// 进入多选后，同一行的点击不再打开会话，而是切换选中：这是批量模式的核心语义，
+// 进入多选后，同一行的点击不再打开对话，而是切换选中：这是批量模式的核心语义，
 // 也是「误点不会跳走」的保障。
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -169,12 +169,12 @@ let ``entering selection mode turns row clicks into selection toggles`` () =
     let window = show root 320.0 420.0
     try
         // 先挂窗再灌数据：虚拟化只在挂树后生成行容器。
-        sidebar.SetConversations [ summary id "第一个会话" false ]
+        sidebar.SetConversations [ summary id "第一个对话" false ]
         Dispatcher.UIThread.RunJobs()
-        let row = rowByName sidebar "第一个会话"
+        let row = rowByName sidebar "第一个对话"
         sidebar.EnterSelection id
         Dispatcher.UIThread.RunJobs()
-        // 模式内点同一行：从「已选中」变「未选中」，绝不打开会话。
+        // 模式内点同一行：从「已选中」变「未选中」，绝不打开对话。
         row.RaiseEvent(
             KeyEventArgs(
                 RoutedEvent = InputElement.KeyDownEvent,
@@ -197,7 +197,7 @@ let ``deselecting the last item exits selection mode`` () =
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
     try
-        sidebar.SetConversations [ summary id "唯一会话" false ]
+        sidebar.SetConversations [ summary id "唯一对话" false ]
         Dispatcher.UIThread.RunJobs()
         sidebar.EnterSelection id
         Dispatcher.UIThread.RunJobs()
@@ -212,7 +212,7 @@ let ``deselecting the last item exits selection mode`` () =
 
 // 多选期内 Esc 一律先退多选，不因焦点落在列表底部已归档开关上而失灵：
 // 归档开关行也是列表内的 Tab 停靠点（up/down/home 四处键位都通得到），
-// 会话行（Sidebar.fs:860）与搜索框（Sidebar.fs:1383）上的 Esc 都已退多选，
+// 对话行（Sidebar.fs:860）与搜索框（Sidebar.fs:1383）上的 Esc 都已退多选，
 // 唯独这里漏了——用户 End 滚到底再按 Esc 毫无反应，被困在批量态。
 // kelivo interactive_drawer.dart:399-407 同序：抽屉级返回先问「是不是在多选」。
 [<Trait("Category", "UI")>]
@@ -225,8 +225,8 @@ let ``escape exits selection mode from the archived toggle row`` () =
     let window = show root 320.0 420.0
     try
         sidebar.SetConversations
-            [ summary live "活跃会话" false
-              { summary archived "归档会话" false with archived = true } ]
+            [ summary live "活跃对话" false
+              { summary archived "归档对话" false with archived = true } ]
         Dispatcher.UIThread.RunJobs()
         sidebar.EnterSelection live
         Dispatcher.UIThread.RunJobs()
@@ -235,7 +235,7 @@ let ``escape exits selection mode from the archived toggle row`` () =
         let toggle =
             root.GetVisualDescendants()
             |> Seq.choose (function :? Control as c -> Some c | _ -> None)
-            |> Seq.find (fun c -> AutomationProperties.GetName c = "已归档会话 (1)，点击展开")
+            |> Seq.find (fun c -> AutomationProperties.GetName c = "已归档对话 (1)，点击展开")
         Assert.True(toggle.Focusable, "前置条件：已归档开关可聚焦")
         toggle.Focus(NavigationMethod.Directional) |> ignore
         Dispatcher.UIThread.RunJobs()
@@ -422,7 +422,7 @@ let ``selection mode gives up the brand header and footer`` () =
         let newConversationVisible =
             descendants sidebar
             |> Seq.exists (fun c ->
-                Avalonia.Automation.AutomationProperties.GetName(c) = "新建会话（Ctrl+N）"
+                Avalonia.Automation.AutomationProperties.GetName(c) = "新建对话（Ctrl+N）"
                 && c.IsEffectivelyVisible)
         Assert.False(newConversationVisible, "选择模式下右上角新建按钮应让位")
         Assert.True(sidebar.IsSelectionMode)
@@ -456,7 +456,7 @@ let ``row context menu offers the selection entry`` () =
             |> Seq.find (fun c ->
                 match AutomationProperties.GetName(c) with
                 | null -> false
-                | name -> name.StartsWith("会话“菜单甲”的操作菜单"))
+                | name -> name.StartsWith("对话“菜单甲”的操作菜单"))
         moreButton.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
         Dispatcher.UIThread.RunJobs()
         Assert.True(overlay.IsPopupOpen, "行菜单应打开")
@@ -634,8 +634,8 @@ let ``composer sends only on the mode's declared key`` () =
         composer.SetEnabled(false, "")
     )
 
-// 从外部切换当前会话（Ctrl+1..9 / 搜索结果 / 新建）后，选中行若在视口外，
-// 侧栏上看不到正在进行的会话。SetActive 只滚屏不抢焦点：焦点归属照旧由调用方决定。
+// 从外部切换当前对话（Ctrl+1..9 / 搜索结果 / 新建）后，选中行若在视口外，
+// 侧栏上看不到正在进行的对话。SetActive 只滚屏不抢焦点：焦点归属照旧由调用方决定。
 // 锁：激活的行必须被滚进可视区。
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -645,7 +645,7 @@ let ``setting the active conversation scrolls it into view`` () =
     let ids = [ for i in 1 .. 30 -> Guid.NewGuid() ]
     let window = show root 320.0 300.0
     try
-        sidebar.SetConversations [ for id in ids -> summary id "会话" false ]
+        sidebar.SetConversations [ for id in ids -> summary id "对话" false ]
         Dispatcher.UIThread.RunJobs()
         // 先激活第一个：列表滚回顶部。
         sidebar.SetActive (List.tryHead ids)
@@ -663,14 +663,14 @@ let ``setting the active conversation scrolls it into view`` () =
         match scroller with
         | Some s ->
             // 视图顶部应从 0 移下来：未滚动时列表在 0，滚动后 Offset.Y > 0。
-            Assert.True(s.Offset.Y > 0.0, "激活列表末端的会话应把列表滚出顶部")
-        | None -> Assert.Fail("找不到会话列表的滚动容器")
+            Assert.True(s.Offset.Y > 0.0, "激活列表末端的对话应把列表滚出顶部")
+        | None -> Assert.Fail("找不到对话列表的滚动容器")
     finally
         window.Close()
     )
 
 // 置顶键的文案只按「已选项是否全部置顶」判定。此前混入「必须全选可见行」的前提，
-// 于是只挑两个已置顶的会话时键面仍说「置顶」，点下去发出的却是取消置顶——
+// 于是只挑两个已置顶的对话时键面仍说「置顶」，点下去发出的却是取消置顶——
 // 文案与动作相反，用户要么不敢点，要么点错。
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -680,7 +680,7 @@ let ``pin key follows the selected items' pinned state alone`` () =
     let root = Grid()
     let overlay = OverlayHost(root)
     let pinnedMany = ResizeArray<Guid list * bool>()
-    // 夹具上报：传入的任何选择都算「全部已置顶」——模拟两个已置顶会话被挑中的情形。
+    // 夹具上报：传入的任何选择都算「全部已置顶」——模拟两个已置顶对话被挑中的情形。
     let actions: SidebarActions =
         { newConversation = ignore
           openConversation = ignore
@@ -731,7 +731,7 @@ let ``pin key follows the selected items' pinned state alone`` () =
 
 // 空选择不进删除流：SelectedIds 只报可见行里的已选项，搜索把选中行滤掉后
 // 选择计数非 0 而批量载荷为空——行上按 Delete 仍会调 deleteMany，确认框弹出
-// 「选中的 0 个会话」。kelivo 侧栏以 selectedCount > 0 为启用条件
+// 「选中的 0 个对话」。kelivo 侧栏以 selectedCount > 0 为启用条件
 // （sidebar_selection_bars.dart:186），同一约定。
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -750,7 +750,7 @@ let ``batch delete with an empty selection never reaches the batch action`` () =
         // 搜索框过滤到只剩 Beta：选中项 Alpha 不可见了。
         let search =
             descendants root
-            |> Seq.choose (function :? TextBox as tb when tb.PlaceholderText = "搜索会话" -> Some tb | _ -> None)
+            |> Seq.choose (function :? TextBox as tb when tb.PlaceholderText = "搜索对话" -> Some tb | _ -> None)
             |> Seq.head
         search.Text <- "Beta"
         // 搜索有 160ms 防抖（MotionLedger.searchInputDebounce）：测试线程就是

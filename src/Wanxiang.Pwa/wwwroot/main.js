@@ -180,7 +180,7 @@ function setupShellStatus() {
     const showBack = () => {
         if (!wasOffline) return;
         wasOffline = false;
-        text.textContent = "网络已恢复，正在重新连接服务端…";
+        text.textContent = "网络已恢复，正在重新连接主机…";
         offlineBar.hidden = false;
         hideTimer = setTimeout(() => { offlineBar.hidden = true; }, 3500);
     };

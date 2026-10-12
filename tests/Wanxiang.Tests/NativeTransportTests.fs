@@ -554,9 +554,9 @@ let ``gemini 把图片 PDF 音频一律映成 inlineData`` () =
         Assert.Contains(media, json)
 
 [<Fact>]
-let ``会话 extraJson 在两种原生传输上都不被丢掉`` () =
+let ``对话 extraJson 在两种原生传输上都不被丢掉`` () =
     // 兼容传输靠 ChatOptions.AdditionalProperties 透传；原生传输若不读它，
-    // 用户在会话里配的模型专属参数会静默消失
+    // 用户在对话里配的模型专属参数会静默消失
     let options = ChatOptions()
     options.AdditionalProperties <-
         AdditionalPropertiesDictionary(dict [ "service_tier", box (JsonValue.Create "priority" :> JsonNode) ])

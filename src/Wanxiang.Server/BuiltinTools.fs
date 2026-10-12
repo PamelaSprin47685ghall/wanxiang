@@ -16,7 +16,7 @@ module BuiltinToolsCore =
 
     let resolveInRoots (roots: string list) (path: string) : Result<string, string> =
         if List.isEmpty roots then
-            Error "文件工具未启用：服务端未配置 tools.fileReadRoots 沙箱根目录。"
+            Error "文件工具未启用：主机未配置 tools.fileReadRoots 沙箱根目录。"
         elif String.IsNullOrWhiteSpace path then
             Error "路径不能为空。"
         else

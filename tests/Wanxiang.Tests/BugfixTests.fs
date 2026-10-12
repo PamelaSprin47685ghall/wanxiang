@@ -101,7 +101,7 @@ let ``attachment media type sniffed and metadata persisted`` () =
     finally
         cleanup dir
 
-/// P1-2：快照尾部截断（Q127：长会话快照不携带全部历史）。
+/// P1-2：快照尾部截断（Q127：长对话快照不携带全部历史）。
 [<Fact>]
 let ``snapshot tail caps long conversation`` () =
     let dir = tempDir ()

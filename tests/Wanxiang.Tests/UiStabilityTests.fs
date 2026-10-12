@@ -1221,7 +1221,7 @@ let ``changing active sidebar row does not rebuild the conversation list`` () =
         let secondId = Guid.NewGuid()
         sidebar.SetConversations [ summary firstId "Alpha"; summary secondId "Beta" ]
         Dispatcher.UIThread.RunJobs()
-        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let list = byAutomationName sidebar "对话列表" :?> ListBox
         let alphaBefore = realizedByAutomationName list "Alpha"
         let betaBefore = realizedByAutomationName list "Beta"
 
@@ -1274,7 +1274,7 @@ let ``sidebar keeps a bounded visual tree for 5000 conversations`` () =
                 let controlType = AutomationProperties.GetControlTypeOverride(control)
                 controlType = Nullable<AutomationControlType>(AutomationControlType.ListItem))
             |> Seq.length
-        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let list = byAutomationName sidebar "对话列表" :?> ListBox
         let realized = list.GetRealizedContainers() |> Seq.length
         Assert.True(realized > 0 && realized < 80, sprintf "realized containers = %d" realized)
         Assert.True(rows () < 80, sprintf "conversation row visuals = %d" (rows ()))
@@ -1320,7 +1320,7 @@ let ``sidebar running pin and idle states keep the same title origin`` () =
         let titleOrigin pinned running =
             sidebar.SetConversations [ { baseItem with pinned = pinned; running = running } ]
             Dispatcher.UIThread.RunJobs()
-            let list = byAutomationName sidebar "会话列表" :?> ListBox
+            let list = byAutomationName sidebar "对话列表" :?> ListBox
             let host = realizedByAutomationName list "Stable title"
             // 标题文本现在住在 Inlines 里（搜索命中高亮按 run 上色），.Text 已空。
             // 取标题块改用结构定位：dock[0] 状态槽 / dock[1] 更多按钮 / dock[2] 标题，
@@ -1349,11 +1349,11 @@ let ``sidebar running pin and idle states keep the same title origin`` () =
 
         sidebar.SetActive(Some id)
         Dispatcher.UIThread.RunJobs()
-        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let list = byAutomationName sidebar "对话列表" :?> ListBox
         let selected = realizedByAutomationName list "Stable title"
         // Active + generating rows announce the combined status (Sidebar.ApplyRowState:
-        // true, true -> "当前会话，生成中"); title geometry/origin asserts above stay.
-        Assert.Equal("当前会话，生成中", AutomationProperties.GetItemStatus(selected))
+        // true, true -> "当前对话，生成中"); title geometry/origin asserts above stay.
+        Assert.Equal("当前对话，生成中", AutomationProperties.GetItemStatus(selected))
     finally
         window.Close()
     )
@@ -1396,7 +1396,7 @@ let ``sidebar recycles twenty thousand rows through scroll search active and the
         sidebar.SetConversations items
         Dispatcher.UIThread.RunJobs()
         watch.Stop()
-        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let list = byAutomationName sidebar "对话列表" :?> ListBox
         let realizedCount () = list.GetRealizedContainers() |> Seq.length
         let rec awaitRealized remaining name =
             Dispatcher.UIThread.RunJobs()
@@ -1420,7 +1420,7 @@ let ``sidebar recycles twenty thousand rows through scroll search active and the
         Assert.Contains("Conversation 00001", string (ToolTip.GetTip last))
         sidebar.SetActive(Some ids[0])
         Dispatcher.UIThread.RunJobs()
-        Assert.Equal("当前会话", AutomationProperties.GetItemStatus(last))
+        Assert.Equal("当前对话", AutomationProperties.GetItemStatus(last))
 
         Tokens.apply Dark
         Dispatcher.UIThread.RunJobs()
@@ -1433,7 +1433,7 @@ let ``sidebar recycles twenty thousand rows through scroll search active and the
 
         let search =
             descendants sidebar
-            |> Seq.choose (function :? TextBox as box when box.PlaceholderText = "搜索会话" -> Some box | _ -> None)
+            |> Seq.choose (function :? TextBox as box when box.PlaceholderText = "搜索对话" -> Some box | _ -> None)
             |> Seq.head
         let pumpSearchDebounce () =
             let watch = Stopwatch.StartNew()
@@ -1530,7 +1530,7 @@ let ``accelerated craft soak covers the long-session action ledger without visua
             [ for index in 1 .. 300 ->
                   { summary ids[index - 1] (sprintf "Soak %03d" index) with lastCommitId = uint64 (301 - index) } ]
         Dispatcher.UIThread.RunJobs()
-        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let list = byAutomationName sidebar "对话列表" :?> ListBox
         let initialLayerCount = root.Children.Count
 
         for index in 0 .. 19 do
@@ -1538,7 +1538,7 @@ let ``accelerated craft soak covers the long-session action ledger without visua
             Dispatcher.UIThread.RunJobs()
         let search =
             descendants sidebar
-            |> Seq.choose (function :? TextBox as box when box.PlaceholderText = "搜索会话" -> Some box | _ -> None)
+            |> Seq.choose (function :? TextBox as box when box.PlaceholderText = "搜索对话" -> Some box | _ -> None)
             |> Seq.head
         for index in 1 .. 20 do
             search.Text <- sprintf "Soak %03d" index
@@ -1609,7 +1609,7 @@ let ``long chat title never pushes header actions outside narrow viewport`` () =
     let window = show chat 540.0 420.0
     try
         Dispatcher.UIThread.RunJobs()
-        let more = byAutomationName chat "会话操作"
+        let more = byAutomationName chat "对话操作"
         let toggle = byAutomationName chat "切换侧边栏（Ctrl+B / ⌘B）"
         for control in [ more; toggle ] do
             let point = control.TranslatePoint(Point(0.0, 0.0), chat)
@@ -1649,16 +1649,16 @@ let ``conversation menu and title geometry stay stable across generation without
     let chat = ChatView(actions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
     chat.Build()
     chat.SetConversationChrome true
-    chat.SetTitle("会话语义标题", true)
+    chat.SetTitle("对话语义标题", true)
     let window = show chat 900.0 420.0
     try
         Dispatcher.UIThread.RunJobs()
         let status = byAutomationName chat "正在生成回答"
-        let more = byAutomationName chat "会话操作"
+        let more = byAutomationName chat "对话操作"
         let toggle = byAutomationName chat "切换侧边栏（Ctrl+B / ⌘B）"
         let titleText =
             descendants chat
-            |> Seq.choose (function :? TextBlock as t when t.Text = "会话语义标题" -> Some t | _ -> None)
+            |> Seq.choose (function :? TextBlock as t when t.Text = "对话语义标题" -> Some t | _ -> None)
             |> Seq.head
         let geometry () =
             Dispatcher.UIThread.RunJobs()
@@ -1749,7 +1749,7 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
         chat.SetCompactMode(width < LayoutPolicy.compactBreakpoint)
         chat.SetConversationChrome true
         chat.SetGenerating(true, "正在生成一段很长很长的状态说明")
-        chat.SetTitle(String.replicate 12 "这是一个非常长的会话标题-ABCDEFGHIJK-", true)
+        chat.SetTitle(String.replicate 12 "这是一个非常长的对话标题-ABCDEFGHIJK-", true)
         let composer = Composer(composerActions)
         composer.Build()
         composer.SetEnabled(true, "")
@@ -1762,7 +1762,7 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
         let window = show root width height
         try
             Dispatcher.UIThread.RunJobs()
-            for name in [ "切换侧边栏（Ctrl+B / ⌘B）"; "会话操作"; "发送"; "添加附件" ] do
+            for name in [ "切换侧边栏（Ctrl+B / ⌘B）"; "对话操作"; "发送"; "添加附件" ] do
                 let control = byAutomationName root name
                 if control.IsVisible then
                     match control.TranslatePoint(Point(0.0, 0.0), root) with
@@ -2153,7 +2153,7 @@ let ``settings caps content width and centers it while exposing selected navigat
         // 宽屏居中：MaxWidth 封顶之外，内容列在超宽窗口里必须居中而不是贴左。
         Assert.Equal(HorizontalAlignment.Center, frame.HorizontalAlignment)
 
-        let providers = byAutomationName settings "服务商"
+        let providers = byAutomationName settings "模型服务"
         let appearance = byAutomationName settings "外观与操作"
         Assert.Equal("当前分区", AutomationProperties.GetItemStatus(providers))
         let invokeAppearance = ControlAutomationPeer.CreatePeerForElement appearance |> Assert.IsAssignableFrom<IInvokeProvider>
@@ -2175,7 +2175,7 @@ let ``settings caps content width and centers it while exposing selected navigat
         window.Close()
     )
 
-// 服务商编辑器首焦必须落在主输入框：表单首个可聚焦元素是预设下拉（历史行为），
+// 模型服务编辑器首焦必须落在主输入框：表单首个可聚焦元素是预设下拉（历史行为），
 // 键盘用户打开编辑器的意图就是填字段。Kelivo model_edit_dialog.dart:88 同语义。
 // 断言走自动化名而非对象身份——焦点实现只能落在控件树上，名字即用户所见。
 [<Trait("Category", "UI")>]
@@ -2207,7 +2207,7 @@ let ``provider editor opens focus on the primary text field`` () =
                 if String.IsNullOrWhiteSpace name then None else Some name
             | _ -> None)
     try
-        let addProvider = byAutomationName view "添加服务商"
+        let addProvider = byAutomationName view "添加模型服务"
         ControlAutomationPeer.CreatePeerForElement addProvider
         |> Assert.IsAssignableFrom<IInvokeProvider>
         |> fun invoke -> invoke.Invoke()
@@ -2221,7 +2221,7 @@ let ``provider editor opens focus on the primary text field`` () =
         match window.FocusManager.GetFocusedElement() with
         | :? TextBox -> ()
         | :? Control as focused -> Assert.True(false, sprintf "焦点落到了非输入框控件 %s" (AutomationProperties.GetName focused))
-        | _ -> Assert.True(false, "新建服务商后焦点不得为 null")
+        | _ -> Assert.True(false, "新建模型服务后焦点不得为 null")
     finally
         window.Close()
     )
@@ -2247,10 +2247,10 @@ let ``provider editor stays pending until authoritative config result`` () =
     let view = providers.Build()
     root.Children.Insert(0, view)
     let window = show root 760.0 700.0
-    // 新建服务商带默认预设：按钮当前值就是首个预设名。
+    // 新建模型服务带默认预设：按钮当前值就是首个预设名。
     let currentPresetLabel = (ProviderPresets.all |> List.head).label
     try
-        let addProvider = byAutomationName view "添加服务商"
+        let addProvider = byAutomationName view "添加模型服务"
         ControlAutomationPeer.CreatePeerForElement addProvider
         |> Assert.IsAssignableFrom<IInvokeProvider>
         |> fun invoke -> invoke.Invoke()
@@ -2326,37 +2326,37 @@ let ``sidebar empty state separates list loading from confirmed empty and embeds
                 | _ -> false)
         let pressEnter (control: Control) =
             control.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
-        // 未连接：原空态 + 内嵌「连接服务器」，与底部状态行重连同一动作。
-        Assert.True(hasText "先连接一台万象服务器")
-        let connectButton = byName "连接服务器" |> Option.get
+        // 未连接：原空态 + 内嵌「连接主机」，与底部状态行重连同一动作。
+        Assert.True(hasText "先连接一台万象主机")
+        let connectButton = byName "连接主机" |> Option.get
         Assert.True(connectButton.IsVisible)
         pressEnter connectButton
         Assert.Equal(1, reconnectCount)
-        // 已连接但未发出列表请求：此刻就是「还没有会话」，而不是加载中。
+        // 已连接但未发出列表请求：此刻就是「还没有对话」，而不是加载中。
         sidebar.SetConnection(true, "已连接")
-        Assert.True(hasText "还没有会话")
-        Assert.False(hasText "正在加载会话…")
-        let createButton = byName "新建会话（Ctrl+N）" |> Option.get
+        Assert.True(hasText "还没有对话")
+        Assert.False(hasText "正在加载对话…")
+        let createButton = byName "新建对话（Ctrl+N）" |> Option.get
         Assert.True(createButton.IsVisible)
         pressEnter createButton
         Assert.Equal(1, createCount)
         // 已发出请求、快照未达：列表只呈现加载中，顶部新建入口仍随时可用。
         sidebar.SetConversationListLoading true
-        Assert.True(hasText "正在加载会话…")
-        Assert.False(hasText "还没有会话")
-        Assert.True((byName "正在加载会话" |> Option.get).IsVisible)
+        Assert.True(hasText "正在加载对话…")
+        Assert.False(hasText "还没有对话")
+        Assert.True((byName "正在加载对话" |> Option.get).IsVisible)
         Assert.True(createButton.IsVisible)
         // 快照到达（空列表）：加载态解除，回到确认空态。
         sidebar.SetConversations []
-        Assert.True(hasText "还没有会话")
-        Assert.False(hasText "正在加载会话…")
+        Assert.True(hasText "还没有对话")
+        Assert.False(hasText "正在加载对话…")
         Assert.True(createButton.IsVisible)
         // 断连：加载中随连接翻转作废，回到未连接空态（断连清空列表的既有路径不变）。
         sidebar.SetConversationListLoading true
         sidebar.SetConnection(false, "连接已断开")
-        Assert.True(hasText "先连接一台万象服务器")
-        Assert.False(hasText "正在加载会话…")
-        Assert.True((byName "连接服务器" |> Option.get).IsVisible)
+        Assert.True(hasText "先连接一台万象主机")
+        Assert.False(hasText "正在加载对话…")
+        Assert.True((byName "连接主机" |> Option.get).IsVisible)
     finally
         window.Close()
     )
@@ -2510,7 +2510,7 @@ let ``composer inset adapts to width outside compact and stays tight inside comp
 
 // 预设下拉此前展开后所有条目平铺，看不出当前是哪一项：按钮标题只显示一项，
 // 列表里第二眼就得靠试。与外观主题下拉同一 contract（MenuEntry.markSelected
-// 在选中项右侧画勾）。锁：新建服务商（当前预设 None）展开时恰好零个勾；
+// 在选中项右侧画勾）。锁：新建模型服务（当前预设 None）展开时恰好零个勾；
 // 选中一个预设后重新展开，恰好一个勾。
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -2532,7 +2532,7 @@ let ``preset dropdown marks exactly the current preset`` () =
     let view = providers.Build()
     root.Children.Insert(0, view)
     let window = show root 760.0 700.0
-    // 新建服务商带默认预设：按钮当前值就是首个预设名。
+    // 新建模型服务带默认预设：按钮当前值就是首个预设名。
     let currentPresetLabel = (ProviderPresets.all |> List.head).label
     // 数勾：菜单选中态由右侧一个 check 图标承担（Icons.check 是 Path 几何）。
     // 勾的数量就是用户看得见的东西，按几何匹配。
@@ -2556,14 +2556,14 @@ let ``preset dropdown marks exactly the current preset`` () =
         Dispatcher.UIThread.RunJobs()
         ()
     try
-        let addProvider = byAutomationName view "添加服务商"
+        let addProvider = byAutomationName view "添加模型服务"
         ControlAutomationPeer.CreatePeerForElement addProvider
         |> Assert.IsAssignableFrom<IInvokeProvider>
         |> fun invoke -> invoke.Invoke()
         Dispatcher.UIThread.RunJobs()
         expandPreset currentPresetLabel
         Assert.True(overlay.IsPopupOpen, "预设下拉应已展开")
-        // 新建服务商带默认预设：这一项旁边应已有勾（此前一个都没有）。
+        // 新建模型服务带默认预设：这一项旁边应已有勾（此前一个都没有）。
         // 只看展开的菜单项：菜单项的无障碍名就是预设名，选中态是该项里的勾。
         let markedPresets () =
             visualControls root
@@ -2578,7 +2578,7 @@ let ``preset dropdown marks exactly the current preset`` () =
                 | _ -> None)
             |> List.ofSeq
         Assert.Equal<string list>([ currentPresetLabel ], markedPresets ())
-        // 切到第二个预设：菜单项经由服务商编辑器自己的选择逻辑（与用户点击等价）。
+        // 切到第二个预设：菜单项经由模型服务编辑器自己的选择逻辑（与用户点击等价）。
         let nextPreset = ProviderPresets.all.[1]
         let target =
             descendants root
@@ -2623,12 +2623,12 @@ let ``form error summary clears as soon as the user starts fixing a field`` () =
     root.Children.Insert(0, view)
     let window = show root 760.0 700.0
     try
-        let addProvider = byAutomationName view "添加服务商"
+        let addProvider = byAutomationName view "添加模型服务"
         ControlAutomationPeer.CreatePeerForElement addProvider
         |> Assert.IsAssignableFrom<IInvokeProvider>
         |> fun invoke -> invoke.Invoke()
         Dispatcher.UIThread.RunJobs()
-        Assert.True(overlay.IsDialogOpen, "新增服务商对话框应已打开")
+        Assert.True(overlay.IsDialogOpen, "新增模型服务对话框应已打开")
         // 对话框内容挂在 OverlayHost 的次级层上：visualControls 走可视树，
         // 才够得到弹出层里的输入框与摘要（descendants 只走逻辑子级）。
         let summary =
@@ -2800,7 +2800,7 @@ let ``collapsing the desktop sidebar returns focus to the composer`` () =
         let wide = NavigationController(false).ApplyViewport(1200.0, false) |> snd
         controller.Apply wide
         // 焦点放进侧栏：ListBox 本体可聚焦（进入侧栏的 Tab 停靠点）。
-        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let list = byAutomationName sidebar "对话列表" :?> ListBox
         list.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
         Assert.True(list.IsFocused, "precondition: focus in sidebar")

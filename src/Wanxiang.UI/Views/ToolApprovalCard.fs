@@ -13,7 +13,7 @@ type ApprovalRequestView = {
     approvalId: Guid
     conversationId: Guid
     toolName: string
-    /// 人话摘要（服务端用 ToolSummary 生成，两端同一份文案）
+    /// 人话摘要（主机用 ToolSummary 生成，两端同一份文案）
     summary: string
     argumentsJson: string
     /// "first"（首次询问）或 "always"（每次询问）
@@ -28,7 +28,7 @@ module ToolApprovalCard =
         | "first" -> "批准后，这个对话里再用同一个工具不会再问。"
         | _ -> "每次调用这个工具都会询问。"
 
-    /// 状态文案：用户点了按钮、等服务端确认期间。
+    /// 状态文案：用户点了按钮、等主机确认期间。
     let sentText (approved: bool) = if approved then "已批准，正在继续…" else "已拒绝，正在通知模型…"
 
     /// 「已处理」说明（晚到的决定，或服务重启后失效的审批）。
@@ -41,7 +41,7 @@ module ToolApprovalCard =
         | _ -> "这个审批已经处理过了。"
 
     /// 渲染一张审批卡。`decide true` = 批准，`decide false` = 拒绝。
-    /// 点击后按钮立即置灰并显示「已发送」状态，真正的结果由服务端的 resolved 事件移除卡片。
+    /// 点击后按钮立即置灰并显示「已发送」状态，真正的结果由主机的 resolved 事件移除卡片。
     let build (req: ApprovalRequestView) (decide: bool -> unit) : Control =
         let icon = Icons.wrench Tokens.warning
         icon.VerticalAlignment <- VerticalAlignment.Top
@@ -121,7 +121,7 @@ module ToolApprovalCard =
         card :> Control
 
 /// 对话内的审批卡片宿主：浮在输入框上方，只显示当前对话的待审批项。
-/// 内容完全由服务端事件驱动，不持久化；断线重连后服务端重发，卡片自然回来。
+/// 内容完全由主机事件驱动，不持久化；断线重连后主机重发，卡片自然回来。
 type ToolApprovalPanel(decide: Guid -> bool -> unit) as this =
     inherit StackPanel()
 
@@ -152,11 +152,11 @@ type ToolApprovalPanel(decide: Guid -> bool -> unit) as this =
         if i >= 0 then pending[i] <- req else pending.Add req
         refresh ()
 
-    /// 服务端已处理（任何结果）：卡片消失。
+    /// 主机已处理（任何结果）：卡片消失。
     member _.Remove(approvalId: Guid) =
         if pending.RemoveAll(fun r -> r.approvalId = approvalId) > 0 then refresh ()
 
-    /// 断线：服务端会在重连并重新观察后重发，先清空避免显示失效卡片。
+    /// 断线：主机会在重连并重新观察后重发，先清空避免显示失效卡片。
     member _.Clear() =
         pending.Clear()
         refresh ()

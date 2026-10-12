@@ -96,7 +96,7 @@ module CoreTests =
         Assert.Equal(UnknownFailure, GenerationErrorKind.ofCode "")
         Assert.Equal(UnknownFailure, GenerationErrorKind.ofCode "some_unrecognized_error_kind")
 
-        // 针对服务商不可用的细分建议
+        // 针对模型服务不可用的细分建议
         Assert.Contains("维护", GenerationErrorKind.hintUnavailable true)
         Assert.Contains("网络", GenerationErrorKind.hintUnavailable false)
 
@@ -263,7 +263,7 @@ module CoreTests =
 
         let newConvId = Guid.NewGuid()
 
-        // 1. 父会话不存在
+        // 1. 父对话不存在
         let cmdMissingParent =
             ForkConversation
                 {| invocationId = Guid.NewGuid()
@@ -276,14 +276,14 @@ module CoreTests =
         | Rejected (ConversationNotFound _) -> ()
         | r -> Assert.Fail(sprintf "Expected ConversationNotFound, got %A" r)
 
-        // 2. 父会话已删除
+        // 2. 父对话已删除
         let deletedParent = { parentWithMsg with deleted = true }
         let projDeleted = { proj with conversations = Map.ofList [ (parentId, deletedParent) ] }
         match CommandEngine.plan projDeleted 10UL cmdMissingParent with
         | Rejected (ConversationNotFound _) -> ()
         | r -> Assert.Fail(sprintf "Expected ConversationNotFound, got %A" r)
 
-        // 3. forkAfterId 不在父会话中
+        // 3. forkAfterId 不在父对话中
         let cmdBadForkPoint =
             ForkConversation
                 {| invocationId = Guid.NewGuid()
@@ -331,7 +331,7 @@ module CoreTests =
         | Rejected (ValidationError msg) -> Assert.Contains("characters", msg)
         | r -> Assert.Fail(sprintf "Expected ValidationError, got %A" r)
 
-        // 2. 会话不存在
+        // 2. 对话不存在
         let cmdNotFound =
             RenameConversation
                 {| invocationId = Guid.NewGuid(); conversationId = Guid.NewGuid(); title = "New" |}

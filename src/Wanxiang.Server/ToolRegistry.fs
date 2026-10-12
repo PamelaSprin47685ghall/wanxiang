@@ -11,7 +11,7 @@ open Wanxiang.Config
 open Wanxiang.Core
 
 /// 把一个 MCP 工具包装成模型可调用的 `AIFunction`，并**原样转发**
-/// 服务器给出的 `inputSchema`。
+/// MCP 服务给出的 `inputSchema`。
 ///
 /// 旧实现把每个 MCP 工具都注册成 `Func<string, ...>`，模型只看到一个
 /// 叫 `args` 的字符串参数、以及一句「MCP tool x/y」的假描述——
@@ -65,7 +65,7 @@ type McpFunction(client: McpClient, serverId: string, info: McpToolInfo) =
 
 /// 一个工具在界面上的样子。
 type ToolDescriptor = {
-    /// 稳定标识（会话配置里存的就是它）
+    /// 稳定标识（对话配置里存的就是它）
     id: string
     /// 模型看到的函数名
     functionName: string
@@ -73,12 +73,12 @@ type ToolDescriptor = {
     description: string
     /// "builtin" | "mcp"
     source: string
-    /// MCP 工具所属服务器 id
+    /// MCP 工具所属 MCP 服务 id
     serverId: string option
 }
 
 /// 工具注册表：内置工具 + MCP 工具（决策 95-100）。
-/// 会话配置只保存稳定标识（`builtin:...` / `mcp:<server-id>/<tool-name>`）。
+/// 对话配置只保存稳定标识（`builtin:...` / `mcp:<server-id>/<tool-name>`）。
 type ToolRegistry(getConfig: unit -> AppConfig, onLog: string -> unit) =
 
     let mcpClients = ConcurrentDictionary<string, McpClient>()
@@ -152,7 +152,7 @@ type ToolRegistry(getConfig: unit -> AppConfig, onLog: string -> unit) =
                     | true, old -> old.Stop()
                     | _ -> ())
 
-    /// 全部可选工具（内置 + 已连上的 MCP 服务器）。客户端据此渲染工具清单。
+    /// 全部可选工具（内置 + 已连上的 MCP 服务）。客户端据此渲染工具清单。
     member this.Descriptors() : ToolDescriptor list =
         let cfg = getConfig ()
         let builtins =
@@ -199,7 +199,7 @@ type ToolRegistry(getConfig: unit -> AppConfig, onLog: string -> unit) =
             arr.Add o
         arr
 
-    /// 构建会话启用的 AITool 列表。
+    /// 构建对话启用的 AITool 列表。
     member this.BuildTools(config: SessionConfig) : AITool list =
         let appCfg = getConfig ()
         let requested = config.tools |> Set.ofList
@@ -217,7 +217,7 @@ type ToolRegistry(getConfig: unit -> AppConfig, onLog: string -> unit) =
                     match client.TryTool toolName with
                     | Some info -> Some(McpFunction(client, serverId, info) :> AITool)
                     | None ->
-                        onLog(sprintf "[mcp:%s] 会话请求的工具 %s 不存在，已跳过" serverId toolName)
+                        onLog(sprintf "[mcp:%s] 对话请求的工具 %s 不存在，已跳过" serverId toolName)
                         None)
             |> List.ofSeq
         builtins @ mcpTools
@@ -228,9 +228,9 @@ type ToolRegistry(getConfig: unit -> AppConfig, onLog: string -> unit) =
         | :? McpFunction as m -> m.StableId
         | t -> BuiltinTools.stableId t.Name
 
-    /// 会话请求了但当前不可用的工具（供 UI 提示配置漂移）。
+    /// 对话请求了但当前不可用的工具（供 UI 提示配置漂移）。
     member this.MissingTools(config: SessionConfig) : string list =
-        // 调试工具默认不进目录，但老会话已经选了它时仍然可用，不能算「配置漂移」
+        // 调试工具默认不进目录，但老对话已经选了它时仍然可用，不能算「配置漂移」
         let available =
             (this.Descriptors() |> List.map (fun d -> d.id)) @ (BuiltinTools.descriptors (getConfig ()).tools |> List.map (fun (id, _, _) -> id))
             |> Set.ofList

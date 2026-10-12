@@ -182,15 +182,15 @@ let ``generation form consumes shared column spacing and text metrics`` () =
     Assert.True(switchRows >= 1, "生成表单至少有一个开关行走共享行最小高")
     )
 
-// 生成设置是设置区唯一不认 Ctrl+Enter 的表单：本地其余表单（服务商 / MCP / 会话参数）
+// 生成设置是设置区唯一不认 Ctrl+Enter 的表单：本地其余表单（模型服务 / MCP / 对话参数）
 // 全部「Ctrl/⌘+Enter 保存」。补上同样的行级 KeyDown，并把键位写进按钮的无障碍说明，
 // 用户不必先到处试键。锁：Ctrl+Enter 真触发保存，裸 Enter 不触发（归 Ui.onClick）。
-// 生成设置此前是设置区唯一不认 Ctrl+Enter 的表单：本地其余表单（服务商 / MCP / 会话参数）
+// 生成设置此前是设置区唯一不认 Ctrl+Enter 的表单：本地其余表单（模型服务 / MCP / 对话参数）
 // 全部「Ctrl/⌘+Enter 保存」。按钮的无障碍说明现在把键位写清楚，不必靠试。
 // 键盘路由本身的验证不在此处：合成按键在无头窗口里不会从焦点控件冒泡到祖先
 // （同一原因，SettingsProviders / SettingsTools 的行级 KeyDown 也没有单测），
 // 这里只锁用户可观察的那一半——按钮自描述里的键位。
-// 服务器默认值采用明确提交：移开焦点不发送请求，目录刷新不覆盖草稿。
+// 主机默认值采用明确提交：移开焦点不发送请求，目录刷新不覆盖草稿。
 // 保存动作必须携带编辑值；确认成功后才清除未保存状态。
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -347,14 +347,14 @@ let ``missing key reads as warning tag and disabled provider dims its text`` () 
     Assert.Equal(Tokens.warning.Color, ((warningTag :?> Border).BorderBrush :?> SolidColorBrush).Color)
     let mutedName =
         firstTextBlock built "本地推理"
-        |> Option.defaultWith (fun () -> failwith "已停用服务商卡缺少名称文本")
+        |> Option.defaultWith (fun () -> failwith "已停用模型服务卡缺少名称文本")
     Assert.Same(Tokens.textMuted, mutedName.Foreground)
     let enabledName =
         firstTextBlock built "OpenAI"
-        |> Option.defaultWith (fun () -> failwith "启用中服务商卡缺少名称文本")
+        |> Option.defaultWith (fun () -> failwith "启用中模型服务卡缺少名称文本")
     Assert.Same(Tokens.text, enabledName.Foreground)
     let rowActionButtons = iconButtons built |> Seq.toList
-    Assert.True(rowActionButtons.Length >= 4, "每个服务商行都应保留编辑与更多按钮")
+    Assert.True(rowActionButtons.Length >= 4, "每个模型服务行都应保留编辑与更多按钮")
     Assert.All(rowActionButtons, fun button -> Assert.True(button.IsEnabled && button.IsHitTestVisible))
     )
 
@@ -402,7 +402,7 @@ let ``settings window title dominates section headings`` () =
         firstTextBlock settings "设置"
         |> Option.defaultWith (fun () -> failwith "设置缺少窗口标题")
     let sectionHeading =
-        firstTextBlock settings "服务商"
+        firstTextBlock settings "模型服务"
         |> Option.defaultWith (fun () -> failwith "分区缺少小节标题")
     // 窗口（页面主标题）应不小于小节标题，消除「标题 < 小节标题」的层级倒挂。
     Assert.True(windowTitle.FontSize >= sectionHeading.FontSize, "窗口标题应不小于小节标题")
@@ -457,7 +457,7 @@ let ``built-in tool row title shares the row-title body font`` () =
     let nameBlock =
         firstTextBlock built "读取文件"
         |> Option.defaultWith (fun () -> failwith "内置工具行缺少名称文本")
-    // 与 MCP 行名、服务商行名同一「行标题」角色，统一 fontBody（此前本地用 fontSmall）。
+    // 与 MCP 行名、模型服务行名同一「行标题」角色，统一 fontBody（此前本地用 fontSmall）。
     Assert.Equal(Tokens.fontBody, nameBlock.FontSize, 3)
     )
 

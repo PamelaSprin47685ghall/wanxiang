@@ -4,7 +4,7 @@ open System
 open System.Text.Json
 open System.Text.Json.Nodes
 
-/// 侧栏一行所需的会话摘要（`conversation-list.snapshot` 的解析结果）。
+/// 侧栏一行所需的对话摘要（`conversation-list.snapshot` 的解析结果）。
 type ConversationSummary = {
     id: Guid
     title: string
@@ -80,7 +80,7 @@ module ConversationSummary =
             let createdAt =
                 match DateTimeOffset.TryParse(str o "createdAt" "") with
                 | true, value -> value
-                // 坏时间戳回退到 Unix 纪元：排最后、永不进“今天”，绝不冒充刚建的会话（D6）。
+                // 坏时间戳回退到 Unix 纪元：排最后、永不进“今天”，绝不冒充刚建的对话（D6）。
                 | _ -> DateTimeOffset.UnixEpoch
             let updatedAt =
                 match DateTimeOffset.TryParse(str o "updatedAt" "") with
@@ -88,7 +88,7 @@ module ConversationSummary =
                 | _ -> createdAt
             Some
                 { id = id
-                  title = (let t = str o "title" "" in if String.IsNullOrWhiteSpace t then "未命名会话" else t)
+                  title = (let t = str o "title" "" in if String.IsNullOrWhiteSpace t then "未命名对话" else t)
                   preview = str o "lastMessage" ""
                   running = isGeneratingStatus (str o "runtimeState" "idle")
                   pinned = boolOf o "pinned"
@@ -110,7 +110,7 @@ module ConversationSummary =
                   | None -> ()
               | _ -> () ]
 
-    /// 搜索过滤：标题、预览、模型与服务商均参与匹配，支持多关键词空格分词。
+    /// 搜索过滤：标题、预览、模型与模型服务均参与匹配，支持多关键词空格分词。
     let matches (query: string) (summary: ConversationSummary) =
         if String.IsNullOrWhiteSpace query then true
         else
@@ -178,12 +178,12 @@ module ConversationSummary =
                 items = sortPinnedArchived archived } ]
 
 // ---------------------------------------------------------------------------
-// W4 对话库：分叉谱系、同一消息的版本切换、全文搜索命中（决策 75–79）。
+// W4 对话库：分叉谱系、同一消息的版本切换、全文搜索命中（决策 201–205）。
 // 全部是 `conversation-list.snapshot` / `search.results` 的**只读派生**，不新增任何持久事实；
 // 与 `ConversationSummary` 记录分开放，原记录字段不变（旧构造点不受影响）。
 // ---------------------------------------------------------------------------
 
-/// 一个分叉的谱系（根对话没有）。字段缺省 = 旧服务端没发，界面退回“只显示分叉标记”。
+/// 一个分叉的谱系（根对话没有）。字段缺省 = 旧主机没发，界面退回“只显示分叉标记”。
 type ForkLineage = {
     parentId: Guid
     /// 分叉点：父对话里最后一条被继承的消息（None = 从第一条消息处分出）
@@ -268,7 +268,7 @@ module ForkLineage =
         let mutable n: JsonNode = null
         o.TryGetPropertyValue(key, &n) && not (isNull n) && n.GetValueKind() = JsonValueKind.True
 
-    /// 解析快照里每一行的谱系；没有 `parentId`（根对话、旧服务端）的行不入表。
+    /// 解析快照里每一行的谱系；没有 `parentId`（根对话、旧主机）的行不入表。
     let parse (items: JsonArray) : Map<Guid, ForkLineage> =
         items
         |> Seq.choose (fun item ->
@@ -289,7 +289,7 @@ module ForkLineage =
             | _ -> None)
         |> Map.ofSeq
 
-    /// 面包屑文案。父对话已删除时只说“原对话已删除”，该分叉仍是完整可用的对话（决策 76）。
+    /// 面包屑文案。父对话已删除时只说“原对话已删除”，该分叉仍是完整可用的对话（决策 202）。
     let breadcrumb (summaries: ConversationSummary list) (lineage: Map<Guid, ForkLineage>) (conversationId: Guid) : ForkBreadcrumb option =
         match lineage.TryFind conversationId with
         | None -> None

@@ -202,12 +202,12 @@ module ExchangeNavTests =
 
     [<Trait("Category", "UI")>]
     [<Fact>]
-    let ``compact 档保留会话菜单且不再堆叠导航按钮`` () =
+    let ``compact 档保留对话菜单且不再堆叠导航按钮`` () =
         Headless.run (fun () ->
         let chat, window =
             buildChat (exchanges 3)
         try
-            let more = named chat "会话操作"
+            let more = named chat "对话操作"
             Assert.True(more.IsVisible)
             chat.SetCompactMode true
             chat.SetConversationChrome true

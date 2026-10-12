@@ -153,7 +153,7 @@ let ``composer shows custom context only when useful and reserves no idle queue 
         window.Show()
         try
             Dispatcher.UIThread.RunJobs()
-            let context = named view "会话上下文"
+            let context = named view "对话上下文"
             let queue = named view "排队发送"
             let send = named view "发送"
             Assert.False(context.IsVisible)
@@ -179,7 +179,7 @@ let ``composer shows custom context only when useful and reserves no idle queue 
 let ``conversation first desktop composition keeps history secondary to the current draft`` (lightTheme: bool) =
     Headless.run (fun () ->
         let initialTheme = Tokens.current ()
-        // 用合成历史检查整幅画面的关系；不连接服务器，不读取真实会话。
+        // 用合成历史检查整幅画面的关系；不连接主机，不读取真实对话。
         let root = Grid(Background = Tokens.canvas)
         root.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength 280.0))
         root.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength ControlMetrics.sidebarDividerWidth))
@@ -212,7 +212,7 @@ let ``conversation first desktop composition keeps history secondary to the curr
         sidebar.SetConnection(true, "已连接")
         sidebar.SetServerUrl("ws://localhost:9000")
         sidebar.SetConversations
-            [ summary "重整会话体验" "讨论页面结构和操作层级" true
+            [ summary "重整对话体验" "讨论页面结构和操作层级" true
               summary "一些随手想法" "留下一点想法，稍后继续" false
               summary "阅读笔记" "整理一段长文的要点" false ]
         let chat = chat ()
@@ -231,8 +231,8 @@ let ``conversation first desktop composition keeps history secondary to the curr
         try
             surface.SetStarting true
             Dispatcher.UIThread.RunJobs()
-            Assert.True((named sidebar "新建会话（Ctrl+N）").IsEffectivelyVisible)
-            Assert.True((named composer "切换本会话使用的模型").IsEffectivelyVisible)
+            Assert.True((named sidebar "新建对话（Ctrl+N）").IsEffectivelyVisible)
+            Assert.True((named composer "切换本对话使用的模型").IsEffectivelyVisible)
             capture window "full-conversation-desktop" lightTheme
         finally
             Tokens.apply initialTheme
@@ -257,7 +257,7 @@ let ``request context and execution actions stay within the composer`` (width: f
             view.SetGenerating true
             view.SetCanStop true
             Dispatcher.UIThread.RunJobs()
-            for name in [ "会话上下文"; "停止生成"; "排队发送"; "添加附件" ] do
+            for name in [ "对话上下文"; "停止生成"; "排队发送"; "添加附件" ] do
                 let control = named view name
                 let point = control.TranslatePoint(Point(), view).Value
                 Assert.True(point.X >= 0.0, name)
@@ -286,11 +286,11 @@ let ``compact conversation menu keeps fork export and reading actions reachable`
         try
             view.RenderMessages([ { MessageView.empty with role = "user"; text = "第一条问题"; commitId = Some 1UL } ], None, None, Tokens.fontReading, true, None, Set.empty)
             Dispatcher.UIThread.RunJobs()
-            let trigger = named root "会话操作"
+            let trigger = named root "对话操作"
             press trigger
             Assert.True((named root "从当前分叉").IsEffectivelyVisible)
-            Assert.True((named root "会话上下文").IsEffectivelyVisible)
-            Assert.True((named root "回到会话开头").IsEffectivelyVisible)
+            Assert.True((named root "对话上下文").IsEffectivelyVisible)
+            Assert.True((named root "回到对话开头").IsEffectivelyVisible)
             press (named root "导出为 Markdown")
             Assert.Equal(1, exports)
             Assert.True(trigger.IsEffectivelyVisible)

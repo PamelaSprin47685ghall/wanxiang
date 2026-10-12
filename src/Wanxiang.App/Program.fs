@@ -239,8 +239,8 @@ module Program =
                     outcome
 
             // 自动配对（决策 64 + Q190）：server+client 同进程时，本机桌面 Client 自动获得永久令牌。
-            // - 服务端 TOML 只存哈希；客户端令牌原文保存到本机 client.toml（决策 54）；
-            // - 任一侧丢失（哈希不在服务端 / 客户端令牌文件丢失）时创建新 token；
+            // - 主机 TOML 只存哈希；客户端令牌原文保存到本机 client.toml（决策 54）；
+            // - 任一侧丢失（哈希不在主机 / 客户端令牌文件丢失）时创建新 token；
             // - 写 TOML 走 ConfigStore.Rewrite 原子路径（临时文件 + rename + reload，决策 42/43）。
             if switches.server && switches.client then
                 let clientConfigPath = Path.Combine(Path.GetDirectoryName configPath, "client.toml")
@@ -318,7 +318,7 @@ module Program =
                 | Ok () -> ()
                 | Error e -> logInfo(sprintf "desktop auto-pairing skipped: %s" e)
 
-            // 服务器（若启用）：后台线程运行。
+            // 主机（若启用）：后台线程运行。
             let serverApp =
                 if effectiveServer then
                     let pwaDir =
@@ -392,7 +392,7 @@ module Program =
                 match sigterm with Some r -> r.Dispose() | None -> ()
                 code
             else
-                // 无 UI：服务器等待信号优雅关闭（决策 101/102）。
+                // 无 UI：主机等待信号优雅关闭（决策 101/102）。
                 // SIGTERM（kill 默认）与 SIGINT（Ctrl+C）都触发优雅关闭：第一次排空退出，第二次立即退出。
                 use cts = new CancellationTokenSource()
                 let signalLock = obj()

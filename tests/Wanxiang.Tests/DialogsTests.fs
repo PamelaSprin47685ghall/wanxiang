@@ -55,8 +55,8 @@ module DialogsTests =
 
             Dialogs.prompt
                 overlay
-                "重命名会话"
-                "请输入新的会话标题"
+                "重命名对话"
+                "请输入新的对话标题"
                 "旧标题"
                 "确定"
                 (fun v onComplete ->
@@ -132,8 +132,8 @@ module DialogsTests =
             // 1. 验证取消按钮
             Dialogs.confirm
                 overlay
-                "删除会话"
-                "确定要删除此会话吗？此操作无法撤销。"
+                "删除对话"
+                "确定要删除此对话吗？此操作无法撤销。"
                 "删除"
                 (fun () -> confirmed <- true)
 
@@ -425,7 +425,7 @@ module DialogsTests =
                 descendants overlay.Root
                 |> Seq.exists (fun c ->
                     match c with
-                    | :? TextBlock as tb when not (isNull tb.Text) && tb.Text.Contains("新建会话") -> true
+                    | :? TextBlock as tb when not (isNull tb.Text) && tb.Text.Contains("新建对话") -> true
                     | _ -> false)
             Assert.True(hasNewSessionShortcut, "应当显示全局快捷键帮助")
 

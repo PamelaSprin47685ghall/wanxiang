@@ -437,7 +437,7 @@ let ``Auth PairingState 完整生命周期：未启动、启动、防重放、�
     // 1. 未启动时尝试消费
     match ps.TryConsume(now, "123456") with
     | Error msg -> Assert.Equal("no pairing session active", msg)
-    | Ok () -> failwith "未激活会话不应允许消费"
+    | Ok () -> failwith "未激活对话不应允许消费"
 
     Assert.True ps.ActiveSession.IsNone
 

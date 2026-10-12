@@ -107,7 +107,7 @@ let private buildSidebar () =
     root.Children.Add sidebar
     root, overlay, sidebar
 
-// ── 1. 零会话：搜索框 Down 落到唯一的顶部新建入口 ─────────────────────────
+// ── 1. 零对话：搜索框 Down 落到唯一的顶部新建入口 ─────────────────────────
 
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -116,7 +116,7 @@ let ``down in the search box reaches the empty state action`` () =
     let root, _, sidebar = buildSidebar ()
     let window = show root 320.0 420.0
     try
-        // 零会话仍有顶部新建入口；空态不能再造第二个同样的按钮。
+        // 零对话仍有顶部新建入口；空态不能再造第二个同样的按钮。
         sidebar.SetConnection(true, "已连接")
         sidebar.SetConversationListLoading false
         sidebar.SetConversations []
@@ -124,16 +124,16 @@ let ``down in the search box reaches the empty state action`` () =
         let searchBox =
             descendants root
             |> Seq.tryPick (function
-                | :? TextBox as tb when not (isNull tb.PlaceholderText) && tb.PlaceholderText = "搜索会话" -> Some tb
+                | :? TextBox as tb when not (isNull tb.PlaceholderText) && tb.PlaceholderText = "搜索对话" -> Some tb
                 | _ -> None)
             |> Option.defaultWith (fun () -> failwith "侧栏缺少搜索框")
-        let actionButton = byNameOrFail root "新建会话（Ctrl+N）"
+        let actionButton = byNameOrFail root "新建对话（Ctrl+N）"
         searchBox.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
         let e = privateKey searchBox Key.Down
         Dispatcher.UIThread.RunJobs()
         Assert.True(e.Handled, "空态下 Down 必须被侧栏消费")
-        Assert.True(actionButton.IsFocused, "焦点应落到顶部唯一的新建会话入口")
+        Assert.True(actionButton.IsFocused, "焦点应落到顶部唯一的新建对话入口")
     finally
         window.Close()
     )
@@ -277,9 +277,9 @@ let ``next question anchors on the topmost visible card`` () =
         window.Close()
     )
 
-// 批量删除含当前会话时，主视图不能挂在已删会话上：单条删除早已落在邻位，
-// 批量这条路此前直接漏掉，删完主屏仍留着已删会话的内容，此刻发消息/停止
-// 都撞服务端「会话不存在」。锁三条：含当前→邻位；不含当前→不动；
+// 批量删除含当前对话时，主视图不能挂在已删对话上：单条删除早已落在邻位，
+// 批量这条路此前直接漏掉，删完主屏仍留着已删对话的内容，此刻发消息/停止
+// 都撞主机「对话不存在」。锁三条：含当前→邻位；不含当前→不动；
 // 整列全删→欢迎页（None）。
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -317,7 +317,7 @@ let ``batch delete of the active conversation lands on a surviving neighbor`` ()
               lastCommitId = 1UL }
         sidebar.SetConversations [ summary kept; summary doomed; summary doomed2 ]
         Dispatcher.UIThread.RunJobs()
-        // 邻位判定只读 activeConvId 与侧栏可见顺序，先设当前会话为 doomed。
+        // 邻位判定只读 activeConvId 与侧栏可见顺序，先设当前对话为 doomed。
         activeField.SetValue(shell, box (Some doomed))
         let m = typeof<MainView>.GetMethod("NeighborExcluding", flags)
         Assert.True(not (isNull m), "NeighborExcluding 应可反射到")
@@ -325,7 +325,7 @@ let ``batch delete of the active conversation lands on a surviving neighbor`` ()
         Assert.Equal(Some kept, neighbor)
         let withOther =
             unbox<Guid option>(m.Invoke(shell, [| box [ doomed2 ] |]))
-        Assert.True(withOther.IsNone, "批量删除不含当前会话：主视图不搬家")
+        Assert.True(withOther.IsNone, "批量删除不含当前对话：主视图不搬家")
         // 整列全删：退回欢迎页（None 由调用方翻译成 SelectConversation None）。
         let noneLeft =
             unbox<Guid option>(m.Invoke(shell, [| box [ kept; doomed; doomed2 ] |]))

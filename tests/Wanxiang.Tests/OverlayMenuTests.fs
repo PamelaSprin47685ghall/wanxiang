@@ -70,7 +70,7 @@ let select_button_carries_an_automation_name_that_tracks_the_text () =
     Assert.Equal("跟随系统", AutomationProperties.GetName host)
     setText "浅色"
     Assert.Equal("浅色", AutomationProperties.GetName host)
-    // 调用方显式命名（模型卡片「切换本会话使用的模型」等）优先，不被下拉文本覆盖。
+    // 调用方显式命名（模型卡片「切换本对话使用的模型」等）优先，不被下拉文本覆盖。
     let named, _ = Menu.selectButton (OverlayHost(Grid())) "gpt-4o" (fun () -> [])
     AutomationProperties.SetName(named, "切换模型")
     setText "无所谓" |> ignore

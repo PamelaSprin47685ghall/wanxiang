@@ -13,16 +13,16 @@ open Wanxiang.Config
 type McpToolInfo = {
     name: string
     description: string
-    /// 服务器给出的 inputSchema。转发给模型，模型才能填对参数。
+    /// MCP 服务给出的 inputSchema。转发给模型，模型才能填对参数。
     inputSchema: JsonNode option
 }
 
-/// MCP 客户端：一个 MCP 服务器一个实例，按需连接。
+/// MCP 客户端：一个 MCP 服务一个实例，按需连接。
 ///
 /// 与旧实现的三处关键差别：
 /// 1. 工具声明会被缓存并暴露出去（`Tools()`），因此界面能列出可用工具，
 ///    模型也能拿到真实的 `inputSchema` 与描述，而不是一个 `args: string`；
-/// 2. 每次调用都有超时（`callTimeoutSeconds`），挂死的服务器不再冻结整场生成；
+/// 2. 每次调用都有超时（`callTimeoutSeconds`），挂死的 MCP 服务不再冻结整场生成；
 /// 3. 传输可以是本地 stdio 也可以是远程 HTTP。
 type McpClient(config: McpServerConfig, onLog: string -> unit) =
 
@@ -78,7 +78,7 @@ type McpClient(config: McpServerConfig, onLog: string -> unit) =
                     Interlocked.Decrement(&activeCount) |> ignore
         }
 
-    /// 拉取并缓存工具声明。失败返回空列表并记日志（不阻塞会话）。
+    /// 拉取并缓存工具声明。失败返回空列表并记日志（不阻塞对话）。
     member this.LoadTools(ct: CancellationToken) : Task<McpToolInfo list> =
         task {
             let! response = this.Request("tools/list", JsonObject(), ct)

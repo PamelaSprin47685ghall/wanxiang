@@ -11,7 +11,7 @@ open Wanxiang.Core
 /// 三件事在这里发生，而且只在这里发生：
 /// 1. 投影里的透明 JSON 还原成 `ChatMessage`；
 /// 2. 消息携带的附件引用解析成模型真正能读的内容（图片 / 文本）；
-/// 3. 按预算裁剪历史，避免长会话必然撞上上游的 context 上限。
+/// 3. 按预算裁剪历史，避免长对话必然撞上上游的 context 上限。
 module GenerationContext =
 
     /// 裁剪时始终保留的尾部消息数：太少会让模型丢掉刚才的问题。
@@ -52,7 +52,7 @@ module GenerationContext =
                 keep [] maxTokens (List.rev byCount)
         dropOrphanToolResults byBudget
 
-    /// 会话当前有效上下文。`loadBlob` 用于解析附件内容，
+    /// 对话当前有效上下文。`loadBlob` 用于解析附件内容，
     /// `support` 声明当前传输吃得下哪些二进制媒体（各家差别很大）。
     let build
         (proj: Projection)

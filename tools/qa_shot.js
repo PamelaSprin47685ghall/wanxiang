@@ -2,12 +2,12 @@
 // 万象 PWA 视觉 QA：7 态截图 + 几何门禁。
 //
 // 设计原则（verify-round2 教训）：纯坐标点击在 compact 抽屉下不可靠
-// （点击落在抽屉行上变成选中会话，输入框永远拿不到焦点，三次发送零提交）。
-// 因此状态驱动走 WebSocket 协议（配对→建会话→发 LONG/TOOL/FAIL→等 generation.finished，
-// 服务端 ack 即内容断言），浏览器只负责渲染截图；纯 UI 动作（选会话行、开设置）
+// （点击落在抽屉行上变成选中对话，输入框永远拿不到焦点，三次发送零提交）。
+// 因此状态驱动走 WebSocket 协议（配对→建对话→发 LONG/TOOL/FAIL→等 generation.finished，
+// 主机 ack 即内容断言），浏览器只负责渲染截图；纯 UI 动作（选对话行、开设置）
 // 必须做像素变化断言，失败重试 3 次再报错。
 // 用法：node tools/qa_shot.js --tag <name> [--theme dark] [--width 1440] [--height 900] [--scale 1.25]
-// 依赖：puppeteer-core + 本机 google-chrome；服务端需运行并已 qa_provision.js 配好 mock。
+// 依赖：puppeteer-core + 本机 google-chrome；主机需运行并已 qa_provision.js 配好 mock。
 
 const puppeteer = require('puppeteer-core');
 const { createHash, randomUUID } = require('node:crypto');
@@ -137,7 +137,7 @@ async function main() {
         return null;
     });
 
-    // ---- 协议面：配对 + 建会话（mock 模型 + echo 工具）----
+    // ---- 协议面：配对 + 建对话（mock 模型 + echo 工具）----
     const wsUrl = BASE.replace('http', 'ws') + '/ws';
     const ctl = makeClient(wsUrl);
     await ctl.open();
@@ -169,7 +169,7 @@ async function main() {
     ctl.send('conversation.observe', { conversationId: convId });
     await ctl.waitFor((e) => e.type === 'conversation.snapshot', 15000, 'conversation snapshot');
 
-    // ---- 展现面：凭据写入 IndexedDB，浏览器自动连接同一会话列表 ----
+    // ---- 展现面：凭据写入 IndexedDB，浏览器自动连接同一对话列表 ----
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await sleep(3500);
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -283,12 +283,12 @@ async function main() {
     await shot('01-connected');
     await resizeSweep('connected');
 
-    // 02 空会话：点第一行（WS 建的 QA 会话，按更新时间置顶）
+    // 02 空对话：点第一行（WS 建的 QA 对话，按更新时间置顶）
     await clickExpectChange(rowX, 190, 'open-qa-conversation');
     await sleep(800);
     await shot('02-new-conversation');
 
-    // 03/04 LONG：流式中 vs 完成（服务端 ack 即内容断言）
+    // 03/04 LONG：流式中 vs 完成（主机 ack 即内容断言）
     ctl.send('chat.user-message.enqueue', {
         invocationId: randomUUID(),
         conversationId: convId,
