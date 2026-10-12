@@ -956,6 +956,8 @@ type Composer(actions: ComposerActions) as this =
         // 决策 368：手机上附件排成一行横向滚动，不再一行一个把输入框挤掉一半。
         attachmentScroller.HorizontalScrollBarVisibility <- (if value then ScrollBarVisibility.Auto else ScrollBarVisibility.Disabled)
         attachmentScroller.VerticalScrollBarVisibility <- (if value then ScrollBarVisibility.Disabled else ScrollBarVisibility.Auto)
+        // 横向滚动条在小卡下方留出一条轨道，不压住文件名。
+        attachmentStrip.Margin <- (if value then Thickness(0.0, 0.0, 0.0, Spacing.spaceMd) else Thickness 0.0)
         this.Padding <-
             if value then
                 // compact 档：固定收紧边距，不随宽度浮动（窄屏省地优先于呼吸感）。

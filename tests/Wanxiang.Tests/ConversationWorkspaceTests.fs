@@ -159,7 +159,15 @@ let ``composer shows custom context only when useful and reserves no idle queue 
             Assert.False(context.IsVisible)
             Assert.False(queue.IsVisible)
             let idleRightEdge = send.TranslatePoint(Point(send.Bounds.Width, 0.0), view).Value.X
+            // 决策 364：只开了工具不算特殊设置，底栏不显示「工具 N 项」。
             view.SetSessionContext(Some { SessionConfig.empty with tools = [ "example-tool" ] }, true, ignore)
+            Assert.False(context.IsVisible)
+            view.SetSessionContext(Some { SessionConfig.empty with instructions = Some "简短回答" }, true, ignore)
+            Assert.True(context.IsVisible)
+            // 手机（compact）底栏只留模型、附件、发送。
+            view.SetCompactMode true
+            Assert.False(context.IsVisible)
+            view.SetCompactMode false
             Assert.True(context.IsVisible)
             view.SetGenerating true
             Dispatcher.UIThread.RunJobs()
@@ -246,8 +254,9 @@ let ``request context and execution actions stay within the composer`` (width: f
     Headless.run (fun () ->
         let initialTheme = Tokens.current ()
         let view = composer ()
-        view.SetSessionContext(Some { SessionConfig.empty with tools = [ "test-tool" ] }, true, ignore)
-        view.SetCompactMode(width < LayoutPolicy.compactBreakpoint)
+        view.SetSessionContext(Some { SessionConfig.empty with instructions = Some "简短回答" }, true, ignore)
+        let compact = width < LayoutPolicy.compactBreakpoint
+        view.SetCompactMode compact
         view.SetModelLabel(String.replicate 12 "模型名称")
         let window = Window(Width = width, Height = 620.0, Content = view)
         applyTheme window lightTheme
@@ -257,7 +266,7 @@ let ``request context and execution actions stay within the composer`` (width: f
             view.SetGenerating true
             view.SetCanStop true
             Dispatcher.UIThread.RunJobs()
-            for name in [ "对话上下文"; "停止生成"; "排队发送"; "添加附件" ] do
+            for name in [ (if compact then "添加附件" else "对话上下文"); "停止生成"; "排队发送"; "添加附件" ] do
                 let control = named view name
                 let point = control.TranslatePoint(Point(), view).Value
                 Assert.True(point.X >= 0.0, name)
