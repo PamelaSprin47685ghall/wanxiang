@@ -30,6 +30,8 @@ module Program =
             let rich = BrowserRichBackend()
             RichBackend.install rich
             rich.Warmup()
+            // 决策 342：图片缩小交给浏览器（原生解码 + Canvas，异步），不占 wasm 单线程
+            ImageShrink.platformShrinker <- Some BrowserImageShrink.shrink
             do!
                 AppBuilder
                     .Configure<App>()

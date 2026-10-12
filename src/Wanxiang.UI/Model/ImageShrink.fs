@@ -163,6 +163,26 @@ module ImageShrink =
             with ex ->
                 Error(sprintf "没有添加「%s」：图片无法读取（%s）。请换一张图片。" fileName ex.Message)
 
+    /// 决策 342：平台可以换上异步的缩小实现（PWA 用浏览器原生解码与 Canvas，不卡 wasm 单线程）。
+    /// 参数：文件名、原始字节、媒体类型；返回 None 表示平台做不到，回退到上面的 Skia 实现。
+    let mutable platformShrinker: (string -> byte[] -> string -> Async<Result<ShrunkImage, string> option>) option = None
+
+    /// 异步缩小：先做与 `shrink` 相同的前置判断（不需要 / 动图），再优先交给平台实现。
+    let shrinkAsync (fileName: string) (bytes: byte[]) : Async<Result<ShrunkImage option, string>> =
+        async {
+            if not (needsShrink fileName bytes) then return Ok None
+            elif isAnimated bytes then return shrink fileName bytes
+            else
+                match platformShrinker with
+                | Some f ->
+                    let! r = f fileName bytes (MediaTypes.ofFileName fileName)
+                    match r with
+                    | Some(Ok s) -> return Ok(Some { s with fileName = renamed fileName (if s.mediaType = "image/png" then ".png" else ".jpg"); originalBytes = int64 bytes.Length })
+                    | Some(Error e) -> return Error e
+                    | None -> return shrink fileName bytes
+                | None -> return shrink fileName bytes
+        }
+
     /// 给用户看的一句话：原图 vs 实际发送。
     let note (r: ShrunkImage) =
         sprintf "已自动缩小：原图 %s（%d×%d）→ 发送 %s（%d×%d）"

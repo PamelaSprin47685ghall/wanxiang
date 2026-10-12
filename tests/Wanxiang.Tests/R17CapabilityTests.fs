@@ -98,3 +98,39 @@ let ``ollama version body parsing`` () =
     Assert.True(ModelCapabilities.ofOllamaVersion """{"version":"0.5.1"}""")
     Assert.False(ModelCapabilities.ofOllamaVersion """<html>""")
     Assert.False(ModelCapabilities.ofOllamaVersion """{"error":"x"}""")
+
+let private bigImage () =
+    use bmp = new SkiaSharp.SKBitmap(5000, 100)
+    bmp.Erase(SkiaSharp.SKColors.Coral)
+    use img = SkiaSharp.SKImage.FromBitmap bmp
+    img.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100).ToArray()
+
+[<Fact>]
+let ``shrinkAsync prefers the platform shrinker and falls back to Skia when it declines`` () =
+    let bytes = bigImage ()
+    let saved = Wanxiang.UI.ImageShrink.platformShrinker
+    try
+        let mutable called = 0
+        Wanxiang.UI.ImageShrink.platformShrinker <-
+            Some(fun _ b mt ->
+                async {
+                    called <- called + 1
+                    return
+                        Some(
+                            Ok
+                                { Wanxiang.UI.ShrunkImage.bytes = [| 1uy |]; fileName = "x"; mediaType = "image/jpeg"
+                                  originalBytes = 0L; originalWidth = 5000; originalHeight = 100; width = 4096; height = 82 }
+                        )
+                })
+        match Wanxiang.UI.ImageShrink.shrinkAsync "wide.png" bytes |> Async.RunSynchronously with
+        | Ok(Some r) ->
+            Assert.Equal(1, called)
+            Assert.Equal("wide.jpg", r.fileName)
+            Assert.Equal(int64 bytes.Length, r.originalBytes)
+        | other -> failwithf "unexpected %A" other
+        Wanxiang.UI.ImageShrink.platformShrinker <- Some(fun _ _ _ -> async { return None })
+        match Wanxiang.UI.ImageShrink.shrinkAsync "wide.png" bytes |> Async.RunSynchronously with
+        | Ok(Some r) -> Assert.True(r.width <= 4096 && r.bytes.Length > 1)
+        | other -> failwithf "unexpected %A" other
+    finally
+        Wanxiang.UI.ImageShrink.platformShrinker <- saved
