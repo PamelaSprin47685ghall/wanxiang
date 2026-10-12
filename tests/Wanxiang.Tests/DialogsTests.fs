@@ -5,6 +5,7 @@ open Avalonia
 open Avalonia.Automation
 open Avalonia.Controls
 open Avalonia.Input
+open Avalonia.Input.TextInput
 open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Threading
@@ -272,6 +273,36 @@ module DialogsTests =
             codeBox.Text <- "123456"
             click pairOkBtn.Value
             Assert.Equal(Some "123456", pairingCodeSubmitted)
+        )
+
+    [<Trait("Category", "UI")>]
+    [<Fact>]
+    let ``pairing code box normalizes pasted text and auto-submits at six digits`` () =
+        Headless.run (fun () ->
+            let root = Grid()
+            let overlay = OverlayHost(root)
+            let submitted = ResizeArray<string>()
+            Dialogs.connect overlay "ws://127.0.0.1:8765/ws" ignore (fun code -> submitted.Add code) |> ignore
+            Dispatcher.UIThread.RunJobs()
+            click (findButton overlay.Root "没有令牌？改用配对码").Value
+            let codeBox =
+                descendants overlay.Root
+                |> Seq.pick (fun c ->
+                    match c with
+                    | :? TextBox as tb when tb.MaxLength = 6 -> Some tb
+                    | _ -> None)
+            // 触屏数字键盘
+            Assert.Equal(TextInputContentType.Digits, TextInputOptions.GetContentType codeBox)
+            // 不足 6 位：只清洗不提交
+            codeBox.Text <- "12 3-a4"
+            Dispatcher.UIThread.RunJobs()
+            Assert.Equal("1234", codeBox.Text)
+            Assert.Empty submitted
+            // 粘贴“123 456”：归一化后凑满 6 位自动提交
+            codeBox.Text <- "123 456"
+            Dispatcher.UIThread.RunJobs()
+            Assert.Equal("123456", codeBox.Text)
+            Assert.Equal<string list>([ "123456" ], List.ofSeq submitted)
         )
 
     [<Trait("Category", "UI")>]
