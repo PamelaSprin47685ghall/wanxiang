@@ -254,3 +254,30 @@ module MessageView =
                         | Some result -> { call with result = Some result }
                         | None -> call)
                 Some { m with toolCalls = filled })
+
+/// 对话尾部的回复链（最后一条用户消息之后的 assistant / tool 消息）。
+/// 主机的重新生成会整段删掉它（CommandEngine：连续 assistant/tool 全删）。
+module ReplyTail =
+
+    let private isReply (m: MessageView) = m.role = "assistant" || m.role = "tool"
+
+    /// 尾部回复链，按原顺序。
+    let chain (messages: MessageView list) : MessageView list =
+        messages |> List.rev |> List.takeWhile isReply |> List.rev
+
+    /// 最新一条有正文的回复；没有则 None（决策 220：Ctrl+Shift+C 复制它）。
+    let latestText (messages: MessageView list) : string option =
+        chain messages
+        |> List.rev
+        |> List.tryFind (fun m -> m.role = "assistant" && not (System.String.IsNullOrWhiteSpace m.text))
+        |> Option.map _.text
+
+    /// 重新生成会不会丢掉用户看得见的东西（决策 221）：尾部回复链只要有正文、
+    /// 思维链或工具调用，就要确认；失败时什么都没留下的，直接重试，不再多问一次。
+    let hasLosableContent (messages: MessageView list) : bool =
+        chain messages
+        |> List.exists (fun m ->
+            not (System.String.IsNullOrWhiteSpace m.text)
+            || not (System.String.IsNullOrWhiteSpace m.reasoning)
+            || not (List.isEmpty m.toolCalls)
+            || not (List.isEmpty m.toolResults))

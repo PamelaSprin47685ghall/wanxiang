@@ -882,23 +882,46 @@ type MainView() as this =
         match activeConvId with
         | None -> ()
         | Some convId ->
-            // 重新生成不可恢复：主机会删掉尾部整段回复链
-            // （CommandEngine.fs:220-232 连续 assistant/tool 消息全删）再重新生成。
-            // 本项目每一个不可恢复操作——删对话、批量删、删消息、删模型服务、删
-            // MCP——全部有确认框，此前唯独重新生成没有；误点一次，上一轮回复
-            // 连内容带引用全部消失。kelivo 同样确认（chat_message_widget.dart:1346-1375
-            // _confirmRegeneration，默认开启）。
-            Dialogs.confirm
-                overlay
-                "重新生成"
-                "将丢弃当前这条回复并重新生成。此操作无法撤销。"
-                "重新生成"
-                (fun () ->
-                    runs.ClearError convId
-                    sendCommand (RegenerateResponse {| invocationId = newInvocation (); conversationId = convId |})
-                    this.Render()
-                    // 错误卡片随重试卸载：焦点无处可去会掉到页顶，先交还给输入区。
-                    composer.Focus())
+            let fire () =
+                runs.ClearError convId
+                sendCommand (RegenerateResponse {| invocationId = newInvocation (); conversationId = convId |})
+                this.Render()
+                // 错误卡片随重试卸载：焦点无处可去会掉到页顶，先交还给输入区。
+                composer.Focus()
+            // 重新生成不可恢复：主机会删掉尾部整段回复链再重新生成，所以有内容时必须确认
+            // （与删对话 / 删消息同规则，kelivo 同样默认确认）。但生成失败、尾部什么都没
+            // 留下时，确认框只是在「重试」上多加一步，问的还是一句不成立的「将丢弃当前回复」
+            // ——直接重试（决策 221）。
+            let losable =
+                activeConversation ()
+                |> Option.map (fun view -> ReplyTail.hasLosableContent (messagesOf view))
+                |> Option.defaultValue false
+            if not losable then fire ()
+            else
+                Dialogs.confirm
+                    overlay
+                    "重新生成"
+                    "将丢弃当前这条回复并重新生成。此操作无法撤销。"
+                    "重新生成"
+                    fire
+
+    /// Ctrl+Shift+G：与卡片菜单的「重新生成」同一路径；生成中、未连接、尾部不是回复时不动作。
+    member private this.RegenerateLatest() =
+        match activeConversation () with
+        | Some view when not (runs.Get activeConvId).generationId.IsSome ->
+            let messages = messagesOf view
+            match List.tryLast messages with
+            | Some last when last.role = "user" || not (List.isEmpty (ReplyTail.chain messages)) ->
+                this.Regenerate()
+            | _ -> toast "这段对话还没有可以重新生成的回复" Warning
+        | Some _ -> toast "正在生成；先按 Esc 停止，再重新生成" Info
+        | None -> toast "没有打开的对话" Warning
+
+    /// Ctrl+Shift+C：复制最新一条有正文的回复。
+    member private this.CopyLatestReply() =
+        match activeConversation () |> Option.bind (fun view -> ReplyTail.latestText (messagesOf view)) with
+        | Some text -> copyToClipboard text
+        | None -> toast "还没有可以复制的回复" Warning
 
     member private this.StopGeneration() =
         match activeConvId, (runs.Get activeConvId).generationId with
@@ -1353,6 +1376,8 @@ type MainView() as this =
                  | AlwaysDark -> "已切换为深色主题"
                  | AlwaysLight -> "已切换为浅色主题")
                 Info
+        | CopyLastReply -> e.Handled <- true; this.CopyLatestReply()
+        | RegenerateLast -> e.Handled <- true; this.RegenerateLatest()
         | ExportConversation ->
             e.Handled <- true
             match activeSummary() with
@@ -2133,6 +2158,7 @@ type MainView() as this =
                     if prefs.theme = FollowSystem then
                         Dispatcher.UIThread.Post(fun () -> this.ApplyTheme()))
         this.KeyDown.Add(fun e -> this.HandleShortcut e)
+        chat.SetStarterHandler(fun seed -> composer.SetText seed)
         this.PropertyChanged.Add(fun args ->
             if args.Property = Visual.BoundsProperty then
                 this.ApplyResponsiveLayout this.Bounds.Width)

@@ -28,6 +28,14 @@ type ChatActions = {
     message: MessageActions
 }
 
+/// 空对话的起手式：标签 → 填进输入框的开头。只给开头不给整句，用户补完再发（决策 222）。
+module ChatStarters =
+    let items =
+        [ "解释概念", "用通俗的话解释："
+          "总结要点", "帮我总结下面这段内容的要点：\n\n"
+          "改写润色", "帮我改写得更清楚、更简洁：\n\n"
+          "写代码", "写一段代码，实现：" ]
+
 /// 空态在不同前提下要说不同的话，否则用户不知道下一步做什么。
 type ChatEmptyState =
     /// 未连接（无保存凭据）
@@ -186,6 +194,20 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         btn.IsVisible <- false
         btn
     let mutable lastEmptyState: (ChatEmptyState * string option) option = None
+    /// 空对话的起手式（决策 222）：点一下只把半句话填进输入框，不替用户发送。
+    let mutable starterPick: (string -> unit) option = None
+    let starterRow () : Control =
+        let row = WrapPanel(Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center)
+        row.Margin <- Thickness(0.0, Spacing.spaceXl, 0.0, 0.0)
+        for (label, seed) in ChatStarters.items do
+            let chip = Ui.button Ui.Secondary label (fun () -> starterPick |> Option.iter (fun pick -> pick seed))
+            chip.Margin <- Thickness(Spacing.spaceXs)
+            chip.Focusable <- true
+            chip.Name <- "starter-chip"
+            ToolTip.SetTip(chip, sprintf "填入「%s」" seed)
+            Avalonia.Automation.AutomationProperties.SetName(chip, label)
+            row.Children.Add chip
+        row :> Control
     let skeletonPanel =
         StackPanel(
             Orientation = Orientation.Vertical,
@@ -691,6 +713,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         emptyPanel.VerticalAlignment <- if value then VerticalAlignment.Bottom else VerticalAlignment.Center
         emptyPanel.Margin <- Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, Spacing.space2xl)
 
+    /// 起手式的去处（通常是 Composer.SetText）；不设则空态不显示起手式。
+    member _.SetStarterHandler(pick: string -> unit) =
+        starterPick <- Some pick
+        lastEmptyState <- None
+
     member this.ShowEmpty(state: ChatEmptyState, onPrimary: (string * (unit -> unit)) option) =
         match onPrimary with
         | Some(_, action) -> currentPrimaryAction <- action
@@ -722,6 +749,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             | NoConversation | EmptyConversation ->
                 emptyPanel.Children.Add(
                     Ui.conversationPrompt title hint (onPrimary |> Option.map (fun _ -> emptyActionButton)))
+                if starterPick.IsSome then emptyPanel.Children.Add(starterRow ())
             | NotConnected | ConnectionFailed _ | NoProvider ->
                 let logo = brandLogo Tokens.logoEmpty
                 logo.HorizontalAlignment <- HorizontalAlignment.Center

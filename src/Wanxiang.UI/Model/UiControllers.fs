@@ -630,6 +630,10 @@ type ShortcutAction =
     | ScrollToEnd
     /// 关闭主窗口：桌面端 Ctrl+W 的通用语义，与 kelivo 的 close_window 同键。
     | CloseWindow
+    /// 复制最新一条回复（与 ChatGPT 同键）：长回复读完想带走，不必先找卡片菜单（决策 220）。
+    | CopyLastReply
+    /// 重新生成最新回复。不用 Ctrl+Shift+R：浏览器里那是强制刷新，PWA 会丢掉页面状态（决策 220）。
+    | RegenerateLast
     | NoShortcut
 
 module ShortcutRouter =
@@ -653,6 +657,8 @@ module ShortcutRouter =
         elif ctrl && not shift && e.Key = Key.End then ScrollToEnd
         elif ctrl && shift && e.Key = Key.S then ToggleTheme
         elif ctrl && shift && e.Key = Key.E then ExportConversation
+        elif ctrl && shift && e.Key = Key.C then CopyLastReply
+        elif ctrl && shift && e.Key = Key.G then RegenerateLast
         elif ctrl && not shift && e.Key >= Key.D1 && e.Key <= Key.D9 then
             OpenConversationAt(int e.Key - int Key.D1)
         elif ctrl && (e.Key = Key.OemQuestion || e.Key = Key.Divide) then ShowShortcuts
