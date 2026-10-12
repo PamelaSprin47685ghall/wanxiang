@@ -680,7 +680,7 @@ type WsConnection(
                                         | Ok page -> SearchResults page
                                         | Error message -> SearchFailed {| queryId = d.queryId; message = message |}
                                     with _ ->
-                                        SearchFailed {| queryId = d.queryId; message = "搜索失败，请重试。" |}
+                                        SearchFailed {| queryId = d.queryId; message = "搜索没有完成：主机处理时出错。请重试。" |}
                                 this.TrySend ev |> ignore
                             finally
                                 Interlocked.Decrement(&searchesInFlight) |> ignore)

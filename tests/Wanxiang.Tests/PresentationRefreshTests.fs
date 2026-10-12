@@ -310,8 +310,8 @@ let ``code block copy confirmation dips toward fade opacity and keeps the confir
     let normalWindow, normalButton, copiedText = runCopy ()
     try
         Assert.Equal("let x = 42", copiedText.Trim())
-        Assert.Equal("已复制！", AutomationProperties.GetName(normalButton))
-        Assert.Equal("已复制！", ToolTip.GetTip(normalButton) :?> string)
+        Assert.Equal("已复制", AutomationProperties.GetName(normalButton))
+        Assert.Equal("已复制", ToolTip.GetTip(normalButton) :?> string)
         Assert.True(normalButton.Opacity >= Tokens.opacityCopyConfirmFade - 0.001)
         Assert.True(normalButton.Opacity <= 1.0 + 0.001)
         Assert.Equal(150.0, MotionLedger.copyConfirmationFade.TotalMilliseconds, 3)
@@ -323,7 +323,7 @@ let ``code block copy confirmation dips toward fade opacity and keeps the confir
         let reducedWindow, reducedButton, reducedCopied = runCopy ()
         try
             Assert.Equal("let x = 42", reducedCopied.Trim())
-            Assert.Equal("已复制！", AutomationProperties.GetName(reducedButton))
+            Assert.Equal("已复制", AutomationProperties.GetName(reducedButton))
             Assert.Equal(1.0, reducedButton.Opacity, 3)
         finally
             reducedWindow.Close()

@@ -37,6 +37,10 @@ module SettingsViewTests =
         descendants root
         |> Seq.find (fun control -> AutomationProperties.GetName(control) = name)
 
+    let private byAutomationId (root: Control) (id: string) =
+        descendants root
+        |> Seq.find (fun control -> AutomationProperties.GetAutomationId(control) = id)
+
     let private tryByAutomationName (root: Control) (name: string) =
         descendants root
         |> Seq.tryFind (fun control -> AutomationProperties.GetName(control) = name)
@@ -657,7 +661,7 @@ module SettingsViewTests =
             submit toggleBtn
             Dispatcher.UIThread.RunJobs()
 
-            let probeBtn = byAutomationName root "从主机获取模型列表" :?> Border
+            let probeBtn = byAutomationId root "provider-probe-models" :?> Border
             submit probeBtn
             Dispatcher.UIThread.RunJobs()
 
