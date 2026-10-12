@@ -28,7 +28,7 @@ module OnboardingConfigTests =
           enabled = true
           promptCaching = false
           headers = Map.empty
-          extraJson = None }
+          extraJson = None; visionOverrides = Map.empty }
 
     let private twoProviders () =
         let cfg = AppConfig.defaults (Guid.Parse "11111111-1111-1111-1111-111111111111")

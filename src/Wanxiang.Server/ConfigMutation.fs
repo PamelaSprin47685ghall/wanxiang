@@ -122,7 +122,24 @@ module ConfigMutation =
                      if Map.isEmpty h then existing |> Option.map (fun p -> p.headers) |> Option.defaultValue Map.empty else h)
                   promptCaching =
                     boolOf payload "promptCaching" (existing |> Option.map (fun p -> p.promptCaching) |> Option.defaultValue false)
-                  extraJson = existing |> Option.bind (fun p -> p.extraJson) }
+                  extraJson = existing |> Option.bind (fun p -> p.extraJson)
+                  visionOverrides =
+                    // 缺省表示「保持原值」；给了就整体替换（设置界面总是整份提交）。
+                    // 只保留仍在模型列表里的模型，删掉的模型不留孤儿指定。
+                    (let hasKey =
+                        let mutable n: JsonNode = null
+                        payload.TryGetPropertyValue("visionOverrides", &n) && not (isNull n)
+                     let raw =
+                        if hasKey then
+                            match payload["visionOverrides"] with
+                            | :? JsonObject as o ->
+                                [ for kv in o do
+                                      if not (isNull kv.Value) && kv.Value.GetValueKind() = JsonValueKind.True then yield kv.Key, true
+                                      elif not (isNull kv.Value) && kv.Value.GetValueKind() = JsonValueKind.False then yield kv.Key, false ]
+                                |> Map.ofList
+                            | _ -> Map.empty
+                        else existing |> Option.map (fun p -> p.visionOverrides) |> Option.defaultValue Map.empty
+                     raw |> Map.filter (fun m _ -> List.contains m models)) }
             let errors =
                 [ if not (TomlCodec.supportedProviderKinds.Contains provider.kind) then
                       sprintf "provider.kind: 暂不支持 %s" provider.kind

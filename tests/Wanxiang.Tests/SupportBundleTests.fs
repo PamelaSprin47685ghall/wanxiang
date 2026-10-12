@@ -34,7 +34,7 @@ module SupportBundle =
                             promptCaching = false
                             enabled = true
                             headers = Map.empty
-                            extraJson = None } ] }
+                            extraJson = None; visionOverrides = Map.empty } ] }
         File.WriteAllText(path, Wanxiang.Config.TomlCodec.serialize withKey)
         path, instanceId
 

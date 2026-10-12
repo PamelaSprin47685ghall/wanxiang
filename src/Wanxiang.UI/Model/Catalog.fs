@@ -16,6 +16,10 @@ type ProviderInfo = {
     timeoutSeconds: int
     maxRetries: int
     enabled: bool
+    /// 决策 331：用户手动指定的「能否看图」（模型 → 能/不能）
+    visionOverrides: Map<string, bool>
+    /// 决策 330：模型服务提供的「能否看图」信息（主机探测或已知清单）
+    visionDetected: Map<string, bool>
 }
 
 /// 一个可用工具。
@@ -142,6 +146,18 @@ module Catalog =
         else
             []
 
+    let private boolMap (o: JsonObject) (key: string) : Map<string, bool> =
+        match o[key] with
+        | :? JsonObject as m ->
+            [ for kv in m do
+                  if not (isNull kv.Value) then
+                      match kv.Value.GetValueKind() with
+                      | JsonValueKind.True -> yield kv.Key, true
+                      | JsonValueKind.False -> yield kv.Key, false
+                      | _ -> () ]
+            |> Map.ofList
+        | _ -> Map.empty
+
     let private providerOf (o: JsonObject) : ProviderInfo =
         { id = str o "id" ""
           label = (let l = str o "label" "" in if String.IsNullOrWhiteSpace l then str o "id" "" else l)
@@ -152,7 +168,9 @@ module Catalog =
           defaultModel = str o "defaultModel" ""
           timeoutSeconds = intOf o "timeoutSeconds" 120
           maxRetries = intOf o "maxRetries" 2
-          enabled = boolOf o "enabled" true }
+          enabled = boolOf o "enabled" true
+          visionOverrides = boolMap o "visionOverrides"
+          visionDetected = boolMap o "visionDetected" }
 
     let private toolOf (o: JsonObject) : ToolInfo =
         { id = str o "id" ""
@@ -248,6 +266,14 @@ module Catalog =
         match chosen with
         | Some p -> Some(p.id, modelOf p (catalog.generation.defaultModel |> Option.defaultValue ""))
         | None -> usable |> List.tryHead |> Option.map (fun p -> p.id, modelOf p "")
+
+    /// 决策 330/331：某模型能否看图。用户指定 > 模型服务信息 > 名字推断。
+    let visionOf (providerId: string) (model: string) (catalog: Catalog) : VisionSupport * VisionSource =
+        let ofBool b = if b then VisionYes else VisionNo
+        match tryProvider providerId catalog with
+        | Some p when p.visionOverrides.ContainsKey model -> ofBool p.visionOverrides[model], VisionFromUser
+        | Some p when p.visionDetected.ContainsKey model -> ofBool p.visionDetected[model], VisionFromProvider
+        | _ -> ModelVision.classify model, VisionFromName
 
     /// 该 (服务, 模型) 是否正是全局默认（设置页行内标记用）。
     let isGlobalDefault (providerId: string) (catalog: Catalog) =

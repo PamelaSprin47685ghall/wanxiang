@@ -38,6 +38,9 @@ type ProviderConfig = {
     headers: Map<string, string>
     /// 其余生成参数，原样透传给 Provider
     extraJson: JsonNode option
+    /// 决策 331：用户对单个模型「能否看图」的手动指定（true 能看图 / false 只吃文字）。
+    /// 优先于模型服务提供的信息与名字推断。TOML 里是 `visionModels` / `textOnlyModels` 两个列表。
+    visionOverrides: Map<string, bool>
 }
 
 module ProviderConfig =

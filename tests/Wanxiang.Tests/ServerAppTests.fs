@@ -47,7 +47,7 @@ module ServerAppTests =
                             enabled = true
                             promptCaching = false
                             headers = Map.empty
-                            extraJson = None } ]
+                            extraJson = None; visionOverrides = Map.empty } ]
                 authClients =
                     [ { tokenHash = hash
                         name = "srv-test-client"

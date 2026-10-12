@@ -65,7 +65,7 @@ module OnboardingUiTests =
           enabled = true
           promptCaching = false
           headers = Map.empty
-          extraJson = None }
+          extraJson = None; visionOverrides = Map.empty }
 
     // ---- 用一个内存「主机」替代 WebSocket：真实 ConfigMutation + 真实探测，端点指向本地 mock ----
 

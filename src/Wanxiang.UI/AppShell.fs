@@ -363,7 +363,7 @@ type MainView() as this =
                 match draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog) with
                 | Some(providerId, model) ->
                     composer.SetModelLabel(Catalog.describeModel providerId model catalog)
-                    composer.SetModelVision(ModelVision.classify model, Catalog.describeModel providerId model catalog)
+                    composer.SetModelVision(fst (Catalog.visionOf providerId model catalog), Catalog.describeModel providerId model catalog)
                 | None ->
                     composer.SetModelLabel "未选择模型"
                     composer.SetModelVision(VisionUnknown, "")
@@ -382,7 +382,7 @@ type MainView() as this =
             chat.SetBreadcrumb(ForkLineage.breadcrumb summaries lineage convId, fun parentId -> this.OpenConversation parentId)
             chat.SetTitle((summary |> Option.map (fun s -> s.title) |> Option.defaultValue "对话"), true)
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
-            composer.SetModelVision(ModelVision.classify view.config.model, Catalog.describeModel view.config.provider view.config.model catalog)
+            composer.SetModelVision(fst (Catalog.visionOf view.config.provider view.config.model catalog), Catalog.describeModel view.config.provider view.config.model catalog)
             chat.SetHeaderModel(
                 ModelSwitcher.chipText view.config.provider view.config.model catalog,
                 (Catalog.tryProvider view.config.provider catalog |> Option.map _.label |> Option.defaultValue ""),
@@ -1182,7 +1182,13 @@ type MainView() as this =
             async {
                 try
                     let! picked =
-                        top.StorageProvider.OpenFilePickerAsync(FilePickerOpenOptions(AllowMultiple = true))
+                        top.StorageProvider.OpenFilePickerAsync(
+                            FilePickerOpenOptions(
+                                AllowMultiple = true,
+                                Title = "添加附件",
+                                FileTypeFilter =
+                                    [ for (label, patterns, mimes) in MediaTypes.pickerFilters ->
+                                          FilePickerFileType(label, Patterns = patterns, MimeTypes = mimes) ]))
                         |> Async.AwaitTask
                     for file in picked do
                         use! stream = file.OpenReadAsync() |> Async.AwaitTask
@@ -1290,6 +1296,28 @@ type MainView() as this =
                 false
 
     member private this.BeginUpload(owner: AttachmentDraftController, fileName: string, bytes: byte[]) =
+        // 决策 332：超大图片先在后台缩小再走原流程；缩小期间不占界面线程。
+        if ImageShrink.needsShrink fileName bytes && int64 bytes.Length <= 64L * 1024L * 1024L then
+            let ownerInstance = instanceId
+            let ownerConnection = client.ConnectionGeneration
+            toast (sprintf "「%s」太大，正在自动缩小…" fileName) Info
+            async {
+                let result = ImageShrink.shrink fileName bytes
+                Dispatcher.UIThread.Post(fun () ->
+                    if not (authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection) then
+                        toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning
+                    else
+                        match result with
+                        | Error message -> toast message Warning
+                        | Ok None -> this.BeginUploadCore(owner, fileName, bytes, None)
+                        | Ok(Some shrunk) ->
+                            toast (sprintf "「%s」%s" fileName (ImageShrink.note shrunk)) Info
+                            this.BeginUploadCore(owner, shrunk.fileName, shrunk.bytes, Some shrunk))
+            }
+            |> Async.Start
+        else this.BeginUploadCore(owner, fileName, bytes, None)
+
+    member private this.BeginUploadCore(owner: AttachmentDraftController, fileName: string, bytes: byte[], shrunk: ShrunkImage option) =
         match MediaTypes.validate fileName (int64 bytes.Length) with
         | Error message -> toast message Warning
         | Ok() ->
@@ -1297,6 +1325,9 @@ type MainView() as this =
             let mediaType = MediaTypes.ofFileName fileName
             let attachmentId = Guid.CreateVersion7()
             if MediaTypes.isModelImage mediaType then composer.SetThumbnail(attachmentId, bytes)
+            match shrunk with
+            | Some r -> composer.SetShrinkNote(attachmentId, ImageShrink.note r)
+            | None -> ()
             let upload =
                 { attachmentId = attachmentId
                   fileName = fileName

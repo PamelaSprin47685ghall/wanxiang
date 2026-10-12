@@ -14,6 +14,12 @@ type VisionSupport =
     | VisionNo
     | VisionUnknown
 
+/// 看图判断的来源（决策 330/331），设置页据此说明「为什么」。
+type VisionSource =
+    | VisionFromUser
+    | VisionFromProvider
+    | VisionFromName
+
 module ModelVision =
 
     let private contains (needle: string) (s: string) = s.Contains(needle, StringComparison.Ordinal)

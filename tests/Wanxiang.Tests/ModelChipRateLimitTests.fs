@@ -170,7 +170,7 @@ let private providerOf (kind: string) (baseUrl: string) : ProviderConfig =
       enabled = true
       promptCaching = false
       headers = Map.empty
-      extraJson = None }
+      extraJson = None; visionOverrides = Map.empty }
 
 let private runAgainst (kind: string) (pathSuffix: string) =
     task {
@@ -232,7 +232,7 @@ let ``non retryable errors never get a countdown`` () =
 
 let private provider (id: string) (label: string) (models: string list) : ProviderInfo =
     { id = id; label = label; kind = "openai"; baseUrl = ""; hasApiKey = true; models = models
-      defaultModel = List.head models; timeoutSeconds = 30; maxRetries = 0; enabled = true }
+      defaultModel = List.head models; timeoutSeconds = 30; maxRetries = 0; enabled = true; visionOverrides = Map.empty; visionDetected = Map.empty }
 
 let private catalog =
     { Catalog.empty with

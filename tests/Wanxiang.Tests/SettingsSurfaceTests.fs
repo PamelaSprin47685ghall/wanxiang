@@ -331,7 +331,7 @@ let ``missing key reads as warning tag and disabled provider dims its text`` () 
           defaultModel = "gpt-4o"
           timeoutSeconds = 120
           maxRetries = 2
-          enabled = true }
+          enabled = true; visionOverrides = Map.empty; visionDetected = Map.empty }
     let disabled = { needsKey with id = "local"; label = "本地推理"; hasApiKey = true; enabled = false }
     providers.SetCatalog { Catalog.empty with providers = [ needsKey; disabled ] }
     let built = providers.Build()

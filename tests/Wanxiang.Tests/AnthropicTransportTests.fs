@@ -41,7 +41,7 @@ module AnthropicTransportTests =
             enabled = true
             promptCaching = false
             headers = Map.empty
-            extraJson = None
+            extraJson = None; visionOverrides = Map.empty
         }
 
     let private createClient (handler: HttpMessageHandler) (baseUrl: string option) (apiKey: string option) (thinkingBudget: int option) : IChatClient =

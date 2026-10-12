@@ -33,7 +33,7 @@ module Doctor =
                             promptCaching = false
                             enabled = true
                             headers = Map.empty
-                            extraJson = None } ] }
+                            extraJson = None; visionOverrides = Map.empty } ] }
         File.WriteAllText(path, Wanxiang.Config.TomlCodec.serialize withKey)
         path
 
@@ -90,7 +90,7 @@ module Doctor =
                                 promptCaching = false
                                 enabled = true
                                 headers = Map.empty
-                                extraJson = None } ] }
+                                extraJson = None; visionOverrides = Map.empty } ] }
             File.WriteAllText(path, Wanxiang.Config.TomlCodec.serialize bad)
             let d = Wanxiang.Server.Doctor.run (path, dir)
             let c = check d "provider-config"

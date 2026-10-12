@@ -244,7 +244,7 @@ let ``provider form consumes enter from a single line field`` () =
                     defaultModel = ""
                     timeoutSeconds = 120
                     maxRetries = 2
-                    enabled = true } ] }
+                    enabled = true; visionOverrides = Map.empty; visionDetected = Map.empty } ] }
     let built = providers.Build()
     root.Children.Add built
     let window = show root 520.0 640.0

@@ -74,7 +74,7 @@ module ProviderCatalogTests =
                 enabled = true
                 promptCaching = false
                 headers = Map.empty
-                extraJson = None
+                extraJson = None; visionOverrides = Map.empty
             }
             let res = ProviderCatalog.probeModels provider CancellationToken.None |> Async.AwaitTask |> Async.RunSynchronously
             match res with
@@ -116,7 +116,7 @@ module ProviderCatalogTests =
                 enabled = true
                 promptCaching = false
                 headers = Map.empty
-                extraJson = None
+                extraJson = None; visionOverrides = Map.empty
             }
             let res = ProviderCatalog.probeModels provider CancellationToken.None |> Async.AwaitTask |> Async.RunSynchronously
             match res with
@@ -131,10 +131,10 @@ module ProviderCatalogTests =
     let ``providers snapshot hides api keys and formats models correctly`` () =
         let p1: ProviderConfig =
             { id = "p1"; kind = "openai"; label = "P1"; baseUrl = "http://api.p1.com"; apiKey = Some "secret-123"
-              models = ["m1"]; defaultModel = "m1"; timeoutSeconds = 60; maxRetries = 0; enabled = true; promptCaching = false; headers = Map.empty; extraJson = None }
+              models = ["m1"]; defaultModel = "m1"; timeoutSeconds = 60; maxRetries = 0; enabled = true; promptCaching = false; headers = Map.empty; extraJson = None; visionOverrides = Map.empty }
         let p2: ProviderConfig =
             { id = "p2"; kind = "anthropic"; label = ""; baseUrl = "http://api.p2.com"; apiKey = None
-              models = ["m2"]; defaultModel = "m2"; timeoutSeconds = 60; maxRetries = 0; enabled = false; promptCaching = false; headers = Map.empty; extraJson = None }
+              models = ["m2"]; defaultModel = "m2"; timeoutSeconds = 60; maxRetries = 0; enabled = false; promptCaching = false; headers = Map.empty; extraJson = None; visionOverrides = Map.empty }
 
         let sampleAppConfig = { AppConfig.defaults (Guid.NewGuid()) with providers = Map.ofList [ ("p1", p1); ("p2", p2) ] }
 

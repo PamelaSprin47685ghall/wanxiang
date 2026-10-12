@@ -642,7 +642,7 @@ module SettingsViewTests =
                   defaultModel = "old-model"
                   timeoutSeconds = 120
                   maxRetries = 2
-                  enabled = true }
+                  enabled = true; visionOverrides = Map.empty; visionDetected = Map.empty }
             providers.SetCatalog { Catalog.empty with providers = [ existingProvider ] }
             let window = Window(Width = 800.0, Height = 600.0, Content = root)
             window.Show()
