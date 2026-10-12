@@ -44,6 +44,14 @@ let private snapshot id =
         {| conversationId = id; title = "测试"; lastCommitId = 0UL; runtimeState = "idle"; generationId = None
            messages = JsonArray(); snapshotEarliestCommitId = 0UL; snapshotHasMore = false
            config = SessionConfig.empty |}
+/// 尾部带一条有正文的回复：重新生成会丢掉它，必须确认（决策 221）。
+let private snapshotWithReply id =
+    let messages =
+        JsonNode.Parse("""[{"commitId":1,"payload":{"role":"user","contents":[{"type":"text","text":"问"}]}},{"commitId":2,"payload":{"role":"assistant","contents":[{"type":"text","text":"已有的回答"}]}}]""") :?> JsonArray
+    ConversationSnapshot
+        {| conversationId = id; title = "测试"; lastCommitId = 2UL; runtimeState = "idle"; generationId = None
+           messages = messages; snapshotEarliestCommitId = 1UL; snapshotHasMore = false
+           config = SessionConfig.empty |}
 let private start id generation =
     GenerationStarted {| conversationId = id; generationId = generation; providerId = "mock"; model = "mock" |}
 let private finish id generation =
@@ -627,7 +635,7 @@ let ``regenerate asks before discarding the last reply`` () =
     let composer = (field view "composer").GetValue view :?> Composer
     let a = Guid.NewGuid ()
     select view a
-    handle view (snapshot a)
+    handle view (snapshotWithReply a)
     // 焦点先在别处：确认通过后 composer.Focus() 是「命令已发出」的可观察代理
     // （shell 在 Regenerate 的确认回调里唯一做的用户可见动作）。
     (controls root |> Seq.tryFind (fun c -> AutomationProperties.GetName c = "新建对话"))
@@ -659,4 +667,19 @@ let ``regenerate asks before discarding the last reply`` () =
     Dispatcher.UIThread.RunJobs()
     Assert.False(overlay.IsDialogOpen, "取消后确认框应关闭")
     Assert.False(composer.IsFocused, "取消不得发出命令")
+    )
+
+[<Trait("Category", "UI")>]
+[<Fact>]
+let ``retry after an empty failure regenerates without a confirmation`` () =
+    Headless.run (fun () ->
+    let view = shell ()
+    let overlay = (field view "overlay").GetValue view :?> OverlayHost
+    let a = Guid.NewGuid ()
+    select view a
+    handle view (snapshot a)
+    invoke view "Regenerate" [||] |> ignore
+    Dispatcher.UIThread.RunJobs()
+    // 尾部什么都没有：「将丢弃当前回复」不成立，直接重试（决策 221）。
+    Assert.False(overlay.IsDialogOpen, "没有可丢的内容时不该再问一次")
     )

@@ -1744,12 +1744,15 @@ module MessageCard =
             [ if not (String.IsNullOrWhiteSpace message.text) then
                 MenuEntry.create "复制消息" (fun () -> actions.copyText message.text)
                 |> MenuEntry.withIcon Icons.copy
+                // 最新回复有全局快捷键：菜单里标出来，才有人发现（决策 220）。
+                |> (if not (MessageView.isUser message) && ctx.isLastAssistant then MenuEntry.withHint "Ctrl+Shift+C" else id)
               if MessageView.isUser message then
                 MenuEntry.create "编辑并分叉" (fun () -> actions.editAndFork message)
                 |> MenuEntry.withIcon Icons.pencil
               if not (MessageView.isUser message) && ctx.isLastAssistant then
                 MenuEntry.create "重新生成" (fun () -> actions.regenerate ())
                 |> MenuEntry.withIcon Icons.refresh
+                |> MenuEntry.withHint "Ctrl+Shift+G"
               match message.commitId with
               | Some commitId ->
                 MenuEntry.create "删除这条消息" (fun () -> actions.deleteMessage commitId)
