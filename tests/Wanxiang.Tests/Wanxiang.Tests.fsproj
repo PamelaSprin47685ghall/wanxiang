@@ -92,6 +92,7 @@
     <Compile Include="MessageCardTests.fs" />
     <Compile Include="ToolCallStatusTests.fs" />
     <Compile Include="UiPureLogicTests.fs" />
+    <Compile Include="A11yRegressionTests.fs" />
   </ItemGroup>
 
   <!-- 真 KaTeX 生成的 HTML 夹具：公式排版测试不必带一个 JS 引擎 -->
