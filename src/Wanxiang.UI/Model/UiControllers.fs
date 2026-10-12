@@ -718,6 +718,8 @@ type ShortcutAction =
     | RegenerateLast
     /// 撤销提示条里待生效的动作（删除宽限期内的「撤销」，决策 232）。
     | UndoPending
+    /// 焦点移到最新一条提示条的动作按钮（决策 311）。
+    | FocusToast
     | NoShortcut
 
 module ShortcutRouter =
@@ -748,4 +750,5 @@ module ShortcutRouter =
             OpenConversationAt(int e.Key - int Key.D1)
         elif ctrl && (e.Key = Key.OemQuestion || e.Key = Key.Divide) then ShowShortcuts
         elif e.Key = Key.F1 then ShowShortcuts
+        elif e.Key = Key.F6 && e.KeyModifiers = KeyModifiers.None then FocusToast
         else NoShortcut

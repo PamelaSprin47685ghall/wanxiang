@@ -110,6 +110,10 @@ type OverlayHost(root: Grid) =
     let toastEntries = ResizeArray<string * (unit -> unit)>()
     /// 可见提示条上的行内动作（按出现顺序）：Ctrl/⌘+Z 触发最新一条「撤销」（决策 232）。
     let toastActions = ResizeArray<string * string * (unit -> unit)>()
+    /// 决策 311：可见提示条的动作按钮（按出现顺序），供 Tab / F6 到达。
+    let toastButtons = ResizeArray<string * Control>()
+    /// 带焦点的提示条消失时焦点的归宿（AppShell 设为输入框）；否则焦点会掉成 null。
+    let mutable toastFocusHome: unit -> unit = ignore
 
     let currentFocus () =
         match TopLevel.GetTopLevel root with
@@ -480,6 +484,8 @@ type OverlayHost(root: Grid) =
             row.Children.Add bar
             row.Children.Add bodyScroller
             let mutable removeRef: unit -> unit = ignore
+            let mutable paused = false
+            let mutable focusedAction: Control option = None
             match action with
             | Some(actionLabel, onAction) ->
                 row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
@@ -488,10 +494,20 @@ type OverlayHost(root: Grid) =
                         removeRef ()
                         onAction ())
                 actionButton.Focusable <- true
+                // 决策 311：动作按钮进 Tab 序（不抢焦点，出现时焦点留在原处）；F6 直达最新一条。
+                actionButton.IsTabStop <- true
+                actionButton.Name <- "toast-action"
                 actionButton.VerticalAlignment <- VerticalAlignment.Center
                 AutomationProperties.SetName(actionButton, actionLabel)
-                // 决策 305：提示条不进 Tab 序，撤销要有键盘路径——读屏把快捷键念出来。
-                if actionLabel = "撤销" then AutomationProperties.SetAcceleratorKey(actionButton, "Ctrl+Z")
+                // 决策 305：读屏把快捷键念出来。
+                if actionLabel = "撤销" then
+                    AutomationProperties.SetAcceleratorKey(actionButton, "Ctrl+Z")
+                    AutomationProperties.SetHelpText(actionButton, "按 Ctrl+Z 直接撤销；按 F6 或 Tab 可移到这里")
+                toastButtons.Add(message, actionButton :> Control)
+                // 键盘用户正停在按钮上：倒计时暂停，读完再决定，不会在 Tab 到达后眨眼消失。
+                actionButton.GotFocus.Add(fun _ -> paused <- true)
+                actionButton.LostFocus.Add(fun _ -> paused <- false)
+                focusedAction <- Some(actionButton :> Control)
                 Grid.SetColumn(actionButton, 2)
                 row.Children.Add actionButton
             | None -> ()
@@ -530,7 +546,6 @@ type OverlayHost(root: Grid) =
             let mutable removed = false
             // 默认停留时长按语气取 MotionLedger：毫秒唯一来源是 toastDwell{Failure,Warning,Default}；
             // 时间跨度转毫秒沿用既有 remainingMs 的浮点递减算法，不再写 9000.0/6500.0/4000.0 字面量。
-            let mutable paused = false
             let mutable remainingMs =
                 match tone with
                 | Failure -> MotionLedger.toastDwellFailure.TotalMilliseconds
@@ -545,10 +560,13 @@ type OverlayHost(root: Grid) =
                     // 去重/计数立即释放：同文再出或后续入条不再受本条约限。
                     toastEntries.RemoveAll(fun (text, _) -> text = message) |> ignore
                     toastActions.RemoveAll(fun (text, _, _) -> text = message) |> ignore
+                    toastButtons.RemoveAll(fun (text, _) -> text = message) |> ignore
+                    let hadFocus = focusedAction |> Option.exists (fun b -> b.IsFocused)
                     // 同步移除节点：本仓库无显示测试制度无法确定性泵动 DispatcherTimer，
                     // 异步退场没有可重复验收路径（Manager 决策：退场改回同步，仅保留入场淡入）。
                     // Escape / 点击 / 超时 / 上限挤出四条路径行为一致。
                     toastStack.Children.Remove toast |> ignore
+                    if hadFocus then toastFocusHome ()
             // 同文只留最新一条：先清掉旧的，计数里也不再占位。
             toastEntries
             |> Seq.filter (fun (text, _) -> text = message)
@@ -567,11 +585,10 @@ type OverlayHost(root: Grid) =
             | None -> ()
             Ui.onClick toast remove
             // Escape 唯一归属 HandleEscape（topmost-first）：这里不再自带局部 Esc 处理。
-            // 提示条 Focusable=false（见上）：永远无法获得焦点，GotFocus / LostFocus 以及
-            // PointerExited 里按焦点读 paused 的分支永不触发，均为死代码，一并删除；
-            // 暂停计时只保留 hover 驱动——指针进入即暂停、离开即恢复（IsFocused 恒为 false）。
+            // 提示条外框 Focusable=false；暂停计时由 hover 与动作按钮的焦点共同驱动（决策 311）：
+            // 指针离开时若键盘焦点仍在按钮上，继续暂停。
             toast.PointerEntered.Add(fun _ -> paused <- true)
-            toast.PointerExited.Add(fun _ -> paused <- false)
+            toast.PointerExited.Add(fun _ -> paused <- focusedAction |> Option.exists (fun b -> b.IsFocused))
             toastStack.Children.Add toast
             // 触发进场淡入（0→1）；减弱动效时 transition 时长为零，等同瞬时全显。
             toast.Opacity <- 1.0
@@ -590,6 +607,16 @@ type OverlayHost(root: Grid) =
         match toastActions |> Seq.filter (fun (_, l, _) -> l = label) |> Seq.tryLast with
         | Some(_, _, invoke) -> invoke (); true
         | None -> false
+
+    /// 决策 311：F6 把焦点移到最新一条提示条的动作按钮；没有则返回 false。
+    member _.FocusToastAction() : bool =
+        match toastButtons |> Seq.tryLast with
+        | Some(_, button) when button.IsEffectivelyVisible -> button.Focus(NavigationMethod.Tab) |> ignore; true
+        | _ -> false
+
+    member _.SetToastFocusHome(home: unit -> unit) = toastFocusHome <- home
+
+    member _.ToastActionButtons = toastButtons |> Seq.map snd |> List.ofSeq
 
     member _.HasToastAction(label: string) : bool =
         toastActions |> Seq.exists (fun (_, l, _) -> l = label)

@@ -82,6 +82,10 @@ module MotionLedger =
     let outboxDeliveryCheckTick = TimeSpan.FromMilliseconds 1000.0
     /// 导出过期检查 tick：配合导出有效期逐格清扫；与 outbox 同为 1000ms 但语义不同，分记。
     let exportExpiryCheckTick = TimeSpan.FromMilliseconds 1000.0
+    /// 决策 310：更早一页历史的等待上限。过了就判失败、给行内重试，绝不无限挂起。
+    let olderPageTimeout = TimeSpan.FromMilliseconds 10000.0
+    /// 更早一页历史的超时检查 tick。
+    let olderPageCheckTick = TimeSpan.FromMilliseconds 500.0
     /// 进度文字节流时长（预留）：传输事件可远快于人眼阅读，100ms 约每秒 10 次，既顺滑又可读。
     let progressTextThrottle = TimeSpan.FromMilliseconds 100.0
     /// 主题颜色过渡时长（预留）：200ms 约 60fps 下 12 帧，落在常见 150~300ms 状态色过渡区间，可感知而不拖沓。
