@@ -1302,7 +1302,7 @@ type MainView() as this =
             let ownerConnection = client.ConnectionGeneration
             toast (sprintf "「%s」太大，正在自动缩小…" fileName) Info
             async {
-                let result = ImageShrink.shrink fileName bytes
+                let! result = ImageShrink.shrinkAsync fileName bytes
                 Dispatcher.UIThread.Post(fun () ->
                     if not (authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection) then
                         toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning

@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <Compile Include="RichBrowser.fs" />
+    <Compile Include="BrowserImageShrink.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

@@ -63,4 +63,11 @@ public static partial class BrowserBridge
     /// <summary>KaTeX 排版，返回 HTML；失败返回空串。</summary>
     [JSImport("richMath", "wanxiang")]
     public static partial string RichMath(string tex, bool displayMode);
+
+    /// <summary>决策 342：PWA 里用浏览器原生解码 + (Offscreen)Canvas 缩小图片，不占 wasm 单线程。
+    /// 返回 JSON：{ok:true,b64,mediaType,width,height,originalWidth,originalHeight} 或 {ok:false,error}。</summary>
+    [JSImport("imageShrink", "wanxiang")]
+    [return: JSMarshalAs<JSType.Promise<JSType.String>>]
+    public static partial Task<string> ImageShrink(
+        [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bytes, string mediaType, int maxDimension, double maxBytes);
 }

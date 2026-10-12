@@ -292,6 +292,66 @@ function setupShellStatus() {
 }
 setupShellStatus();
 
+// ---- 决策 342：图片缩小走浏览器原生解码与 (Offscreen)Canvas ----
+// wasm 是单线程：Skia 在 wasm 里解码 + 编码一张 12 MP 照片约 1.3 s，期间界面完全卡住。
+// createImageBitmap 在浏览器的解码线程里做，convertToBlob/toBlob 也是异步的，界面保持可交互。
+async function imageShrink(bytes, mediaType, maxDimension, maxBytes) {
+    try {
+        const blob = new Blob([bytes], { type: mediaType });
+        let bitmap;
+        try { bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" }); }
+        catch { return JSON.stringify({ ok: false, error: "decode" }); }
+        const ow = bitmap.width, oh = bitmap.height;
+        const tryAlpha = mediaType === "image/png" || mediaType === "image/webp";
+        const make = (w, h) => {
+            if (typeof OffscreenCanvas === "function") return new OffscreenCanvas(w, h);
+            const c = document.createElement("canvas"); c.width = w; c.height = h; return c;
+        };
+        const toBlob = (canvas, type, quality) =>
+            canvas.convertToBlob ? canvas.convertToBlob({ type, quality })
+                : new Promise((r) => canvas.toBlob(r, type, quality));
+        let limit = maxDimension;
+        for (let attempt = 0; attempt < 8; attempt++) {
+            const longest = Math.max(ow, oh);
+            const scale = longest <= limit ? 1 : limit / longest;
+            const w = Math.max(1, Math.round(ow * scale)), h = Math.max(1, Math.round(oh * scale));
+            const canvas = make(w, h);
+            const ctx = canvas.getContext("2d");
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = "high";
+            const candidates = [];
+            if (tryAlpha) {
+                ctx.clearRect(0, 0, w, h);
+                ctx.drawImage(bitmap, 0, 0, w, h);
+                candidates.push(["image/png", undefined]);
+            }
+            let flattened = false;
+            for (const q of [0.85, 0.75, 0.65]) candidates.push(["image/jpeg", q]);
+            for (const [type, q] of candidates) {
+                if (type === "image/jpeg" && !flattened) {
+                    // JPEG 没有透明通道：铺白底再画，免得透明处变黑
+                    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+                    ctx.drawImage(bitmap, 0, 0, w, h);
+                    flattened = true;
+                }
+                const out = await toBlob(canvas, type, q);
+                if (out && out.size > 0 && out.size <= maxBytes && out.type === type) {
+                    const buf = new Uint8Array(await out.arrayBuffer());
+                    let bin = "";
+                    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+                    bitmap.close && bitmap.close();
+                    return JSON.stringify({ ok: true, b64: btoa(bin), mediaType: type, width: w, height: h, originalWidth: ow, originalHeight: oh });
+                }
+            }
+            limit = Math.floor(Math.max(w, h) * 0.75);
+        }
+        bitmap.close && bitmap.close();
+        return JSON.stringify({ ok: false, error: "too-large", originalWidth: ow, originalHeight: oh });
+    } catch (e) {
+        return JSON.stringify({ ok: false, error: String(e && e.message || e) });
+    }
+}
+
 // ---- 运行时引导 ----
 const dotnetRuntime = await dotnet
     .withDiagnosticTracing(false)
@@ -300,7 +360,7 @@ const dotnetRuntime = await dotnet
 
 dotnetRuntime.setModuleImports("wanxiang", {
     credList, credPut, credDelete, draftGet, draftPut, draftDelete, pageUrl, wxViewportWidth, wxResumeEpoch, wxConversationSucceeded,
-    richLoad, richHighlight, richMath,
+    richLoad, richHighlight, richMath, imageShrink,
 });
 
 const config = dotnetRuntime.getConfig();
