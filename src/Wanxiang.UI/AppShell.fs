@@ -1801,10 +1801,10 @@ type MainView() as this =
             RetryCountdown.notice d.generationId d.limit DateTimeOffset.UtcNow
         | AttachmentCommitted d ->
             match drafts.All |> Seq.tryPick (fun draft -> draft.attachments.Complete(d.attachmentId, d.size)) with
-            // 完成 toast 只给当前可见对话：后台对话的翻转由 chip 自证，不叠 toast（C5）。
-            | Some(upload, stillDrafted, key) when stillDrafted && key = (instanceId, activeConvId) ->
+            // 决策 351：上传完成不再 toast——附件条上的 chip 已自证完成，每个文件一条
+            // 「上传完成」叠在输入框上、盖住模型选择，还会跟进设置页。失败仍恰报一次（C6）。
+            | Some(_, stillDrafted, key) when stillDrafted && key = (instanceId, activeConvId) ->
                 composer.SetAttachments((attachmentDraft ()).Items)
-                toast (sprintf "附件「%s」上传完成" upload.fileName) Success
             | Some _ -> ()
             | None -> ()
         | AttachmentAborted d ->

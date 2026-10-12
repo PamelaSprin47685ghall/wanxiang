@@ -235,7 +235,7 @@ let ``escape exits selection mode from the archived toggle row`` () =
         let toggle =
             root.GetVisualDescendants()
             |> Seq.choose (function :? Control as c -> Some c | _ -> None)
-            |> Seq.find (fun c -> AutomationProperties.GetName c = "已归档对话 (1)，点击展开")
+            |> Seq.find (fun c -> AutomationProperties.GetName c = "已归档对话（1），点击展开")
         Assert.True(toggle.Focusable, "前置条件：已归档开关可聚焦")
         toggle.Focus(NavigationMethod.Directional) |> ignore
         Dispatcher.UIThread.RunJobs()
