@@ -1992,14 +1992,13 @@ module MessageCard =
         buttons.PointerEntered.Add(fun _ -> highlight ())
         buttons.PointerExited.Add(fun _ -> dim ())
         // 定位高亮的承载面（第 211 节）：host 是 StackPanel，直接刷背景会是一块贴边的直角色块，
-        // 用户气泡下面还会透出整行。外包一层圆角 Border，内外边距相抵，布局不变；平时透明。
+        // 用户气泡下面还会透出整行。外包零边距圆角 Border 作承载面；平时透明，不改列表占位。
+        // 零 padding / margin：只换圆角承载面，不改卡片在列表里的占位（端点滚动 / 脚注几何靠这个）。
         let highlight =
             Border(
                 Name = revealHighlightName,
                 Background = Brushes.Transparent,
                 CornerRadius = CornerRadius Spacing.Radius.lg,
-                Padding = Thickness(Spacing.spaceMd, Spacing.spaceXs),
-                Margin = Thickness(-Spacing.spaceMd, -Spacing.spaceXs),
                 Child = host,
                 ContextMenu = messageContextMenu)
         highlight :> Control
