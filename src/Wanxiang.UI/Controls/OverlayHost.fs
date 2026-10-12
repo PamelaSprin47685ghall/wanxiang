@@ -490,6 +490,8 @@ type OverlayHost(root: Grid) =
                 actionButton.Focusable <- true
                 actionButton.VerticalAlignment <- VerticalAlignment.Center
                 AutomationProperties.SetName(actionButton, actionLabel)
+                // 决策 305：提示条不进 Tab 序，撤销要有键盘路径——读屏把快捷键念出来。
+                if actionLabel = "撤销" then AutomationProperties.SetAcceleratorKey(actionButton, "Ctrl+Z")
                 Grid.SetColumn(actionButton, 2)
                 row.Children.Add actionButton
             | None -> ()

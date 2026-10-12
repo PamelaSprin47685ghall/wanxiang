@@ -692,3 +692,24 @@ r9 QA 工具待办：`tools/qa_shot.js` 在抽屉布局下坐标点行不可靠�
 
 # 295. PWA：framework 产物按启动清单版本缓存，首访不下调试产物
 `sw.js`：`/_framework/dotnet.boot.js` 回源（`no-cache`）并与上一版逐字比较，变了先清空 `wanxiang-fw` 缓存再返回；`dotnet.js` network-first；其余 framework 产物 cache-first。二次打开到达主机的请求 224 → 2。`WasmDebugLevel=0`、不生成符号表：首访少下约 4 MB，且不初始化调试器。主机升级后首次打开会整包重下（已验证）。静态壳仍 network-first。
+
+# 300. 挂载窗口下的跳转总能到达目标
+「上一轮」越过挂载窗口时先 `ExpandMountWindow` 再续跳；本机已加载的都看完而主机还有更早页（`SetOlderAvailable`，AppShell 按 `pageHasMore` 同步）时挂起跳转、请求下一页，页到渲染后在 ContextIdle 续跳（晚于分页锚点恢复）。只要还有更早消息，「上一轮」就保持可用。搜索命中与消息链接走同一条 `ScrollToMessage → EnsureMounted`，窗口外的先挂、未加载的先分页（`TryReveal`）。
+
+# 301. CI：large-history 不再静默跳过
+`large-history-gate` 在每次 push main、周定时，以及改动了 Store/Core/Protocol/Server、ChatView/MessageCard/Sidebar、Rich、Model、AppShell、相关测试、`run-tests.sh` 或 workflow 的 PR 上运行；路径判断用 `git diff`（`history-changes` job），不引第三方 action。
+
+# 302. 限流倒计时的读屏语义
+倒计时文字的读屏名带剩余时间、每秒更新但不是 live region；走完那一刻才以 polite 播报一次。倒计时中的「重试」读屏名为「重试生成，N 秒后可用」。
+
+# 303. 顶栏模型芯片是按钮
+`AutomationRole.Button`，帮助文字说明「从下一条回复开始生效」。
+
+# 304. 模型切换器键盘路径
+搜索框帮助文字写明：回车选第一条、↓进入列表、Esc 关闭；「没有匹配的模型」为 polite live region。浮层打开即聚焦搜索、Tab 被困在浮层内、关闭后焦点回到芯片（OverlayHost 既有行为）。
+
+# 305. 撤销提示条的键盘路径
+提示条不进 Tab 序（不抢焦点），「撤销」按钮通过 `AcceleratorKey = Ctrl+Z` 告诉读屏可直接按快捷键。
+
+# 306. r7–r12 新控件的对比度契约
+模型芯片（accent/accentFaint）、倒计时（warning/success 于 surface/surfaceRaised）、提示条与切换器浮层、选中行文字在浅色和深色主题下都过 4.5:1，由 `A11yRegressionTests` 守护。
