@@ -335,7 +335,7 @@ type MainView() as this =
                 | None ->
                     if not hasSavedCredentials then
                         chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接主机", fun () -> this.ShowConnectDialog()))
-                        composer.SetEnabled(false, "需要连接主机才能开始对话。")
+                        composer.SetEnabled(false, "可以先写草稿，连上主机后再发送。")
                         composer.SetModelLabel "未连接"
                     else
                         chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接主机", fun () -> this.ShowConnectDialog()))

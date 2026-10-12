@@ -172,6 +172,13 @@ module InteractabilityConvergenceTests =
                 items |> List.find (fun i -> (string i.Header).Contains "删除")
             // 删错一条的代价最高：红字另有一层「别顺手点到它」的提醒。
             Assert.IsAssignableFrom(typeof<IBrush>, delete.Foreground)
+            // 决策 220：最新回复的快捷键要标在右键菜单项上（视觉走查 r6：曾被丢在半路）。
+            let gestureOf (needle: string) =
+                items
+                |> List.find (fun i -> (string i.Header).Contains needle)
+                |> fun i -> if isNull i.InputGesture then "" else i.InputGesture.ToString()
+            Assert.Equal("Ctrl+Shift+C", gestureOf "复制")
+            Assert.Equal("Ctrl+Shift+G", gestureOf "重新生成")
         finally
             window.Close()
         )

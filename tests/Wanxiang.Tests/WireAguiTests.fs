@@ -70,11 +70,22 @@ module WireAguiTests =
         Assert.Contains("\"type\":\"RUN_FINISHED\"", json)
 
     [<Fact>]
-    let ``failed generation maps to RUN_ERROR`` () =
-        let err = { kind = GenerationErrorKind.ProviderTimeout; message = "超时"; detail = None; retryable = false; retryAfterSeconds = None }
+    let ``failed generation keeps conversation, generation and structured error across the wire`` () =
+        // 决策 223：RUN_ERROR 不带 threadId/runId，失败会被客户端归到空对话，
+        // 真正的对话永远停在「生成中」。失败改走 CUSTOM generation.finished，往返无损。
+        let err = { kind = GenerationErrorKind.ProviderUnavailable; message = "HTTP 500"; detail = Some "x"; retryable = true; retryAfterSeconds = None }
         let json =
             WireAgui.encode (GenerationFinished {| conversationId = convId; generationId = genId; status = "failed"; error = Some err; usage = None |})
-        Assert.Contains("\"type\":\"RUN_ERROR\"", json)
+        Assert.DoesNotContain("\"type\":\"RUN_ERROR\"", json)
+        Assert.Contains("wanxiang.dev/generation.finished", json)
+        match WireAgui.tryDecode json with
+        | Ok(Some(GenerationFinished d)) ->
+            Assert.Equal(convId, d.conversationId)
+            Assert.Equal(genId, d.generationId)
+            Assert.Equal("failed", d.status)
+            Assert.Equal(GenerationErrorKind.ProviderUnavailable, d.error.Value.kind)
+            Assert.True(d.error.Value.retryable)
+        | other -> failwithf "Expected GenerationFinished, got %A" other
 
     // ---------- CUSTOM 面（其余语义事件） ----------
 
@@ -438,7 +449,7 @@ module WireAguiCommandTests =
         Assert.Contains("\"type\":\"RUN_FINISHED\"", json)
 
     [<Fact>]
-    let ``encode GenerationFinished with other status maps to RUN_ERROR`` () =
+    let ``encode GenerationFinished with other status keeps identity via CUSTOM`` () =
         let ev =
             GenerationFinished {|
                 conversationId = convId
@@ -448,8 +459,9 @@ module WireAguiCommandTests =
                 usage = None
             |}
         let json = WireAgui.encode ev
-        Assert.Contains("\"type\":\"RUN_ERROR\"", json)
+        Assert.Contains("wanxiang.dev/generation.finished", json)
         Assert.Contains("custom_unknown_status", json)
+        Assert.Contains(convId.ToString("D"), json)
 
     [<Fact>]
     let ``encode GenerationCancel maps to CUSTOM generation.cancel`` () =

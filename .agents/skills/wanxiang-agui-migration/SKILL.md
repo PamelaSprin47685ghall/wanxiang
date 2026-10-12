@@ -533,7 +533,7 @@ match TolerantReader.parse text with
 | functionResult 内容 | `TOOL_CALL_RESULT` |
 | cancelled 生成 | `RUN_FINISHED` + `RunFinishedCancelledOutcome` |
 | completed 生成（含 usage） | `RUN_FINISHED` + `TokenUsage` |
-| failed 生成 | `RUN_ERROR` |
+| failed 生成 | CUSTOM `wanxiang.dev/generation.finished`（决策 223：RUN_ERROR 无 threadId/runId，失败无法归属对话；入站仍容忍 RUN_ERROR） |
 | 生成开始 | `RUN_STARTED` |
 
 **CUSTOM 面**（万象设计特色决策，保留语义但仿标准面风格）：

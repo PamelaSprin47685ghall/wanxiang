@@ -30,6 +30,9 @@ module LayoutPolicy =
     /// 与 ControlMetrics.rowMinHeight 同值但语义不同（命中下限 vs 行高），分记；
     /// 落地经 Ui.setSquareTarget（只调 hit surface 不改 glyph）。
     let compactActionTarget = 44.0
+    /// 输入卡工具行只在真正放不下时才拆成两行（视觉走查 r6）：手机 390 宽时
+    /// 模型胶囊（≤150）+ 附件/发送（2×44）一行放得下，拆行白白多占 50px 高度。
+    let composerToolbarStackBelow = 320.0
 
     /// 消息脚注、代码块工具栏的紧凑动作面积。
     let inlineActionTarget = 30.0

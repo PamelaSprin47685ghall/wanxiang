@@ -95,3 +95,26 @@ let ``§214 带「撤销」的提示条：点动作即执行并关条`` () =
             Assert.True((findNamed root "撤销").IsNone, "执行动作后提示条应关闭")
         finally
             window.Close())
+
+/// 视觉走查 r6：PWA 里点「撤销」只关掉了提示条，对话没回来——指针点击落到了
+/// 提示条自身的「点击关闭」上。这里用真实的指针按下/抬起而不是键盘激活来锁。
+[<Trait("Category", "UI")>]
+[<Fact>]
+let ``§214 指针点「撤销」执行动作而不只是关条`` () =
+    Headless.run (fun () ->
+        let root = Grid()
+        let overlay = OverlayHost(root)
+        let mutable undone = false
+        overlay.ToastWith("已删除「甲」", Info, Some("撤销", fun () -> undone <- true))
+        let window = Window(Content = root, Width = 600.0, Height = 400.0)
+        window.Show()
+        try
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs()
+            let btn = (findNamed root "撤销").Value
+            let center = Avalonia.VisualExtensions.TranslatePoint(btn, Avalonia.Point(btn.Bounds.Width / 2.0, btn.Bounds.Height / 2.0), window).Value
+            Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, center, MouseButton.Left, RawInputModifiers.None)
+            Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, center, MouseButton.Left, RawInputModifiers.None)
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs()
+            Assert.True(undone, "指针点「撤销」必须执行撤销")
+        finally
+            window.Close())
