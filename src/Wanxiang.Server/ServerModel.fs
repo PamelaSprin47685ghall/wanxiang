@@ -97,20 +97,21 @@ module ServerModel =
     /// 快照尾部消息（Q127/P1-2：长对话快照只携带尾部，避免大帧；返回 items、最早 commitId、是否还有更早）。
     /// limit <= 0 表示不截断。
     let conversationMessagesTail (proj: Projection) (conv: Conversation) (limit: int) : JsonArray * CommitId * bool =
-        let all = conversationMessages proj conv
-        if limit <= 0 || all.Count <= limit then
-            all, 0UL, false
+        // 决策 294：只序列化尾部——旧实现先把整段对话逐条 DeepClone 成 JSON 再截尾，
+        // 十万条的对话每次打开都要付全量拷贝。
+        let all = Projection.effectiveMessages proj conv |> Array.ofList
+        if limit <= 0 || all.Length <= limit then
+            conversationMessages proj conv, 0UL, false
         else
             let tail = JsonArray()
-            for i in all.Count - limit .. all.Count - 1 do
-                tail.Add (all[i].DeepClone())
-            let earliest =
-                match tail[0] with
-                | :? JsonObject as o ->
-                    let mutable c: JsonNode = null
-                    if o.TryGetPropertyValue("commitId", &c) && c <> null then c.GetValue<uint64>() else 0UL
-                | _ -> 0UL
-            tail, earliest, true
+            for i in all.Length - limit .. all.Length - 1 do
+                let m = all[i]
+                let o = JsonObject()
+                o["commitId"] <- m.commitId
+                o["committedAt"] <- m.committedAtUtc.UtcDateTime.ToString("o", System.Globalization.CultureInfo.InvariantCulture)
+                o["payload"] <- m.payloadJson.DeepClone()
+                tail.Add o
+            tail, all[all.Length - limit].commitId, true
 
     /// 历史分页切片（Q127：按 commitID 反向；页边界 = beforeCommitId 之前的稳定 ID）。
     /// 返回 (items 升序数组, hasMore)。

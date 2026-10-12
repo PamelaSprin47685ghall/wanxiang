@@ -6,6 +6,10 @@
     <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
     <WasmMainJSPath>wwwroot/main.js</WasmMainJSPath>
     <WasmRuntimeAssetsLocation>./_framework</WasmRuntimeAssetsLocation>
+    <!-- 决策 295：首访不下载调试产物——符号表（dotnet.native.js.symbols，约 3 MB）与 pdb 只在调试时有用 -->
+    <WasmEmitSymbolMap>false</WasmEmitSymbolMap>
+    <WasmDebugLevel>0</WasmDebugLevel>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
   </PropertyGroup>
 
   <ItemGroup>
