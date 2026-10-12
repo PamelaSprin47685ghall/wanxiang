@@ -75,6 +75,13 @@ let ``搜索命中跳转：滚到目标消息并短暂高亮，随后复原`` ()
             Assert.True(chat.RevealAndHighlight 10UL)
             pump 900
             Assert.True(scroller.Offset.Y < before - 300.0, sprintf "should scroll up to the hit: %f -> %f" before scroller.Offset.Y)
+            // 向上的平滑动画不得被自己的负增量当成用户手势打断：必须真正抵达目标卡片
+            let target =
+                descendantsOf chat
+                |> Seq.find (fun c -> match c with :? Border as b -> b.Name = "reveal-highlight" && obj.ReferenceEquals(b.Background, Tokens.accentSoft) | _ -> false)
+            let tp = target.TranslatePoint(Point(0.0, 0.0), scroller)
+            let top = if tp.HasValue then tp.Value.Y else -1.0
+            Assert.True(top >= 0.0 && top < scroller.Viewport.Height * 0.5, sprintf "hit card should sit in the upper half of the viewport (top=%f)" top)
             Assert.Equal(Some 10UL, chat.LastFlashedCommit)
             Assert.Equal(Some 10UL, chat.HighlightedCommit)
             let tinted =
