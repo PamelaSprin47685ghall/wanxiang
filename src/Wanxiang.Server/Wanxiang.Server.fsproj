@@ -23,6 +23,7 @@
     <Compile Include="McpTransport.fs" />
     <Compile Include="McpClient.fs" />
     <Compile Include="ToolRegistry.fs" />
+    <Compile Include="ToolApproval.fs" />
     <Compile Include="TitleGenerator.fs" />
     <Compile Include="ChatOrchestrator.fs" />
     <Compile Include="HostStatus.fs" />

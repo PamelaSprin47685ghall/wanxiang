@@ -43,6 +43,7 @@
     <Compile Include="Views/Brand.fs" />
     <Compile Include="Views/ExportDialog.fs" />
     <Compile Include="Views/MessageCard.fs" />
+    <Compile Include="Views/ToolApprovalCard.fs" />
     <Compile Include="Views/ChatView.fs" />
     <Compile Include="Views/Composer.fs" />
     <Compile Include="Views/OnboardingCard.fs" />

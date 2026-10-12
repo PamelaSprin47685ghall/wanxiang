@@ -30,7 +30,7 @@ module TomlCodec =
         set [ "temperature"; "topP"; "maxTokens"; "instructions"; "maxContextMessages"; "maxContextTokens"
               "autoTitle"; "maxToolRounds"; "thinkingBudget"; "defaultProvider"; "defaultModel" ]
 
-    let private knownToolsKeys = set [ "fileReadRoots"; "callTimeoutSeconds" ]
+    let private knownToolsKeys = set [ "approvalTimeoutSeconds"; "callTimeoutSeconds"; "exposeDebug"; "fileReadRoots"; "policy" ]
 
     let private knownProviderKeys =
         set [ "kind"; "label"; "baseUrl"; "apiKey"; "models"; "defaultModel"
@@ -122,6 +122,28 @@ module TomlCodec =
         for key in table.Keys do
             if not (known.Contains key) then
                 errors.Add(sprintf "%s.%s: unknown field" path key)
+
+
+    /// `[tools.policy]`：`default` 是兜底，其余键是工具稳定标识；值只允许 auto / first / always。
+    let private parseToolPolicy (t: TomlTable) (errors: ResizeArray<string>) : ToolPolicy * Map<string, ToolPolicy> =
+        match t.TryGetValue "policy" with
+        | true, v ->
+            match asTable v with
+            | Some pt ->
+                let mutable dflt = Auto
+                let mutable map = Map.empty
+                for KeyValue(k, value) in pt do
+                    match value with
+                    | :? string as str ->
+                        match ToolPolicy.tryParse str with
+                        | Some p -> if k = "default" then dflt <- p else map <- Map.add k p map
+                        | None -> errors.Add(sprintf "tools.policy.%s: expected \"auto\", \"first\" or \"always\"" k)
+                    | _ -> errors.Add(sprintf "tools.policy.%s: expected string" k)
+                dflt, map
+            | None ->
+                errors.Add "tools.policy: expected table"
+                Auto, Map.empty
+        | _ -> Auto, Map.empty
 
     let private parseRuntime (top: System.Collections.Generic.IDictionary<string, obj>) (errors: ResizeArray<string>) : RuntimeSwitches =
         match top.TryGetValue "runtime" with
@@ -470,6 +492,7 @@ module TomlCodec =
                 | Some t ->
                     checkKeys t knownToolsKeys "tools" errors
                     let d = ToolsConfig.defaults
+                    let policyDefault, policy = parseToolPolicy t errors
                     { fileReadRoots =
                         (match t.TryGetValue "fileReadRoots" with
                          | true, b -> asStringList b |> Option.defaultValue []
@@ -477,7 +500,17 @@ module TomlCodec =
                       callTimeoutSeconds =
                         (match t.TryGetValue "callTimeoutSeconds" with
                          | true, b -> asInt b |> Option.defaultValue d.callTimeoutSeconds
-                         | _ -> d.callTimeoutSeconds) }
+                         | _ -> d.callTimeoutSeconds)
+                      policyDefault = policyDefault
+                      policy = policy
+                      approvalTimeoutSeconds =
+                        (match t.TryGetValue "approvalTimeoutSeconds" with
+                         | true, b -> asInt b |> Option.defaultValue d.approvalTimeoutSeconds
+                         | _ -> d.approvalTimeoutSeconds)
+                      exposeDebug =
+                        (match t.TryGetValue "exposeDebug" with
+                         | true, (:? bool as b) -> b
+                         | _ -> d.exposeDebug) }
                 | None ->
                     errors.Add "tools: expected table"
                     ToolsConfig.defaults
@@ -624,6 +657,7 @@ module TomlCodec =
         if generation.maxToolRounds <= 0 then errors.Add "generation.maxToolRounds: must be positive"
         if generation.thinkingBudget < 0 then errors.Add "generation.thinkingBudget: must not be negative"
         if toolsCfg.callTimeoutSeconds <= 0 then errors.Add "tools.callTimeoutSeconds: must be positive"
+        if toolsCfg.approvalTimeoutSeconds <= 0 then errors.Add "tools.approvalTimeoutSeconds: must be positive"
         for root in toolsCfg.fileReadRoots do
             if not (Path.IsPathRooted root) then
                 errors.Add(sprintf "tools.fileReadRoots: %s must be an absolute path" root)
@@ -759,6 +793,15 @@ module TomlCodec =
             for r in cfg.tools.fileReadRoots do arr.Add r
             toolsTable.Add("fileReadRoots", arr)
         toolsTable.Add("callTimeoutSeconds", int64 cfg.tools.callTimeoutSeconds)
+        if cfg.tools.approvalTimeoutSeconds <> ToolsConfig.defaultApprovalTimeoutSeconds then
+            toolsTable.Add("approvalTimeoutSeconds", int64 cfg.tools.approvalTimeoutSeconds)
+        if cfg.tools.exposeDebug then toolsTable.Add("exposeDebug", true)
+        if cfg.tools.policyDefault <> Auto || not (Map.isEmpty cfg.tools.policy) then
+            let pt = TomlTable()
+            if cfg.tools.policyDefault <> Auto then pt.Add("default", ToolPolicy.toToml cfg.tools.policyDefault)
+            for (id, p) in cfg.tools.policy |> Map.toList do
+                pt.Add(id, ToolPolicy.toToml p)
+            toolsTable.Add("policy", pt)
         top.Add("tools", toolsTable)
 
         let providers = TomlTable()

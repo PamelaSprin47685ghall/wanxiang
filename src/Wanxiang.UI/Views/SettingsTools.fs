@@ -76,6 +76,42 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         o["enabled"] <- enabled
         o
 
+    /// 工具设置的写入载荷（走既有的 updateGeneration，服务端缺省字段保持原值；第 70 节）。
+    let toolsPayload (roots: string list) (policyDefault: string) (policy: Map<string, string>) (exposeDebug: bool) : JsonObject =
+        let tools = JsonObject()
+        tools["fileReadRoots"] <- JsonArray([| for r in roots -> JsonNode.op_Implicit r |])
+        let pol = JsonObject()
+        pol["default"] <- policyDefault
+        for KeyValue(id, p) in policy do pol[id] <- p
+        tools["policy"] <- pol
+        tools["exposeDebug"] <- exposeDebug
+        let root = JsonObject()
+        root["tools"] <- tools
+        root
+
+    /// 策略的界面文案。
+    let policyLabel (policy: string) =
+        match policy with
+        | "first" -> "首次询问"
+        | "always" -> "每次询问"
+        | _ -> "自动执行"
+
+    let foldersPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
+    let debugHost = Border()
+
+    let saveTools (roots: string list) (policyDefault: string) (policy: Map<string, string>) (exposeDebug: bool) (onDone: bool -> unit) =
+        let g = catalog.generation
+        let submitted =
+            { g with
+                fileReadRoots = roots
+                toolPolicyDefault = policyDefault
+                toolPolicy = policy
+                exposeDebug = exposeDebug }
+        actions.updateGeneration (toolsPayload roots policyDefault policy exposeDebug) (fun ok ->
+            if ok then catalog <- { catalog with generation = submitted }
+            else actions.toast "保存失败，请重试。" Failure
+            onDone ok)
+
     member private this.ShowEditor(existing: McpInfo option) =
         let takenIds = catalog.mcpServers |> List.map (fun s -> s.id)
         let mutable editorActive = true
@@ -317,12 +353,77 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                 LineHeight = ReadingRhythm.captionLineHeight,
                 Margin = Thickness 0.0)
         let column = Ui.vstack Spacing.spaceXXs [ name :> Control; identifier :> Control; description :> Control ]
+        let g = catalog.generation
+        let current = g.toolPolicy |> Map.tryFind tool.id |> Option.defaultValue g.toolPolicyDefault
+        let policyButton = Ui.button Ui.Secondary (policyLabel current) ignore
+        Avalonia.Automation.AutomationProperties.SetAutomationId(policyButton, sprintf "tool-policy-%s" tool.id)
+        Avalonia.Automation.AutomationProperties.SetName(policyButton, sprintf "%s 的审批方式：%s" tool.label (policyLabel current))
+        policyButton.VerticalAlignment <- VerticalAlignment.Center
+        Ui.onClick policyButton (fun () ->
+            Menu.show
+                overlay
+                (policyButton :> Control)
+                true
+                [ for value in [ "auto"; "first"; "always" ] ->
+                      MenuEntry.create
+                          ((if value = current then "✓ " else "") + policyLabel value)
+                          (fun () ->
+                              saveTools
+                                  catalog.generation.fileReadRoots
+                                  catalog.generation.toolPolicyDefault
+                                  (catalog.generation.toolPolicy |> Map.add tool.id value)
+                                  catalog.generation.exposeDebug
+                                  ignore) ])
+        let dock = DockPanel(LastChildFill = true)
+        DockPanel.SetDock(policyButton, Dock.Right)
+        dock.Children.Add policyButton
         let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXl)
         row.Children.Add icon
         row.Children.Add column
+        dock.Children.Add row
         // 列表行卡内边距走行卡档 (space4, space3)：与同页 MCP 行、服务商行同一档。
-        Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.spaceXl)) row Spacing.Radius.md
+        Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.spaceXl)) dock Spacing.Radius.md
         :> Control
+
+    /// 授权一个文件夹：只接受绝对路径；写入 tools.fileReadRoots（第 70 节）。
+    member private this.ShowAddFolder() =
+        let _, pathBox = Ui.textField "例如 /home/me/文档"
+        let field = Ui.inputFieldGroup "文件夹的绝对路径" "模型只能读取这个文件夹以内的文件，不能读到它之外。" pathBox
+        attachFieldValidation pathBox
+        let mutable pending = false
+        let save () =
+            if not pending then
+                clearFieldError pathBox
+                let raw = if isNull pathBox.Text then "" else pathBox.Text.Trim()
+                if String.IsNullOrWhiteSpace raw then applyFieldError pathBox "请填写文件夹路径。"
+                elif not (IO.Path.IsPathRooted raw) then applyFieldError pathBox "需要绝对路径，例如 /home/me/文档。"
+                elif List.contains raw catalog.generation.fileReadRoots then applyFieldError pathBox "这个文件夹已经授权过了。"
+                else
+                    pending <- true
+                    saveTools
+                        (catalog.generation.fileReadRoots @ [ raw ])
+                        catalog.generation.toolPolicyDefault
+                        catalog.generation.toolPolicy
+                        catalog.generation.exposeDebug
+                        (fun ok ->
+                            pending <- false
+                            if ok then overlay.CloseDialog())
+        let cancel = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
+        let confirm = Ui.button Ui.Primary "授权" save
+        let buttons = Ui.hstack Spacing.spaceMd [ cancel :> Control; confirm :> Control ]
+        buttons.HorizontalAlignment <- HorizontalAlignment.Right
+        pathBox.KeyDown.Add(fun e ->
+            if e.Key = Key.Enter then
+                e.Handled <- true
+                save ())
+        let form =
+            Ui.vstack
+                Spacing.spaceXl
+                [ Ui.title "授权文件夹" :> Control
+                  Ui.caption "授权后，读取文件、列出文件夹这两个工具才会出现在工具清单里。" :> Control
+                  field
+                  buttons :> Control ]
+        overlay.ShowDialog(form :> Control, 480.0, initialFocus = pathBox, canDismiss = (fun () -> not pending))
 
     member private this.RenderMcp(server: McpInfo) : Control =
         let toolCount = catalog.tools |> List.filter (fun t -> t.serverId = Some server.id) |> List.length
@@ -405,24 +506,60 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
                     "还没有 MCP 服务器。添加后它提供的工具会自动出现在上面的清单里。"
                     None
                     None)
+        foldersPanel.Children.Clear()
+        for root in next.generation.fileReadRoots do
+            let label = TextBlock(Text = root, FontFamily = Tokens.monoFontFamily, FontSize = Tokens.fontCaption, Foreground = Tokens.text, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center)
+            let remove = Ui.iconButton Icons.trash "移除授权"
+            Avalonia.Automation.AutomationProperties.SetName(remove, sprintf "移除文件夹授权 %s" root)
+            Ui.onClick remove (fun () ->
+                saveTools
+                    (catalog.generation.fileReadRoots |> List.filter (fun r -> r <> root))
+                    catalog.generation.toolPolicyDefault
+                    catalog.generation.toolPolicy
+                    catalog.generation.exposeDebug
+                    ignore)
+            let dock = DockPanel(LastChildFill = true)
+            DockPanel.SetDock(remove, Dock.Right)
+            dock.Children.Add remove
+            dock.Children.Add label
+            foldersPanel.Children.Add(Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.spaceMd)) dock Spacing.Radius.md)
         sandboxNote.Text <-
             if List.isEmpty next.generation.fileReadRoots then
-                "文件读取工具当前不可用：服务端未配置 tools.fileReadRoots 沙箱根目录。这是有意的——没有沙箱就等于把整台机器的文件交给模型。"
+                "文件读取工具当前不可用：还没有授权任何文件夹。这是有意的——没有授权范围就等于把整台机器的文件交给模型。点「授权文件夹」添加。"
             else
                 "文件读取工具的沙箱根目录：" + String.Join("、", next.generation.fileReadRoots)
+        let debugRow, _, _ =
+            Ui.switchRow
+                "显示调试工具"
+                "打开后，工具清单里会多出一个只用于排查问题的回显工具。"
+                next.generation.exposeDebug
+                (fun value ->
+                    if value <> catalog.generation.exposeDebug then
+                        saveTools
+                            catalog.generation.fileReadRoots
+                            catalog.generation.toolPolicyDefault
+                            catalog.generation.toolPolicy
+                            value
+                            ignore)
+        debugHost.Child <- debugRow
 
     member this.Build() : Control =
         let addButton = Ui.button Ui.Primary "添加 MCP 服务器" (fun () -> this.ShowEditor None)
         addButton.HorizontalAlignment <- HorizontalAlignment.Left
+        let addFolderButton = Ui.button Ui.Secondary "授权文件夹" (fun () -> this.ShowAddFolder())
+        addFolderButton.HorizontalAlignment <- HorizontalAlignment.Left
+        Avalonia.Automation.AutomationProperties.SetAutomationId(addFolderButton, "tools-add-folder")
         Ui.vstack
             Spacing.space4xl
             [ Ui.vstack
                   Spacing.spaceXs
                   [ Ui.heading "工具与 MCP" :> Control
-                    Ui.caption "会话设置里勾选的工具会随请求交给模型。工具清单来自服务端实际发现的结果。" :> Control ]
+                    Ui.caption "会话设置里勾选的工具会随请求交给模型；每个工具可以设为自动执行、首次询问或每次询问。工具清单来自服务端实际发现的结果。" :> Control ]
               :> Control
               Ui.vstack Spacing.spaceMd [ Ui.sectionLabel "可用工具" :> Control; builtinPanel :> Control ] :> Control
               sandboxNote :> Control
+              Ui.vstack Spacing.spaceMd [ Ui.sectionLabel "授权文件夹" :> Control; foldersPanel :> Control; addFolderButton :> Control ] :> Control
+              debugHost :> Control
               // 内容分区之间用内容档分隔线（Ui.hairline = borderSoft），与编辑器表单内的分隔线同一档；
               // 窗口 / 导航这类 chrome 分隔才用更轻的 Tokens.hairline。
               Ui.hairline () :> Control

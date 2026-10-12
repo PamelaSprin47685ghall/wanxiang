@@ -329,6 +329,29 @@ module WireCodec =
             p["ok"] <- d.ok
             if not (List.isEmpty d.errors) then
                 p["errors"] <- JsonArray([| for e in d.errors -> JsonNode.op_Implicit e |])
+        | ConfigUpdateTools d ->
+            putGuid p "requestId" d.requestId
+            p["tools"] <- d.tools.DeepClone()
+        | ToolApprovalCapability d -> p["supported"] <- d.supported
+        | ToolApprovalRequested d ->
+            putGuid p "approvalId" d.approvalId
+            putGuid p "threadId" d.conversationId
+            putGuid p "runId" d.generationId
+            p["callId"] <- d.callId
+            p["toolName"] <- d.toolName
+            p["summary"] <- d.summary
+            p["arguments"] <- (if isNull d.arguments then null else d.arguments.DeepClone())
+            p["policy"] <- d.policy
+            p["expiresInSeconds"] <- d.expiresInSeconds
+        | ToolApprovalDecision d ->
+            putGuid p "approvalId" d.approvalId
+            p["approved"] <- d.approved
+        | ToolApprovalResolved d ->
+            putGuid p "approvalId" d.approvalId
+            putGuid p "threadId" d.conversationId
+            p["status"] <- d.status
+            p["reason"] <- d.reason
+            p["alreadyHandled"] <- d.alreadyHandled
         | ConfigChanged d -> p["reason"] <- d.reason
         | ServerError d -> p["message"] <- d.message
         | HostConfigRejected d ->
@@ -766,6 +789,44 @@ module WireCodec =
                                ok = (match tryGet p "ok" with Some v -> v.GetValueKind() = JsonValueKind.True | None -> false)
                                errors = tryStringList p "errors" |})
                     | None -> Error "config.applied: missing requestId"
+                | Some "config.tools-update" ->
+                    match tryGuid p "requestId" with
+                    | Some rid ->
+                        match tryGet p "tools" with
+                        | Some (:? JsonObject as o) -> Ok(ConfigUpdateTools {| requestId = rid; tools = o.DeepClone() :?> JsonObject |})
+                        | _ -> Error "config.tools-update: tools must be an object"
+                    | None -> Error "config.tools-update: missing requestId"
+                | Some "tool.approval-capability" ->
+                    Ok(ToolApprovalCapability {| supported = (match tryGet p "supported" with Some v -> v.GetValueKind() <> JsonValueKind.False | None -> true) |})
+                | Some "tool.approval-requested" ->
+                    match tryGuid p "approvalId", tryGuid p "threadId", tryGuid p "runId" with
+                    | Some aid, Some cid, Some gid ->
+                        Ok(ToolApprovalRequested
+                            {| approvalId = aid
+                               conversationId = cid
+                               generationId = gid
+                               callId = tryString p "callId" |> Option.defaultValue ""
+                               toolName = tryString p "toolName" |> Option.defaultValue ""
+                               summary = tryString p "summary" |> Option.defaultValue ""
+                               arguments = (match tryGet p "arguments" with Some v -> v.DeepClone() | None -> null)
+                               policy = tryString p "policy" |> Option.defaultValue "always"
+                               expiresInSeconds = (match tryGet p "expiresInSeconds" with Some v when v.GetValueKind() = JsonValueKind.Number -> v.GetValue<int>() | _ -> 0) |})
+                    | _ -> Error "tool.approval-requested: missing approvalId/threadId/runId"
+                | Some "tool.approval-decision" ->
+                    match tryGuid p "approvalId" with
+                    | Some aid ->
+                        Ok(ToolApprovalDecision {| approvalId = aid; approved = (match tryGet p "approved" with Some v -> v.GetValueKind() = JsonValueKind.True | None -> false) |})
+                    | None -> Error "tool.approval-decision: missing approvalId"
+                | Some "tool.approval-resolved" ->
+                    match tryGuid p "approvalId" with
+                    | Some aid ->
+                        Ok(ToolApprovalResolved
+                            {| approvalId = aid
+                               conversationId = tryGuid p "threadId" |> Option.defaultValue Guid.Empty
+                               status = tryString p "status" |> Option.defaultValue ""
+                               reason = tryString p "reason" |> Option.defaultValue ""
+                               alreadyHandled = (match tryGet p "alreadyHandled" with Some v -> v.GetValueKind() = JsonValueKind.True | None -> false) |})
+                    | None -> Error "tool.approval-resolved: missing approvalId"
                 | Some "config.changed" -> Ok(ConfigChanged {| reason = tryString p "reason" |> Option.defaultValue "" |})
                 | Some "server.error" -> Ok(ServerError {| message = tryString p "message" |> Option.defaultValue "" |})
                 | Some "config.rejected" ->

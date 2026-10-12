@@ -1,6 +1,6 @@
 ---
 name: wanxiang-tools
-description: 万象 Tool 与 MCP：自动批准、进程内执行、内置/MCP Tool、子进程管理与并发超时（决策 39–40，问答 Q161–170）。
+description: 万象 Tool 与 MCP：策略与审批（第 70–74 节，补充决策 93）、自动批准的首版取舍、进程内执行、内置/MCP Tool、子进程管理与并发超时（决策 39–40，问答 Q161–170）。
 ---
 
 # 39. Tool 执行
@@ -8,6 +8,8 @@ description: 万象 Tool 与 MCP：自动批准、进程内执行、内置/MCP T
 > 覆盖对话决策 93（两个子决策）、94。会话时间：2026-08-01 13:27–13:28。
 
 ## 决策 93（第一问）：需要用户批准的 Tool Call 由哪个客户端批准？
+
+> **已被第 70、71 节补充**（2026-10-12）：首版“全批准”仍是升级前配置的行为；审批能力以可选的 `[tools.policy]` 加入。下面原文保留，不改写。
 
 **AI 建议：** 会话级共享审批，任意已追平且正在观察该会话的授权客户端都可以决定，先到的有效决定胜出。语义如下：
 - Tool Call 完整记账后进入"等待批准"的运行时状态；
@@ -222,3 +224,82 @@ description: 万象 Tool 与 MCP：自动批准、进程内执行、内置/MCP T
 
 **170. 问：Tool 参数解析失败是否调用 Tool？**
 答：不调用。生成完整失败 Tool Result，保留原 Tool Call，并让后续 Provider 自行处理。
+
+# 70. 工具策略：自动 / 首次询问 / 每次询问（W3，2026-10-12，补充决策 93）
+
+> 触发：UX 重设计提案 W3“工具可读可控”。负责人已拍板的取舍写在本节。决策 93 的“未来若引入权限系统，再单独设计审批”在此兑现。
+
+**策略取值**（TOML `[tools.policy]`，值为字符串）：
+- `auto`：自动执行（决策 93 的原行为）。
+- `first`：每个对话里**第一次**用这个工具时询问；批准后同一对话内不再问，记忆只在内存里，进程重启或删除对话即失效；换一个对话仍然问。拒绝**不**被记住。
+- `always`：每次调用都询问。
+
+**键**：`default` 是兜底；其余键是工具稳定标识（`builtin:time`、`mcp:<server>/<tool>`，决策 161）。例：
+
+```toml
+[tools]
+approvalTimeoutSeconds = 300   # 缺省 300，到点自动拒绝
+exposeDebug = false            # 缺省 false，true 才在工具目录里显示 builtin:echo
+
+[tools.policy]
+default = "first"
+"builtin:time" = "auto"
+"mcp:fs/write_file" = "always"
+```
+
+**对既有用户不突变**（负责人硬性要求）：
+- 解析时缺省 `default = auto`、`policy` 为空：升级前的配置文件语义完全不变，不需要任何审批，现有 `ChatOrchestratorTests`、`McpTests` 不改即通过。
+- 重写配置（配对落盘、吊销、设置页保存）时，只有非缺省值才写出：老用户的 TOML 不会被悄悄写进 `policy`。
+- **只有全新安装**（配置文件不存在，由 `ConfigStore.Open` 生成）写入 `default = "first"` 与 `"builtin:time" = "auto"`，即“先问再用”的安全默认。要从“自动”改为“询问”，必须是用户在设置页或 TOML 里主动选择。
+- `tools.policy` 值非法、`approvalTimeoutSeconds <= 0` 视为配置错误，整份配置被拒绝（决策 183 的既有语义）。
+
+# 71. 审批流程（补充决策 93 的“未来设计”）
+
+> 2026-10-12 负责人决定：需要审批而客户端没有审批能力时**拒绝**，不永远等待；缺省审批超时 5 分钟后拒绝；审批与邀请一律只存内存。
+
+**线上协议（全部是加法，旧客户端忽略即可）**，均以 `CUSTOM` `wanxiang.dev/<type>` 承载：
+
+| 事件 | 方向 | 含义 |
+|---|---|---|
+| `tool.approval-capability` `{supported}` | C→S | 客户端声明自己能展示审批卡并回复决定。未声明 = 不具备能力。服务端据此判断“是否有能处理审批的客户端”。 |
+| `tool.approval-requested` `{approvalId, threadId, runId, callId, toolName, summary, arguments, policy, expiresInSeconds}` | S→C | 有调用在等审批。`summary` 是第 72 节的人话摘要。 |
+| `tool.approval-decision` `{approvalId, approved}` | C→S | 批准或拒绝。 |
+| `tool.approval-resolved` `{approvalId, threadId, status, reason, alreadyHandled}` | S→C | 审批结束。`status` ∈ `approved` / `denied` / `expired`（超时、失效或无能力客户端）/ `cancelled`。广播给观察该对话的全部连接；`alreadyHandled = true` 是单独回给**晚到决定者**的“已处理”。 |
+| `config.tools-update` `{requestId, tools}` | C→S | 设置工具策略、授权文件夹、审批超时、`exposeDebug`；缺省字段保持原值，走原子重写 TOML 与 `config.applied` 回执。设置页实际走既有的 `config.generation-update` 的 `tools` 子对象，两条入口共用同一合并逻辑。 |
+
+**语义**
+- 挂起发生在服务端运行时状态里（`ToolApprovalBroker`），由工具循环 `ExecuteTools` 在执行前发起；批准后才执行。
+- **先到者胜**：对每个 `approvalId`，第一个决定原子生效；晚到者收到 `alreadyHandled = true` 的 `tool.approval-resolved`。
+- **没有具备审批能力的客户端正在观察该对话** → 立即拒绝，不挂起；拒绝文案写进工具结果：“这个工具需要先经用户批准，但此刻没有支持审批的客户端在线，所以调用被拒绝。……”
+- **超时**（`tools.approvalTimeoutSeconds`，缺省 300）→ 拒绝，文案“审批超时：N 秒内没有人处理，工具调用已被拒绝。”
+- **用户拒绝** → 一条完整、可记账的 Tool Result，文案固定为 `{"error":"用户拒绝了此次工具调用。"}`，模型据此继续。（以上三类拒绝都是完整 Tool Result，按决策 92 单独记账。）
+- **取消生成** / **删除对话** → 等待中的审批作废（`cancelled`），不写任何 Tool Result（与决策 89 一致，取消成功即无完整结果）。
+- **断线重连**：审批不因断线取消。客户端重新 `observe` 并声明能力后，服务端补发仍在等待的 `tool.approval-requested`（剩余时间递减）。
+- **重启**：挂起的审批随进程消失（原则 2、决策 22）；没有结果的工具调用在界面上按决策 18 显示“结果未知”；对旧 `approvalId` 的决定得到 `status = expired` 的“已处理”。
+- **永不写入日志**：审批请求、决定、能力声明都不进 RFC 7464 日志，也不进快照（测试断言日志不含 `approval`）。
+- 未认证连接发的审批事件按既有规则以协议违规关闭。
+
+# 72. 工具目录整理与人话摘要
+
+- `builtin:echo` 是调试工具：默认**不进工具目录**；`tools.exposeDebug = true` 才显示。已经选了它的老会话仍能构建并执行，也不被报成“配置漂移”（升级不改变既有会话的工具可用性）。
+- **授权文件夹**入口（设置 → 工具）写 `tools.fileReadRoots`：只接受绝对路径；授权前文件工具不出现；空列表时文案明确指向入口。沙箱语义（决策 93 之外的 `resolveInRoots`）不变。
+- **人话摘要** `ToolSummary.describe functionName args`（`Wanxiang.Core`，服务端写审批请求与客户端渲染工具卡共用一份）：
+  - `builtin_time` → “查看当前时间”
+  - `builtin_file_read` → “读取文件 {path}”；`builtin_file_list` → “列出文件夹 {path} 里的内容”；缺参数时回落带“（展开看参数）”的泛化句。
+  - MCP 与未知工具 → “调用 {名字}（展开看参数）”。
+  - 工具调用卡在头部先显示摘要，原始参数仍在下一行与展开详情里；审批卡显示同一句摘要，并说明批准的后果（首次询问 / 每次询问）。
+
+# 73. 协议、配置追加项汇总与兼容性
+
+- `WireEvent` 追加 5 个变体（第 71 节表），均为 `wanxiang.dev/*` CUSTOM 加法；既有 56 个事件语义不变。旧客户端对未知事件不报错（客户端解码失败即忽略，见 `WsClient`），旧客户端不会收到需要它处理的东西：服务端只给声明了能力的连接发审批请求。
+- TOML 追加 `tools.approvalTimeoutSeconds`、`tools.exposeDebug`、`[tools.policy]`；`knownToolsKeys` 与解析/序列化只在 tools 段内新增，与 W1 的 `generation.*` 追加互不冲突。
+- 目录快照 `generation.tools` 追加 `policyDefault`、`policy`、`approvalTimeoutSeconds`、`exposeDebug`（可选字段，旧客户端忽略）。
+- 日志格式与单写者原则零改动。
+
+# 74. 威胁模型与已知限制
+
+- 审批只对**本服务的 MCP/内置工具调用**起作用；MCP 子进程自身的行为不在审批范围内（决策 96：子进程隔离不变）。
+- 任何已认证且观察该对话的、声明了审批能力的设备都能批准（决策 93 的“会话级共享审批”）；持有有效令牌的设备本来就能读写全部对话，批准权限不扩大其能力。
+- `first` 策略的“已批准”记忆按（对话，工具）记在内存里；它不识别参数差异，用户若要逐次把关应选 `always`。
+- 术语：界面与文案使用“主机、模型服务、版本、设备、工具”（负责人已采用）；本工作流新增的用户可见字符串遵循该术语，并避免使用“服务器”一词指代万象主机。
+- 未验证：真机 PWA 上审批卡的软键盘/安全区表现、读屏朗读审批卡的体验、桌面客户端多窗口场景。

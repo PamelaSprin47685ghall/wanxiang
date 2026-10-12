@@ -83,6 +83,12 @@ module ProviderCatalog =
         let t = JsonObject()
         t["fileReadRoots"] <- JsonArray([| for r in cfg.tools.fileReadRoots -> JsonNode.op_Implicit r |])
         t["callTimeoutSeconds"] <- cfg.tools.callTimeoutSeconds
+        t["policyDefault"] <- ToolPolicy.toToml cfg.tools.policyDefault
+        let pol = JsonObject()
+        for KeyValue(id, p) in cfg.tools.policy do pol[id] <- ToolPolicy.toToml p
+        t["policy"] <- pol
+        t["approvalTimeoutSeconds"] <- cfg.tools.approvalTimeoutSeconds
+        t["exposeDebug"] <- cfg.tools.exposeDebug
         o["tools"] <- t
         o
 

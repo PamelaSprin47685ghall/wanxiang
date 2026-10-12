@@ -848,3 +848,7 @@ MAF ⇄ AG-UI 消息往返对文本/工具调用/工具结果/推理/图片/混�
 - 读方宽容（55.8）：快照里的未知字段被忽略，缺字段取保守默认值。
 
 **兼容性（实测，须知）**：当前主机对**未知的 `wanxiang.dev/*` 事件类型**按“畸形事件”处理并关闭连接（`WireCodec.tryDecode` 返回 `unknown event type`），这与 55.8 R1 不一致，**W2 没有改动它**（不在 W2 范围）。后果：新客户端连接**旧主机**并打开「设置 → 设备」会被断开。缓解：客户端只在用户打开设备分区时才发 `devices.request`；读取期间断线时界面提示“主机版本较旧，可能不支持设备管理，请升级主机”（# 68）。旧客户端连接新主机不受影响（它们从不发送这些事件）。
+
+# 70–74（W3 指针）：工具审批事件是 wanxiang.dev 加法
+
+2026-10-12：新增 `tool.approval-capability`、`tool.approval-requested`、`tool.approval-decision`、`tool.approval-resolved`、`config.tools-update` 五个 `wanxiang.dev/*` CUSTOM 事件，语义与兼容性见 `wanxiang-tools` 第 70–74 节。它们不进日志，旧客户端忽略。

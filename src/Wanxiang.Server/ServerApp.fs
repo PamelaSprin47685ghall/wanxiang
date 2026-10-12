@@ -334,6 +334,12 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             with _ -> None
         orchestrator <-
             Some(ChatOrchestrator(coordinator.Value, currentProjection, broadcastToConversation, toolRegistry, currentConfig, loadBlob, logInfo))
+        // 审批只发给「声明了审批能力、且正在观察该对话」的客户端；没有这样的客户端时直接拒绝（决策 71）
+        orchestrator.Value.Approvals.CapabilityProbe <-
+            fun convId ->
+                match registry with
+                | Some reg -> reg.All() |> List.exists (fun c -> c.IsAuthenticated && c.ApprovalCapable && c.Observes convId)
+                | None -> false
         let builder = WebApplication.CreateBuilder()
         if servePwa then
             builder.Services.AddResponseCompression(fun options ->

@@ -194,6 +194,38 @@ module ConfigMutation =
         if cfg.mcpServers.ContainsKey id then Ok { cfg with mcpServers = cfg.mcpServers.Remove id }
         else Error [ sprintf "MCP 服务器 %s 不存在" id ]
 
+    /// 更新工具设置（第 70/71 节）：授权文件夹、每个工具的审批策略、审批超时、调试工具开关。
+    /// 缺省字段保持原值；`policy` 给出时整体替换（`default` 是兜底，其余键是工具稳定标识）。
+    let updateTools (cfg: AppConfig) (payload: JsonObject) : Result<AppConfig, string list> =
+        let hasKey (k: string) =
+            let mutable n: JsonNode = null
+            payload.TryGetPropertyValue(k, &n)
+        let errors = ResizeArray<string>()
+        let current = cfg.tools
+        let policyDefault, policy =
+            let mutable n: JsonNode = null
+            if payload.TryGetPropertyValue("policy", &n) && not (isNull n) && n.GetValueKind() = JsonValueKind.Object then
+                let mutable dflt = Auto
+                let mutable map = Map.empty
+                for kv in n.AsObject() do
+                    let v = if isNull kv.Value || kv.Value.GetValueKind() <> JsonValueKind.String then "" else kv.Value.GetValue<string>()
+                    match ToolPolicy.tryParse v with
+                    | Some p -> if kv.Key = "default" then dflt <- p else map <- Map.add kv.Key p map
+                    | None -> errors.Add(sprintf "tools.policy.%s: 只允许 auto、first、always" kv.Key)
+                dflt, map
+            else current.policyDefault, current.policy
+        let tools =
+            { current with
+                fileReadRoots = if hasKey "fileReadRoots" then stringList payload "fileReadRoots" else current.fileReadRoots
+                policyDefault = policyDefault
+                policy = policy
+                approvalTimeoutSeconds = intOf payload "approvalTimeoutSeconds" |> Option.defaultValue current.approvalTimeoutSeconds
+                exposeDebug = boolOf payload "exposeDebug" current.exposeDebug }
+        if tools.approvalTimeoutSeconds <= 0 then errors.Add "tools.approvalTimeoutSeconds: 需为正整数"
+        for root in tools.fileReadRoots do
+            if not (IO.Path.IsPathRooted root) then errors.Add(sprintf "tools.fileReadRoots: %s 需为绝对路径" root)
+        if errors.Count = 0 then Ok { cfg with tools = tools } else Error(List.ofSeq errors)
+
     /// 更新生成默认值与工具配置。缺省字段保持原值。
     let updateGeneration (cfg: AppConfig) (payload: JsonObject) : Result<AppConfig, string list> =
         let current = cfg.generation
@@ -215,12 +247,21 @@ module ConfigMutation =
               // 全局默认模型：键存在即覆盖，空串 = 清除（回落为首个可用模型服务的 defaultModel）。
               defaultProvider = if hasKey "defaultProvider" then str payload "defaultProvider" else current.defaultProvider
               defaultModel = if hasKey "defaultModel" then str payload "defaultModel" else current.defaultModel }
+        let mutable toolsErrors: string list = []
         let toolsCfg =
             let mutable n: JsonNode = null
             if payload.TryGetPropertyValue("tools", &n) && not (isNull n) && n.GetValueKind() = JsonValueKind.Object then
                 let t = n.AsObject()
-                { fileReadRoots = stringList t "fileReadRoots"
-                  callTimeoutSeconds = intOf t "callTimeoutSeconds" |> Option.defaultValue cfg.tools.callTimeoutSeconds }
+                let basic =
+                    { cfg.tools with
+                        fileReadRoots = stringList t "fileReadRoots"
+                        callTimeoutSeconds = intOf t "callTimeoutSeconds" |> Option.defaultValue cfg.tools.callTimeoutSeconds }
+                // 审批策略等新键沿用同一个入口：缺省保持原值，旧客户端只发两个老键时不受影响
+                match updateTools { cfg with tools = basic } t with
+                | Ok merged -> merged.tools
+                | Error es ->
+                    toolsErrors <- es
+                    basic
             else
                 cfg.tools
         let errors =
@@ -249,6 +290,7 @@ module ConfigMutation =
               | None, None -> ()
               if toolsCfg.callTimeoutSeconds <= 0 then "tools.callTimeoutSeconds: 需为正整数"
               for root in toolsCfg.fileReadRoots do
-                  if not (IO.Path.IsPathRooted root) then sprintf "tools.fileReadRoots: %s 需为绝对路径" root ]
+                  if not (IO.Path.IsPathRooted root) then sprintf "tools.fileReadRoots: %s 需为绝对路径" root
+              yield! toolsErrors ]
         if List.isEmpty errors then Ok { cfg with generation = generation; tools = toolsCfg }
         else Error errors

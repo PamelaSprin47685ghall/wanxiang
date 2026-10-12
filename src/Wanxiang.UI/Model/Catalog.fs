@@ -53,6 +53,12 @@ type GenerationInfo = {
     defaultProvider: string option
     /// 全局默认模型（`[generation] defaultModel`，可选）
     defaultModel: string option
+    /// 未单独配置的工具所用审批策略："auto" | "first" | "always"
+    toolPolicyDefault: string
+    /// 单个工具的审批策略（键是稳定标识）
+    toolPolicy: Map<string, string>
+    approvalTimeoutSeconds: int
+    exposeDebug: bool
 }
 
 /// 服务端能力目录。客户端所有选择器（模型、工具）都从这里取数据，
@@ -80,7 +86,11 @@ module Catalog =
               maxToolRounds = 12
               fileReadRoots = []
               defaultProvider = None
-              defaultModel = None } }
+              defaultModel = None
+              toolPolicyDefault = "auto"
+              toolPolicy = Map.empty
+              approvalTimeoutSeconds = 300
+              exposeDebug = false } }
 
     let private str (o: JsonObject) key fallback =
         let mutable n: JsonNode = null
@@ -192,7 +202,19 @@ module Catalog =
               maxToolRounds = intOf generation "maxToolRounds" 12
               fileReadRoots = strings toolsConfig "fileReadRoots"
               defaultProvider = strOpt generation "defaultProvider"
-              defaultModel = strOpt generation "defaultModel" } }
+              defaultModel = strOpt generation "defaultModel"
+              toolPolicyDefault = str toolsConfig "policyDefault" "auto"
+              toolPolicy =
+                (let mutable n: JsonNode = null
+                 if toolsConfig.TryGetPropertyValue("policy", &n) && not (isNull n) && n.GetValueKind() = JsonValueKind.Object then
+                     n.AsObject()
+                     |> Seq.choose (fun kv ->
+                         if not (isNull kv.Value) && kv.Value.GetValueKind() = JsonValueKind.String then Some(kv.Key, kv.Value.GetValue<string>())
+                         else None)
+                     |> Map.ofSeq
+                 else Map.empty)
+              approvalTimeoutSeconds = intOf toolsConfig "approvalTimeoutSeconds" 300
+              exposeDebug = boolOf toolsConfig "exposeDebug" false } }
 
     /// 参与模型选择的服务商：启用且至少一个模型。
     let usableProviders (catalog: Catalog) =

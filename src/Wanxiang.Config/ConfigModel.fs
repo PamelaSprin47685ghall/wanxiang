@@ -129,19 +129,65 @@ module GenerationDefaults =
           defaultProvider = None
           defaultModel = None }
 
+/// 工具审批策略（第 70 节）：自动 / 每个对话里首次询问 / 每次询问。
+type ToolPolicy =
+    | Auto
+    | AskFirst
+    | AskEach
+
+module ToolPolicy =
+
+    let toToml (p: ToolPolicy) : string =
+        match p with
+        | Auto -> "auto"
+        | AskFirst -> "first"
+        | AskEach -> "always"
+
+    let tryParse (s: string) : ToolPolicy option =
+        match s with
+        | "auto" -> Some Auto
+        | "first" -> Some AskFirst
+        | "always" -> Some AskEach
+        | _ -> None
+
 /// 内建工具配置。
 type ToolsConfig = {
     /// `builtin:file.read` 的沙箱根目录白名单；空列表 = 该工具不可用
     fileReadRoots: string list
     /// 单个内建工具调用超时（秒）
     callTimeoutSeconds: int
+    /// 未单独配置的工具所用策略。缺省 Auto（既有配置行为不变，第 70 节）
+    policyDefault: ToolPolicy
+    /// 单个工具策略，键是稳定标识（`builtin:time`、`mcp:<server>/<tool>`）
+    policy: Map<string, ToolPolicy>
+    /// 审批等待上限（秒），到点自动拒绝（第 71 节）
+    approvalTimeoutSeconds: int
+    /// 是否在工具目录里显示调试工具（`builtin:echo`）
+    exposeDebug: bool
 }
 
 module ToolsConfig =
 
+    let defaultApprovalTimeoutSeconds = 300
+
+    /// 解析缺省值：既有配置文件没写的键保持原行为（全自动、调试工具可经会话继续使用）。
     let defaults : ToolsConfig =
         { fileReadRoots = []
-          callTimeoutSeconds = 30 }
+          callTimeoutSeconds = 30
+          policyDefault = Auto
+          policy = Map.empty
+          approvalTimeoutSeconds = defaultApprovalTimeoutSeconds
+          exposeDebug = false }
+
+    /// 全新安装写入的配置：未单独配置的工具先询问（第 70 节）。
+    let newInstall : ToolsConfig =
+        { defaults with
+            policyDefault = AskFirst
+            policy = Map.ofList [ "builtin:time", Auto ] }
+
+    /// 某个工具的生效策略。
+    let policyOf (cfg: ToolsConfig) (toolId: string) : ToolPolicy =
+        cfg.policy |> Map.tryFind toolId |> Option.defaultValue cfg.policyDefault
 
 /// 已授权客户端（令牌哈希即身份）。
 type ClientAuthRecord = {

@@ -75,6 +75,8 @@ type WsConnection(
     let mutable snapshotMode = false
     let mutable closed = false
     let mutable pairingRequested = false
+    /// 客户端声明过自己能处理工具审批（`tool.approval-capability`）。旧客户端永远是 false。
+    let mutable approvalCapable = false
     /// catch-up 进行中标记（Interlocked，防多入口并发发送重复批次）。
     let mutable catchUpRunning = 0
     /// 全文搜索进行中的数量（W4，预算 SearchLimits.maxInFlightPerConnection）。
@@ -105,6 +107,7 @@ type WsConnection(
         | _ -> false
     member _.TokenHash = lock cursorLock (fun () -> tokenHash)
     member _.Observes(convId: Guid) : bool = lock cursorLock (fun () -> observedConversations.Contains convId)
+    member _.ApprovalCapable = lock cursorLock (fun () -> approvalCapable)
     member _.ObservesList = lock cursorLock (fun () -> observedList)
     member _.AppliedCursor = lock cursorLock (fun () -> appliedCursor)
     member _.IsInSnapshotMode = lock cursorLock (fun () -> snapshotMode)
@@ -512,6 +515,10 @@ type WsConnection(
                     // 降级到 catch-up 分批重同步（决策 32-34），绝不静默丢弃快照
                     if not (this.SendConversationSnapshot d.conversationId) then
                         this.EnterSnapshotMode()
+                    // 断线重连后审批卡片仍在：补发这个对话里还在等待的审批请求
+                    if this.ApprovalCapable then
+                        for ev in orchestrator.Approvals.PendingFor d.conversationId do
+                            this.TrySend ev |> ignore
                 | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
             | UnobserveConversation d ->
                 lock cursorLock (fun () -> observedConversations <- observedConversations.Remove d.conversationId)
@@ -734,6 +741,21 @@ type WsConnection(
             | ConfigUpsertProvider d -> do! this.ApplyConfig(d.requestId, ConfigMutation.upsertProvider, d.provider)
             | ConfigUpsertMcp d -> do! this.ApplyConfig(d.requestId, ConfigMutation.upsertMcp, d.server)
             | ConfigUpdateGeneration d -> do! this.ApplyConfig(d.requestId, ConfigMutation.updateGeneration, d.generation)
+            | ToolApprovalCapability d ->
+                match handshakeState with
+                | Authenticated ->
+                    lock cursorLock (fun () -> approvalCapable <- d.supported)
+                    if d.supported then
+                        let observed = lock cursorLock (fun () -> observedConversations)
+                        for convId in observed do
+                            for ev in orchestrator.Approvals.PendingFor convId do
+                                this.TrySend ev |> ignore
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
+            | ToolApprovalDecision d ->
+                match handshakeState with
+                | Authenticated -> orchestrator.Approvals.Decide(d.approvalId, d.approved, (fun ev -> this.TrySend ev |> ignore))
+                | _ -> do! this.CloseWith(WebSocketCloseStatus.ProtocolError, "not authenticated")
+            | ConfigUpdateTools d -> do! this.ApplyConfig(d.requestId, ConfigMutation.updateTools, d.tools)
             | ConfigDeleteProvider d ->
                 do! this.ApplyConfigWith(d.requestId, fun cfg -> ConfigMutation.deleteProvider cfg d.providerId)
             | ConfigDeleteMcp d ->

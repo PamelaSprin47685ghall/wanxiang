@@ -34,6 +34,9 @@ type McpFunction(client: McpClient, serverId: string, info: McpToolInfo) =
 
     override _.Name = functionName
 
+    /// 稳定标识（`mcp:<server>/<tool>`），审批策略按它查。
+    member _.StableId = sprintf "mcp:%s/%s" serverId info.name
+
     override _.Description =
         if String.IsNullOrWhiteSpace info.description then
             sprintf "%s 提供的工具 %s。" serverId info.name
@@ -154,6 +157,7 @@ type ToolRegistry(getConfig: unit -> AppConfig, onLog: string -> unit) =
         let cfg = getConfig ()
         let builtins =
             BuiltinTools.descriptors cfg.tools
+            |> List.filter (fun (id, _, _) -> cfg.tools.exposeDebug || not (BuiltinTools.isDebug id))
             |> List.map (fun (id, fn, desc) ->
                 { id = id
                   functionName = fn
@@ -218,9 +222,18 @@ type ToolRegistry(getConfig: unit -> AppConfig, onLog: string -> unit) =
             |> List.ofSeq
         builtins @ mcpTools
 
+    /// 一个工具的稳定标识（审批策略的键）。
+    member _.StableIdOf(tool: AITool) : string =
+        match tool with
+        | :? McpFunction as m -> m.StableId
+        | t -> BuiltinTools.stableId t.Name
+
     /// 会话请求了但当前不可用的工具（供 UI 提示配置漂移）。
     member this.MissingTools(config: SessionConfig) : string list =
-        let available = this.Descriptors() |> List.map (fun d -> d.id) |> Set.ofList
+        // 调试工具默认不进目录，但老会话已经选了它时仍然可用，不能算「配置漂移」
+        let available =
+            (this.Descriptors() |> List.map (fun d -> d.id)) @ (BuiltinTools.descriptors (getConfig ()).tools |> List.map (fun (id, _, _) -> id))
+            |> Set.ofList
         config.tools |> List.filter (fun t -> not (available.Contains t))
 
     /// 关闭全部 MCP 客户端（排空后关闭，决策 98）。
