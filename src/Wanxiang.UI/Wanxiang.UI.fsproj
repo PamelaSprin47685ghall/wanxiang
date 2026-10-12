@@ -20,6 +20,7 @@
     <Compile Include="Model/StartupTrace.fs" />
     <Compile Include="Model/UiPrefs.fs" />
     <Compile Include="Model/MediaTypes.fs" />
+    <Compile Include="Model/ModelVision.fs" />
     <Compile Include="Rich/RichBackend.fs" />
     <Compile Include="Rich/Highlight.fs" />
     <Compile Include="Rich/KatexHtml.fs" />

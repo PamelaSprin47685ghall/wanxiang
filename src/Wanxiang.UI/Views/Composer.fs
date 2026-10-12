@@ -175,6 +175,28 @@ type Composer(actions: ComposerActions) as this =
     let mutable disabledReason = ""
     let mutable wasActiveBeforeDisabled = false
     let mutable isDraggingOver = false
+    // 决策 320：当前模型能不能看图，以及给提示用的模型名。
+    let mutable visionSupport = VisionUnknown
+    let mutable visionModelLabel = ""
+    // 决策 322：图片附件的缩略图，按 attachmentId 缓存解码结果（只解一次、按显示宽度解）。
+    let thumbnails = System.Collections.Generic.Dictionary<Guid, Avalonia.Media.Imaging.Bitmap>()
+    let visionNoticeText =
+        TextBlock(
+            Text = "",
+            FontSize = Tokens.fontCaption,
+            Foreground = Tokens.text,
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = ReadingRhythm.captionLineHeight)
+    let visionNotice =
+        Border(
+            Background = Tokens.surfaceContainer,
+            BorderBrush = Tokens.warning,
+            BorderThickness = Thickness ControlMetrics.borderWidth,
+            CornerRadius = CornerRadius Spacing.Radius.md,
+            Padding = Thickness(Spacing.spaceXl, Spacing.spaceMd),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Child = visionNoticeText,
+            IsVisible = false)
     // 发送历史全局共享（shell 风格，不随对话隔离）；半截输入由 uncommittedDraft + per-session draft 持有，不进历史。
     let promptHistory = ResizeArray<string>()
     let mutable historyIndex = -1
@@ -258,8 +280,13 @@ type Composer(actions: ComposerActions) as this =
         let hasAttachment = attachments |> List.exists (fun a -> a.ready)
         let uploading = attachments |> List.exists (fun a -> not a.ready && not a.failed)
         let hasFailed = attachments |> List.exists _.failed
+        let hasImage = attachments |> List.exists (fun a -> MediaTypes.isImage a.mediaType)
+        let visionBlocked = hasImage && visionSupport = VisionNo
+        visionNoticeText.Text <- if visionBlocked then ModelVision.blockedMessage visionModelLabel else ""
+        visionNotice.IsVisible <- visionBlocked
+        Avalonia.Automation.AutomationProperties.SetName(visionNotice, visionNoticeText.Text)
         // 失败残留同样挡住发送：TryConsumeReady 只认全 ready；用户移除或重加后即恢复，不楔死。
-        let canSend = enabled && not uploading && not hasFailed && (hasText || hasAttachment)
+        let canSend = enabled && not uploading && not hasFailed && not visionBlocked && (hasText || hasAttachment)
         Ui.setEnabled sendButton (if generating then canStop else canSend)
         Ui.setEnabled queueButton canSend
         // 排队只在生成时成立。闲置时把它从布局中收起，发送键仍靠右不移动。
@@ -277,6 +304,8 @@ type Composer(actions: ComposerActions) as this =
                 "附件上传中，请稍候…"
             elif hasFailed then
                 "有附件上传失败，移除或重新添加后发送"
+            elif visionBlocked then
+                ModelVision.blockedMessage visionModelLabel
             elif not hasText && not hasAttachment then
                 "请输入消息或添加附件"
             else
@@ -512,11 +541,26 @@ type Composer(actions: ComposerActions) as this =
             icon.VerticalAlignment <- VerticalAlignment.Center
             icon.HorizontalAlignment <- HorizontalAlignment.Center
             let iconSlot =
-                Border(
-                    Width = ControlMetrics.composerAttachmentIconSlot,
-                    Height = ControlMetrics.composerAttachmentIconSlot,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Child = icon)
+                match thumbnails.TryGetValue attachment.attachmentId with
+                | true, bmp when not attachment.failed ->
+                    // 决策 322：图片显示缩略图而不是通用图标——一眼确认「发的是这张」。
+                    let side = ControlMetrics.composerAttachmentIconSlot * 2.0
+                    let thumb =
+                        Border(
+                            Width = side,
+                            Height = side,
+                            CornerRadius = CornerRadius Spacing.Radius.sm,
+                            ClipToBounds = true,
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Child = Image(Source = bmp, Stretch = Stretch.UniformToFill, Opacity = (if attachment.ready then 1.0 else 0.6)))
+                    Avalonia.Automation.AutomationProperties.SetName(thumb, sprintf "图片预览 %s" attachment.fileName)
+                    thumb
+                | _ ->
+                    Border(
+                        Width = ControlMetrics.composerAttachmentIconSlot,
+                        Height = ControlMetrics.composerAttachmentIconSlot,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Child = icon)
             let name =
                 TextBlock(
                     Text = attachment.fileName,
@@ -641,8 +685,33 @@ type Composer(actions: ComposerActions) as this =
                         tryFocusInput ())
         | None -> ()
 
+    /// 决策 322：登记图片缩略图。解码失败（损坏的图）就退回文件图标，不报错。
+    member this.SetThumbnail(attachmentId: Guid, bytes: byte[]) =
+        try
+            use ms = new IO.MemoryStream(bytes)
+            let bmp = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(ms, 96)
+            thumbnails.[attachmentId] <- bmp
+            if attachments |> List.exists (fun a -> a.attachmentId = attachmentId) then this.RenderAttachments()
+        with _ -> ()
+
+    member _.HasThumbnail(attachmentId: Guid) = thumbnails.ContainsKey attachmentId
+
+    /// 决策 320：当前对话（或新对话）将使用的模型能否看图。
+    member _.SetModelVision(support: VisionSupport, modelLabel: string) =
+        if visionSupport <> support || visionModelLabel <> modelLabel then
+            visionSupport <- support
+            visionModelLabel <- modelLabel
+            refreshSendState ()
+
+    member _.VisionNoticeText = if visionNotice.IsVisible then visionNoticeText.Text else ""
+
     member this.SetAttachments(items: PendingAttachment list) =
         if attachments <> items then
+            // 已移除附件的缩略图随之释放。
+            for id in List.ofSeq thumbnails.Keys do
+                if not (items |> List.exists (fun a -> a.attachmentId = id)) then
+                    thumbnails.[id].Dispose()
+                    thumbnails.Remove id |> ignore
             // 数据型重渲染（兄弟附件完成/失败）：显式移除流程已通过 pendingFocusAttachmentId 占位，
             // 其它情况把当前聚焦的 remove 按钮原位恢复，避免焦点掉到页顶。
             if pendingFocusAttachmentId.IsNone then
@@ -981,6 +1050,7 @@ type Composer(actions: ComposerActions) as this =
         let outer = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd, MaxWidth = Tokens.readingWidth)
         outer.Children.Add accessorySlot
         outer.Children.Add disabledNotice
+        outer.Children.Add visionNotice
         outer.Children.Add pendingContainer
         outer.Children.Add shell
         this.Child <- outer
