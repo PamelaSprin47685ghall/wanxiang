@@ -15,7 +15,7 @@ Does NOT enable Software2D.
   We forward those exactly once via InputHelper.OnCompositionEnd(data) (-> RawTextEvent), first
   mapping the replaced range into the Avalonia selection via the existing deleteContentBackward
   selection sync, and preventDefault so the hidden <input> never drifts from Avalonia's text.
-  Skipped while composing and for paste right after a Ctrl/Cmd+V keydown (Avalonia pastes that itself).
+  Only insertReplacementText remaps the selection (others trust Avalonia's own). Skipped while composing and for paste right after a Ctrl/Cmd+V keydown (Avalonia pastes that itself).
 """
 from __future__ import annotations
 import pathlib, sys
@@ -58,10 +58,10 @@ BRIDGE_NEW = BRIDGE_OLD + BRIDGE_MARK + (
     'e.addEventListener("beforeinput",o=>{let y=o.inputType;'
     'if(o.isComposing||e.__wxComp||!/^(insertText|insertReplacementText|insertFromPaste|insertFromPasteAsQuotation|insertFromDrop|insertFromDictation|insertFromYank)$/.test(y))return;'
     'if(y.startsWith("insertFromPaste")&&Date.now()-(globalThis.__wxPasteKey||0)<1e3)return;'
-    'let d=o.data;d==null&&o.dataTransfer&&(d=o.dataTransfer.getData("text/plain"));o.preventDefault();'
+    'let d=o.data,x=o.target&&o.target.setSelectionRange?o.target:e;d==null&&o.dataTransfer&&(d=o.dataTransfer.getData("text/plain"));o.preventDefault();'
     'if(y==="insertReplacementText"){let g=o.getTargetRanges&&o.getTargetRanges();'
-    'g&&g.length&&g[0].startOffset!==g[0].endOffset&&e.setSelectionRange&&e.setSelectionRange(g[0].startOffset,g[0].endOffset)}'
-    'e.selectionStart!=null&&e.selectionStart!==e.selectionEnd&&l.InputHelper.OnBeforeInput(t,"deleteContentBackward",-1,-1);'
+    'g&&g.length&&g[0].startOffset!==g[0].endOffset&&x.setSelectionRange&&x.setSelectionRange(g[0].startOffset,g[0].endOffset);'
+    'x.selectionStart!=null&&x.selectionStart!==x.selectionEnd&&l.InputHelper.OnBeforeInput(t,"deleteContentBackward",-1,-1)}'
     'd&&l.InputHelper.OnCompositionEnd(t,d.replace(/\\r\\n?/g,"\\n"))});')
 if BRIDGE_MARK in t:
     print(f"insert bridge already present {path}")
