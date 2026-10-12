@@ -186,6 +186,7 @@ type Composer(actions: ComposerActions) as this =
     // 当前 compact 档：宽度驱动的留白刷新只在非 compact 路径生效，
     // 与 SetCompactMode 协作而非争抢同一份 Padding 写权。
     let mutable compactMode = false
+    let mutable contextCustomized = false
     let mutable generating = false
     let mutable canStop = true
     let mutable enabled = false
@@ -895,17 +896,19 @@ type Composer(actions: ComposerActions) as this =
         openSessionSettings <- onOpen
         // 上下文完整入口始终在对话菜单里；只有这段对话真的作了特殊设置，
         // 输入区才显示摘要。这是状态标记，不再是第二份常驻设置导航。
+        // 决策 364：工具开关不算「特殊设置」——「工具 N 项」对新用户没有意义，完整入口在对话菜单里。
         let isCustomized (value: SessionConfig) =
-            value.instructions.IsSome || not (List.isEmpty value.tools)
+            value.instructions.IsSome
             || value.temperature.IsSome || value.topP.IsSome || value.maxTokens.IsSome
             || value.thinkingBudget.IsSome || value.extraJson.IsSome
-        contextButton.IsVisible <- config |> Option.exists isCustomized
+        contextCustomized <- config |> Option.exists isCustomized
+        // 决策 364：手机（compact）底栏只留模型芯片、回形针、发送三样。
+        contextButton.IsVisible <- contextCustomized && not compactMode
         Ui.setEnabled contextButton canEdit
         match config with
         | Some value when isCustomized value ->
             let label =
-                if not (List.isEmpty value.tools) then sprintf "工具 %d 项" value.tools.Length
-                elif value.instructions.IsSome then "系统指令"
+                if value.instructions.IsSome then "系统指令"
                 else "生成参数"
             Ui.setButtonText contextButton label
             Avalonia.Automation.AutomationProperties.SetName(contextButton, "对话上下文")
@@ -949,6 +952,10 @@ type Composer(actions: ComposerActions) as this =
         contextButton.MinHeight <- if value then LayoutPolicy.compactActionTarget else ControlMetrics.textButtonMinHeight
         applyToolbarLayout (this.Bounds.Width > 0.0 && this.Bounds.Width < LayoutPolicy.composerToolbarStackBelow)
         compactMode <- value
+        contextButton.IsVisible <- contextCustomized && not value
+        // 决策 368：手机上附件排成一行横向滚动，不再一行一个把输入框挤掉一半。
+        attachmentScroller.HorizontalScrollBarVisibility <- (if value then ScrollBarVisibility.Auto else ScrollBarVisibility.Disabled)
+        attachmentScroller.VerticalScrollBarVisibility <- (if value then ScrollBarVisibility.Disabled else ScrollBarVisibility.Auto)
         this.Padding <-
             if value then
                 // compact 档：固定收紧边距，不随宽度浮动（窄屏省地优先于呼吸感）。

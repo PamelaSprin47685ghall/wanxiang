@@ -30,6 +30,19 @@ type ConversationGroup = {
 
 module ConversationSummary =
 
+    /// 决策 361：同名对话的区分标记。标题与列表里别的对话重名时，预览行开头附上
+    /// 最近活动时间（今天只写时刻，否则写月/日 时刻），让两条「新对话」一眼可分；不重名返回 None。
+    let disambiguator (all: ConversationSummary list) (now: DateTimeOffset) (summary: ConversationSummary) : string option =
+        let key (t: string) = (if isNull t then "" else t.TrimEnd('…').Trim())
+        let k = key summary.title
+        let dup = all |> List.exists (fun o -> o.id <> summary.id && key o.title = k)
+        if not dup then None
+        else
+            let t = summary.updatedAt.ToLocalTime()
+            let n = now.ToLocalTime()
+            if t.Date = n.Date then Some(t.ToString "HH:mm")
+            else Some(t.ToString "M/d HH:mm")
+
     /// 生成中状态的唯一判定（C8：UiControllers 的旧副本收敛到这里）。
     let isGeneratingStatus (status: string) : bool = status = "generating"
 

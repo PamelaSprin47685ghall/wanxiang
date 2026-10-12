@@ -343,6 +343,22 @@ html, body {
     .shell-notice { background: #15151A; color: #EDEBE4; }
 }
 @media (prefers-reduced-motion: reduce) { .shell-bar { animation: none; } }
+/* 决策 365：安装提示降一档——浅底细边、不再是全屏最重的黑条。 */
+.shell-install {
+    background: var(--ivory);
+    color: var(--near-black);
+    border-color: rgba(20,19,19,0.12);
+    box-shadow: 0 4px 14px -10px rgba(20,19,19,0.25);
+    font-size: 12.5px;
+    padding-top: 6px; padding-bottom: 6px;
+}
+.shell-install .shell-btn { color: var(--near-black); border-color: rgba(20,19,19,0.18); }
+.shell-install .shell-btn-primary { background: transparent; color: #2F5F98; border-color: rgba(47,95,152,0.45); }
+@media (prefers-color-scheme: dark) {
+    .shell-install { background: #1C1C22; color: #D8D6CF; border-color: rgba(237,235,228,0.10); }
+    .shell-install .shell-btn { color: #D8D6CF; border-color: rgba(237,235,228,0.18); }
+    .shell-install .shell-btn-primary { background: transparent; color: #9CC0EA; border-color: rgba(156,192,234,0.5); }
+}
 /* PWA 独立窗口：无浏览器地址栏，壳层不再需要额外让位 */
 @media (display-mode: standalone) { .shell-install { display: none !important; } }
 /* 决策 271：桌面（精确指针、宽屏）上安装提示不再浮在画布上压住对话标题栏，
@@ -352,16 +368,16 @@ html, body {
         top: 0; left: 0; right: 0;
         transform: none;
         width: 100%;
-        height: 56px;
+        height: 40px;
         border-radius: 0 !important;
         border-width: 0 0 1px 0;
         box-shadow: none;
         animation: none;
         padding: 0 16px 0 24px;
     }
-    .shell-install .shell-btn { min-height: 36px; }
+    .shell-install .shell-btn { min-height: 30px; }
     body:has(#shell-install:not([hidden])) #out {
-        top: 56px;
-        height: calc(var(--wx-vvh, 100dvh) - 56px);
+        top: 40px;
+        height: calc(var(--wx-vvh, 100dvh) - 40px);
     }
 }

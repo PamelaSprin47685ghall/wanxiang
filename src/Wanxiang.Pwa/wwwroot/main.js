@@ -247,6 +247,13 @@ function setupShellStatus() {
         catch (_) { return false; }
     };
     if (standalone || recentlyDismissed()) return;
+    // 决策 365：第二次打开才提安装——第一次来的人先把对话跑通，不被最重的横条打扰。
+    let visits = 1;
+    try {
+        visits = Number(localStorage.getItem("wanxiang.visits") || 0) + 1;
+        localStorage.setItem("wanxiang.visits", String(visits));
+    } catch (_) { }
+    if (visits < 2) return;
     let deferred = null;
     const installLabel = () => matchMedia("(pointer: coarse)").matches
         ? "安装到主屏幕，像应用一样全屏打开。"
