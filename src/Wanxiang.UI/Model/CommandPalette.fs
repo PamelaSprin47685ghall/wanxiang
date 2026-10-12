@@ -115,7 +115,10 @@ module CommandPalette =
                   let ini = PinyinInitials.initials item.title
                   // 首字母只认前缀/连续命中，避免「d」这种单字母把半个列表都拉进来时乱序。
                   if ini <> "" && ini.Contains(q.ToLowerInvariant().Replace(" ", "")) then
-                      yield Some(800 - ini.IndexOf(q.ToLowerInvariant().Replace(" ", "")) * 5 - ini.Length) ]
+                      yield Some(800 - ini.IndexOf(q.ToLowerInvariant().Replace(" ", "")) * 5 - ini.Length)
+                  // 中英混排（「Rust 学习笔记」→ rsxx）退回子序列，分数低于连续命中。
+                  elif ini <> "" && q.Length >= 2 then
+                      yield fuzzyScore q ini |> Option.map (fun s -> min s 600) ]
         candidates |> List.choose id |> function [] -> None | xs -> Some(List.max xs)
 
     let private kindWeight = function
