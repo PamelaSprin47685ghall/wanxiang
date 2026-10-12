@@ -145,3 +145,65 @@ let ``image attachment renders a thumbnail with remove button`` () =
     finally
         window.Close()
     )
+
+// ---------- 截图（仅在设置 WANXIANG_UX_ARTIFACT_DIR 时落盘） ----------
+
+let private capture (window: Window) (name: string) =
+    match Environment.GetEnvironmentVariable "WANXIANG_UX_ARTIFACT_DIR" with
+    | null | "" -> ()
+    | directory ->
+        IO.Directory.CreateDirectory directory |> ignore
+        Avalonia.Headless.AvaloniaHeadlessPlatform.ForceRenderTimerTick()
+        Dispatcher.UIThread.RunJobs()
+        use frame = window.CaptureRenderedFrame()
+        frame.Save(IO.Path.Combine(directory, name + ".png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default)
+
+/// 画一张有内容的“照片”当缩略图素材。
+let private samplePhoto () =
+    let canvas = Avalonia.Controls.Border(Width = 160.0, Height = 120.0)
+    canvas.Background <-
+        Avalonia.Media.LinearGradientBrush(
+            StartPoint = RelativePoint(0.0, 0.0, RelativeUnit.Relative),
+            EndPoint = RelativePoint(1.0, 1.0, RelativeUnit.Relative),
+            GradientStops = Avalonia.Media.GradientStops(
+                [ Avalonia.Media.GradientStop(Avalonia.Media.Color.Parse "#F2A65A", 0.0)
+                  Avalonia.Media.GradientStop(Avalonia.Media.Color.Parse "#4A7FB5", 1.0) ]))
+    canvas.Measure(Size(160.0, 120.0)); canvas.Arrange(Rect(0.0, 0.0, 160.0, 120.0))
+    use rtb = new Avalonia.Media.Imaging.RenderTargetBitmap(PixelSize(160, 120))
+    rtb.Render canvas
+    use ms = new IO.MemoryStream()
+    rtb.Save(ms)
+    ms.ToArray()
+
+[<Trait("Category", "UI")>]
+[<Fact>]
+let ``r15 截图：图片缩略图、只吃文字的模型拦下、深色、手机宽度`` () =
+    Headless.run (fun () ->
+    MotionPolicy.setReduced true
+    let scene (theme: ThemeMode) (width: float) (vision: VisionSupport) (label: string) (shot: string) =
+        Tokens.apply theme
+        let composer = Composer(actions ignore)
+        composer.Build()
+        let host = Grid(Background = Tokens.canvas)
+        host.Children.Add(Border(Padding = Thickness 16.0, VerticalAlignment = Layout.VerticalAlignment.Bottom, Child = composer))
+        let window = show host width 300.0
+        try
+            composer.SetEnabled(true, "")
+            composer.SetModelLabel label
+            composer.SetModelVision(vision, label)
+            composer.SetText "这张截图里的报错是什么意思？"
+            let photo = Guid.NewGuid()
+            composer.SetThumbnail(photo, samplePhoto ())
+            composer.SetAttachments
+                [ { image photo true with fileName = "screenshot.png"; size = 184_320L }
+                  { attachmentId = Guid.NewGuid(); sha256 = "t"; size = 3_200L; mediaType = "text/plain"; fileName = "build.log"; ready = true; failed = false } ]
+            Dispatcher.UIThread.RunJobs()
+            capture window shot
+        finally
+            window.Close()
+    scene ThemeMode.Light 760.0 VisionYes "OpenAI · gpt-4o" "01-thumbnails-vision-model"
+    scene ThemeMode.Light 760.0 VisionNo "DeepSeek · deepseek-chat" "02-text-only-model-blocks-image"
+    scene ThemeMode.Dark 760.0 VisionNo "Ollama · llama3.1:8b" "03-blocked-dark"
+    scene ThemeMode.Light 390.0 VisionYes "Ollama · llava:13b" "04-mobile-thumbnails"
+    Tokens.apply ThemeMode.Light
+    )
