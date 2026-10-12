@@ -1827,3 +1827,37 @@ let ``MarkdownRenderer task boxes expose checkbox automation state`` () =
         |> Seq.toList
     Assert.Contains(Avalonia.Automation.Peers.AutomationControlType.CheckBox, overrides)
     )
+
+/// 视觉走查 r6：手机宽度（390）时工具行曾拆成两行，发送键单独占一行，输入卡白白多出约 50px。
+/// 宽度够放下模型胶囊 + 附件/发送时，发送键必须和模型胶囊同一行。
+[<Trait("Category", "UI")>]
+[<Fact>]
+let ``compact composer keeps model chip and send button on one row at phone width`` () =
+    Headless.run (fun () ->
+    let actions =
+        { submit = fun _ -> true
+          stopGeneration = ignore
+          pickAttachment = ignore
+          removeAttachment = ignore
+          openModelPicker = ignore
+          dropFiles = ignore
+          pasteFromClipboard = fun () -> false }
+    let composer = Composer(actions)
+    composer.Build()
+    composer.SetEnabled(true, "")
+    composer.SetModelLabel "mock · mock-gpt"
+    let window = Window(Width = 390.0, Height = 400.0, Content = composer)
+    window.Show()
+    try
+        composer.SetCompactMode true
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs()
+        window.UpdateLayout()
+        let named name =
+            descendants composer
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = name)
+        let send = named "添加附件"
+        let rowOf (c: Control) = Grid.GetRow(c.Parent :?> Control)
+        Assert.Equal(0, rowOf send)
+    finally
+        window.Close()
+    )

@@ -822,7 +822,7 @@ type Composer(actions: ComposerActions) as this =
         Ui.setSquareTarget queueButton actionSize
         modelChip.MinHeight <- if value then LayoutPolicy.compactActionTarget else 0.0
         contextButton.MinHeight <- if value then LayoutPolicy.compactActionTarget else ControlMetrics.textButtonMinHeight
-        applyToolbarLayout (value || this.Bounds.Width < LayoutPolicy.compactBreakpoint)
+        applyToolbarLayout (this.Bounds.Width > 0.0 && this.Bounds.Width < LayoutPolicy.composerToolbarStackBelow)
         compactMode <- value
         this.Padding <-
             if value then
@@ -854,7 +854,7 @@ type Composer(actions: ComposerActions) as this =
             if args.Property = Visual.BoundsProperty then
                 if not compactMode then this.ApplyComposerPadding()
                 // 侧栏也会吃掉宽度；工具行以自身宽度而不是整窗宽度判定是否换行。
-                applyToolbarLayout (compactMode || this.Bounds.Width < LayoutPolicy.compactBreakpoint))
+                applyToolbarLayout (this.Bounds.Width > 0.0 && this.Bounds.Width < LayoutPolicy.composerToolbarStackBelow))
 
         // 次级图标操作（附件/排队）与所有 Ui.iconButton 一致：不带一次性描边，30px ghost
         // 目标靠透明底 + hover 底区分，发送键保持 accent 实心。曾单给这两个补 hairline 轮廓，
@@ -881,7 +881,7 @@ type Composer(actions: ComposerActions) as this =
             Grid.SetRow(actionRow, if compact then 1 else 0)
             Grid.SetColumn(actionRow, if compact then 0 else 1)
             Grid.SetColumnSpan(actionRow, if compact then 2 else 1)
-        applyToolbarLayout compactMode
+        applyToolbarLayout false
 
         let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
         column.Children.Add attachmentScroller

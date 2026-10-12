@@ -51,6 +51,9 @@ jobs:
         run: ./run-tests.sh --no-ui
 
       - name: UI tests (process-level parallel)
+        # 8 个测试进程各自起主机：改用轮询文件监视，免得撞上 runner 的 inotify 实例上限。
+        env:
+          DOTNET_USE_POLLING_FILE_WATCHER: "1"
         run: ./run-tests.sh --ui-only -j 8
 
   main-gate:

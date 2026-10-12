@@ -77,6 +77,12 @@ type App() =
         let toolTipFont = Style(fun selector -> selector.OfType<ToolTip>())
         toolTipFont.Setters.Add(Setter(TemplatedControl.FontFamilyProperty, Tokens.fontFamily))
         this.Styles.Add toolTipFont
+        // 右键菜单同理：ContextMenu 是弹出层，PWA 里菜单文字曾整排渲染成豆腐块。
+        for popupFont in
+            [ Style(fun selector -> selector.OfType<ContextMenu>())
+              Style(fun selector -> selector.OfType<MenuItem>()) ] do
+            popupFont.Setters.Add(Setter(TemplatedControl.FontFamilyProperty, Tokens.fontFamily))
+            this.Styles.Add popupFont
 
         // 选中/悬停一律走万象的强调浅底与暖灰，不用 Fluent 的糖果蓝
         this.Resources["SystemControlHighlightListAccentLowBrush"] <- Tokens.accentSoft

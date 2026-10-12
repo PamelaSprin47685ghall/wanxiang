@@ -56,8 +56,16 @@ fi
 [ -x "$BIN" ] || { echo "找不到 $BIN" >&2; exit 1; }
 cd "$OUT" || exit 1
 
+# 每个测试进程会起多个 ASP.NET 主机，reloadOnChange 的配置监视各占 inotify 实例；
+# -j 8 时可能撞上 Linux 默认 max_user_instances=128。测试里改用轮询并关掉主机配置
+# 热加载（只影响测试进程，不改产品默认）。ConfigStore 自己的 FileSystemWatcher 不受
+# 这两个变量影响，若仍有关停期崩溃，下方按分组打印的退出码与日志尾部会指名是谁。
+export DOTNET_USE_POLLING_FILE_WATCHER=${DOTNET_USE_POLLING_FILE_WATCHER:-1}
+export DOTNET_hostBuilder__reloadConfigOnChange=${DOTNET_hostBuilder__reloadConfigOnChange:-false}
+
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+KEEP_TMP=${KEEP_TMP:-0}
+trap '[ "$KEEP_TMP" = 1 ] || rm -rf "$TMP"' EXIT
 FAILED=0
 
 # UI 分组：按测试类轮转分到 N 个进程。
@@ -90,10 +98,11 @@ if [ "$MODE" != "noui" ]; then
           args+=(-class "${c//+/.}")
         done < "$g"
         ./Wanxiang.Tests -trait "Category=UI" "${args[@]}" > "$g.out" 2>&1
+        echo $? > "$g.rc"
       ) &
       pids+=($!)
     done
-    for p in "${pids[@]}"; do wait "$p" || FAILED=1; done
+    for p in "${pids[@]}"; do wait "$p" || true; done
 
     for g in "$TMP"/ui-group-*; do
       [ -f "$g.out" ] || continue
@@ -102,6 +111,17 @@ if [ "$MODE" != "noui" ]; then
       if ! grep -qE "Failed: 0," "$g.out"; then
         FAILED=1
         sed 's/\x1b\[[0-9;]*m//g' "$g.out" | grep -A30 "\[FAIL\]" >&2 || true
+      fi
+      # 进程退出码与汇总行分开判：全部用例通过但进程退出非 0（关停期崩溃、
+      # 未处理异常、被信号杀死）同样算失败，但要指名是哪个分组、打印尾部日志，
+      # 否则 CI 只剩一句 "exit code 1" 无从追查。
+      rc=$(cat "$g.rc" 2>/dev/null || echo missing)
+      if [ "$rc" != "0" ]; then
+        FAILED=1
+        echo "::error::UI 分组 $(basename "$g") 进程退出码 $rc（汇总行之外的失败，见下方日志尾部）" >&2
+        echo "--- $(basename "$g") 类清单:" >&2; cat "$g" >&2
+        echo "--- $(basename "$g") 输出尾部:" >&2
+        sed 's/\x1b\[[0-9;]*m//g' "$g.out" | tail -n 80 >&2
       fi
     done
   fi
@@ -115,11 +135,17 @@ if [ "$MODE" != "ui" ]; then
     ARGS+=(-trait- "Category=LargeHistory")
   fi
   ./Wanxiang.Tests "${ARGS[@]}" > "$TMP/noui.out" 2>&1
+  noui_rc=$?
   grep -E "Total:|^\s+Wanxiang.*\[FAIL\]" "$TMP/noui.out" || true
   if ! grep -qE "Failed: 0," "$TMP/noui.out"; then
     FAILED=1
     # 失败时输出明细（去掉 ANSI 颜色码再匹配），CI 日志里才看得到原因。
     sed 's/\x1b\[[0-9;]*m//g' "$TMP/noui.out" | grep -A30 "\[FAIL\]" >&2 || true
+  fi
+  if [ "$noui_rc" != "0" ]; then
+    FAILED=1
+    echo "::error::非 UI 进程退出码 $noui_rc，输出尾部：" >&2
+    sed 's/\x1b\[[0-9;]*m//g' "$TMP/noui.out" | tail -n 80 >&2
   fi
 fi
 

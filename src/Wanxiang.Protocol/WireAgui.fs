@@ -65,11 +65,13 @@ module WireAgui =
                 e.Outcome <- RunFinishedCancelledOutcome()
                 e :> BaseEvent
             | _ ->
-                // failed / 其它异常态：RUN_ERROR
-                let e = RunErrorEvent()
-                e.Message <- (d.error |> Option.map (fun er -> er.message) |> Option.defaultValue d.status)
-                e.Code <- (d.status)
-                e :> BaseEvent
+                // failed / 其它异常态：走 CUSTOM wanxiang.dev/generation.finished（决策 223）。
+                // 标准 RUN_ERROR 只有 message/code，丢了 threadId/runId 与结构化错误：
+                // 客户端无法把失败归到对话，该对话会永远停在「生成中」，错误卡与恢复动作也出不来。
+                let ce = CustomEvent()
+                ce.Name <- sprintf "%s%s" Capabilities.Namespace (WireEvent.typeName ev)
+                ce.Value <- Nullable(WireCodec.payloadOf ev |> JsonDocument.Parse |> fun doc -> doc.RootElement.Clone())
+                ce :> BaseEvent
         | GenerationDelta d ->
             // 增量按 MAF 内容形状分派到 AG-UI 标准面（能用标准语义的都用标准）：
             //   contents[0].$type = "text"          → TEXT_MESSAGE_CHUNK
@@ -255,6 +257,6 @@ module WireAgui =
                             {| conversationId = Guid.Empty
                                generationId = Guid.Empty
                                status = "failed"
-                               error = Some { kind = Wanxiang.Core.GenerationErrorKind.ProviderTimeout; message = e.Message; detail = None; retryable = false; retryAfterSeconds = None }
+                               error = Some { kind = Wanxiang.Core.GenerationErrorKind.UnknownFailure; message = e.Message; detail = None; retryable = true; retryAfterSeconds = None }
                                usage = None |}))
             | _ -> Ok None    // 认识但当前不消费的标准事件（STATE_DELTA 等）：忽略

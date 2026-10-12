@@ -1790,6 +1790,10 @@ module MessageCard =
                         item.Icon <- glyph
                     | None -> ()
                     if e.danger then item.Foreground <- Tokens.danger
+                    // 决策 220：快捷键以 hint 标在菜单项右侧。右键菜单此前丢了 hint，
+                    // 键盘动作在 UI 上无处可发现。
+                    if not (String.IsNullOrWhiteSpace e.hint) then
+                        try item.InputGesture <- KeyGesture.Parse e.hint with _ -> ()
                     item.Click.Add(fun _ -> e.action ())
                     item :> obj)
                 |> ResizeArray<obj>
