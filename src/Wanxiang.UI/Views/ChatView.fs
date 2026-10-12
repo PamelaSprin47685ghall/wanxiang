@@ -1256,7 +1256,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
         if wasAtBottom then this.ScrollToEndDeferred()
         else
-            let newCount = desired.Count
+            // 窗口外未挂载的消息也算条数：否则超过挂载窗口后尾部新增 delta 恒为 0（决策 293）。
+            let newCount = desired.Count + firstMounted
             let delta = newCount - previousRenderedMessageCount
             // 分页加载更早历史也是正的 delta，但那批消息在历史上就已经读过了，
             // 不是「新来的」：划上去翻旧账时冒出「N 条新消息」纯属误导。
@@ -1282,7 +1283,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             // 分页这一帧也要刷新按钮外观：未读计数不动，但按钮可见性/文案
             // 与「是否在底部」相关，同一处刷新不能漏掉这条路。
             this.UpdateScrollToBottomAppearance()
-        previousRenderedMessageCount <- desired.Count
+        previousRenderedMessageCount <- desired.Count + firstMounted
 
     member private this.UpdateScrollToBottomAppearance() =
         let extent = scroller.Extent.Height
