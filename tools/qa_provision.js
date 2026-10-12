@@ -25,6 +25,20 @@ function pairingCode() {
     return m ? m[1] : null;
 }
 
+// AG-UI 承载（与 qa_r8 同）：CUSTOM wanxiang.dev/<type> → {type,payload}；标准面生成事件归一
+function normAgui(ev) {
+    if (ev.type === 'CUSTOM' && String(ev.name).startsWith('wanxiang.dev/')) {
+        return { type: ev.name.slice(13), payload: (ev.value && ev.value.type && ev.value.payload) ? ev.value.payload : ev.value };
+    }
+    const ids = { conversationId: ev.threadId, generationId: ev.runId };
+    if (ev.type === 'RUN_STARTED') return { type: 'generation.started', payload: { ...ev, ...ids } };
+    if (ev.type === 'RUN_FINISHED') {
+        const cancelled = ev.outcome && JSON.stringify(ev.outcome).includes('ancel');
+        return { type: 'generation.finished', payload: { ...ev, ...ids, status: cancelled ? 'cancelled' : 'completed' } };
+    }
+    return ev;
+}
+const aguiFrame = (type, payload) => JSON.stringify({ type: 'CUSTOM', name: 'wanxiang.dev/' + type, value: payload || {} });
 class Client {
     constructor(url) {
         this.ws = new WebSocket(url);
@@ -32,7 +46,7 @@ class Client {
         this.waiters = [];
         this.cursor = 0n;
         this.ws.onmessage = (e) => {
-            const ev = JSON.parse(e.data);
+            const ev = normAgui(JSON.parse(String(e.data)));
             this.events.push(ev);
             const p = ev.payload || {};
             for (const c of [p.lastCommitId, p.commitId, p.toCommitId]) {
@@ -57,7 +71,7 @@ class Client {
         });
     }
     send(type, payload) {
-        this.ws.send(JSON.stringify(payload ? { type, payload } : { type }));
+        this.ws.send(aguiFrame(type, payload));
     }
     waitFor(match, timeoutMs = 20000, label = 'event') {
         const existing = this.events.find(match);
@@ -79,7 +93,7 @@ class Client {
 async function main() {
     const c = new Client(URL);
     await c.open();
-    await c.waitFor((e) => e.type === 'protocol.hello', 10000, 'protocol.hello');
+    // ADR-001：主机不再先发 hello，直接由客户端声明
     c.send('protocol.hello', { protocol: 'wanxiang', version: 1 });
     c.send('pairing.requested', { clientName: 'qa-provision' });
     await c.waitFor((e) => e.type === 'pairing.started', 10000, 'pairing.started');

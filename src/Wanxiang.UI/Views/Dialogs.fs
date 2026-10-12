@@ -332,7 +332,8 @@ module Dialogs =
         codeBox.FontSize <- Tokens.fontTitle
         // 决策 273：居中对齐时空框的光标压在占位文字正中，像是已经输了一半；改为左对齐。
         codeBox.TextAlignment <- TextAlignment.Left
-        codeBox.LetterSpacing <- 8.0
+        // 决策 286：字距只给数字，占位文字「6 位配对码」不被拉散。
+        codeBox.LetterSpacing <- 0.0
         codeBox.FontFamily <- Tokens.monoFontFamily
         // 触屏：弹出数字键盘并把回车键标为“提交”（浏览器后端映射为 inputmode / enterkeyhint）。
         TextInputOptions.SetContentType(codeBox, TextInputContentType.Digits)
@@ -398,11 +399,18 @@ module Dialogs =
         let fail (issue: ConnectionIssue) =
             showMessage (describeIssue issue) true
             pendingRetry <- ConnectionIssue.retry issue
-            match pendingRetry with
-            | Some retry ->
+            match issue, pendingRetry with
+            | PairingRejected "invalid pairing code", _ ->
+                // 决策 285：码输错时配对会话仍有效，「提交配对码」就是下一步；不再并排一个「重试配对」。
+                // 全选错码并聚焦：直接重输即覆盖，凑满 6 位照常自动提交。
+                retryButton.IsVisible <- false
+                Dispatcher.UIThread.Post(fun () ->
+                    codeBox.Focus() |> ignore
+                    codeBox.SelectAll())
+            | _, Some retry ->
                 Ui.setButtonText retryButton (retryLabel retry)
                 retryButton.IsVisible <- true
-            | None -> retryButton.IsVisible <- false
+            | _, None -> retryButton.IsVisible <- false
 
         let submitCode () =
             let code = if isNull codeBox.Text then "" else codeBox.Text.Trim()
@@ -433,6 +441,7 @@ module Dialogs =
                     codeBox.Text <- digits
                     codeBox.CaretIndex <- digits.Length
                     normalizingCode <- false
+                codeBox.LetterSpacing <- (if digits.Length = 0 then 0.0 else 8.0)
                 if digits.Length = 6 then
                     if digits <> autoSubmitted then
                         autoSubmitted <- digits

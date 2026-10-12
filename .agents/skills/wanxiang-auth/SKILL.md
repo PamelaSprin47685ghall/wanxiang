@@ -456,3 +456,18 @@ instanceId + clientId + token
 - “在线”是运行时状态：由当前已认证连接集合算出，不落盘。
 
 **为什么桌面设备不能在这里吊销**：吊销会让本机桌面失去连接，而本机自动配对只在启动时跑；要吊销只能手改 TOML 并重启，属于有意的“需要想一想”的操作。
+
+# 280. 本机打开 PWA 不按网络位置免配对（r11 · 2026-10-12）
+回环地址不是凭据（同机其他用户/进程、反向代理、跨站 WebSocket、DNS 重绑定都“来自回环”）。威胁模型与结论见 `docs/security/loopback-pwa-pairing.md`。
+
+# 281. WebSocket 握手检查 Origin
+带 Origin 的握手必须 http(s) 且 host:port 与 Host 头一致，否则 403；无 Origin 的原生客户端放行（仍需令牌或配对码）。`Auth.isAllowedWsOrigin`。
+
+# 282. 浏览器握手的 Host 白名单（防 DNS 重绑定）
+带 Origin 时 Host 只能是 IP 字面量、`localhost`，或环境变量 `WANXIANG_ALLOWED_HOSTS`（逗号分隔）登记的域名。`Auth.isAllowedWsHost`。
+
+# 283. 不信任 X-Forwarded-For
+主机永不依据 X-Forwarded-* 判定来源；“桌面身份”= 保留名令牌 + 回环连接，两者缺一不可。
+
+# 284. 待办：桌面发起的一次性“在浏览器中打开”令牌
+未来若做本机免码：仅桌面客户端可申请，32 字节、60 秒、单次、只存哈希，经 URL fragment 交给 PWA 后立即清除；默认关闭。
