@@ -84,6 +84,8 @@ module ModelSwitcherView =
         let shell, search = Ui.textField "搜索模型或模型服务"
         search.Name <- "ModelSwitcherSearch"
         Avalonia.Automation.AutomationProperties.SetName(search, "搜索模型")
+        // 决策 304：键盘路径写进帮助文字；空结果以 polite 播报。
+        Avalonia.Automation.AutomationProperties.SetHelpText(search, "输入筛选，回车选第一条，下方向键进入列表，Esc 关闭")
         let list = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXXs, Name = "ModelSwitcherList")
         let empty =
             TextBlock(
@@ -92,6 +94,7 @@ module ModelSwitcherView =
                 Foreground = Tokens.textMuted,
                 Margin = Thickness(Spacing.spaceXl, Spacing.spaceMd),
                 IsVisible = false)
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(empty, Avalonia.Automation.AutomationLiveSetting.Polite)
         let choose (o: ModelOption) = if not o.isCurrent then pick o
         let rows () = list.Children |> Seq.choose (function :? ActionBorder as b -> Some b | _ -> None) |> Array.ofSeq
         let mutable shown: ModelOption list = options

@@ -643,6 +643,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let full = if String.IsNullOrWhiteSpace providerLabel then model else sprintf "%s · %s" providerLabel model
             ToolTip.SetTip(headerModelChip, sprintf "当前模型：%s。点击切换，从下一条回复开始生效" full)
             Avalonia.Automation.AutomationProperties.SetName(headerModelChip, sprintf "当前模型 %s，切换模型" full)
+            // 决策 303：芯片是按钮（读屏念「按钮」而不是一段文字），说明生效时机。
+            Avalonia.Automation.AutomationProperties.SetRole(headerModelChip, AutomationRole.Button)
+            Avalonia.Automation.AutomationProperties.SetHelpText(headerModelChip, "打开模型切换器，从下一条回复开始生效")
             Ui.setEnabled headerModelChip enabled
 
     /// 顶栏模型芯片点击后的去处（AppShell 注入）。

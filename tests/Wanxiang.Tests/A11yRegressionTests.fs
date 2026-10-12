@@ -209,3 +209,49 @@ let ``PWA 清单声明名称与图标`` () =
     Assert.Matches("\"name\"\\s*:\\s*\"[^\"]+\"", m)
     Assert.Matches("\"short_name\"\\s*:\\s*\"[^\"]+\"", m)
     Assert.Contains("\"icons\"", m)
+
+// ── r13 无障碍复审（决策 302–306）：r7–r12 新增的芯片 / 提示条 / 倒计时 / 切换器 ──
+
+[<Fact>]
+let ``r7-r12 新增控件的文字在浅色与深色主题下都过 AA`` () =
+    for (label, p) in palettes do
+        check label 4.5
+            [ // 顶栏模型芯片（决策 240）
+              "accent", p.accent, "accentFaint", p.accentFaint
+              // 限流倒计时（决策 242）：错误卡在 surface / surfaceRaised 上
+              "warning", p.warning, "surface", p.surface
+              "warning", p.warning, "surfaceRaised", p.surfaceRaised
+              "success", p.success, "surface", p.surface
+              "success", p.success, "surfaceRaised", p.surfaceRaised
+              // 提示条（撤销删除）与模型切换器浮层
+              "text", p.text, "surfaceRaised", p.surfaceRaised
+              "textMuted", p.textMuted, "surfaceRaised", p.surfaceRaised
+              "accent", p.accent, "surfaceRaised", p.surfaceRaised
+              // 选中行（切换器当前项、搜索命中）
+              "text", p.text, "selected", p.selected
+              "textMuted", p.textMuted, "selected", p.selected ]
+
+[<Fact>]
+let ``限流倒计时读屏名带剩余时间、走完才播报一次`` () =
+    let src = read "src/Wanxiang.UI/Views/MessageCard.fs"
+    Assert.Contains("sprintf \"重试倒计时：%s\"", src)
+    Assert.Contains("sprintf \"重试生成，%d 秒后可用\"", src)
+    // 每秒变化的文字不能一开始就是 live region，否则读屏每秒念一次
+    Assert.DoesNotMatch(Regex(@"SetLiveSetting\(countdown, AutomationLiveSetting\.Polite\)\s*\n\s*let refresh"), src)
+
+[<Fact>]
+let ``顶栏模型芯片对读屏是按钮并说明生效时机`` () =
+    let src = read "src/Wanxiang.UI/Views/ChatView.fs"
+    Assert.Contains("SetRole(headerModelChip, AutomationRole.Button)", src)
+    Assert.Contains("SetHelpText(headerModelChip,", src)
+
+[<Fact>]
+let ``模型切换器写明键盘路径且空结果会播报`` () =
+    let src = read "src/Wanxiang.UI/Views/ModelSwitcherView.fs"
+    Assert.Contains("SetHelpText(search,", src)
+    Assert.Contains("SetLiveSetting(empty,", src)
+
+[<Fact>]
+let ``撤销提示条把 Ctrl+Z 告诉读屏`` () =
+    let src = read "src/Wanxiang.UI/Controls/OverlayHost.fs"
+    Assert.Contains("SetAcceleratorKey(actionButton, \"Ctrl+Z\")", src)

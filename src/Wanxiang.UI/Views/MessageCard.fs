@@ -1382,10 +1382,16 @@ module MessageCard =
                     FontSize = Tokens.fontCaption,
                     Foreground = Tokens.warning,
                     TextWrapping = TextWrapping.Wrap)
+            // 决策 302：读屏名带上剩余时间（每秒刷新但不播报）；走完那一刻才以 polite 播报一次「可以重试了」。
             Avalonia.Automation.AutomationProperties.SetName(countdown, "重试倒计时")
+            let mutable announcedReady = false
             let refresh () =
                 let left = RetryCountdown.remainingSeconds info DateTimeOffset.UtcNow
                 countdown.Text <- ProviderRateLimit.countdownText left
+                Avalonia.Automation.AutomationProperties.SetName(countdown, sprintf "重试倒计时：%s" countdown.Text)
+                if left <= 0 && not announcedReady then
+                    announcedReady <- true
+                    Avalonia.Automation.AutomationProperties.SetLiveSetting(countdown, AutomationLiveSetting.Polite)
                 countdown.Foreground <- if left <= 0 then Tokens.success else Tokens.warning
                 countdownLeft <- left
                 onCountdown left
@@ -1434,6 +1440,10 @@ module MessageCard =
                 match retryButton.Child with
                 | :? TextBlock as tb -> tb.Text <- (if waiting then sprintf "重试（%d 秒）" left else "重试")
                 | _ -> ()
+                // 决策 302：禁用时读屏要知道为什么不能按、还要等多久。
+                Avalonia.Automation.AutomationProperties.SetName(
+                    retryButton,
+                    (if waiting then sprintf "重试生成，%d 秒后可用" left else "重试生成"))
             onCountdown <- applyCountdown
             applyCountdown countdownLeft
             actionRow.Children.Add retryButton
