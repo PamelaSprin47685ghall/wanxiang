@@ -384,6 +384,8 @@ type MainView() as this =
             else
                 chat.HideSkeletonLoading()
                 chat.HideEmpty()
+                // 决策 300：「上一轮」越过已加载历史时要知道主机上还有没有更早的页。
+                chat.SetOlderAvailable view.pageHasMore
                 let retry () = this.Regenerate()
                 // 先同步生成状态：渲染时要据此区分工具调用「执行中」与「结果未知」
                 chat.SetGenerating(generating, (if generating then "生成中" else ""))
