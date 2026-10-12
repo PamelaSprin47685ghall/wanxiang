@@ -304,7 +304,7 @@ module Program =
                                         { cfg with
                                             authClients =
                                                 { tokenHash = hash
-                                                  name = "wanxiang-desktop"
+                                                  name = Wanxiang.Config.Auth.desktopClientName
                                                   createdAtUtc = DateTimeOffset.UtcNow
                                                   lastSeenUtc = None
                                                   revoked = false }

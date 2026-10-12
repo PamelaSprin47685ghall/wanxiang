@@ -14,19 +14,20 @@ type SettingsSection =
     | Providers
     | Tools
     | Generation
+    | Devices
     | Appearance
     | About
 
 module SettingsSection =
 
     let groups =
-        [ "当前服务器", [ Providers; Tools; Generation ]
+        [ "当前服务器", [ Providers; Tools; Generation; Devices ]
           "这台客户端", [ Appearance; About ] ]
 
     let all = groups |> List.collect snd
 
     let scope = function
-        | Providers | Tools | Generation -> "当前服务器"
+        | Providers | Tools | Generation | Devices -> "当前服务器"
         | Appearance | About -> "这台客户端"
 
     let label (section: SettingsSection) =
@@ -34,6 +35,7 @@ module SettingsSection =
         | Providers -> "服务商"
         | Tools -> "工具与 MCP"
         | Generation -> "新会话默认值"
+        | Devices -> "设备"
         | Appearance -> "外观与操作"
         | About -> "关于"
 
@@ -42,6 +44,7 @@ module SettingsSection =
         | Providers -> Icons.server
         | Tools -> Icons.wrench
         | Generation -> Icons.sliders
+        | Devices -> Icons.key
         | Appearance -> Icons.sun
         | About -> Icons.info
 
@@ -54,6 +57,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     let providersPanel = SettingsProviders(overlay, actions)
     let toolsPanel = SettingsTools(overlay, actions)
     let generalPanel = SettingsGeneral(overlay, actions, onPrefsChanged)
+    let devicesPanel = SettingsDevices(overlay, DeviceActions.none)
 
     let contentHost = ContentControl()
     let mutable contentScroll: ScrollViewer option = None
@@ -82,6 +86,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         | Providers -> providersPanel.Build()
         | Tools -> toolsPanel.Build()
         | Generation -> generalPanel.BuildGeneration()
+        | Devices -> devicesPanel.Build()
         | Appearance -> generalPanel.BuildAppearance()
         | About -> generalPanel.BuildAbout(instanceId, serverUrl)
 
@@ -140,6 +145,8 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
                 | _ -> "尚未连接服务器"
         this.UpdateNavButtonStates()
         contentHost.Content <- renderSection section
+        // 设备列表是运行时状态：每次切进来都向主机要最新的
+        if section = Devices && changed then devicesPanel.Refresh()
         if changed then
             let targetY =
                 match scrollPositions.TryGetValue section with
@@ -293,10 +300,14 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         generalPanel.SetGenerationScope instance
         instanceId <- instance
         serverUrl <- url
+        devicesPanel.SetConnection url
         invalidate [ About ]
         this.Select current
 
     member _.HasUnsavedChanges = generalPanel.HasUnsavedGeneration
+
+    /// 设备分区面板：AppShell 绑定动作并转发设备相关事件。
+    member _.Devices = devicesPanel
 
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
         providersPanel.ApplyProbe(providerId, ok, models, error)

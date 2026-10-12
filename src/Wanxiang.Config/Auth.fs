@@ -29,6 +29,39 @@ module Auth =
         let n = RandomNumberGenerator.GetInt32(0, 1_000_000)
         n.ToString("D6")
 
+    /// 本机桌面客户端在 TOML 里的固定用途名（决策 190 的“固定用途元数据”，决策 65-W2 章）。
+    /// 该名称保留：经配对码创建的设备不得使用它（见 `sanitizeClientName`）。
+    [<Literal>]
+    let desktopClientName = "wanxiang-desktop"
+
+    /// 是否保留名（忽略大小写与首尾空白）。
+    let isReservedClientName (name: string) : bool =
+        not (isNull name) && String.Equals(name.Trim(), desktopClientName, StringComparison.OrdinalIgnoreCase)
+
+    /// 配对时客户端自报的名称：保留名一律改成 `fallback`，其余原样（空白名也回落）。
+    let sanitizeClientName (requested: string option) (fallback: string) : string =
+        match requested with
+        | Some n when not (String.IsNullOrWhiteSpace n) && not (isReservedClientName n) -> n.Trim()
+        | _ -> fallback
+
+    let private isLoopbackAddress (address: string) : bool =
+        if String.IsNullOrWhiteSpace address then false
+        else
+            match System.Net.IPAddress.TryParse address with
+            | true, ip -> System.Net.IPAddress.IsLoopback ip || (ip.IsIPv4MappedToIPv6 && System.Net.IPAddress.IsLoopback(ip.MapToIPv4()))
+            | _ -> false
+
+    /// 仅“桌面本机客户端”有权发配对邀请：令牌记录是保留名、未吊销，且连接来自回环地址。
+    /// 保留名只有本机自动配对写入；回环限制让反向代理之外的远端无法借用该身份。
+    let isDesktopClient (record: ClientAuthRecord option) (remoteAddress: string) : bool =
+        match record with
+        | Some r -> not r.revoked && isReservedClientName r.name && isLoopbackAddress remoteAddress
+        | None -> false
+
+    /// 设备的稳定标识：令牌哈希的前 16 位十六进制。哈希本身不可逆，截断后不能用于认证。
+    let deviceId (tokenHash: string) : string =
+        if isNull tokenHash then "" elif tokenHash.Length <= 16 then tokenHash else tokenHash.Substring(0, 16)
+
     type PairingSession = {
         code: string
         expiresAtUtc: DateTimeOffset
@@ -39,13 +72,37 @@ module Auth =
     type PairingState() =
         let lockObj = obj()
         let mutable session: PairingSession option = None
+        /// 当前码是否由桌面客户端邀请产生（仅内存，决策 65-W2 章）。
+        let mutable invited = false
 
         /// 发起新配对：旧码立即失效（决策 46）。
         member _.Start(nowUtc: DateTimeOffset, lifetime: TimeSpan) : string =
             lock lockObj (fun () ->
                 let code = generatePairingCode ()
                 session <- Some { code = code; expiresAtUtc = nowUtc + lifetime; used = false }
+                invited <- false
                 code)
+
+        /// 桌面客户端发出邀请：与 Start 同样替换旧码，同时只有一个有效码；码仍只在内存。
+        member _.StartInvite(nowUtc: DateTimeOffset, lifetime: TimeSpan) : string * DateTimeOffset =
+            lock lockObj (fun () ->
+                let code = generatePairingCode ()
+                let expires = nowUtc + lifetime
+                session <- Some { code = code; expiresAtUtc = expires; used = false }
+                invited <- true
+                code, expires)
+
+        /// 是否存在由邀请产生的会话（含已用或已过期但尚未清理的）。
+        /// 用于让提交邀请码的连接得到明确的“已用/过期”回执，而不是沉默。
+        member _.HasInviteSession : bool =
+            lock lockObj (fun () -> invited && session.IsSome)
+
+        /// 仍有效（未用、未过期）的邀请码到期时间；没有则 None。
+        member _.ActiveInvite(nowUtc: DateTimeOffset) : DateTimeOffset option =
+            lock lockObj (fun () ->
+                match session with
+                | Some s when invited && not s.used && nowUtc <= s.expiresAtUtc -> Some s.expiresAtUtc
+                | _ -> None)
 
         /// 校验配对码；成功即消耗（单次使用）。
         member _.TryConsume(nowUtc: DateTimeOffset, code: string) : Result<unit, string> =

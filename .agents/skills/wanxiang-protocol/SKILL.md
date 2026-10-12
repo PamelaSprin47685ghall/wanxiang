@@ -826,3 +826,25 @@ MAF ⇄ AG-UI 消息往返对文本/工具调用/工具结果/推理/图片/混�
 - `hasMore` 表示还能翻页；`truncated` 表示预算耗尽、结果不完整，**客户端必须明说**，不得当作“没有更多”。
 - 查询只读：不写日志、不推进 commitId、不改投影。分页用 `offset`，服务端无游标、无状态。
 - 数值预算的权威是 `Wanxiang.Protocol.SearchLimits`，同步见 `docs/contracts/resource-budgets.md` §10。
+
+
+# 67. W2 协议附录：配对邀请与设备事件（全部为增量，`wanxiang.dev/*` CUSTOM 面）
+
+承载规则同 55：`CUSTOM`，`name = wanxiang.dev/<type>`，`value` 为扁平字段。**不改、不删现有 56 个事件**；旧客户端不会发也不需要认识这些事件。
+
+| 事件（type） | 方向 | 载荷 | 说明 |
+|---|---|---|---|
+| `pairing.invite` | C→S | 空 | 桌面本机客户端请求配对邀请（# 65） |
+| `pairing.invite-issued` | S→C | `code`（6 位）、`expiresAt`（RFC 3339 UTC）、`expiresInSeconds`（300） | 只发给发起者；**不入日志** |
+| `pairing.invite-rejected` | S→C | `reason`：`not-authenticated` \| `not-desktop` | 未认证者随后被关闭连接 |
+| `devices.request` | C→S | 空 | 请求设备列表（需已认证） |
+| `devices.snapshot` | S→C | `items[]`、`canInvite` | `items[]`：`id`、`name`、`createdAt`、`lastSeen?`、`revoked`、`online`、`current`、`desktop` |
+| `device.rename` | C→S | `requestId`、`deviceId`、`name` | 结果 `config.applied`（同 `requestId`） |
+| `device.revoke` | C→S | `requestId`、`deviceId` | 结果 `config.applied`，随后 `devices.snapshot` |
+
+**语义要点**
+- 未认证连接发 `devices.request` / `device.*` → 协议违规，关闭连接（与其他业务事件一致）。
+- `pairing.started` 的 `expiresInSeconds` 在沿用邀请码时是**剩余秒数**（1–300）；其余不变。
+- 读方宽容（55.8）：快照里的未知字段被忽略，缺字段取保守默认值。
+
+**兼容性（实测，须知）**：当前主机对**未知的 `wanxiang.dev/*` 事件类型**按“畸形事件”处理并关闭连接（`WireCodec.tryDecode` 返回 `unknown event type`），这与 55.8 R1 不一致，**W2 没有改动它**（不在 W2 范围）。后果：新客户端连接**旧主机**并打开「设置 → 设备」会被断开。缓解：客户端只在用户打开设备分区时才发 `devices.request`；读取期间断线时界面提示“主机版本较旧，可能不支持设备管理，请升级主机”（# 68）。旧客户端连接新主机不受影响（它们从不发送这些事件）。

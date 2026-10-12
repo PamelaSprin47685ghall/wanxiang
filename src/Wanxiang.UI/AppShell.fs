@@ -77,12 +77,15 @@ type MainView() as this =
     let mutable lastToken: string option = None
     let mutable hasSavedCredentials = CredentialStore.tryLoadClientToml().IsSome
     let mutable connectionError: string option = None
+    /// 类型化的连接失败原因：连接对话框的重试动作由它决定，不由 connectionError 的文案推断。
+    let mutable connectionIssue: ConnectionIssue option = None
     let mutable enteredSettingsForFirstProvider = false
     let mutable reconnectCts: CancellationTokenSource option = None
     let mutable reconnectDelayMs = ReconnectBackoff.baseDelayMs
     let mutable pairingRequested = false
     let mutable connectAttempt = 0
     let mutable setConnectStatus: string -> unit = ignore
+    let mutable failConnectStatus: ConnectionIssue -> unit = ignore
     let mutable pageLoading = false
     /// 设置关闭后焦点的回家点：打开设置时的触发控件（设置入口按钮等）。只记一个元素，
     /// 不经过 OverlayHost 的对话框记忆（对话框已有唯一的记忆路径，这里是视图显隐切换）。
@@ -297,7 +300,12 @@ type MainView() as this =
             if not authenticated then
                 match connectionError with
                 | Some err ->
-                    chat.ShowEmpty(ChatEmptyState.ConnectionFailed err, Some("重新连接", fun () -> this.ShowConnectDialog()))
+                    // 令牌失效时入口直接叫“重新配对”，而不是泛泛的“重新连接”
+                    let entryLabel =
+                        match connectionIssue |> Option.bind ConnectionIssue.retry with
+                        | Some RePair -> "重新配对"
+                        | _ -> "重新连接"
+                    chat.ShowEmpty(ChatEmptyState.ConnectionFailed err, Some(entryLabel, fun () -> this.ShowConnectDialog()))
                     composer.SetEnabled(false, sprintf "连接失败：%s" err)
                     composer.SetModelLabel "未连接"
                 | None ->
@@ -512,7 +520,7 @@ type MainView() as this =
     // ---- 连接 ----
 
     member private this.ShowConnectDialog() =
-        let announce =
+        let handle =
             Dialogs.connectWithClosed
                 overlay
                 lastUrl
@@ -524,9 +532,20 @@ type MainView() as this =
                     reconnectDelayMs <- ReconnectBackoff.baseDelayMs
                     this.Connect())
                 (fun code -> send (PairingAttempted {| code = code; clientName = Some CredentialStore.clientName |}))
-                (fun () -> setConnectStatus <- ignore)
-        setConnectStatus <- announce
-        connectionError |> Option.iter announce
+                (fun () ->
+                    setConnectStatus <- ignore
+                    failConnectStatus <- ignore)
+        setConnectStatus <- handle.info
+        failConnectStatus <- handle.fail
+        match connectionIssue with
+        | Some issue -> handle.fail issue
+        | None -> connectionError |> Option.iter handle.info
+
+    /// 记录并呈现一次类型化的连接失败（对话框内联 + 空态入口）。
+    member private this.ReportConnectionIssue(issue: ConnectionIssue) =
+        connectionIssue <- Some issue
+        connectionError <- Some(Dialogs.describeIssue issue)
+        failConnectStatus issue
 
     member private this.Connect() =
         connectAttempt <- connectAttempt + 1
@@ -534,6 +553,7 @@ type MainView() as this =
         authenticated <- false
         connectionError <- None
         settings.Health.Disconnected()
+        connectionIssue <- None
         runs.Disconnect()
         exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
         outbox.Disconnect instanceId
@@ -572,9 +592,7 @@ type MainView() as this =
             with ex ->
                 Dispatcher.UIThread.Post(fun () ->
                     if attempt = connectAttempt then
-                        let msg = sprintf "连接已断开：%s" ex.Message
-                        connectionError <- Some msg
-                        setConnectStatus msg
+                        this.ReportConnectionIssue(ConnectionIssue.ofException ex)
                         sidebar.SetConnection(false, "连接已断开")
                         this.ScheduleReconnect()
                         this.Render())
@@ -1280,6 +1298,7 @@ type MainView() as this =
             authenticated <- true
             hasSavedCredentials <- true
             connectionError <- None
+            connectionIssue <- None
             instanceId <- d.instanceId
             // 连接真的成功了，退避归零
             reconnectDelayMs <- ReconnectBackoff.baseDelayMs
@@ -1293,6 +1312,7 @@ type MainView() as this =
             sidebar.SetConnection(true, sprintf "已连接 · %s" host)
             settings.SetConnection(instanceId, lastUrl)
             this.RestoreLocalDrafts()
+            if settings.Devices.IsShown then settings.Devices.Refresh()
             if OperatingSystem.IsBrowser() then
                 match lastToken with
                 | Some token -> CredentialStore.saveBrowserConnectionAsync d.instanceId lastUrl token CredentialStore.clientName |> ignore
@@ -1310,25 +1330,23 @@ type MainView() as this =
             hasSavedCredentials <- false
             sidebar.SetConnection(false, "未认证")
             // 失败只报一次：连接对话框内联呈现原因（紧邻重连入口），不再叠 toast。
-            let msg = sprintf "服务器拒绝连接：%s" d.reason
-            connectionError <- Some msg
-            setConnectStatus msg
+            // 认证被拒就是令牌失效：入口是“重新配对”，不是“连接失败”。
+            this.ReportConnectionIssue TokenInvalid
             this.Render()
         | PairingStarted _ ->
             connectionError <- None
-            setConnectStatus "配对码已打印到服务端终端，请输入后提交。"
+            connectionIssue <- None
+            setConnectStatus "配对码已生成，请输入后提交。"
         | PairingSucceeded d ->
             lastToken <- Some d.token
             hasSavedCredentials <- true
             connectionError <- None
+            connectionIssue <- None
             setConnectStatus "配对成功，正在认证…"
             send (AuthPresent {| token = d.token |})
         | PairingFailed d ->
-            let message =
-                if d.frozen then sprintf "配对已冻结 %d 分钟：%s" d.freezeMinutes d.reason
-                else sprintf "配对失败：%s" d.reason
-            connectionError <- Some message
-            setConnectStatus message
+            this.ReportConnectionIssue(
+                if d.frozen then PairingFrozen d.freezeMinutes else PairingRejected d.reason)
             this.Render()
         | CatalogSnapshot d ->
             catalog <- Catalog.parse d.providers d.tools d.generation
@@ -1345,6 +1363,8 @@ type MainView() as this =
             if settings.Health.ClearConfigIssue() then
                 this.UpdateHostStatusLine()
                 toast "主机配置已恢复正常。" Success
+            // 设备列表可见时跟着刷新（别的设备被吊销、重命名）
+            if settings.Devices.IsShown then send DevicesRequest
         | HostConfigRejected d ->
             // 主机拒绝了一份配置并继续用上一份有效的；客户端必须看得见（决策 82）。
             let first = settings.Health.ConfigIssue.IsNone
@@ -1354,6 +1374,9 @@ type MainView() as this =
         | DoctorReport d ->
             settings.Health.SetReport(d.ok, DoctorCheck.parseChecks d.checks)
         | DoctorRequest _ -> ()
+        | DevicesSnapshot d -> settings.Devices.SetDevices(DevicesModel.parse d.items, d.canInvite)
+        | PairingInviteIssued d -> settings.Devices.SetInvite(d.code, d.expiresAtUtc, DateTimeOffset.UtcNow)
+        | PairingInviteRejected d -> settings.Devices.SetInviteRejected d.reason
         | ProviderProbeResult d ->
             let models =
                 [ for item in d.models do
@@ -1892,6 +1915,28 @@ type MainView() as this =
                     (fun () -> this.ClearLocalDrafts()))
         settings.Build()
         this.UpdateDraftSummary()
+        settings.Devices.Bind
+            { request = fun () -> send DevicesRequest
+              invite = fun () -> send PairingInvite
+              rename =
+                fun deviceId name ->
+                    sendConfigWithFeedback
+                        "设备已重命名"
+                        (fun requestId -> DeviceRename {| requestId = requestId; deviceId = deviceId; name = name |})
+                        ignore
+              revoke =
+                fun device ->
+                    Dialogs.confirm
+                        overlay
+                        "吊销设备"
+                        (sprintf "「%s」会立即断开，之后需要重新配对才能再连这台主机。" device.name)
+                        "吊销"
+                        (fun () ->
+                            sendConfigWithFeedback
+                                "设备已吊销"
+                                (fun requestId -> DeviceRevoke {| requestId = requestId; deviceId = device.id |})
+                                ignore)
+              toast = fun message tone -> toast message tone }
 
     /// 卡片按需构建：局部构建视图的调用方（只 Build 了部分区域）也不会撞上空引用。
     member private this.Onboarding: OnboardingCard =
@@ -1996,6 +2041,7 @@ type MainView() as this =
                     commandFeedback.RejectAll()
                     configFeedback.RejectAll()
                     this.FailUploadingAttachments()
+                    settings.Devices.NotifyDisconnected()
                     // 与主动断开同路径：连接死了，在途下载缓冲一并丢弃（R1）。
                     downloads.Clear()
                     downloadCappedNotified <- false

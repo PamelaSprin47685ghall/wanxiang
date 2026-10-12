@@ -11,6 +11,14 @@ open Avalonia.Media
 open Avalonia.Threading
 open Avalonia.Automation
 open Wanxiang.Core
+open Wanxiang.Client
+
+/// 连接对话框返回的两个入口：`info` 报中性进度，`fail` 报类型化的失败。
+/// 失败的重试按钮由 `ConnectionIssue.retry` 决定，与文案无关。
+type ConnectDialogHandle = {
+    info: string -> unit
+    fail: ConnectionIssue -> unit
+}
 
 /// 连接对话框的回调。
 type ConnectRequest = {
@@ -255,6 +263,49 @@ module Dialogs =
             box.Focus() |> ignore
             box.CaretIndex <- (if isNull box.Text then 0 else box.Text.Length))
 
+    /// 类型化连接错误的用户可见文案：发生了什么 / 为什么 / 下一步。
+    /// 只用于展示；是否出现重试按钮看 `ConnectionIssue.retry`，不看这里的字。
+    let describeIssue (issue: ConnectionIssue) : string =
+        match issue with
+        | Rejected _ -> "主机拒绝了连接。可能没有在运行，或地址、端口不对。检查地址后再试。"
+        | TimedOut -> "连接超时。主机没有及时回应，可能网络不通或主机在休眠。确认主机在线后再试。"
+        | TokenInvalid -> "这台设备的授权已失效。令牌无效或已被吊销。请重新配对。"
+        | PairingFrozen minutes ->
+            sprintf "配对已冻结 %d 分钟。连续输错次数过多。稍后再试，或请已连接的桌面端为这台设备发配对码。" minutes
+        | PairingRejected reason ->
+            let why =
+                match reason with
+                | "invalid pairing code" -> "配对码不对"
+                | "pairing code expired" -> "配对码已过期"
+                | "pairing code already used" -> "配对码已被使用"
+                | "no pairing session active" -> "没有进行中的配对"
+                | other -> other
+            sprintf "配对没有成功：%s。请核对 6 位配对码后再试一次。" why
+        | Disconnected detail ->
+            if String.IsNullOrWhiteSpace detail then "连接已断开。网络中断或主机已关闭。检查后重新连接。"
+            else sprintf "连接已断开：%s。网络中断或主机已关闭。检查后重新连接。" detail
+
+    /// 重试按钮的文案（只对应动作，不对应错误文案）。
+    let retryLabel (retry: ConnectionRetry) : string =
+        match retry with
+        | RetryConnect -> "重试连接"
+        | RePair -> "重新配对"
+        | RetryPairing -> "重试配对"
+
+    /// 地址是否指向本机（决定配对码提示该怎么拿）。
+    let isLoopbackUrl (url: string) : bool =
+        match Uri.TryCreate((if isNull url then "" else url.Trim()), UriKind.Absolute) with
+        | true, uri ->
+            uri.IsLoopback || uri.Host = "localhost"
+        | _ -> false
+
+    /// 配对码从哪里拿：本机与远端不同。
+    let pairingCodeHint (url: string) : string =
+        if isLoopbackUrl url then
+            "在运行万象的这台机器上：打开桌面应用的「设置 → 设备 → 添加设备」，或查看启动万象的终端输出。5 分钟内有效。"
+        else
+            "这是远端主机：请在已连接的桌面应用里打开「设置 → 设备 → 添加设备」，会显示 6 位配对码。主机没有桌面应用时，查看它的终端输出。5 分钟内有效。"
+
     /// 连接对话框：地址 + 令牌，或走配对码。
     let connectWithClosed
         (overlay: OverlayHost)
@@ -262,7 +313,7 @@ module Dialogs =
         (onConnect: ConnectRequest -> unit)
         (onSubmitCode: string -> unit)
         (onClosed: unit -> unit)
-        : (string -> unit) =
+        : ConnectDialogHandle =
         let urlField, urlBox = Ui.labeledField "服务器地址" "ws://127.0.0.1:8765/ws"
         urlBox.Text <- defaultUrl
         let tokenField, tokenBox = Ui.labeledField "访问令牌" "有令牌就粘贴，没有就用配对码"
@@ -277,12 +328,13 @@ module Dialogs =
         // 触屏：弹出数字键盘并把回车键标为“提交”（浏览器后端映射为 inputmode / enterkeyhint）。
         TextInputOptions.SetContentType(codeBox, TextInputContentType.Digits)
         TextInputOptions.SetReturnKeyType(codeBox, TextInputReturnKeyType.Done)
+        let pairingHint = Ui.caption (pairingCodeHint defaultUrl)
         let codeSectionInner =
             Ui.vstack
                 Spacing.spaceMd
                 [ Ui.fieldLabel "配对码" :> Control
                   codeShell :> Control
-                  Ui.caption "配对码会打印在服务端终端（stderr），5 分钟内有效。" :> Control ]
+                  pairingHint :> Control ]
                 // 配对码区是对话框内的分组表面：surfaceContainer + 最轻发丝边，与主字段区分层。
         let codeSection =
             Ui.groupingCard (Thickness(Spacing.spaceXl, Spacing.spaceMd)) codeSectionInner Spacing.Radius.md
@@ -301,43 +353,47 @@ module Dialogs =
 
         let mutable connectActionRef: unit -> unit = ignore
         let mutable submitCodeRef: unit -> unit = ignore
+        let mutable startPairingRef: unit -> unit = ignore
+        /// 当前失败对应的重试动作（来自 `ConnectionIssue.retry`，不由文案推断）。
+        let mutable pendingRetry: ConnectionRetry option = None
 
         let retryButton =
             Ui.button Ui.Secondary "重试连接" (fun () ->
-                if codeSection.IsVisible then
+                match pendingRetry with
+                | Some RetryConnect -> connectActionRef ()
+                | Some RePair ->
+                    // 令牌已失效：旧令牌留着只会再次被拒绝
+                    tokenBox.Text <- ""
+                    startPairingRef ()
+                | Some RetryPairing ->
                     let code = if isNull codeBox.Text then "" else codeBox.Text.Trim()
-                    if code.Length = 6 then submitCodeRef ()
-                    else
-                        onConnect
-                            { url = (if isNull urlBox.Text then "" else urlBox.Text.Trim())
-                              token = None
-                              usePairing = true }
-                else
-                    connectActionRef ())
+                    if code.Length = 6 then submitCodeRef () else startPairingRef ()
+                | None -> ())
         retryButton.IsVisible <- false
         retryButton.HorizontalAlignment <- HorizontalAlignment.Left
 
-        let announce message =
+        let showMessage (message: string) (failure: bool) =
             status.Text <- message
             let hasMessage = not (String.IsNullOrWhiteSpace message)
             status.IsVisible <- hasMessage
             AutomationProperties.SetName(status, message)
-            if hasMessage then
-                let isFailure =
-                    message.Contains "失败"
-                    || message.Contains "拒绝"
-                    || message.Contains "断开"
-                    || message.Contains "超时"
-                    || message.Contains "错误"
-                if isFailure then
-                    status.Foreground <- Tokens.danger
-                    Ui.setButtonText retryButton (if codeSection.IsVisible then "重试配对" else "重试连接")
-                    retryButton.IsVisible <- true
-                else
-                    status.Foreground <- Tokens.textMuted
-                    retryButton.IsVisible <- false
-            else
-                retryButton.IsVisible <- false
+            status.Foreground <- (if failure && hasMessage then Tokens.danger else Tokens.textMuted)
+
+        /// 中性进度/校验提示：不出现重试按钮。
+        let announce message =
+            pendingRetry <- None
+            showMessage message false
+            retryButton.IsVisible <- false
+
+        /// 类型化失败：红字 + 由类型决定的重试按钮。
+        let fail (issue: ConnectionIssue) =
+            showMessage (describeIssue issue) true
+            pendingRetry <- ConnectionIssue.retry issue
+            match pendingRetry with
+            | Some retry ->
+                Ui.setButtonText retryButton (retryLabel retry)
+                retryButton.IsVisible <- true
+            | None -> retryButton.IsVisible <- false
 
         let submitCode () =
             let code = if isNull codeBox.Text then "" else codeBox.Text.Trim()
@@ -378,19 +434,25 @@ module Dialogs =
         let codeButton = Ui.button Ui.Secondary "提交配对码" submitCode
         codeButton.IsVisible <- false
 
+        let startPairing () =
+            codeSection.IsVisible <- true
+            codeButton.IsVisible <- true
+            pairingHint.Text <- pairingCodeHint (if isNull urlBox.Text then "" else urlBox.Text)
+            onConnect
+                { url = (if isNull urlBox.Text then "" else urlBox.Text.Trim())
+                  token = None
+                  usePairing = true }
+            Dispatcher.UIThread.Post(fun () -> codeBox.Focus() |> ignore)
+        startPairingRef <- startPairing
+        urlBox.TextChanged.Add(fun _ -> pairingHint.Text <- pairingCodeHint urlBox.Text)
+
         let pairingToggle =
             Ui.button Ui.Ghost "没有令牌？改用配对码" (fun () ->
                 let show = not codeSection.IsVisible
-                codeSection.IsVisible <- show
-                codeButton.IsVisible <- show
-                if retryButton.IsVisible then
-                    Ui.setButtonText retryButton (if show then "重试配对" else "重试连接")
-                if show then
-                    onConnect
-                        { url = (if isNull urlBox.Text then "" else urlBox.Text.Trim())
-                          token = None
-                          usePairing = true }
-                    Dispatcher.UIThread.Post(fun () -> codeBox.Focus() |> ignore))
+                if show then startPairing ()
+                else
+                    codeSection.IsVisible <- false
+                    codeButton.IsVisible <- false)
         pairingToggle.HorizontalAlignment <- HorizontalAlignment.Left
 
         let connectAction () =
@@ -455,14 +517,14 @@ module Dialogs =
         let target =
             if String.IsNullOrWhiteSpace (if isNull urlBox.Text then "" else urlBox.Text) then urlBox else tokenBox
         overlay.ShowDialog(content :> Control, 460.0, initialFocus = target, onClosed = onClosed)
-        announce
+        { info = announce; fail = fail }
 
     let connect
         (overlay: OverlayHost)
         (defaultUrl: string)
         (onConnect: ConnectRequest -> unit)
         (onSubmitCode: string -> unit)
-        : (string -> unit) =
+        : ConnectDialogHandle =
         connectWithClosed overlay defaultUrl onConnect onSubmitCode ignore
 
 
