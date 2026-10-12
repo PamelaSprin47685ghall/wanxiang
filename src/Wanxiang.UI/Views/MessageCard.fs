@@ -948,14 +948,17 @@ module MessageCard =
                     else String.concat " · " parts
                 sprintf "调用 %d 个工具 · %s" total summary
 
+        // 等待批准优先于执行中：需要用户动手的状态最先被看到（第 206 节）；绝不显示「完成」对勾。
         let overviewBrush: IBrush =
-            if runningCount > 0 then Tokens.accent
+            if awaitingCount > 0 then Tokens.warning
+            elif runningCount > 0 then Tokens.accent
             elif failedCount > 0 then Tokens.danger
             elif unknownCount > 0 then Tokens.warning
             else Tokens.textMuted
 
         let overviewIcon: Control =
-            if runningCount > 0 then Ui.spinner ControlMetrics.spinnerCompactSize
+            if awaitingCount > 0 then Icons.info overviewBrush
+            elif runningCount > 0 then Ui.spinner ControlMetrics.spinnerCompactSize
             elif failedCount > 0 then Icons.alert overviewBrush
             elif unknownCount > 0 then Icons.info overviewBrush
             else Icons.check overviewBrush
@@ -1774,6 +1777,10 @@ module MessageCard =
         menu
 
     /// 渲染一条消息。返回可直接塞进消息列表的控件。
+    /// 消息卡外层高亮承载面的名字（ChatView 定位高亮时按名查找）。
+    [<Literal>]
+    let revealHighlightName = "reveal-highlight"
+
     let render (message: MessageView) (ctx: MessageContext) (actions: MessageActions) (index: int option) : Control =
         // 剪贴板入口的运行时绑定（ChatView 直接调用的 errorCard 未显式注入 copyText）：
         // 这里写入的仍是 AppShell 持有的同一函数，不是第二真源。
@@ -1984,4 +1991,13 @@ module MessageCard =
         buttons.LostFocus.Add(fun _ -> dim ())
         buttons.PointerEntered.Add(fun _ -> highlight ())
         buttons.PointerExited.Add(fun _ -> dim ())
-        host :> Control
+        // 定位高亮的承载面（第 211 节）：host 是 StackPanel，直接刷背景会是一块贴边的直角色块，
+        // 用户气泡下面还会透出整行。外包一层圆角 Border，内外边距相抵，布局不变；平时透明。
+        Border(
+            Name = revealHighlightName,
+            Background = Brushes.Transparent,
+            CornerRadius = CornerRadius Spacing.Radius.lg,
+            Padding = Thickness(Spacing.spaceMd, Spacing.spaceXs),
+            Margin = Thickness(-Spacing.spaceMd, -Spacing.spaceXs),
+            Child = host)
+        :> Control

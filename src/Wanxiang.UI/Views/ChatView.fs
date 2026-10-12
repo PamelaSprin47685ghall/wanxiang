@@ -9,6 +9,8 @@ open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Threading
+open Avalonia.VisualTree
+open Avalonia.LogicalTree
 open Wanxiang.Core
 
 /// 聊天区对外暴露的动作。
@@ -114,6 +116,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable showMore: Control -> unit = ignore
     let mutable awaitingApproval: Set<string> = Set.empty
     let mutable lastFlashedCommit: uint64 option = None
+    let mutable highlightedCommit: uint64 option = None
+    let mutable highlightTimer: (DispatcherTimer * (unit -> unit)) option = None
     let mutable canJumpPrevious = false
     let mutable canJumpNext = false
     let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl+B / ⌘B）"
@@ -603,23 +607,48 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                     let index = mountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
                     match index with
                     | Some i when i < messagePanel.Children.Count ->
-                        let card = messagePanel.Children.[i]
-                        let apply (get: unit -> IBrush) (set: IBrush -> unit) =
-                            let original = get ()
-                            set Tokens.accentSoft
+                        // 卡片本身是 StackPanel（或带版本条的竖排），背景刷不出圆角面：
+                        // 找 MessageCard 外包的高亮承载面（第 211 节）。
+                        let surface =
+                            match messagePanel.Children.[i] with
+                            | :? Border as b when b.Name = MessageCard.revealHighlightName -> Some b
+                            | card ->
+                                card.GetVisualDescendants()
+                                |> Seq.tryPick (function
+                                    | :? Border as b when b.Name = MessageCard.revealHighlightName -> Some b
+                                    | _ -> None)
+                                |> Option.orElse (
+                                    card.GetLogicalDescendants()
+                                    |> Seq.tryPick (function
+                                        | :? Border as b when b.Name = MessageCard.revealHighlightName -> Some b
+                                        | _ -> None))
+                        match surface with
+                        | Some b ->
+                            highlightTimer |> Option.iter (fun (t: DispatcherTimer, restore) -> t.Stop(); restore ())
+                            b.Background <- Tokens.accentSoft
+                            highlightedCommit <- Some commitId
+                            let restore () =
+                                b.Background <- Brushes.Transparent
+                                highlightedCommit <- None
+                                highlightTimer <- None
                             let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 1600.0)
                             timer.Tick.Add(fun _ ->
                                 timer.Stop()
-                                set original)
+                                restore ())
+                            highlightTimer <- Some(timer, restore)
                             timer.Start()
-                        match card with
-                        | :? Border as b -> apply (fun () -> b.Background) (fun v -> b.Background <- v)
-                        | :? Panel as p -> apply (fun () -> p.Background) (fun v -> p.Background <- v)
-                        | _ -> ()
+                        | None -> ()
                     | _ -> ()),
                 DispatcherPriority.Background)
             true
         else false
+
+    /// 当前正高亮着的消息（高亮结束后为 None）。
+    member _.HighlightedCommit = highlightedCommit
+
+    /// 立即结束定位高亮（计时器到点时走的同一路径；无显示测试里 DispatcherTimer 不可确定泵出）。
+    member _.EndRevealHighlight() =
+        highlightTimer |> Option.iter (fun (t: DispatcherTimer, restore) -> t.Stop(); restore ())
 
     member this.ScrollToMessage(commitId: uint64) : bool =
         let indexOf () =
