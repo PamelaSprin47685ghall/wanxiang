@@ -9,6 +9,13 @@ Does NOT enable Software2D.
   devicePixelRatio > 1, so the canvas backing store stays CSS-sized and the whole UI renders
   at DPR x scale (model chip overflow, half-width layout). Only trust it when it agrees with
   contentBoxSize * devicePixelRatio (±2px); otherwise fall back to the CSS size * DPR path.
+- Non-composition text bridge (UI 决策 390): upstream only turns keydown (key.length==1) and
+  compositionend into TextInput; `beforeinput` insertText / insertReplacementText / insertFromPaste /
+  insertFromDrop (CDP Input.insertText, iOS autocorrect, voice dictation, long-press paste) is dropped.
+  We forward those exactly once via InputHelper.OnCompositionEnd(data) (-> RawTextEvent), first
+  mapping the replaced range into the Avalonia selection via the existing deleteContentBackward
+  selection sync, and preventDefault so the hidden <input> never drifts from Avalonia's text.
+  Skipped while composing and for paste right after a Ctrl/Cmd+V keydown (Avalonia pastes that itself).
 """
 from __future__ import annotations
 import pathlib, sys
@@ -41,4 +48,26 @@ elif DPR_OLD in t:
     print(f"patched dpr guard -> {path}")
 else:
     raise SystemExit(f"avalonia.js ResizeObserver pattern not found in {path}")
+BRIDGE_OLD = 'e.addEventListener("beforeinput",n);'
+BRIDGE_MARK = "/*wx-insert-bridge*/"
+BRIDGE_NEW = BRIDGE_OLD + BRIDGE_MARK + (
+    'e.addEventListener("compositionstart",()=>{e.__wxComp=!0});'
+    'e.addEventListener("compositionend",()=>{e.__wxComp=!1});'
+    'globalThis.__wxPasteHook||(globalThis.__wxPasteHook=1,globalThis.document&&globalThis.document.addEventListener("keydown",'
+    'k=>{(k.ctrlKey||k.metaKey)&&(k.key==="v"||k.key==="V")&&(globalThis.__wxPasteKey=Date.now())},!0));'
+    'e.addEventListener("beforeinput",o=>{let y=o.inputType;'
+    'if(o.isComposing||e.__wxComp||!/^(insertText|insertReplacementText|insertFromPaste|insertFromPasteAsQuotation|insertFromDrop|insertFromDictation|insertFromYank)$/.test(y))return;'
+    'if(y.startsWith("insertFromPaste")&&Date.now()-(globalThis.__wxPasteKey||0)<1e3)return;'
+    'let d=o.data;d==null&&o.dataTransfer&&(d=o.dataTransfer.getData("text/plain"));o.preventDefault();'
+    'if(y==="insertReplacementText"){let g=o.getTargetRanges&&o.getTargetRanges();'
+    'g&&g.length&&g[0].startOffset!==g[0].endOffset&&e.setSelectionRange&&e.setSelectionRange(g[0].startOffset,g[0].endOffset)}'
+    'e.selectionStart!=null&&e.selectionStart!==e.selectionEnd&&l.InputHelper.OnBeforeInput(t,"deleteContentBackward",-1,-1);'
+    'd&&l.InputHelper.OnCompositionEnd(t,d.replace(/\\r\\n?/g,"\\n"))});')
+if BRIDGE_MARK in t:
+    print(f"insert bridge already present {path}")
+elif BRIDGE_OLD in t:
+    t = t.replace(BRIDGE_OLD, BRIDGE_NEW, 1)
+    print(f"patched insert bridge -> {path}")
+else:
+    raise SystemExit(f"avalonia.js beforeinput pattern not found in {path}")
 path.write_text(t)

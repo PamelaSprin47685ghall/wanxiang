@@ -22,6 +22,7 @@ let private fixture =
     + "r.devicePixelContentBoxSize?(s=r.devicePixelContentBoxSize[0].inlineSize,o=r.devicePixelContentBoxSize[0].blockSize,a=1):"
     + "r.contentBoxSize?r.contentBoxSize[0]?(s=r.contentBoxSize[0].inlineSize,o=r.contentBoxSize[0].blockSize):(s=r.contentBoxSize.inlineSize,o=r.contentBoxSize.blockSize):"
     + "(s=r.contentRect.width,o=r.contentRect.height);let d=Math.round(s*a),u=Math.round(o*a);n(d,u,i)}}"
+    + "static subscribeTextEvents(e,t){let n=o=>{l.InputHelper.OnBeforeInput(t,o.inputType,-1,-1)};e.addEventListener(\"beforeinput\",n);return 0}"
 
 let private runPatch (path: string) =
     let psi = ProcessStartInfo("python3")
@@ -47,6 +48,13 @@ let ``avalonia.js 补丁只在 devicePixelContentBoxSize 与 CSS×DPR 一致时�
         Assert.Contains("failIfMajorPerformanceCaveat:!1", once)
         // 回退分支保持原样：CSS 尺寸 × DPR
         Assert.Contains("let d=Math.round(s*a),u=Math.round(o*a)", once)
+        // 决策 390：非组合上屏桥只插一次，跳过组合中与 Ctrl/⌘+V 之后的粘贴
+        Assert.Contains("/*wx-insert-bridge*/", once)
+        Assert.Equal(1, once.Split("/*wx-insert-bridge*/").Length - 1)
+        Assert.Contains("o.isComposing||e.__wxComp", once)
+        Assert.Contains("insertReplacementText|insertFromPaste", once)
+        Assert.Contains("globalThis.__wxPasteKey", once)
+        Assert.Contains("l.InputHelper.OnCompositionEnd(t,d", once)
         let code2, out2 = runPatch path
         Assert.True((code2 = 0), out2)
         Assert.Equal(once, File.ReadAllText path)
