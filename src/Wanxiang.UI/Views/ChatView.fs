@@ -249,6 +249,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 不加这层缓存的话，流式期间每批 delta 都要把整表拆掉重建：
     /// 200 条消息实测约 100ms 一次，越聊越卡，而其中只有最后一张卡真的变了。
     let cardCache = Dictionary<CardKey, Control>()
+    /// 决策 292：流式卡原位更新。外形（除正文外的一切：思考、工具调用、附件、字号、审批）不变时，
+    /// 同一张卡留在面板上，只把新文字交给它的 StreamingMarkdown；外形变了才换代（streamGeneration + 1）。
+    let mutable streamSlot: (obj * CardKey * StreamingMarkdown) option = None
+    let mutable streamGeneration = 0
     /// 当前挂在面板上的卡片身份，用来算最长公共前缀
     let mutable mountedKeys: CardKey option array = [||]
 
@@ -1114,8 +1118,34 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
         match streamingMessage with
         | Some streaming when MessageView.hasVisibleBody streaming ->
-            desired.Add(None, fun () -> MessageCard.render streaming (ctxFor -1 true) actions.message None)
-        | _ -> ()
+            let ctx = ctxFor -1 true
+            let shape =
+                box ({ streaming with text = "" }, String.IsNullOrWhiteSpace streaming.text, fontSize, autoCollapseReasoning, awaitingApproval)
+            match streamSlot with
+            | Some(prevShape, key, live) when prevShape = shape ->
+                live.Update streaming.text
+                desired.Add(Some key, fun () -> MessageCard.render streaming ctx actions.message None)
+            | _ ->
+                streamGeneration <- streamGeneration + 1
+                let key =
+                    { commit = UInt64.MaxValue
+                      role = "streaming"
+                      toolCalls = 0
+                      toolResults = 0
+                      attachments = 0
+                      fontSize = fontSize
+                      collapse = autoCollapseReasoning
+                      lastAssistant = false
+                      usageTag = 0
+                      missingTag = 0
+                      siblingTag = streamGeneration
+                      awaitingTools = false
+                      approvalTag = 0 }
+                let card, live = MessageCard.renderWithStream streaming ctx actions.message None
+                cardCache[key] <- card
+                streamSlot <- live |> Option.map (fun l -> shape, key, l)
+                desired.Add(Some key, fun () -> card)
+        | _ -> streamSlot <- None
         let partialNow =
             match error with
             | Some _ -> partialReply |> Option.filter (fun (p, _) -> streamingMessage.IsNone && MessageView.hasVisibleBody p)

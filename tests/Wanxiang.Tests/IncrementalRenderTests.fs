@@ -61,7 +61,10 @@ type Incremental(output: ITestOutputHelper) =
                 match v with
                 | :? StackPanel as panel when panel.Orientation = Avalonia.Layout.Orientation.Vertical -> Some panel
                 | _ -> None)
-            |> Seq.tryFind (fun panel -> panel.Children.Count > 0)
+            // 取子项最多的那个：空态 / 骨架等其他纵向面板排在可视树更前面时不会误选
+            |> Seq.filter (fun panel -> panel.Children.Count > 0)
+            |> Seq.sortByDescending (fun panel -> panel.Children.Count)
+            |> Seq.tryHead
             |> Option.map (fun panel -> panel.Children |> Seq.toList)
             |> Option.defaultValue []
         view, window, cards
@@ -116,7 +119,7 @@ type Incremental(output: ITestOutputHelper) =
 
     [<Trait("Category", "UI")>]
     [<Fact>]
-    member _.``流式卡每帧都是新的而已提交部分不动``() =
+    member _.``流式卡原位更新而已提交部分不动（决策 292）``() =
         Headless.run (fun () ->
         let view, window, cards = mount ()
         try
@@ -133,8 +136,21 @@ type Incremental(output: ITestOutputHelper) =
             Assert.Equal(26, second.Length)
             for (a, b) in List.zip (first |> List.truncate 25) (second |> List.truncate 25) do
                 Assert.Same(a, b)
-            // 流式那一张内容变了，必须是新控件
-            Assert.NotSame(List.last first, List.last second)
+            // 决策 292：流式卡外形没变，只是正文长了——同一张卡原位更新，而不是整卡重建
+            Assert.Same(List.last first, List.last second)
+            let texts (c: Control) =
+                c.GetVisualDescendants()
+                |> Seq.choose (function :? TextBlock as t -> Option.ofObj t.Text | _ -> None)
+                |> Seq.toList
+            let inlineText (c: Control) =
+                c.GetVisualDescendants()
+                |> Seq.choose (function :? SelectableTextBlock as t -> Some(t.Inlines |> Option.ofObj |> Option.map (fun i -> i.Text) |> Option.defaultValue "") | _ -> None)
+                |> String.concat ""
+            ignore texts
+            Assert.Contains("继续", inlineText (List.last second))
+            // 外形变了（出现思考过程）才换一张新卡
+            render view messages (Some { MessageView.empty with role = "assistant"; text = "写作中……继续"; reasoning = "想一想" }) Tokens.fontReading
+            Assert.NotSame(List.last second, List.last (cards ()))
         finally
             window.Close()
         )
