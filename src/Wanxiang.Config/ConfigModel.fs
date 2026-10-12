@@ -106,6 +106,12 @@ type GenerationDefaults = {
     /// Gemini 的 `generationConfig.thinkingConfig.thinkingBudget`；
     /// OpenAI 兼容传输忽略它（那边靠 extraJson 里的 reasoning_effort）。
     thinkingBudget: int
+    /// 全局默认模型服务（TOML `[generation] defaultProvider`，可选）。
+    /// 新对话没有显式选择时优先用它；缺省 = 首个可用的模型服务（与旧行为一致）。
+    defaultProvider: string option
+    /// 全局默认模型（TOML `[generation] defaultModel`，可选）。
+    /// 不在该模型服务的模型列表中时回落为该服务自己的 defaultModel。
+    defaultModel: string option
 }
 
 module GenerationDefaults =
@@ -119,7 +125,9 @@ module GenerationDefaults =
           maxContextTokens = 128000
           thinkingBudget = 0
           autoTitle = true
-          maxToolRounds = 12 }
+          maxToolRounds = 12
+          defaultProvider = None
+          defaultModel = None }
 
 /// 内建工具配置。
 type ToolsConfig = {
@@ -179,6 +187,16 @@ module AppConfig =
     [<Literal>]
     let CurrentVersion = 2
 
+    /// 写入了全局默认模型（`[generation] defaultProvider/defaultModel`）时使用的版本。
+    /// 只有用户真的设置了全局默认才写 3；否则保持 2，旧版本服务端仍可读（决策 60）。
+    [<Literal>]
+    let GlobalDefaultVersion = 3
+
+    /// 当前配置落盘时应使用的 configVersion。
+    let versionToWrite (cfg: AppConfig) : int =
+        if cfg.generation.defaultProvider.IsSome || cfg.generation.defaultModel.IsSome then GlobalDefaultVersion
+        else CurrentVersion
+
     let defaults (instanceId: Guid) : AppConfig =
         { configVersion = CurrentVersion
           instanceId = instanceId
@@ -205,9 +223,25 @@ module AppConfig =
         |> List.filter (fun p -> p.enabled && not (List.isEmpty p.models))
         |> List.sortBy (fun p -> p.id)
 
-    /// 会话默认 provider：首个可用者。
+    /// 新对话的默认 (模型服务, 模型)：
+    /// 1. 全局默认模型服务存在且可用 → 它，模型取全局默认（不在列表中则回落该服务的 defaultModel）；
+    /// 2. 否则首个可用的模型服务及其 defaultModel（删掉全局默认键后的回落，与旧行为一致）。
+    let defaultSelection (cfg: AppConfig) : (ProviderConfig * string) option =
+        let usable = usableProviders cfg
+        let chosen =
+            match cfg.generation.defaultProvider with
+            | Some id -> usable |> List.tryFind (fun p -> p.id = id)
+            | None -> None
+        match chosen with
+        | Some p ->
+            let requested = cfg.generation.defaultModel |> Option.defaultValue ""
+            Some(p, ProviderConfig.resolveModel requested p)
+        | None -> usable |> List.tryHead |> Option.map (fun p -> p, ProviderConfig.resolveModel "" p)
+
+    /// 会话默认 provider：见 `defaultSelection`。返回值的 `defaultModel` 已替换为
+    /// 选定的默认模型，调用方继续用 `ProviderConfig.resolveModel` 即可得到全局默认。
     let defaultProvider (cfg: AppConfig) : ProviderConfig option =
-        usableProviders cfg |> List.tryHead
+        defaultSelection cfg |> Option.map (fun (p, model) -> { p with defaultModel = model })
 
     let tryProvider (id: string) (cfg: AppConfig) : ProviderConfig option =
         cfg.providers |> Map.tryFind id

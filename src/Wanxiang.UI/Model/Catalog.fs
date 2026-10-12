@@ -49,6 +49,10 @@ type GenerationInfo = {
     autoTitle: bool
     maxToolRounds: int
     fileReadRoots: string list
+    /// 全局默认模型服务（`[generation] defaultProvider`，可选）
+    defaultProvider: string option
+    /// 全局默认模型（`[generation] defaultModel`，可选）
+    defaultModel: string option
 }
 
 /// 服务端能力目录。客户端所有选择器（模型、工具）都从这里取数据，
@@ -74,7 +78,9 @@ module Catalog =
               maxContextMessages = 200
               autoTitle = true
               maxToolRounds = 12
-              fileReadRoots = [] } }
+              fileReadRoots = []
+              defaultProvider = None
+              defaultModel = None } }
 
     let private str (o: JsonObject) key fallback =
         let mutable n: JsonNode = null
@@ -184,7 +190,9 @@ module Catalog =
               maxContextMessages = intOf generation "maxContextMessages" 200
               autoTitle = boolOf generation "autoTitle" true
               maxToolRounds = intOf generation "maxToolRounds" 12
-              fileReadRoots = strings toolsConfig "fileReadRoots" } }
+              fileReadRoots = strings toolsConfig "fileReadRoots"
+              defaultProvider = strOpt generation "defaultProvider"
+              defaultModel = strOpt generation "defaultModel" } }
 
     /// 参与模型选择的服务商：启用且至少一个模型。
     let usableProviders (catalog: Catalog) =
@@ -203,12 +211,69 @@ module Catalog =
         | None when String.IsNullOrWhiteSpace model -> "未选择模型"
         | None -> model
 
-    /// 首个可用的 (服务商 id, 模型)。
+    /// 新对话的默认 (模型服务 id, 模型)：
+    /// 全局默认存在且可用 → 它（模型不在列表中则回落该服务的 defaultModel）；
+    /// 否则首个可用的模型服务及其默认模型。与服务端 `AppConfig.defaultSelection` 同一规则。
     let defaultSelection (catalog: Catalog) =
-        usableProviders catalog
-        |> List.tryHead
-        |> Option.map (fun p ->
-            let model =
-                if not (String.IsNullOrWhiteSpace p.defaultModel) then p.defaultModel
-                else p.models |> List.tryHead |> Option.defaultValue ""
-            p.id, model)
+        let usable = usableProviders catalog
+        let modelOf (p: ProviderInfo) (requested: string) =
+            if not (String.IsNullOrWhiteSpace requested) && List.contains requested p.models then requested
+            elif not (String.IsNullOrWhiteSpace p.defaultModel) then p.defaultModel
+            else p.models |> List.tryHead |> Option.defaultValue ""
+        let chosen =
+            catalog.generation.defaultProvider
+            |> Option.bind (fun id -> usable |> List.tryFind (fun p -> p.id = id))
+        match chosen with
+        | Some p -> Some(p.id, modelOf p (catalog.generation.defaultModel |> Option.defaultValue ""))
+        | None -> usable |> List.tryHead |> Option.map (fun p -> p.id, modelOf p "")
+
+    /// 该 (服务, 模型) 是否正是全局默认（设置页行内标记用）。
+    let isGlobalDefault (providerId: string) (catalog: Catalog) =
+        match defaultSelection catalog with
+        | Some(id, _) -> id = providerId && catalog.generation.defaultProvider = Some providerId
+        | None -> false
+
+/// 模型探测失败的类型（与服务端 `ProviderCatalog.ProbeFailure` 的稳定错误码一一对应）。
+/// 界面按类型决定下一步，不再靠文案关键词判断。
+type ProbeFailureKind =
+    | ProbeInvalidKey
+    | ProbeEndpointNotFound
+    | ProbeRateLimited
+    | ProbeServerError
+    | ProbeUnreachable
+    | ProbeTimedOut
+    | ProbeBadResponse
+    | ProbeRejected
+    | ProbeCancelled
+    /// 旧服务端（无错误码前缀）或未知码
+    | ProbeUnclassified
+
+module ProbeFailureKind =
+
+    let ofCode (code: string) =
+        match code with
+        | "invalid-key" -> ProbeInvalidKey
+        | "endpoint-not-found" -> ProbeEndpointNotFound
+        | "rate-limited" -> ProbeRateLimited
+        | "server-error" -> ProbeServerError
+        | "unreachable" -> ProbeUnreachable
+        | "timeout" -> ProbeTimedOut
+        | "bad-response" -> ProbeBadResponse
+        | "rejected" -> ProbeRejected
+        | "cancelled" -> ProbeCancelled
+        | _ -> ProbeUnclassified
+
+    /// 解析线上 `[code] 说明`。没有前缀时类型为 ProbeUnclassified，说明原样保留。
+    let parse (text: string) : ProbeFailureKind * string =
+        if not (String.IsNullOrWhiteSpace text) && text.StartsWith("[", StringComparison.Ordinal) then
+            let close = text.IndexOf ']'
+            if close > 1 then ofCode (text.Substring(1, close - 1)), text.Substring(close + 1).TrimStart()
+            else ProbeUnclassified, text
+        else
+            ProbeUnclassified, (if isNull text then "" else text)
+
+    /// 失败后值得给「改用兼容端点 / 改用原生接口」这类下一步的类型。
+    let suggestsTransportSwitch (kind: ProbeFailureKind) =
+        match kind with
+        | ProbeEndpointNotFound | ProbeBadResponse -> true
+        | _ -> false

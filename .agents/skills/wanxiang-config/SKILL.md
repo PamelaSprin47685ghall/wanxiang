@@ -321,3 +321,51 @@ GET /service-worker.js
 3. 读写都先看开关：关闭时**不读**（不把旧内容恢复回来）也**不写**。
 4. 测试进程默认把 `WANXIANG_HOME` 指到进程私有临时目录，不碰真实家目录。
 5. 窗口关闭时写窗口几何必须以磁盘上的最新 `ui.json` 为底（`UiPrefs.load()`），不得用构造时的旧副本覆盖设置页改过的开关。
+
+# 60. 全局默认模型与 configVersion 3（UX 重设计 W1）
+
+> 定案：2026-10-12。来源：`docs/ux/redesign-proposal.md` §5 W1、负责人决策「所有协议与数据改动只做加法且向后兼容」。
+> 补充（不替代）第 184 问「`configVersion` 单一、旧版本经显式升级读入」。
+
+## 60.1 新增的两个可选键
+
+`[generation]` 新增两个**可选**键：
+
+| 键 | 类型 | 含义 |
+|---|---|---|
+| `defaultProvider` | string | 全局默认模型服务（`[providers.<id>]` 的 id） |
+| `defaultModel` | string | 全局默认模型；必须同时有 `defaultProvider` |
+
+- **缺省行为与此前完全一致**：没有这两个键时，新对话用首个可用模型服务（按 id 排序）及其 `defaultModel`。
+- `defaultModel` 不在该服务的模型列表里，或 `defaultProvider` 指向不存在 / 已停用 / 没有模型的服务：
+  **回落**为「该服务自己的 defaultModel」或「首个可用模型服务」，**不报错、不拒绝整份配置**
+  （删掉一个服务不该让配置被拒；设置界面删服务时会一并清掉指向它的全局默认）。
+- 选择规则只有一处权威：`AppConfig.defaultSelection`；客户端 `Catalog.defaultSelection` 与它同一规则，测试钉死两者一致。
+  服务端为新对话 / 无效配置注入会话配置时用 `AppConfig.defaultProvider`（返回的服务其 `defaultModel` 已换成选定模型）。
+- 显式有效的会话配置（用户选定的服务与模型）**绝不**被全局默认改写（决策 86 不变）。
+
+## 60.2 configVersion：按需升到 3
+
+| 情形 | 读 | 写回 |
+|---|---|---|
+| 文件 `configVersion = 1` | 显式升级读入（不变） | 2 |
+| 文件 `configVersion = 2` | 读入，行为不变 | **仍是 2**（未设置全局默认） |
+| 文件 `configVersion = 3` | 读入（= 2 + 上述两个键） | 设置了全局默认才是 3 |
+| 其他版本 | 整体拒绝（不猜格式） | — |
+
+- 版本由 `AppConfig.versionToWrite` 决定：**只有用户真的设置了全局默认才写 3**；清除后写回 2。
+  这样不使用新功能的用户，配置文件对旧版本服务端保持可读。
+- 读写幂等：`serialize ∘ tryParse ∘ serialize` 与第一次 `serialize` 字节相同。
+- 未知键仍整体拒绝（决策 183），包括 `[generation]` 里的拼写错误。
+
+## 60.3 发布说明（须随版本发布）
+
+> 设置了「全局默认模型」后，配置文件会升到 `configVersion = 3`，**更早版本的万象主机无法读取该文件**
+> （会拒绝并继续使用上一份有效配置）。要回退到旧版本：在设置里「取消默认」，文件会随下一次保存写回 `configVersion = 2`，
+> 或手动删除 `[generation]` 下的 `defaultProvider` / `defaultModel` 并把 `configVersion` 改回 2。
+
+## 60.4 保存路径
+
+全局默认经 `ConfigUpdateGeneration`（`ConfigMutation.updateGeneration`）写入，与其余生成设置同一条
+「生成完整 TOML → 原子 rename → 重读」路径（原则 9）。键存在即覆盖，空串即清除；不带这两个键的更新保持原值。
+校验：`defaultModel` 需有 `defaultProvider`；服务必须存在；模型必须在该服务的列表中。

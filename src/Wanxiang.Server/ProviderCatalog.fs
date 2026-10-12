@@ -42,6 +42,9 @@ module ProviderCatalog =
         o["maxContextMessages"] <- g.maxContextMessages
         o["autoTitle"] <- g.autoTitle
         o["maxToolRounds"] <- g.maxToolRounds
+        // 全局默认模型（可选键；缺省不下发，旧客户端无感）。
+        match g.defaultProvider with Some p -> o["defaultProvider"] <- p | None -> ()
+        match g.defaultModel with Some m -> o["defaultModel"] <- m | None -> ()
         o
 
     let private mcpToJson (m: McpServerConfig) : JsonObject =
@@ -144,9 +147,91 @@ module ProviderCatalog =
               | Some k -> "Authorization", "Bearer " + k
               | None -> () ]
 
-    /// 向 provider 的模型清单端点探活。
-    /// 失败原因原样带回，设置界面能直接告诉用户是密钥错还是网络不通。
-    let probeModels (p: ProviderConfig) (ct: CancellationToken) : Task<Result<string list, string>> =
+    /// 探活失败的类型化原因。界面按它决定文案与下一步，不靠文案关键词判断。
+    type ProbeFailure =
+        /// 401 / 403：密钥无效、过期或没有权限
+        | InvalidKey
+        /// 404：端点路径不对（baseUrl 多写或少写了 /v1 之类）
+        | EndpointNotFound
+        /// 429：被限流或额度用尽
+        | RateLimited
+        /// 5xx：对方服务内部错误
+        | ServerError
+        /// DNS / 连接被拒 / TLS：网络不通
+        | Unreachable
+        /// 超时
+        | TimedOut
+        /// 200 但响应不是模型清单（多半是 baseUrl 指到了网页而不是 API）
+        | BadResponse
+        /// 其他 HTTP 状态
+        | Rejected
+        /// 调用方取消
+        | Cancelled
+
+    module ProbeFailure =
+
+        let all =
+            [ InvalidKey; EndpointNotFound; RateLimited; ServerError; Unreachable; TimedOut; BadResponse; Rejected; Cancelled ]
+
+        /// 稳定错误码：随 `provider.probe-result.error` 的 `[code] ` 前缀下发
+        /// （协议字段仍是自由文本，旧客户端只会多看到一个方括号前缀）。
+        let code (f: ProbeFailure) =
+            match f with
+            | InvalidKey -> "invalid-key"
+            | EndpointNotFound -> "endpoint-not-found"
+            | RateLimited -> "rate-limited"
+            | ServerError -> "server-error"
+            | Unreachable -> "unreachable"
+            | TimedOut -> "timeout"
+            | BadResponse -> "bad-response"
+            | Rejected -> "rejected"
+            | Cancelled -> "cancelled"
+
+        let ofCode (value: string) : ProbeFailure option =
+            all |> List.tryFind (fun f -> code f = value)
+
+        /// 把类型与说明编码成线上字符串：`[code] 说明`。
+        let encode (f: ProbeFailure) (message: string) = sprintf "[%s] %s" (code f) message
+
+        /// 解码 `[code] 说明`；没有前缀（旧服务端）返回 None 与原文。
+        let decode (text: string) : ProbeFailure option * string =
+            if not (isNull text) && text.StartsWith("[", StringComparison.Ordinal) then
+                let close = text.IndexOf ']'
+                if close > 1 then
+                    ofCode (text.Substring(1, close - 1)), text.Substring(close + 1).TrimStart()
+                else
+                    None, text
+            else
+                None, text
+
+    /// 失败类型 → (发生了什么 · 为什么，下一步)。固定三段：发生了什么 / 为什么 / 下一步。
+    let private describeFailure (p: ProviderConfig) (f: ProbeFailure) (detail: string) : string =
+        let nativeKind = p.kind = "anthropic" || p.kind = "gemini"
+        match f with
+        | InvalidKey ->
+            sprintf "%s 拒绝了这把密钥（%s）。密钥可能填错、已过期或没有权限。请重新复制完整密钥后再试。" (ProviderConfig.displayName p) detail
+        | EndpointNotFound ->
+            if nativeKind then
+                sprintf "找不到模型清单端点（%s）。原生接口的地址只需填到域名；如果你用的是中转或网关，请改用兼容端点。" detail
+            else
+                sprintf "找不到模型清单端点（%s）。兼容接口的地址通常以 /v1 结尾，请检查路径；原生 Claude 或 Gemini 请改用原生接口。" detail
+        | RateLimited ->
+            sprintf "%s 暂时限制了请求（%s）。可能是额度用尽或请求太频繁，请稍后再试或检查账户额度。" (ProviderConfig.displayName p) detail
+        | ServerError ->
+            sprintf "%s 返回了内部错误（%s）。这通常是对方服务的临时故障，请稍后再试。" (ProviderConfig.displayName p) detail
+        | Unreachable ->
+            sprintf "连不上 %s（%s）。可能是网络不通、地址写错或本机服务没有启动，请检查地址与网络。" p.baseUrl detail
+        | TimedOut ->
+            sprintf "等待 %s 超时（%s）。网络较慢或对方没有响应，请稍后再试，或检查地址是否正确。" p.baseUrl detail
+        | BadResponse ->
+            sprintf "%s 有响应，但返回的不是模型清单（%s）。地址可能指到了网页而不是接口，请确认端点路径。" p.baseUrl detail
+        | Rejected ->
+            sprintf "%s 拒绝了请求（%s）。请检查地址与密钥是否匹配这个接口。" (ProviderConfig.displayName p) detail
+        | Cancelled -> "探测已取消。"
+
+    /// 向 provider 的模型清单端点探活，失败带类型。
+    /// 只在用户点击后触发；密钥只进请求头，错误文案里不出现密钥（决策 41）。
+    let probeModelsTyped (p: ProviderConfig) (ct: CancellationToken) : Task<Result<string list, ProbeFailure * string>> =
         task {
             try
                 let url, authHeaders = probeRequest p
@@ -160,20 +245,37 @@ module ProviderCatalog =
                 let! response = client.SendAsync(request, ct)
                 let! body = response.Content.ReadAsStringAsync ct
                 if not response.IsSuccessStatusCode then
-                    let hint =
-                        match int response.StatusCode with
-                        | 401 | 403 -> "凭据被拒绝，请检查 API Key"
-                        | 404 ->
-                            match p.kind with
-                            | "anthropic" -> "端点不存在，anthropic 传输的 baseUrl 填到域名即可"
-                            | "gemini" -> "端点不存在，gemini 传输的 baseUrl 填到域名即可"
-                            | _ -> "端点不存在，请检查 baseUrl 是否以 /v1 结尾"
-                        | s when s >= 500 -> "服务商内部错误"
-                        | _ -> "请求被拒绝"
-                    return Error(sprintf "HTTP %d · %s" (int response.StatusCode) hint)
+                    let status = int response.StatusCode
+                    let detail = sprintf "HTTP %d" status
+                    let failure =
+                        match status with
+                        | 401 | 403 -> InvalidKey
+                        | 404 -> EndpointNotFound
+                        | 429 -> RateLimited
+                        | s when s >= 500 -> ServerError
+                        | _ -> Rejected
+                    return Error(failure, describeFailure p failure detail)
                 else
-                    return modelIdsFromProbe body
+                    match modelIdsFromProbe body with
+                    | Ok ids -> return Ok ids
+                    | Error reason -> return Error(BadResponse, describeFailure p BadResponse reason)
             with
-            | :? OperationCanceledException -> return Error "探测已取消"
-            | ex -> return Error ex.Message
+            | :? OperationCanceledException when ct.IsCancellationRequested ->
+                return Error(Cancelled, describeFailure p Cancelled "")
+            | :? OperationCanceledException ->
+                return Error(TimedOut, describeFailure p TimedOut "请求超时")
+            | :? HttpRequestException as ex ->
+                return Error(Unreachable, describeFailure p Unreachable ex.Message)
+            | ex ->
+                return Error(Unreachable, describeFailure p Unreachable ex.Message)
+        }
+
+    /// 向 provider 的模型清单端点探活（线上形态）。
+    /// 失败文案为 `[code] 说明`，设置界面据 code 决定下一步，说明本身固定三段式。
+    let probeModels (p: ProviderConfig) (ct: CancellationToken) : Task<Result<string list, string>> =
+        task {
+            let! result = probeModelsTyped p ct
+            match result with
+            | Ok ids -> return Ok ids
+            | Error(failure, message) -> return Error(ProbeFailure.encode failure message)
         }

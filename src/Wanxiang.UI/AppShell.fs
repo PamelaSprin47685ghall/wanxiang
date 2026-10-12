@@ -133,6 +133,8 @@ type MainView() as this =
     let mutable chat: ChatView = Unchecked.defaultof<ChatView>
     let mutable composer: Composer = Unchecked.defaultof<Composer>
     let mutable settings: SettingsView = Unchecked.defaultof<SettingsView>
+    /// 聊天主界面上的「连接一个模型」卡片（W1）：首次运行不进设置页。
+    let mutable onboarding: OnboardingCard = Unchecked.defaultof<OnboardingCard>
     let mutable sidebarSplitter: GridSplitter = Unchecked.defaultof<GridSplitter>
     let mutable mainLayout: MainLayoutController = Unchecked.defaultof<MainLayoutController>
     let navigation = NavigationController(prefs.sidebarCollapsed)
@@ -302,9 +304,12 @@ type MainView() as this =
                         chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接服务器", fun () -> this.ShowConnectDialog()))
                         composer.SetEnabled(false, "正在连接服务器…草稿已保留。")
                         composer.SetModelLabel "正在连接"
-            elif not (Catalog.isReady catalog) then
-                chat.ShowEmpty(ChatEmptyState.NoProvider, Some("添加服务商", fun () -> this.ShowAddProvider()))
-                composer.SetEnabled(false, "还没有可用的模型，先添加一个服务商。")
+            elif not (Catalog.isReady catalog) || this.Onboarding.IsBusy then
+                // 首次运行：卡片就在聊天界面里，不必先进设置页。连接进行中即使目录暂时就绪
+                // 也保留卡片，免得探测失败要撤销时它已被收起。
+                chat.ShowEmbeddedEmpty this.Onboarding.Root
+                this.Onboarding.StartDiscovery()
+                composer.SetEnabled(false, "先在上方连接一个模型，就能在这里输入。")
                 composer.SetModelLabel "未配置模型"
             else
                 chat.ShowEmpty(ChatEmptyState.NoConversation, None)
@@ -834,6 +839,18 @@ type MainView() as this =
                 with _ -> fallback ())
         | None -> fallback ()
 
+    /// 首次运行卡片连接成功、目录已就绪：选定模型，输入框预填第一句话并聚焦（用户只需回车）。
+    member private this.CompleteOnboarding() =
+        match this.Onboarding.TakeConnected catalog with
+        | Some(providerId, model) ->
+            this.Onboarding.Reset()
+            draftModelSelection <- Some(providerId, model)
+            this.Render()
+            if String.IsNullOrWhiteSpace composer.Text then composer.SetText Onboarding.FirstPrompt
+            composer.Focus()
+            toast (sprintf "已连接 %s" (Catalog.describeModel providerId model catalog)) Success
+        | None -> ()
+
     member private this.ShowAddProvider() =
         enteredSettingsForFirstProvider <- not (Catalog.isReady catalog)
         this.ShowSettings()
@@ -1293,6 +1310,7 @@ type MainView() as this =
                 this.CloseSettings()
                 composer.Focus()
             this.Render()
+            this.CompleteOnboarding()
         | ConfigChanged _ ->
             send CatalogRequest
             // 配置重新加载成功：之前的「配置有误」随之消失。只在从有误恢复时提示一次。
@@ -1312,13 +1330,17 @@ type MainView() as this =
             let models =
                 [ for item in d.models do
                       if not (isNull item) && item.GetValueKind() = JsonValueKind.String then item.GetValue<string>() ]
-            settings.ApplyProbe(d.providerId, d.ok, models, d.error)
+            // 首次运行卡片自己发起的探测由它处理；其余交给设置页。
+            if not (this.Onboarding.ApplyProbe(d.providerId, d.ok, models, d.error)) then
+                settings.ApplyProbe(d.providerId, d.ok, models, d.error)
         | ConfigApplied d ->
             match configFeedback.Resolve d.requestId with
             | Some feedback ->
                 feedback.onCompleted d.ok
                 if d.ok then
-                    toast feedback.successMessage Success
+                    // 空文案 = 调用方（首次运行卡片）自己会说话，这里不再叠 toast。
+                    if not (String.IsNullOrEmpty feedback.successMessage) then
+                        toast feedback.successMessage Success
                     send CatalogRequest
                 else
                     toast (String.Join("；", d.errors)) Failure
@@ -1791,6 +1813,37 @@ type MainView() as this =
         settings.Build()
         this.UpdateDraftSummary()
 
+    /// 卡片按需构建：局部构建视图的调用方（只 Build 了部分区域）也不会撞上空引用。
+    member private this.Onboarding: OnboardingCard =
+        if isNull (box onboarding) then this.BuildOnboarding()
+        onboarding
+
+    member private this.BuildOnboarding() =
+        let actions: OnboardingActions =
+            { upsertProvider =
+                fun payload onCompleted ->
+                    sendConfigWithFeedback
+                        ""
+                        (fun requestId -> ConfigUpsertProvider {| requestId = requestId; provider = payload |})
+                        onCompleted
+              discardProvider =
+                fun id ->
+                    sendConfigWithFeedback
+                        ""
+                        (fun requestId -> ConfigDeleteProvider {| requestId = requestId; providerId = id |})
+                        ignore
+              probeProvider = fun id -> send (ProviderProbeRequest {| requestId = newInvocation (); providerId = id |})
+              takenIds = fun () -> catalog.providers |> List.map (fun p -> p.id)
+              discoverLocal =
+                fun () ->
+                    if Onboarding.canDiscoverLocal lastUrl then
+                        Onboarding.discoverOllamaAt ProviderPresets.OllamaProbeUrl
+                    else
+                        System.Threading.Tasks.Task.FromResult None
+              openAdvanced = fun () -> this.ShowAddProvider()
+              toast = fun message tone -> toast message tone }
+        onboarding <- OnboardingCard(overlay, actions)
+
     member this.Build() =
         this.FontFamily <- Tokens.fontFamily
         this.ApplyTheme()
@@ -1799,6 +1852,7 @@ type MainView() as this =
         this.BuildChat()
         this.BuildComposer()
         this.BuildSettings()
+        this.BuildOnboarding()
 
         chatColumn <- ConversationWorkspace(chat, composer)
 

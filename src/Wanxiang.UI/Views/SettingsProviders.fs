@@ -90,23 +90,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 let lower = baseUrl.Trim().ToLowerInvariant()
                 lower.Contains("127.0.0.1") || lower.Contains("localhost") || lower.Contains("[::1]") || lower.Contains("::1")
 
+    /// 载荷构造与首次运行卡片共用同一个函数（ProviderPresets.payload）。
     let providerPayload (id: string) (label: string) (kind: string) (baseUrl: string) (apiKey: string option) (models: string list) (defaultModel: string) (enabled: bool) (timeout: int) (retries: int) =
-        let o = JsonObject()
-        o["id"] <- id
-        o["label"] <- label
-        // 传输类型由预设决定（原生 Claude / 原生 Gemini / OpenAI 兼容）。
-        // 写死 openai 会让原生传输在界面上根本选不到。
-        o["kind"] <- (if System.String.IsNullOrWhiteSpace kind then "openai" else kind)
-        o["baseUrl"] <- baseUrl
-        match apiKey with
-        | Some key when not (String.IsNullOrWhiteSpace key) -> o["apiKey"] <- key
-        | _ -> ()
-        o["models"] <- JsonArray([| for m in models -> JsonNode.op_Implicit m |])
-        o["defaultModel"] <- defaultModel
-        o["enabled"] <- enabled
-        o["timeoutSeconds"] <- timeout
-        o["maxRetries"] <- retries
-        o
+        ProviderPresets.payload id label kind baseUrl apiKey models defaultModel enabled timeout retries
 
     /// 服务商编辑器。`existing = None` 表示新增。
     member private this.ShowEditor(existing: ProviderInfo option) =
@@ -197,8 +183,10 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             | "gemini" -> "Google 原生 · generateContent（支持多模态与 systemInstruction）"
             | _ -> "OpenAI 兼容 · /v1/chat/completions"
         let kindCaption = Ui.caption ""
+        let mutable syncTransportButton: unit -> unit = ignore
         let syncKindCaption () =
             kindCaption.Text <- "传输：" + transportLabel selectedKind
+            syncTransportButton ()
 
         let applyPreset (preset: ProviderPreset) =
             applyingPreset <- true
@@ -236,7 +224,12 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         p.models |> List.map (fun s -> s.Trim()) |> List.filter (String.IsNullOrWhiteSpace >> not) |> Array.ofList
                     let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
                     // 端点比较走归一化：末尾斜杠不算分歧，预设连续性不断。
-                    if ProviderPresets.normalizeBaseUrl url <> ProviderPresets.normalizeBaseUrl p.baseUrl || normModels <> normPreset then
+                    let sameEndpoint =
+                        ProviderPresets.normalizeBaseUrl url = ProviderPresets.normalizeBaseUrl p.baseUrl
+                        || (match p.alternate with
+                            | Some(_, alt) -> ProviderPresets.normalizeBaseUrl url = ProviderPresets.normalizeBaseUrl alt
+                            | None -> false)
+                    if not sameEndpoint || normModels <> normPreset then
                         currentPreset <- None
                         // 回到自定义就不再是预设：hint 清空隐藏（传输类型不变，
                         // 只读行无需改动），都在原处换文案，不碰兄弟组。
@@ -244,17 +237,45 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         syncPresetHint ()
                         setPresetText "自定义"
                 | None -> ()
+        let presetEntry (preset: ProviderPreset) =
+            MenuEntry.create preset.label (fun () ->
+                setPresetText preset.label
+                applyPreset preset)
+            // 下拉里要能看出当前是哪一项预设：按钮标题只显示一个是哪一项，
+            // 展开列表时所有条目平铺，选中态缺失等于让用户靠试。与外观主题
+            // 下拉同一 contract（MenuEntry.markSelected）。
+            |> MenuEntry.markSelected (currentPreset = Some preset)
+        /// 高级区才可改：同一家的原生 ↔ 兼容端点切换。默认由预设的 kind 决定，用户无需关心。
+        let transportButton =
+            Ui.button Ui.Secondary "" (fun () ->
+                match currentPreset with
+                | Some preset when preset.alternate.IsSome ->
+                    let altKind, altUrl = preset.alternate.Value
+                    applyingPreset <- true
+                    try
+                        if selectedKind = preset.kind then
+                            selectedKind <- altKind
+                            urlBox.Text <- altUrl
+                        else
+                            selectedKind <- preset.kind
+                            urlBox.Text <- preset.baseUrl
+                    finally
+                        applyingPreset <- false
+                    syncKindCaption ()
+                | _ -> ())
+        transportButton.HorizontalAlignment <- HorizontalAlignment.Left
+        syncTransportButton <- fun () ->
+            match currentPreset with
+            | Some preset when preset.alternate.IsSome ->
+                transportButton.IsVisible <- true
+                Ui.setButtonText
+                    transportButton
+                    (if selectedKind = preset.kind then "改用兼容端点" else "改用原生接口")
+            | _ -> transportButton.IsVisible <- false
         let presetOptions () =
-            [ "服务商预设",
-              ProviderPresets.all
-              |> List.map (fun preset ->
-                  MenuEntry.create preset.label (fun () ->
-                      setPresetText preset.label
-                      applyPreset preset)
-                  // 下拉里要能看出当前是哪一项预设：按钮标题只显示一个是哪一项，
-                  // 展开列表时所有条目平铺，选中态缺失等于让用户靠试。与外观主题
-                  // 下拉同一 contract（MenuEntry.markSelected）。
-                  |> MenuEntry.markSelected (currentPreset = Some preset)) ]
+            // 常用 4 家置顶，其余放「更多」分组；原生 / 兼容端点已合并为一个条目。
+            [ "常用", ProviderPresets.featured |> List.map presetEntry
+              "更多", ProviderPresets.more |> List.map presetEntry ]
         let presetButton, setText =
             Menu.selectButton
                 overlay
@@ -540,7 +561,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let advancedPanel =
             Ui.vstack
                 Spacing.spaceXl
-                [ idField
+                [ transportButton :> Control
+                  idField
                   modelsField
                   defaultModelField
                   probeRow :> Control
@@ -618,9 +640,10 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 setStatus "服务商返回了空模型列表，模型框未改动。"
                 actions.toast "服务商返回了空模型列表。" Warning
             else
-                let errMsg = error |> Option.defaultValue "未知原因"
-                setStatus (sprintf "探测失败：%s" errMsg)
-                actions.toast (sprintf "探测失败：%s" errMsg) Failure
+                // 服务端下发 `[code] 说明`：类型决定下一步，说明本身是「发生了什么 / 为什么 / 下一步」。
+                let _, errMsg = ProbeFailureKind.parse (error |> Option.defaultValue "未知原因")
+                setStatus errMsg
+                actions.toast errMsg Failure
         | _ ->
             // 编辑器未打开或不是当前服务商时的探活回调：仅缓存结果和给出反馈，绝不后台自动 upsert
             if ok then
@@ -630,7 +653,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 else
                     actions.toast "服务商返回了空模型列表。" Warning
             else
-                actions.toast (sprintf "探测失败：%s" (error |> Option.defaultValue "未知原因")) Failure
+                let _, errMsg = ProbeFailureKind.parse (error |> Option.defaultValue "未知原因")
+                actions.toast errMsg Failure
 
     member private this.RenderRow(provider: ProviderInfo) : Control =
         // 点只反映配置完整度：没探活过就没资格显示「健康」。
@@ -677,6 +701,8 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             else "缺少密钥", Ui.TagTone.Warning
         let titleRow = Ui.hstack Spacing.spaceMd [ dot :> Control; name :> Control ]
         titleRow.Children.Add(Ui.tagWith stateTone stateLabel)
+        let isDefault = Catalog.isGlobalDefault provider.id catalog
+        if isDefault then titleRow.Children.Add(Ui.tagWith Ui.TagTone.Neutral "默认")
         let column = Ui.vstack Spacing.spaceXXs [ titleRow :> Control; meta :> Control ]
         let editButton = Ui.iconButton Icons.pencil "编辑"
         Ui.onClick editButton (fun () -> this.ShowEditor(Some provider))
@@ -690,6 +716,20 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                       actions.toast "正在向服务商请求模型列表…" Info
                       actions.probeProvider provider.id)
                   |> MenuEntry.withIcon Icons.refresh
+                  // 全局默认：新对话优先用它（写入 `[generation] defaultProvider/defaultModel`，
+                  // 与其余设置同一条保存路径）。取消即回落为首个可用的模型服务。
+                  (if isDefault then
+                       MenuEntry.create "取消默认" (fun () ->
+                           let o = JsonObject()
+                           o["defaultProvider"] <- ""
+                           o["defaultModel"] <- ""
+                           actions.updateGeneration o ignore)
+                   else
+                       MenuEntry.create "设为默认模型服务" (fun () ->
+                           let o = JsonObject()
+                           o["defaultProvider"] <- provider.id
+                           o["defaultModel"] <- provider.defaultModel
+                           actions.updateGeneration o ignore))
                   MenuEntry.create (if provider.enabled then "停用" else "启用") (fun () ->
                       actions.upsertProvider
                           (providerPayload
