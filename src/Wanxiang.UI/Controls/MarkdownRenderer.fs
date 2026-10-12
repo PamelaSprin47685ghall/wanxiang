@@ -629,7 +629,7 @@ type MarkdownRenderer(
             [ control ]
         | None -> [ this.RenderCode("tex", tex) ]
 
-    member private this.RenderBlock(block: MdBlock, ?inQuote: bool) : Control list =
+    member internal this.RenderBlock(block: MdBlock, ?inQuote: bool) : Control list =
         let insideQuote = defaultArg inQuote false
         let textColor = if insideQuote then Tokens.textMuted else Tokens.text
         let textLineHeight = if insideQuote then ReadingRhythm.secondaryLineHeight fontSize else ReadingRhythm.proseLineHeight fontSize
@@ -780,3 +780,48 @@ type MarkdownRenderer(
         stack :> Control
 
     member this.RenderText(raw: string) : Control = this.Render(Markdown.parse raw)
+
+
+/// 决策 292：流式回复的增量 Markdown 面板。
+///
+/// 流式期间每批 delta 都是「同一段文字又长了一点」：已写完的块（段落、代码、公式、表格）
+/// 不会再变，只有最后一两块在长。这里把面板本身留在可视树里，只替换「第一个变了的块」之后的控件——
+/// 前面的 TextBlock 不重建、也不重新挂树，于是不用重新排字（20 KB 回复每批重绘从数百毫秒降到个位数）。
+/// 结果与 `MarkdownRenderer.RenderText` 同构：同一纵向面板、同一末块边距规则。
+type StreamingMarkdown(renderer: MarkdownRenderer) =
+    let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
+    /// 已挂的块与各自占用的控件（含原始外边距，末块的底边距会被临时清零）
+    let mounted = Collections.Generic.List<MdBlock * (Control * Thickness) list>()
+    let mutable lastRaw: string = null
+
+    member _.Panel: Control = panel :> Control
+
+    /// 当前挂载的块数（测试用）
+    member _.BlockCount = mounted.Count
+
+    member _.Update(raw: string) =
+        if not (Object.ReferenceEquals(raw, lastRaw) || raw = lastRaw) then
+            lastRaw <- raw
+            let blocks = Markdown.parse raw |> Array.ofList
+            let mutable common = 0
+            while common < mounted.Count && common < blocks.Length && fst mounted[common] = blocks[common] do
+                common <- common + 1
+            // 卸下第一个变化块之后的控件
+            let keepControls = mounted |> Seq.take common |> Seq.sumBy (fun (_, cs) -> List.length cs)
+            if panel.Children.Count > keepControls then
+                panel.Children.RemoveRange(keepControls, panel.Children.Count - keepControls)
+            mounted.RemoveRange(common, mounted.Count - common)
+            // 原末块的底边距恢复（它可能不再是末块）
+            if mounted.Count > 0 then
+                for control, margin in snd mounted[mounted.Count - 1] do
+                    control.Margin <- margin
+            for index in common .. blocks.Length - 1 do
+                let controls = renderer.RenderBlock blocks[index]
+                let withMargins = controls |> List.map (fun c -> c, c.Margin)
+                mounted.Add((blocks[index], withMargins))
+                for control in controls do
+                    panel.Children.Add control
+            if panel.Children.Count > 0 then
+                let last = panel.Children[panel.Children.Count - 1]
+                let m = last.Margin
+                last.Margin <- Thickness(m.Left, m.Top, m.Right, 0.0)
