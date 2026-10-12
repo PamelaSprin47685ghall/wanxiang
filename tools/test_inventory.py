@@ -11,8 +11,13 @@ r20 教训：-class 写错格式让 34 个嵌套类 UI 用例从未运行；r21 
 import json, re, sys, glob, os
 
 def load(p):
-    with open(p) as f:
-        return json.load(f)
+    # 运行器可能在 JSON 前后夹带横幅/诊断行（CI 实测 "Extra data"）：只取第一个以 [ 开头的 JSON 数组。
+    text = open(p, encoding="utf-8").read()
+    for line in text.splitlines():
+        if line.lstrip().startswith("[{") or line.strip() == "[]":
+            return json.loads(line)
+    i = text.index("[")
+    return json.JSONDecoder().raw_decode(text[i:])[0]
 
 def cmd_groups(listp, classes):
     want = set(classes)
@@ -60,6 +65,14 @@ def cmd_check(listp, baseline):
     print("清点：" + "，".join(f"{k}={cats.get(k,0)}" for k in sorted(set(cats) | set(floor))) + f"，源码属性={src}", file=sys.stderr)
     return 0 if ok else 1
 
+def cmd_noui(listp, large):
+    data = load(listp)
+    if large == "1":
+        print(sum(1 for t in data if "UI" not in ((t.get("Traits") or {}).get("Category") or [])))
+    else:
+        print(sum(1 for t in data if not (t.get("Traits") or {}).get("Category")))
+
 if __name__ == "__main__":
+    if sys.argv[1] == "noui": cmd_noui(sys.argv[2], sys.argv[3])
     if sys.argv[1] == "groups": cmd_groups(sys.argv[2], sys.argv[3:])
     elif sys.argv[1] == "check": sys.exit(cmd_check(sys.argv[2], sys.argv[3]))
