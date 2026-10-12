@@ -791,7 +791,7 @@ let ``large tool detail is bounded first and can explicitly expand fully`` () =
           isLastAssistant = false
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Border(Width = 26.0, Height = 26.0) :> Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Border(Width = 26.0, Height = 26.0) :> Control }
     let hugeResult = String.Join("\n", [ for i in 1 .. 500 -> sprintf "line %03d: %s" i (String.replicate 8 "payload") ])
     let message =
         { MessageView.empty with
@@ -1134,7 +1134,7 @@ let ``streaming completion keeps the message footnote row geometry constant`` ()
           isLastAssistant = isLast
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Border(Width = 26.0, Height = 26.0) :> Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Border(Width = 26.0, Height = 26.0) :> Control }
     let body = "流式进行中的回答正文，完成时原样提交。"
     let streamingMessage = { MessageView.empty with role = "assistant"; text = body }
     let committedMessage =

@@ -22,7 +22,7 @@ type Pathological(output: ITestOutputHelper) =
           isLastAssistant = false
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Border() :> Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
 
     let timeRender (label: string) (text: string) =
         let message = { MessageView.empty with role = "assistant"; text = text; commitId = Some 1UL }

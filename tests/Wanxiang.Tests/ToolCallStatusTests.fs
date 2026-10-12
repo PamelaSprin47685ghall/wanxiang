@@ -7,26 +7,13 @@ open Wanxiang.UI
 
 module ToolCallStatusTests =
 
-    /// 通过反射调用 MessageCard 模块内的 private/internal resolveToolCallStatus 方法。
-    /// 无论 F# 编译器将其编译为普通多参数静态方法还是柯里化方法，均能可靠调用。
+    /// 走 MessageCard 的公开入口（无审批中的调用）。
     let private resolveStatus (isStreaming: bool) (call: ToolCallView) : ToolCallStatus =
-        let msgCardType = typeof<ToolCallView>.Assembly.GetType("Wanxiang.UI.MessageCard")
-        if isNull msgCardType then
-            failwith "未能找到类型 Wanxiang.UI.MessageCard"
-        let flags = BindingFlags.Static ||| BindingFlags.NonPublic ||| BindingFlags.Public
-        let methodInfo = msgCardType.GetMethod("resolveToolCallStatus", flags)
-        if isNull methodInfo then
-            let methods = msgCardType.GetMethods(flags) |> Array.map (fun m -> m.Name) |> String.concat ", "
-            failwithf "在 Wanxiang.UI.MessageCard 上未找到方法 resolveToolCallStatus。可用静态方法：%s" methods
-        let parameters = methodInfo.GetParameters()
-        if parameters.Length = 2 then
-            methodInfo.Invoke(null, [| box isStreaming; box call |]) :?> ToolCallStatus
-        elif parameters.Length = 1 then
-            let func = methodInfo.Invoke(null, [| box isStreaming |])
-            let invokeMethod = func.GetType().GetMethod("Invoke", [| typeof<ToolCallView> |])
-            invokeMethod.Invoke(func, [| box call |]) :?> ToolCallStatus
-        else
-            failwithf "resolveToolCallStatus 的参数数量不符合预期：%d" parameters.Length
+        MessageCard.resolveStatus
+            { fontSize = 14.0; autoCollapseReasoning = false; streaming = isStreaming; isLastAssistant = false
+              usage = None; missingAttachments = Set.empty; awaitingApproval = Set.empty
+              brandAvatar = fun () -> null }
+            call
 
     let private makeCall (result: string option) : ToolCallView =
         { callId = "call_test_001"

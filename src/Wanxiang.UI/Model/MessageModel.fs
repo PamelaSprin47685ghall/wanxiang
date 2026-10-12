@@ -39,6 +39,8 @@ type ToolCallView = {
 type ToolCallStatus =
     /// 工具明确仍在执行（generation 未结束 + 该 call 没有 result）
     | Running
+    /// 工具调用正等用户批准（主机已发出审批请求、尚未处理），还没开始执行
+    | AwaitingApproval
     /// 调用已完成且有结果
     | Success
     /// 调用已完成且有错误（携带错误摘要）
@@ -51,13 +53,15 @@ module ToolCallStatus =
     let badgeText (status: ToolCallStatus) =
         match status with
         | ToolCallStatus.Running -> "执行中"
+        | ToolCallStatus.AwaitingApproval -> "等待批准"
         | ToolCallStatus.Success -> "已完成"
         | ToolCallStatus.Failed _ -> "执行失败"
         | ToolCallStatus.Unknown -> "结果未知"
 
     let isTerminal (status: ToolCallStatus) =
         match status with
-        | ToolCallStatus.Running -> false
+        | ToolCallStatus.Running
+        | ToolCallStatus.AwaitingApproval -> false
         | ToolCallStatus.Success
         | ToolCallStatus.Failed _
         | ToolCallStatus.Unknown -> true

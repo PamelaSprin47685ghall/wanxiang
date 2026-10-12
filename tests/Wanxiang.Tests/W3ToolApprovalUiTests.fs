@@ -42,7 +42,7 @@ module W3ToolApprovalUiTests =
     let private request (conv: Guid) : ApprovalRequestView =
         { approvalId = Guid.NewGuid()
           conversationId = conv
-          toolName = "builtin_file_read"
+          callId = "call-1"; toolName = "builtin_file_read"
           summary = "读取文件 /home/a/notes.txt"
           argumentsJson = """{"path":"/home/a/notes.txt"}"""
           policy = "always" }
@@ -114,7 +114,7 @@ module W3ToolApprovalUiTests =
               toolResults = []; attachments = []; commitId = Some 1UL; committedAt = Some DateTimeOffset.UtcNow }
         let ctx: MessageContext =
             { fontSize = 14.0; autoCollapseReasoning = false; streaming = false; isLastAssistant = false
-              usage = None; missingAttachments = Set.empty; brandAvatar = fun () -> TextBlock() :> Control }
+              usage = None; missingAttachments = Set.empty; awaitingApproval = Set.empty; brandAvatar = fun () -> TextBlock() :> Control }
         let actions: MessageActions =
             { copyText = ignore; regenerate = ignore; editAndFork = ignore; deleteMessage = ignore
               downloadAttachment = ignore; openLink = ignore }

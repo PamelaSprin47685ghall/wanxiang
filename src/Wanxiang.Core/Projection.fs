@@ -151,7 +151,17 @@ module Projection =
                                     let conv =
                                         { conversationId = d.conversationId
                                           // 中文界面用全角括注；分叉来源另有面包屑说明
-                                          title = parent.title + "（分叉）"
+                                          // 同一父对话的多个分叉编号区分（第 207 节）：第一个仍是「（分叉）」，之后「（分叉 2）」…
+                                          title =
+                                              let siblings =
+                                                  conversations
+                                                  |> Seq.filter (fun kv ->
+                                                      match kv.Value.parent with
+                                                      | Some(p, _) -> p = d.parentConversationId
+                                                      | None -> false)
+                                                  |> Seq.length
+                                              if siblings = 0 then parent.title + "（分叉）"
+                                              else sprintf "%s（分叉 %d）" parent.title (siblings + 1)
                                           createdAtUtc = commit.committedAtUtc
                                           lastActivityAtUtc = commit.committedAtUtc
                                           deleted = false

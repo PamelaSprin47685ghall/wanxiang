@@ -55,7 +55,7 @@ module PwaToolApprovalUiTests =
     let private request () : ApprovalRequestView =
         { approvalId = Guid.NewGuid()
           conversationId = Guid.NewGuid()
-          toolName = "builtin_file_read"
+          callId = "call-1"; toolName = "builtin_file_read"
           summary = "读取文件 /home/a/very/long/path/that/should/wrap/on/a/phone/screen/notes-and-more-notes.txt"
           argumentsJson = """{"path":"/home/a/very/long/path/that/should/wrap/on/a/phone/screen/notes-and-more-notes.txt"}"""
           policy = "first" }
@@ -97,14 +97,15 @@ module PwaToolApprovalUiTests =
             let card = ToolApprovalCard.build (request ()) ignore
             let args = byId card "tool-approval-args" :?> TextBlock
             let toggle = byId card "tool-approval-args-toggle"
-            Assert.Equal(Media.TextWrapping.NoWrap, args.TextWrapping)
+            // 参数只出现一处：收起时不显示预览，展开才显示全文
+            Assert.False args.IsVisible
             Assert.Equal("查看参数", AutomationProperties.GetName toggle)
             invoke toggle
+            Assert.True args.IsVisible
             Assert.Equal(Media.TextWrapping.Wrap, args.TextWrapping)
-            Assert.Equal(Media.TextTrimming.None, args.TextTrimming)
             Assert.Equal("收起参数", AutomationProperties.GetName toggle)
             invoke toggle
-            Assert.Equal(Media.TextWrapping.NoWrap, args.TextWrapping))
+            Assert.False args.IsVisible)
 
     [<Fact>]
     let ``审批卡：没有参数时不显示「查看参数」`` () =

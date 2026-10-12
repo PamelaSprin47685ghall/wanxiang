@@ -352,7 +352,7 @@ let ``disclosure chevron and copy confirmation ride the shared easeOutCubic`` ()
           isLastAssistant = true
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Border() :> Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
     let card = MessageCard.render message ctx messageActions (Some 0)
     let window = show card 600.0 400.0
     try
@@ -496,7 +496,7 @@ let ``disclosure headers share one bordered transition`` () =
           isLastAssistant = false
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Border(Width = 26.0, Height = 26.0) :> Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Border(Width = 26.0, Height = 26.0) :> Control }
 
     let withHeader (name: string) (card: Control) =
         let window = show card 720.0 520.0

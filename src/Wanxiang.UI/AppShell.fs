@@ -210,7 +210,8 @@ type MainView() as this =
         if state.compactMode && not (isNull (box mainLayout)) then mainLayout.Apply state
         // compact 抽屉的焦点归宿：打开进抽屉（搜索框），收起回输入区（D3/D4）。
         if state.compactMode then
-            if opened then sidebar.FocusSearch()
+            // 触屏上不自动聚焦搜索框：软键盘会弹出遮住对话列表（第 212 节）
+            if opened then (if not (InputModality.prefersTouch ()) then sidebar.FocusSearch())
             elif before.compactNavigationOpen then composer.Focus()
 
     member private this.ApplyResponsiveLayout(width: float) =
@@ -224,7 +225,8 @@ type MainView() as this =
             // 触发条件与 SetCompactNavigation 同口径：抽屉由「未开」翻到「compact 打开」才聚焦——
             // 关闭态、非 compact、以及开合状态未变的普通缩放都不抢焦点。
             if state.compactMode && state.compactNavigationOpen
-               && not (before.compactMode && before.compactNavigationOpen) then
+               && not (before.compactMode && before.compactNavigationOpen)
+               && not (InputModality.prefersTouch ()) then
                 sidebar.FocusSearch()
 
     /// 浏览器 CSS 视口轮询：zoom、DPR、显示器移动都不会可靠触发 Bounds 更新，
@@ -281,6 +283,13 @@ type MainView() as this =
         for draft in drafts.All do
             draft.attachments.MarkAllUploadingAsFailed() |> ignore
         composer.SetAttachments((attachmentDraft ()).Items)
+
+    /// 审批卡增减后同步消息里工具卡的「等待批准」状态（第 206 节）。
+    member private this.SyncAwaitingApproval() =
+        let ids = approvalPanel.AwaitingCallIds
+        if ids <> chat.AwaitingApproval then
+            chat.SetAwaitingApproval ids
+            this.Render()
 
     member private this.Render() =
         let run = runs.Get activeConvId
@@ -1390,12 +1399,15 @@ type MainView() as this =
                 { approvalId = d.approvalId
                   conversationId = d.conversationId
                   toolName = d.toolName
+                  callId = d.callId
                   summary = d.summary
                   argumentsJson = (if isNull d.arguments then "" else d.arguments.ToJsonString())
                   policy = d.policy }
             if activeConvId <> Some d.conversationId then toast "另一个对话里有工具调用在等你批准。" Info
+            this.SyncAwaitingApproval()
         | ToolApprovalResolved d ->
             approvalPanel.Remove d.approvalId
+            this.SyncAwaitingApproval()
             if d.alreadyHandled then toast (ToolApprovalCard.alreadyHandledText d.status) Info
         | ToolApprovalCapability _ | ToolApprovalDecision _ | ConfigUpdateTools _ -> ()
         | ProviderProbeResult d ->
@@ -1506,6 +1518,9 @@ type MainView() as this =
                         |> GenerationError.withDetail (sprintf "未知状态：%s" unknown))
             if runs.Finish(d.conversationId, d.generationId, error, d.usage) then
                 state.Handle ev
+                // PWA 安装引导推迟到第一次成功对话之后（第 210 节）：首次运行时不和引导卡 / 输入框抢位置。
+                if d.status = "completed" && OperatingSystem.IsBrowser() then
+                    try BrowserBridge.ConversationSucceeded() with _ -> ()
                 match d.status, error with
                 | "cancelled", _ when activeConvId = Some d.conversationId -> toast "已停止" Info
                 // 非当前对话的失败只 toast（卡片看不见）；当前对话的失败只进卡片，不叠 toast。
@@ -1835,7 +1850,9 @@ type MainView() as this =
             match RevealTarget.resolve reveal loaded with
             | Some commit ->
                 pendingReveal <- None
-                chat.ScrollToMessage commit |> ignore
+                match reveal with
+                | RevealMessage _ -> chat.RevealAndHighlight commit |> ignore
+                | RevealAfter _ -> chat.ScrollToMessage commit |> ignore
             | None ->
                 let wanted = match reveal with RevealMessage c -> Some c | RevealAfter _ -> None
                 match wanted with
@@ -2007,6 +2024,7 @@ type MainView() as this =
 
         let initialNavigation = navigation.State
         shellGrid <- Grid()
+        InputModality.track this
         // 列宽唯一投影器是 MainLayoutController.Apply：这里只建空定义，初值由下方的 Apply 落定。
         shellGrid.ColumnDefinitions.Add(ColumnDefinition(MaxWidth = Tokens.sidebarMaxWidth))
         shellGrid.ColumnDefinitions.Add(ColumnDefinition())
@@ -2060,6 +2078,7 @@ type MainView() as this =
                 if epoch = client.ConnectionGeneration then
                     authenticated <- false
                     approvalPanel.Clear()
+                    chat.SetAwaitingApproval Set.empty
                     runs.Disconnect()
                     exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
                     outbox.Disconnect instanceId

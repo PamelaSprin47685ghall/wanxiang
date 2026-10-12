@@ -1278,7 +1278,7 @@ let ``MessageCard toolCallCard header toggles argument and result details`` () =
           isLastAssistant = true
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Border() :> Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
     let msgActions: MessageActions =
         { copyText = ignore
           regenerate = ignore

@@ -292,7 +292,7 @@ module ExchangeNavTests =
               isLastAssistant = true
               usage = Some { GenerationUsage.empty with promptTokens = Some 1200; completionTokens = Some 380; cachedTokens = Some 900; totalTokens = Some 1580 }
               missingAttachments = Set.empty
-              brandAvatar = fun () -> Brand.logo Tokens.logoAvatar }
+              awaitingApproval = Set.empty; brandAvatar = fun () -> Brand.logo Tokens.logoAvatar }
         let card = MessageCard.render message ctx actions (Some 0)
         let window = Window(Width = 700.0, Height = 400.0, Content = card)
         window.Show()
@@ -343,7 +343,7 @@ module ExchangeNavTests =
               isLastAssistant = true
               usage = Some { GenerationUsage.empty with promptTokens = Some 1200; completionTokens = Some 380 }
               missingAttachments = Set.empty
-              brandAvatar = fun () -> Brand.logo Tokens.logoAvatar }
+              awaitingApproval = Set.empty; brandAvatar = fun () -> Brand.logo Tokens.logoAvatar }
         let card = MessageCard.render message ctx actions (Some 0)
         let window = Window(Width = 700.0, Height = 400.0, Content = card)
         window.Show()

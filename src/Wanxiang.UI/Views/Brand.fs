@@ -48,7 +48,10 @@ module Brand =
                 Background = Tokens.surface,
                 ClipToBounds = true)
         match bitmap with
-        | Some image -> tile.Child <- Image(Source = image, Stretch = Stretch.Uniform)
+        | Some image ->
+            // 资产本身带透明底：不再垫白色圆角方块（视觉走查：深色/纸色背景上露出白方块，第 209 节）
+            tile.Background <- Brushes.Transparent
+            tile.Child <- Image(Source = image, Stretch = Stretch.Uniform)
         | None ->
             tile.Child <-
                 TextBlock(

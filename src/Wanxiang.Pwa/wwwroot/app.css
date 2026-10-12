@@ -115,12 +115,10 @@ html, body {
 .splash-logo {
     width: 76px;
     height: 76px;
-    border-radius: 22px;
-    /* Kami whisper：抬升靠 ivory 白位 + 极轻暖灰扩散，不用重阴影 */
-    box-shadow:
-        0 1px 0 rgba(255,255,255,0.96) inset,
-        0 10px 28px -14px rgba(20,19,19,0.16),
-        0 2px 6px rgba(20,19,19,0.06);
+    object-fit: contain;
+    background: transparent;
+    /* 标志本身透明底：阴影跟随字形（drop-shadow），不画出方块（第 209 节） */
+    filter: drop-shadow(0 6px 14px rgba(20,19,19,0.12));
     animation: splashBob 2400ms ease-in-out infinite;
 }
 @keyframes splashBob {
@@ -237,12 +235,7 @@ html, body, #out, #out * {
     .splash-title { color: #EDEBE4; }
     .splash-sub { color: #A19E95; }
     .splash-bar { background: rgba(237,235,228,0.10); }
-    .splash-logo {
-        box-shadow:
-            0 1px 0 rgba(255,255,255,0.06) inset,
-            0 10px 28px -14px rgba(0,0,0,0.42),
-            0 2px 6px rgba(0,0,0,0.30);
-    }
+    .splash-logo { filter: drop-shadow(0 6px 14px rgba(0,0,0,0.40)); }
     ::-webkit-scrollbar-thumb { background: rgba(237,235,228,0.14); border: 2px solid transparent; background-clip: padding-box; }
     ::-webkit-scrollbar-thumb:hover { background: rgba(237,235,228,0.22); border: 2px solid transparent; background-clip: padding-box; }
     *:focus-visible { outline-color: #8FB4DE; }
@@ -304,7 +297,7 @@ html, body {
 .shell-bar[hidden] { display: none; }
 @keyframes shellIn { from { opacity: 0; margin-top: 6px; } to { opacity: 1; margin-top: 0; } }
 .shell-offline { top: calc(10px + env(safe-area-inset-top, 0px)); }
-.shell-install { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+.shell-install { top: calc(10px + env(safe-area-inset-top, 0px)); } /* 顶部：永不压住底部输入框（第 210 节） */
 .shell-text { flex: 1 1 auto; min-width: 0; }
 .shell-dot {
     flex: none;

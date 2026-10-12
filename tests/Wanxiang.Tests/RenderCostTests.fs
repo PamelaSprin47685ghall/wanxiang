@@ -45,7 +45,7 @@ type Cost(output: ITestOutputHelper) =
           isLastAssistant = false
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Border() :> Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
 
     [<Trait("Category", "UI")>]
     [<Fact>]

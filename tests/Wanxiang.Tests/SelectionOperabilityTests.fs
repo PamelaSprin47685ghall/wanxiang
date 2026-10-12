@@ -501,7 +501,7 @@ let ``long user messages get a clipped viewport with an expand entry`` () =
           isLastAssistant = false
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Border() :> Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
     let actions: MessageActions =
         { copyText = ignore
           regenerate = ignore

@@ -142,7 +142,7 @@ module InteractabilityConvergenceTests =
               isLastAssistant = true
               usage = None
               missingAttachments = Set.empty
-              brandAvatar = fun () -> Border(Width = Tokens.logoAvatar, Height = Tokens.logoAvatar, CornerRadius = CornerRadius(Tokens.logoAvatar / 2.0)) }
+              awaitingApproval = Set.empty; brandAvatar = fun () -> Border(Width = Tokens.logoAvatar, Height = Tokens.logoAvatar, CornerRadius = CornerRadius(Tokens.logoAvatar / 2.0)) }
         let actions =
             { copyText = ignore
               regenerate = ignore

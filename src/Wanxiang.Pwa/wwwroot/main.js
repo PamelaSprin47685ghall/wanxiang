@@ -101,6 +101,15 @@ export function pageUrl() {
 // 响应式布局用的 CSS 像素视口宽。注意不能拿 Avalonia 的 Bounds.Width 当断点依据：
 // Browser 后端在 devicePixelRatio > 1 时上报的布局宽度会被 DPR 除一次
 // （900 CSS @1.5 → ~600 units → 误进 compact），而 innerWidth 永远是 CSS 像素。
+// 第一次成功对话后才允许安装引导出现（第 210 节）。setupShellStatus 注册回调。
+const SUCCEEDED_KEY = "wanxiang.firstConversationAt";
+let onConversationSucceeded = null;
+export function wxConversationSucceeded() {
+    try { if (!localStorage.getItem(SUCCEEDED_KEY)) localStorage.setItem(SUCCEEDED_KEY, String(Date.now())); } catch (_) { }
+    if (onConversationSucceeded) { const f = onConversationSucceeded; onConversationSucceeded = null; f(); }
+}
+const hadConversation = () => { try { return !!localStorage.getItem(SUCCEEDED_KEY); } catch (_) { return false; } };
+
 export function wxViewportWidth() {
     return globalThis.innerWidth || 0;
 }
@@ -176,6 +185,8 @@ function setupShellStatus() {
         clearTimeout(hideTimer);
         text.textContent = "网络已断开。已打开的页面可继续使用，网络恢复后会自动重连。";
         offlineBar.hidden = false;
+        const install = document.getElementById("shell-install");
+        if (install) install.hidden = true; // 同在顶部：离线提示优先
     };
     const showBack = () => {
         if (!wasOffline) return;
@@ -205,16 +216,26 @@ function setupShellStatus() {
     if (standalone || recentlyDismissed()) return;
     let deferred = null;
     const close = (remember) => {
+        wantShow = false;
         bar.hidden = true;
         if (remember) { try { localStorage.setItem(KEY, String(Date.now())); } catch (_) { } }
     };
     dismiss.onclick = () => close(true);
+    // 首次运行不打扰：第一次成功对话之后才露出；离线提示在时让位（两者都在顶部）。
+    let wantShow = false;
+    const reveal = () => {
+        wantShow = true;
+        if (!hadConversation()) { onConversationSucceeded = reveal; return; }
+        if (offlineBar && !offlineBar.hidden) return;
+        bar.hidden = false;
+    };
+    addEventListener("online", () => { if (wantShow) setTimeout(reveal, 3600); });
     addEventListener("beforeinstallprompt", (e) => {
         e.preventDefault();
         deferred = e;
         go.hidden = false;
         label.textContent = "安装到主屏幕，像应用一样全屏打开。";
-        bar.hidden = false;
+        reveal();
     });
     go.onclick = async () => {
         if (!deferred) return;
@@ -229,7 +250,7 @@ function setupShellStatus() {
     if (isIos) {
         go.hidden = true;
         label.textContent = "点底部「分享」按钮，选择「添加到主屏幕」即可安装。";
-        bar.hidden = false;
+        reveal();
     }
 }
 setupShellStatus();
@@ -241,7 +262,7 @@ const dotnetRuntime = await dotnet
     .create();
 
 dotnetRuntime.setModuleImports("wanxiang", {
-    credList, credPut, credDelete, draftGet, draftPut, draftDelete, pageUrl, wxViewportWidth,
+    credList, credPut, credDelete, draftGet, draftPut, draftDelete, pageUrl, wxViewportWidth, wxConversationSucceeded,
     richLoad, richHighlight, richMath,
 });
 

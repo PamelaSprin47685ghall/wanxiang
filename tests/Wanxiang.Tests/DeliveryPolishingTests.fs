@@ -305,7 +305,7 @@ let ``message card renders user and assistant with reasoning and tools without e
           isLastAssistant = true
           usage = Some { promptTokens = Some 100; completionTokens = Some 50; cachedTokens = None; totalTokens = Some 150; durationMs = Some 1200L }
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Avalonia.Controls.Border() :> Avalonia.Controls.Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Avalonia.Controls.Border() :> Avalonia.Controls.Control }
     let msgActions =
         { copyText = ignore
           regenerate = ignore
@@ -512,7 +512,7 @@ let ``message card renders assistant markdown without extra view mode`` () =
           isLastAssistant = true
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Brand.logo 26.0 }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Brand.logo 26.0 }
     let actions: MessageActions =
         { copyText = ignore
           regenerate = ignore

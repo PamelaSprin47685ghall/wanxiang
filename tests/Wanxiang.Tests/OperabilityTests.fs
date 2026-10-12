@@ -50,7 +50,7 @@ module OperabilityTests =
           isLastAssistant = isLastAssistant
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Border() :> Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
 
     let private render (message: MessageView) (ctx: MessageContext) (spy: SpyActions) =
         MessageCard.render message ctx spy.AsMessageActions (Some 0)

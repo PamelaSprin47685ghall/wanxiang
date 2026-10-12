@@ -100,6 +100,7 @@
     <Compile Include="A11yRegressionTests.fs" />
     <Compile Include="ComposerReliabilityTests.fs" />
     <Compile Include="LibraryTests.fs" />
+    <Compile Include="VisualPassR3Tests.fs" />
     <Compile Include="DevicesTests.fs" />
     <Compile Include="DevicesUiTests.fs" />
   </ItemGroup>
