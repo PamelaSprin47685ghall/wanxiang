@@ -119,6 +119,8 @@ module MessageCard =
 
     let private technicalText (text: string) (size: float) (brush: IBrush) =
         SelectableTextBlock(
+            // 视觉走查 r8：主题自带的英文「Copy」浮层会吞掉右键，消息菜单（含「复制消息链接」）出不来
+            ContextFlyout = null,
             Text = text,
             FontFamily = Tokens.monoFontFamily,
             FontSize = size,
@@ -236,6 +238,8 @@ module MessageCard =
         let collapsed = not ctx.streaming && ctx.autoCollapseReasoning
         let bodyText =
             SelectableTextBlock(
+                // 视觉走查 r8：主题自带的英文「Copy」浮层会吞掉右键，消息菜单（含「复制消息链接」）出不来
+                ContextFlyout = null,
                 Text = reasoning,
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = ctx.fontSize - 1.5,
@@ -1817,7 +1821,7 @@ module MessageCard =
               match message.commitId, linkSink with
               | Some commitId, Some copyLink ->
                 MenuEntry.create "复制消息链接" (fun () -> copyLink commitId)
-                |> MenuEntry.withIcon Icons.copy
+                |> MenuEntry.withIcon Icons.link
               | _ -> ()
               match message.commitId with
               | Some commitId ->
@@ -1891,6 +1895,8 @@ module MessageCard =
                 // 展开入口与思考过程 / 工具详情同一 contract（未超限时按钮不出现）。
                 let text =
                     SelectableTextBlock(
+                        // 视觉走查 r8：主题自带的英文「Copy」浮层会吞掉右键，消息菜单（含「复制消息链接」）出不来
+                        ContextFlyout = null,
                         Text = message.text,
                         TextWrapping = TextWrapping.Wrap,
                         FontSize = ctx.fontSize,

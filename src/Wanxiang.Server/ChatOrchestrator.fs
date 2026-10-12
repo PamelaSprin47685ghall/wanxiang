@@ -62,6 +62,8 @@ type GenerationRuntime = {
     /// 累计用量：工具循环里每一轮 Provider 调用的 token 都要计入，
     /// 否则用户只看到最后一轮的开销。
     mutable accumulatedUsage: GenerationUsage
+    /// 本轮 Provider 调用最近一次流出的累积消息（决策 250：中途失败时据此保存半截回复）
+    mutable lastDelta: JsonNode option
 }
 
 /// 对话运行时（内存态，可随进程退出丢弃；排队消息允许丢失，决策 22）。
@@ -97,6 +99,7 @@ type ChatOrchestrator(
     /// 工具审批（第 71 节）：只存内存，不写日志。
     let approvals = ToolApprovalBroker(getConfig, broadcastToConversation)
     let mutable disposed = false
+    let mutable partials = PartialReplyStore(None)
     /// 已尝试过自动标题的对话：一个对话只试一次，失败不反复烧 token
     let titledConversations = System.Collections.Concurrent.ConcurrentDictionary<Guid, bool>()
 
@@ -177,6 +180,30 @@ type ChatOrchestrator(
             (mediaSupportOf convId)
             loadBlob
             convId
+
+    /// 决策 250：半截回复存放处（ServerApp 换成落盘到数据目录的实例）。
+    member _.Partials
+        with get () = partials
+        and set v = partials <- v
+
+    /// 半截回复是否有可续写的正文（助手角色、非空白文本）。
+    static member PartialText(node: JsonNode) : bool =
+        match node with
+        | :? JsonObject as o ->
+            let role = match o["role"] with null -> "" | n -> (try n.GetValue<string>() with _ -> "")
+            let hasText =
+                match o["contents"] with
+                | :? JsonArray as a ->
+                    a |> Seq.exists (fun c ->
+                        match c with
+                        | :? JsonObject as co ->
+                            match co["text"] with
+                            | null -> false
+                            | n -> (try not (String.IsNullOrWhiteSpace(n.GetValue<string>())) with _ -> false)
+                        | _ -> false)
+                | _ -> false
+            role = "assistant" && hasText
+        | _ -> false
 
     /// 对话当前运行状态（供 snapshot 的 runtimeState 字段）。
     member _.WithRuntimeSnapshot(convId: Guid, consume: string -> Guid option -> 'T) : 'T =
@@ -363,7 +390,9 @@ type ChatOrchestrator(
                                   cancelled = false
                                   lastProviderMessages = []
                                   toolRounds = 0
-                                  accumulatedUsage = GenerationUsage.empty }
+                                  accumulatedUsage = GenerationUsage.empty
+                                  lastDelta = None }
+                        partials.Clear convId
                         broadcastToConversation
                             convId
                             (GenerationStarted
@@ -482,14 +511,17 @@ type ChatOrchestrator(
                                 this.RebuildAgent(rt, g, latestConfig.Value)
                                 // 继续循环（下一次迭代用新配置发起调用）
                             else
+                                lock rt (fun () -> g.lastDelta <- None)
                                 let onDelta (deltaMsg: ChatMessage) =
+                                    let payload = MessageSerde.toJsonNode deltaMsg
                                     let deltaEv =
                                         GenerationDelta
                                             {| conversationId = convId
                                                generationId = generationId
-                                               payload = MessageSerde.toJsonNode deltaMsg |}
+                                               payload = payload |}
                                     lock rt (fun () ->
                                         if not g.cancelled && (rt.generation |> Option.map _.generationId) = Some generationId then
+                                            g.lastDelta <- Some payload
                                             broadcastToConversation convId deltaEv)
                                 // 多条消息合并为一次请求（按消息列表传入）
                                 let! result =
@@ -522,8 +554,21 @@ type ChatOrchestrator(
                                             | None, Some wait when err.retryable -> { err with retryAfterSeconds = Some wait }
                                             | _ -> err
                                         | None -> err
+                                    let partialEv =
+                                        lock rt (fun () -> g.lastDelta)
+                                        |> Option.filter ChatOrchestrator.PartialText
+                                        |> Option.map (fun msg ->
+                                            GenerationPartial
+                                                {| conversationId = convId
+                                                   generationId = generationId
+                                                   message = msg.DeepClone()
+                                                   error = Some err |})
                                     let ev = finishedEvent convId generationId "failed" (Some err) g.startedAtUtc (Some g.accumulatedUsage)
-                                    this.FinishGeneration(convId, generationId, ev, false) |> ignore
+                                    if this.FinishGeneration(convId, generationId, ev, false) then
+                                        // 决策 250：落盘后再下发；新生成一开始就作废（StartGeneration 里 Clear）。
+                                        partialEv |> Option.iter (fun pe ->
+                                            partials.Save pe
+                                            broadcastToConversation convId pe)
                                     running <- false
                                 | Completed usage ->
                                     g.accumulatedUsage <- addUsage g.accumulatedUsage (usageFromDetails usage g.startedAtUtc)
@@ -733,6 +778,7 @@ type ChatOrchestrator(
     /// 活跃生成被取消（决策 88 合作式取消；删除后继续生成没有意义）。
     member this.OnConversationDeleted(convId: Guid) : unit =
         approvals.ClearConversation convId
+        partials.Clear convId
         match runtimes.TryRemove convId with
         | true, rt ->
             lock rt (fun () ->

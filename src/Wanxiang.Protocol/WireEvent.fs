@@ -178,6 +178,10 @@ type WireEvent =
     /// 主机 → 观察该对话的客户端：某次生成失败时模型服务给出的限流 / 额度头。
     /// 总是先于对应的 generation.finished 下发；客户端据此给错误卡加倒计时。
     | ProviderRateLimitNotice of {| conversationId: Guid; generationId: Guid; providerId: string; limit: ProviderRateLimit |}
+    // ---- 半截回复（决策 250，仅追加；旧端忽略这个 wanxiang.dev/* 事件）----
+    /// 主机 → 观察该对话的客户端：中途失败留下的半截助手回复与失败原因。主机落盘保存，
+    /// 失败时与（重新）观察对话时下发，刷新页面或换设备后仍可「继续生成」；下次生成开始即作废。
+    | GenerationPartial of {| conversationId: Guid; generationId: Guid; message: JsonNode; error: GenerationError option |}
 
 module WireEvent =
 
@@ -258,3 +262,4 @@ module WireEvent =
         | DeviceRename _ -> "device.rename"
         | DeviceRevoke _ -> "device.revoke"
         | ProviderRateLimitNotice _ -> "provider.rate-limit"
+        | GenerationPartial _ -> "generation.partial"

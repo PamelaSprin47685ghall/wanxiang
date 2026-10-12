@@ -382,6 +382,11 @@ module WireCodec =
             d.limit.remainingTokens |> Option.iter (fun v -> p["remainingTokens"] <- JsonValue.Create v)
             d.limit.resetSeconds |> Option.iter (fun v -> p["resetSeconds"] <- JsonValue.Create v)
             d.limit.retryAfterSeconds |> Option.iter (fun v -> p["retryAfterSeconds"] <- JsonValue.Create v)
+        | GenerationPartial d ->
+            putGuid p "threadId" d.conversationId
+            putGuid p "runId" d.generationId
+            p["message"] <- d.message.DeepClone()
+            match d.error with Some e -> p["error"] <- encodeGenerationError e | None -> ()
         | DeviceRename d ->
             putGuid p "requestId" d.requestId
             p["deviceId"] <- d.deviceId
@@ -913,6 +918,11 @@ module WireCodec =
                                    resetSeconds = nonNeg "resetSeconds"
                                    retryAfterSeconds = nonNeg "retryAfterSeconds" } |})
                     | _ -> Error "provider.rate-limit: missing threadId/runId"
+                | Some "generation.partial" ->
+                    match tryGuid p "threadId", tryGuid p "runId", tryGet p "message" with
+                    | Some cid, Some gid, Some msg ->
+                        Ok(GenerationPartial {| conversationId = cid; generationId = gid; message = msg.DeepClone(); error = parseGenerationError p |})
+                    | _ -> Error "generation.partial: missing threadId/runId/message"
                 | Some other -> Error(unknownEventTypePrefix + other)
                 | None -> Error "missing type"
             | _ -> Error "not a JSON object"

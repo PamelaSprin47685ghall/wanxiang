@@ -109,7 +109,7 @@ async function main() {
         provider: {
             id: 'mock',
             label: 'mock',
-            baseUrl: 'http://127.0.0.1:8799/v1',
+            baseUrl: arg('mock', 'http://127.0.0.1:8799/v1'),
             models: ['mock-gpt', 'mock-gpt-mini', 'mock-reasoner'],
             defaultModel: 'mock-gpt-mini',
             apiKey: 'sk-qa',

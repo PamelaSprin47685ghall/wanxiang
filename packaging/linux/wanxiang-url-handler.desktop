@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=万象
+Comment=打开万象消息链接
+Exec=wanxiang %u
+Terminal=false
+NoDisplay=true
+MimeType=x-scheme-handler/wanxiang;

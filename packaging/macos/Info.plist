@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>万象</string>
+  <key>CFBundleDisplayName</key><string>万象</string>
+  <key>CFBundleIdentifier</key><string>dev.wanxiang.app</string>
+  <key>CFBundleExecutable</key><string>wanxiang</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <!-- 决策 251：声明 wanxiang:// 协议；系统打开链接时经 IActivatableLifetime 的 OpenUri 激活交给万象 -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>dev.wanxiang.message-link</string>
+      <key>CFBundleURLSchemes</key>
+      <array><string>wanxiang</string></array>
+    </dict>
+  </array>
+</dict>
+</plist>

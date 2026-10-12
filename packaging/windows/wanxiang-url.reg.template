@@ -1,0 +1,10 @@
+Windows Registry Editor Version 5.00
+
+; 决策 251：安装器用的模板（把 {EXE} 换成 wanxiang.exe 的绝对路径，反斜杠写两遍）。
+; 万象首次以桌面模式启动时也会自行写入同样的 HKCU 键，便携版无需安装器。
+[HKEY_CURRENT_USER\Software\Classes\wanxiang]
+@="URL:万象消息链接"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\wanxiang\shell\open\command]
+@="\"{EXE}\" \"%1\""

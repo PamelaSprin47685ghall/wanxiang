@@ -199,6 +199,9 @@ module Icons =
     /// 更多操作
     let more : IBrush -> Control = glyph PackIconLucideKind.Ellipsis
 
+    /// 链接（复制消息链接；与「复制」区分开，视觉走查 r8）
+    let link : IBrush -> Control = glyph PackIconLucideKind.Link
+
     /// 外部链接
     let externalLink : IBrush -> Control = glyph PackIconLucideKind.ExternalLink
 

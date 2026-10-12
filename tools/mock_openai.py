@@ -331,7 +331,32 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        if want_long:
+        # RATE：429 + 限流头（决策 241 倒计时的视觉 QA）
+        if "RATE" in last_user:
+            data = json.dumps({"error": {"message": "Rate limit reached", "type": "rate_limit_exceeded"}}).encode()
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("retry-after", "45")
+            self.send_header("x-ratelimit-remaining-requests", "0")
+            self.send_header("x-ratelimit-reset-requests", "45s")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        # CUT：流到一半卡住（决策 230/250 半截回复）。上下文已以助手消息收尾（=继续生成）时正常写完。
+        continuing = bool(msgs) and msgs[-1].get("role") == "assistant"
+        want_cut = "CUT" in last_user and not continuing and stream
+        if "CUT" in last_user and continuing:
+            text_override = "接着刚才写：第三点，断点续写会把已写出的部分保留下来，不需要从头再来。"
+        else:
+            text_override = None
+
+        if text_override:
+            text = text_override
+        elif want_cut:
+            text = "好的，分三点说明：\n\n1. 第一点，网络断开时已写出的内容不会丢。\n2. 第二点，刷新页面或换台设备也还在。\n"
+        elif want_long:
             text = LONG_REPLY
         elif has_tool_result:
             text = "工具已返回结果，下面是总结：调用成功。"
@@ -418,6 +443,12 @@ class Handler(BaseHTTPRequestHandler):
             for piece in re.findall(r".{1,18}", text, flags=re.S):
                 push(_chunk(cid, model, {"content": piece}))
                 time.sleep(0.05)
+            if want_cut:
+                # 卡住不再出字：主机按模型服务的 timeoutSeconds 判超时（QA 配置里调小）。
+                # 注：直接断开连接时 OpenAI SDK 把截断的流当成正常结束，见 r8 遗留项。
+                time.sleep(90)
+                self.close_connection = True
+                return
             push(_chunk(cid, model, {}, finish="stop"))
 
         push(
