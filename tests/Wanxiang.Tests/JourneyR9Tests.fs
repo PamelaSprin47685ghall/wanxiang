@@ -150,3 +150,10 @@ let ``264 桌面浏览器安装引导不说主屏幕`` () =
     Assert.Contains("matchMedia(\"(pointer: coarse)\")", js)
     Assert.Contains("安装为桌面应用，在独立窗口中打开。", js)
     Assert.Contains("label.textContent = installLabel();", js)
+
+// ---- 侧栏搜索：迟到的防抖 Tick 不再清空同词命中（CI 偶发失败） ----
+
+[<Fact>]
+let ``侧栏搜索防抖到期时词未变不重发查询`` () =
+    let src = read "src/Wanxiang.UI/Views/Sidebar.fs"
+    Assert.Contains("if not (q <> \"\" && q = searchHitsQuery) then", src)

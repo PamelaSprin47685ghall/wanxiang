@@ -1588,7 +1588,11 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     this.FocusActiveConversation())
         searchDebounce.Tick.Add(fun _ ->
             searchDebounce.Stop()
-            this.BeginMessageSearch()
+            // 词没变（已为它发过查询，结果已到或在途）就不重发：迟到的防抖 Tick
+            // 否则会清空刚到的命中（CI 上 LibraryTests 偶发失败的根因）。
+            let q = (if isNull searchBox.Text then "" else searchBox.Text).Trim()
+            if not (q <> "" && q = searchHitsQuery) then
+                this.BeginMessageSearch()
             this.Rebuild()
             // 结果刷新不碰滚动：首项可见由 Down 通路的 FocusRowAt/BringIntoView 保证。
             ())
