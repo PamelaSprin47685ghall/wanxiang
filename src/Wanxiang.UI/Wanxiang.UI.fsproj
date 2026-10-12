@@ -17,6 +17,7 @@
     <Compile Include="Design/LayoutPolicy.fs" />
     <Compile Include="Design/Metrics.fs" />
     <Compile Include="Design/Icons.fs" />
+    <Compile Include="Model/StartupTrace.fs" />
     <Compile Include="Model/UiPrefs.fs" />
     <Compile Include="Model/MediaTypes.fs" />
     <Compile Include="Rich/RichBackend.fs" />

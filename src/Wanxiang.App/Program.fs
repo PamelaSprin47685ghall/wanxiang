@@ -182,7 +182,7 @@ module Program =
             // 启动前先执行 doctor/fix（决策 51 第二问：先检查修复，再启动组件）。
             // Q107：纯客户端（无 S）不检查本地数据目录状态，不被数据问题阻塞启动。
             // 数据锁（决策 105/Q110）：任何可能修改 NDJSON 的修复必须在持锁后进行。
-            let startupReplayOutcome =
+            let replayStartup () =
                 if not effectiveServer then
                     None
                 else
@@ -331,7 +331,8 @@ module Program =
                 | Error e -> logInfo(sprintf "desktop auto-pairing skipped: %s" e)
 
             // 主机（若启用）：后台线程运行。
-            let serverApp =
+            let startServer () =
+                let startupReplayOutcome = replayStartup ()
                 if effectiveServer then
                     let pwaDir =
                         if switches.pwa then
@@ -356,8 +357,17 @@ module Program =
                 else
                     None
 
+            // 决策 291：主机 + 桌面同进程时，事件日志重放与主机启动放到后台，窗口先画出来。
+            // 历史越长重放越久，用户却只需要先看到界面骨架；客户端的首次连接会等这个门
+            // （LocalHostGate），不会因为主机还没监听而先报一次「连接失败」再退避重连。
+            // 纯主机模式没有界面可先画，仍同步启动。
+            let serverTask: Task<Wanxiang.Server.ServerApp option> =
+                if switches.client && effectiveServer then Task.Run(fun () -> startServer ())
+                else Task.FromResult(startServer ())
+            Wanxiang.UI.LocalHostGate.ready <- (serverTask :> Task)
+            let serverApp () = try serverTask.Result with _ -> None
             let stopServer () =
-                match serverApp with
+                match serverApp () with
                 | Some app -> app.Stop()
                 | None -> ()
                 logInfo "wanxiang stopped"

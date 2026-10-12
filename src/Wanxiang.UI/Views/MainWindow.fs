@@ -41,6 +41,11 @@ type MainWindow() as this =
 
         Tokens.Changed.Publish.Add(fun _ -> this.Background <- Tokens.canvas)
 
+        if StartupTrace.enabled then
+            // 采样模式直接结束进程：关窗流程（草稿落盘、主机排空）不是被测对象
+            StartupTrace.requestExit <- fun () -> Environment.Exit 0
+            this.Opened.Add(fun _ -> this.RequestAnimationFrame(fun _ -> StartupTrace.mark "firstFrame" |> ignore))
+
         this.Closing.Add(fun _ ->
             // 先落草稿：关窗口前最后一次输入也要在本机留下（W5，决策 80）。
             view.FlushDrafts()

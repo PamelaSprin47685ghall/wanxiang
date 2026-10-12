@@ -616,9 +616,14 @@ type MainView() as this =
         let url = lastUrl
         let token = lastToken
         let usePairing = pairingRequested
-        let connecting =
+        let start () =
             try client.ConnectWithGenerationAsync(Uri url, CancellationToken.None)
             with ex -> System.Threading.Tasks.Task.FromException<int> ex
+        // 决策 291：同进程主机还在后台启动时，等它就绪再连（门已开则照旧立即连接）
+        let gate = LocalHostGate.ready
+        let connecting =
+            if gate.IsCompleted then start ()
+            else System.Threading.Tasks.TaskExtensions.Unwrap(gate.ContinueWith(fun (_: System.Threading.Tasks.Task) -> start ()))
         async {
             try
                 let! epoch = connecting |> Async.AwaitTask
@@ -1609,6 +1614,8 @@ type MainView() as this =
             listReceived <- true
             this.Render()
             pendingLink |> Option.iter this.OpenMessageLink
+            if StartupTrace.mark "listReady" && StartupTrace.exitAfter then
+                Avalonia.Threading.DispatcherTimer.RunOnce((fun () -> StartupTrace.requestExit ()), TimeSpan.FromSeconds 3.0) |> ignore
         | ConversationSnapshot d ->
             state.Handle ev
             state.AdvanceCursor()
@@ -1619,7 +1626,13 @@ type MainView() as this =
             outbox.ConversationReady(instanceId, d.conversationId)
             for item in outbox.Items(instanceId, Some d.conversationId) do
                 if item.state = PreparingConversation then this.DispatchPendingMessage item
-            if activeConvId = Some d.conversationId then this.Render()
+            if activeConvId = Some d.conversationId then
+                this.Render()
+                if StartupTrace.enabled then
+                    Avalonia.Threading.Dispatcher.UIThread.Post(
+                        (fun () ->
+                            if StartupTrace.mark "chatReady" && StartupTrace.exitAfter then StartupTrace.requestExit ()),
+                        Avalonia.Threading.DispatcherPriority.Background)
         | MessageCommitted d ->
             state.Handle ev
             state.AdvanceCursor()
