@@ -580,8 +580,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     /// 在 `SetConversations` 之前调用，随后那次重建就会带上新谱系（本方法自己不重建，避免一次快照两次重建）。
     /// 决策 313：接上导入入口（未接线时按钮不出现）。
     member _.ConfigureImport(handler: unit -> unit) =
+        // 决策 363：导入是低频动作，入口移到 设置 › 对话默认值；侧栏页脚只留设置齿轮。
         importHandler <- handler
-        importButton.IsVisible <- true
 
     member _.ImportButton = importButton
 
@@ -774,7 +774,16 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             elif summary.messageCount > 0 then sprintf "%d 条消息" summary.messageCount
             else "还没有消息"
         // W4：分叉行用一个前缀标出身份（不改行结构，读屏与高亮沿用同一个文本块）。
+        let body =
+            match ConversationSummary.disambiguator summaries DateTimeOffset.Now summary with
+            | Some stamp -> stamp + " · " + body
+            | None -> body
         if summary.isFork || lineage.ContainsKey summary.id then "分叉 · " + body else body
+
+    member private _.AccessibleNameFor(summary: ConversationSummary) =
+        match ConversationSummary.disambiguator summaries DateTimeOffset.Now summary with
+        | Some stamp -> sprintf "%s（%s）" summary.title stamp
+        | None -> summary.title
 
     member private _.RowTooltipFor(summary: ConversationSummary) =
         let provenance =
@@ -916,7 +925,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 rowHosts.Remove summary.id |> ignore
                 moreButtons.Remove summary.id |> ignore
             | _ -> ())
-        Avalonia.Automation.AutomationProperties.SetName(host, summary.title)
+        Avalonia.Automation.AutomationProperties.SetName(host, this.AccessibleNameFor summary)
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
             Nullable Avalonia.Automation.Peers.AutomationControlType.ListItem)
@@ -1095,7 +1104,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                             segmentText previewBlock searchQuery (this.PreviewTextFor summary)
                             this.SetStateSlot(stateSlot, summary)
                             this.ApplyRowState(summary, host)
-                            Avalonia.Automation.AutomationProperties.SetName(host, summary.title)
+                            Avalonia.Automation.AutomationProperties.SetName(host, this.AccessibleNameFor summary)
                             ToolTip.SetTip(
                                 host,
                                 this.RowTooltipFor summary)
@@ -1657,8 +1666,6 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             let dock = DockPanel(LastChildFill = true, VerticalAlignment = VerticalAlignment.Center)
             DockPanel.SetDock(settingsButton, Dock.Right)
             dock.Children.Add settingsButton
-            DockPanel.SetDock(importButton, Dock.Right)
-            dock.Children.Add importButton
             dock.Children.Add statusRow
             Border(
                 Height = Tokens.barHeight,

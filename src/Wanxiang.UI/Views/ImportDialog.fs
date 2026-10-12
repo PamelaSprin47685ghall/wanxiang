@@ -86,7 +86,7 @@ type ConversationImportDialog(
                       | None -> ()
                       if p.hasAttachments then yield "文件里提到的附件只有名称，文件本体不在导出里，导入后无法打开。"
                       if p.skipped > 0 then yield sprintf "有 %d 条无法识别的记录会被跳过。" p.skipped
-                      yield "模型使用这台主机的默认设置，导入后可以在对话顶部更换。" ]
+                      yield "模型使用这台主机的对话默认值，导入后可以在对话顶部更换。" ]
                 details.Text <- String.Join("\n", lines)
                 details.IsVisible <- true
                 Dispatcher.UIThread.Post(fun () -> if importButton.IsEffectivelyVisible then importButton.Focus() |> ignore)

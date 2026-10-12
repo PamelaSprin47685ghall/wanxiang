@@ -44,6 +44,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         summary
 
     let mutable readAutoTitle: unit -> bool = fun () -> true
+    let mutable importHandler: (unit -> unit) option = None
     let mutable setAutoTitle: bool -> unit = ignore
     let mutable setGenerationPending: bool -> unit = ignore
     /// 生成保存往返中的重入 guard：按钮已禁用，但重复调用仍能进 Save。
@@ -132,6 +133,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                     if draftScope = instance then "已回到草稿所属的主机。修改尚未保存。"
                     else "主机已切换。旧草稿仍在，但不能保存到另一台主机。请返回原主机，或放弃修改。"
 
+    member _.SetImportHandler(handler: unit -> unit) = importHandler <- Some handler
     member _.HasUnsavedGeneration = generationDirty
 
     member this.DiscardGenerationChanges() =
@@ -274,7 +276,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                 Spacing.space4xl
                 [ Ui.vstack
                       Spacing.spaceXs
-                      [ Ui.heading "默认设置" :> Control
+                      [ Ui.heading "对话默认值" :> Control
                         Ui.caption "保存到当前主机，供所有客户端新建对话时使用。不会改动已有对话。" :> Control ]
                   :> Control
                   generationErrorSummary :> Control
@@ -292,7 +294,23 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                       Spacing.Radius.lg) :> Control
                   Ui.hairline () :> Control
                   generationStatus :> Control
-                  Ui.hstack Spacing.spaceMd [ saveButton :> Control; discardButton :> Control ] :> Control ]
+                  Ui.hstack Spacing.spaceMd [ saveButton :> Control; discardButton :> Control ] :> Control
+                  // 决策 363：「导入对话」从侧栏页脚移到这里——同属「主机上的对话」，低频、不占常驻位置。
+                  (match importHandler with
+                   | Some handler ->
+                       let importBtn = Ui.button Ui.Secondary "导入对话…" (fun () -> handler ())
+                       importBtn.Name <- "settings-import"
+                       importBtn.HorizontalAlignment <- HorizontalAlignment.Left
+                       Avalonia.Automation.AutomationProperties.SetName(importBtn, "导入对话")
+                       Avalonia.Automation.AutomationProperties.SetHelpText(importBtn, "从导出的 JSON 文件新建一个对话")
+                       Ui.vstack
+                           Spacing.spaceMd
+                           [ Ui.hairline () :> Control
+                             Ui.label "导入对话" :> Control
+                             Ui.caption "从导出的 JSON 文件在这台主机上新建一个对话，先预览再确认。" :> Control
+                             importBtn :> Control ]
+                       :> Control
+                   | None -> Ui.vstack 0.0 [] :> Control) ]
         generationForm.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
             if e.Key = Key.Enter && ctrl then

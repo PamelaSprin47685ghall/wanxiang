@@ -2005,6 +2005,7 @@ type MainView() as this =
                 settings.ShowSection SettingsSection.Providers
                 this.ShowSettings()
             | OpenConversationSettings -> this.ShowSessionContext()
+            | SwitchModel -> this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
             | StartNewConversation -> this.CreateConversation() |> ignore)
         let messageActions =
             { copyText = copyToClipboard
@@ -2279,6 +2280,9 @@ type MainView() as this =
         overlay.SetToastFocusHome(fun () -> composer.Focus())
         sidebar.ConfigureImport(fun () -> this.ImportConversation())
         this.BuildSettings()
+        settings.ConfigureImport(fun () ->
+            this.CloseSettings()
+            this.ImportConversation())
         this.BuildOnboarding()
 
         chatColumn <- ConversationWorkspace(chat, composer)

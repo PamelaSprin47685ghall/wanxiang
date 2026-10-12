@@ -34,7 +34,7 @@ module SettingsSection =
         match section with
         | Providers -> "模型服务"
         | Tools -> "工具"
-        | Generation -> "默认设置"
+        | Generation -> "对话默认值"
         | Devices -> "设备"
         | Appearance -> "外观与操作"
         | About -> "关于"
@@ -281,6 +281,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         host
 
     /// 主机状态（配置有误、检查主机）与本机草稿控件：W5 的外壳接线点。
+    member _.ConfigureImport(handler: unit -> unit) = generalPanel.SetImportHandler handler
     member _.Health = generalPanel.Health
     member _.LocalDrafts = generalPanel.LocalDrafts
 

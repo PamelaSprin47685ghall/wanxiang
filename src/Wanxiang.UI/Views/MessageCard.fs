@@ -1170,6 +1170,14 @@ module MessageCard =
     /// 不能再低：更淡的图标在浅纸背景上已经读不出形状。
     let idleActionOpacity = Tokens.opacitySubtle
 
+    /// 决策 360：长对话里每条消息常驻一列图标比内容还抢眼。闲置时操作条完全隐去（仍占位、
+    /// 仍可命中、仍可 Tab 聚焦、读屏照常可见——只改 Opacity），桌面 hover / 键盘聚焦显示，
+    /// 触屏点一下消息即选中显示；最新一条助手回复保留淡显，作为「这里有操作」的可发现锚点。
+    let hiddenActionOpacity = 0.0
+
+    /// 触屏「点选」的当前消息：再点另一条时把上一条收起。
+    let mutable private touchSelectedRelease: (unit -> unit) option = None
+
     /// 消息操作按钮。放在脚注行里随文档流排布——
     /// 早先做成浮在消息上方的悬浮条（脱离文档流、绝对定位），常驻显示后
     /// 就会压住头像和气泡边角，那条路已废弃。
@@ -2090,11 +2098,32 @@ module MessageCard =
         let host = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0, HorizontalAlignment = HorizontalAlignment.Stretch)
         host.Children.Add row
         host.Children.Add metaRow
+        let mutable touchSelected = false
+        let restingOpacity =
+            if ctx.isLastAssistant && not (MessageView.isUser message) then idleActionOpacity else hiddenActionOpacity
         let syncVisual () =
-            if host.IsPointerOver || buttons.IsKeyboardFocusWithin then
+            if host.IsPointerOver || buttons.IsKeyboardFocusWithin || touchSelected then
                 buttons.Opacity <- 1.0
             else
-                buttons.Opacity <- idleActionOpacity
+                buttons.Opacity <- restingOpacity
+        buttons.Opacity <- restingOpacity
+        // 触屏没有 hover：点一下消息就选中它、露出操作；点另一条时上一条收起。
+        host.AddHandler(
+            InputElement.PointerPressedEvent,
+            (fun (_: obj) (e: PointerPressedEventArgs) ->
+                if e.Pointer.Type = PointerType.Touch || e.Pointer.Type = PointerType.Pen then
+                    match touchSelectedRelease with
+                    | Some release -> release ()
+                    | None -> ()
+                    touchSelected <- true
+                    buttons.Opacity <- 1.0
+                    touchSelectedRelease <-
+                        Some(fun () ->
+                            touchSelected <- false
+                            touchSelectedRelease <- None
+                            syncVisual ())),
+            Avalonia.Interactivity.RoutingStrategies.Tunnel,
+            true)
         let highlight () =
             buttons.Opacity <- 1.0
         let dim () =
