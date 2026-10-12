@@ -148,6 +148,10 @@ module CommandPalette =
     let pushRecent (id: string) (recent: string list) : string list =
         id :: (recent |> List.filter ((<>) id)) |> List.truncate maxRecent
 
+    /// 面板行右侧的紧凑键位：「Ctrl / ⌘ + Shift + E」→「Ctrl+Shift+E」。
+    /// 等宽字体缺 ⌘ 字形（r20 截图里是方框），且行内空间有限；macOS 上 Ctrl 同样由 ⌘ 触发，帮助页仍写全。
+    let compactKeys (keys: string) = keys.Replace(" / ⌘", "").Replace(" + ", "+")
+
     let kindLabel = function
         | PaletteConversation -> "对话"
         | PaletteAction -> "操作"

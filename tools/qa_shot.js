@@ -467,7 +467,27 @@ async function main() {
             await page.keyboard.up('Control');
             await sleep(900);
         };
-        await ctrlK();
+        if (compact) {
+            // 手机没有 Ctrl+K：走抽屉页脚的命令面板按钮（决策 374）。安装提示会盖住汉堡按钮，先点「暂不」。
+            await page.mouse.click(geo.x + geo.w - 53, geo.y + 39);
+            await sleep(700);
+            await page.mouse.click(geo.x + 20, geo.y + 26);
+            await sleep(1200);
+            await shot('10a-drawer-palette-entry');
+            let opened = false;
+            for (const dx of [82, 70, 94, 60]) {
+                const probe = join(OUT, `${TAG}-.probe.png`);
+                await page.screenshot({ path: probe });
+                const before = hashFile(probe);
+                await page.mouse.click(geo.x + geo.w - dx, geo.y + geo.h - 26);
+                await sleep(1200);
+                await page.screenshot({ path: probe });
+                if (hashFile(probe) !== before) { opened = true; console.log('palette via drawer button @', dx); break; }
+            }
+            if (!opened) await ctrlK();
+        } else {
+            await ctrlK();
+        }
         await shot('10-command-palette-empty');
         await page.keyboard.type('dhmrz', { delay: 60 });
         await sleep(900);
