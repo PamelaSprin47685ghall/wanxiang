@@ -68,6 +68,16 @@ KEEP_TMP=${KEEP_TMP:-0}
 trap '[ "$KEEP_TMP" = 1 ] || rm -rf "$TMP"' EXIT
 FAILED=0
 
+# 用例清点（决策 380–383）：发现清单是每个分组“应跑多少”的唯一来源。
+# 源码静态清点 + 基线下限任一不符即失败——测试不许静默消失。
+INV="$ROOT/tools/test_inventory.py"
+./Wanxiang.Tests -preEnumerateTheories -list full/json 2>/dev/null > "$TMP/all.json"
+if ! python3 "$INV" check "$TMP/all.json" "$ROOT/tests/test-counts.baseline"; then
+  FAILED=1
+fi
+# 从汇总行取 Total（去色）。
+total_of() { sed 's/\x1b\[[0-9;]*m//g' "$1" | grep -oE "Total: [0-9]+" | tail -1 | grep -oE "[0-9]+" || echo 0; }
+
 # UI 分组：按测试类轮转分到 N 个进程。
 # 类清单来自程序集自身枚举（`-list classes`），不是猜文件名。
 if [ "$MODE" != "noui" ]; then
@@ -115,6 +125,14 @@ if [ "$MODE" != "noui" ]; then
       # 进程退出码与汇总行分开判：全部用例通过但进程退出非 0（关停期崩溃、
       # 未处理异常、被信号杀死）同样算失败，但要指名是哪个分组、打印尾部日志，
       # 否则 CI 只剩一句 "exit code 1" 无从追查。
+      # 分组期望 = 发现清单里这些类的用例数；实际 Total 不等即有用例被过滤掉没跑。
+      mapfile -t gcls < "$g"
+      expect=$(python3 "$INV" groups "$TMP/all.json" "${gcls[@]}")
+      got=$(total_of "$g.out")
+      if [ "$expect" != "$got" ]; then
+        FAILED=1
+        echo "::error::UI 分组 $(basename "$g") 应跑 $expect 个用例，实际 $got 个——过滤条件漏掉了用例" >&2
+      fi
       rc=$(cat "$g.rc" 2>/dev/null || echo missing)
       if [ "$rc" != "0" ]; then
         FAILED=1
@@ -136,6 +154,16 @@ if [ "$MODE" != "ui" ]; then
   fi
   ./Wanxiang.Tests "${ARGS[@]}" > "$TMP/noui.out" 2>&1
   noui_rc=$?
+  if [ "$LARGE_HISTORY" = "0" ]; then
+    expect=$(python3 -c 'import json,sys;print(sum(1 for t in json.load(open(sys.argv[1])) if not (t.get("Traits") or {}).get("Category")))' "$TMP/all.json")
+  else
+    expect=$(python3 -c 'import json,sys;print(sum(1 for t in json.load(open(sys.argv[1])) if "UI" not in (t.get("Traits") or {}).get("Category",[])))' "$TMP/all.json")
+  fi
+  got=$(total_of "$TMP/noui.out")
+  if [ "$expect" != "$got" ]; then
+    FAILED=1
+    echo "::error::非 UI 应跑 $expect 个用例，实际 $got 个——过滤条件漏掉了用例" >&2
+  fi
   grep -E "Total:|^\s+Wanxiang.*\[FAIL\]" "$TMP/noui.out" || true
   if ! grep -qE "Failed: 0," "$TMP/noui.out"; then
     FAILED=1

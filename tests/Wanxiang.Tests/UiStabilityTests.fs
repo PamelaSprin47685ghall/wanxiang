@@ -203,7 +203,8 @@ let ``chat reading column relies on avalonia stretch and max width across viewpo
             window.Close()
     )
 
-// probe: collapse focus destination[<Fact>]
+// probe: collapse focus destination
+[<Fact>]
 let ``navigation controller owns compact and collapsed state transitions`` () =
     let navigation = NavigationController(true)
     let applyWide, wide = navigation.ApplyViewport(1200.0, false)
