@@ -175,6 +175,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     /// 焦点悬在已隐藏的 workspace 里（或脱落顶层），键盘用户按 Tab 前无处可去。
     /// kelivo 打开设置/历史浮层即 autofocus（chat_history_dialog.dart:192、
     /// settings_search_view.dart:147-150），这里对齐同一条体感。
+    /// §215：错误卡「打开模型服务设置」直达指定分区。
+    member this.ShowSection(section: SettingsSection) = this.Select section
+
     member this.FocusInitial() =
         let target =
             match navButtons.TryGetValue current with

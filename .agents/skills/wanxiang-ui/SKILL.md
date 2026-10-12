@@ -562,3 +562,18 @@ Markdown 标题字号 = `fontReading + {1:10, 2:6.5, 3:4, 4:2, 5+:1}`，属于�
 - **软键盘**：`main.js` 跟随 `visualViewport` 写 `--wx-vvh/--wx-vvtop`，键盘打开（差值 >80px）时底部安全区归零；双指缩放时不跟随。Chrome Android 仍靠 `interactive-widget=resizes-content`。
 - **离线/重连**：壳层离线条照旧；`online`、`visibilitychange→visible`、bfcache `pageshow` 使 `wxResumeEpoch` 加一，F# 侧轮询到变化时若有挂起的退避重连，立刻重连并把退避归零；已连接时不动作。
 - 改 avalonia.js 补丁或 main.js 后同时抬 `FrameworkAssetPathResolver` 版本查询与 `sw.js` 缓存名。
+# 214. 删除即撤销（对话库 · Track B · 2026-10-12）
+
+删除对话（单条与批量）不再弹「此操作无法撤销」确认框。行先从列表隐去，当前对话落到邻位，
+提示条给出「已删除「标题」/已删除 N 个对话」与「撤销」按钮；宽限期 8 秒（`PendingDeletion.grace`）
+后才向主机提交 `conversation.delete`。撤销把整批恢复原位并回到被删的当前对话。
+宽限期内关掉应用 = 什么都没删：宁可少删，不可误删。主机拒绝的条目在下一次列表快照里自然回到列表，
+并给一条警告提示。状态是纯模块 `PendingDeletion`，计时与发送在 AppShell。
+
+# 215. 生成失败就地给恢复动作（模型旅程 · Track B · 2026-10-12）
+
+错误卡的提示里指了路，就必须给能走过去的按钮（`ErrorRecovery.forKind`）：
+密钥失效 / 模型不存在 → 「打开模型服务设置」（直达模型服务分区）；
+对话配置失效 / 参数被拒 / 限流或额度用尽 → 「换模型或调整参数」（打开本对话设置）；
+上下文超长 → 「新建对话」。可重试的错误里它排在「重试」之后（弱按钮），不可重试时是主路径。
+限流文案同步改为「模型服务限流或额度已用尽：稍等再试，或换个模型继续。」

@@ -51,6 +51,8 @@ type MainView() as this =
     let mutable activeConvId: Guid option = None
     let runs = ConversationRuns()
     let mutable summaries: ConversationSummary list = []
+    /// §214：宽限期内的待删批次——列表里隐去，过期才提交删除命令。
+    let mutable pendingDeletes = PendingDeletion.empty
     /// W4：分叉谱系（随列表快照更新）、最近一次搜索的 queryId、待滚动到的消息。
     let mutable lineage: Map<Guid, ForkLineage> = Map.empty
     let mutable latestSearchQueryId: Guid option = None
@@ -672,6 +674,61 @@ type MainView() as this =
                 | true, g when not (removed.Contains g) -> Some g
                 | _ -> None)
         | _ -> None
+
+    /// §214：登记待删 → 隐去行 → 当前对话落邻位 → 带「撤销」的提示条 → 宽限期后提交。
+    member private this.ScheduleDelete(ids: Guid list) =
+        let titled =
+            ids |> List.map (fun id ->
+                id, (summaries |> List.tryFind (fun s -> s.id = id) |> Option.map _.title |> Option.defaultValue "对话"))
+        let neighbor = this.NeighborExcluding ids
+        let deletingCurrent = Option.exists (fun id -> List.contains id ids) activeConvId
+        match ids with
+        | [ single ] -> sidebar.FocusAfterDelete(single.ToString())
+        | _ -> ()
+        let next, batch = PendingDeletion.schedule titled pendingDeletes
+        pendingDeletes <- next
+        match batch with
+        | None -> ()
+        | Some batch ->
+            sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
+            if deletingCurrent then
+                this.SelectConversation neighbor
+                sidebar.SetActive activeConvId
+            let timer = DispatcherTimer(Interval = PendingDeletion.grace)
+            timer.Tick.Add(fun _ ->
+                timer.Stop()
+                this.CommitDelete batch.token)
+            timer.Start()
+            overlay.ToastWith(
+                batch.label,
+                Info,
+                Some(
+                    "撤销",
+                    fun () ->
+                        timer.Stop()
+                        let restored, ids = PendingDeletion.undo batch.token pendingDeletes
+                        pendingDeletes <- restored
+                        if not (List.isEmpty ids) then
+                            sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
+                            if deletingCurrent && ids.Length = 1 then this.SelectConversation(Some ids.Head)
+                            this.Render()
+                            toast (if ids.Length = 1 then "已恢复对话" else sprintf "已恢复 %d 个对话" ids.Length) Success))
+            this.Render()
+
+    /// 宽限期到：真正提交删除。被拒的条目在下一次列表快照里自然回到列表。
+    member private this.CommitDelete(token: Guid) =
+        let next, ids = PendingDeletion.commit token pendingDeletes
+        pendingDeletes <- next
+        for id in ids do
+            let command = DeleteConversation {| invocationId = newInvocation (); conversationId = id |}
+            commandFeedback.TrackWithCompletion(
+                command,
+                None,
+                ignore,
+                (fun ok -> if not ok then toast "有对话没删掉：主机拒绝了这次请求，它已回到列表。" Warning))
+            sendCommand command
+        if not (List.isEmpty ids) then
+            sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
 
     member private this.SelectConversation(id: Guid option) =
         if activeConvId <> id then
@@ -1462,7 +1519,7 @@ type MainView() as this =
             lineage <- ForkLineage.parse d.items
             sidebar.SetLineage lineage
             // SetConversations 即快照到达：侧栏加载中状态随数据一并解除。
-            sidebar.SetConversations summaries
+            sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
             sidebar.SetActive activeConvId
             state.AdvanceCursor()
             this.PruneDeletedConversationDrafts()
@@ -1631,31 +1688,8 @@ type MainView() as this =
                             RenameConversation
                                 {| invocationId = newInvocation (); conversationId = summary.id; title = title |}
                         sendCommandWithCompletion command None ignore onCompleted)
-              deleteConversation =
-                fun summary ->
-                    Dialogs.confirm
-                        overlay
-                        "删除对话"
-                        (sprintf "「%s」及其消息将不再出现在列表里。此操作无法撤销。" summary.title)
-                        "删除"
-                        (fun () ->
-                            let command =
-                                DeleteConversation {| invocationId = newInvocation (); conversationId = summary.id |}
-                            sendCommandWithFeedback
-                                command
-                                (Some(sprintf "对话「%s」已删除" summary.title))
-                                (fun () ->
-                                    // 删除后焦点有家：邻行，否则搜索框（C3）。
-                                    sidebar.FocusAfterDelete(summary.id.ToString())
-                                    if activeConvId = Some summary.id then
-                                        // 删的正是正在看的对话时，落到邻行继续，不进空屏：
-                                        // 焦点已经瞄准邻位（FocusAfterDelete），打开同一行，
-                                        // 键盘与指针看到的是同一个对话，不必再点一次。
-                                        // 列表空了（None）才退回欢迎页。
-                                        let neighbor = sidebar.NeighborAfterDelete(summary.id.ToString())
-                                        this.SelectConversation neighbor
-                                        sidebar.SetActive None
-                                        this.Render()))
+              // §214：删除即撤销——不再弹「无法撤销」确认框；先隐去，提示条给「撤销」。
+              deleteConversation = fun summary -> this.ScheduleDelete [ summary.id ]
               setPinned =
                 fun summary pinned ->
                     let command =
@@ -1718,54 +1752,9 @@ type MainView() as this =
                     sidebar.ExitSelection()
               deleteMany =
                 fun ids ->
-                    let count = List.length ids
-                    if count > 0 then
-                        Dialogs.confirm
-                            overlay
-                            "删除对话"
-                            (sprintf "选中的 %d 个对话及其消息将不再出现在列表里。此操作无法撤销。" count)
-                            "删除"
-                            (fun () ->
-                                // 批量删除若包含正在看的对话，主视图不能挂在已删对话上：
-                                // 发送消息/停止生成都会撞上主机「对话不存在」。单条删除
-                                // 早已落在邻位（FocusAfterDelete + SelectConversation neighbor），
-                                // 批量这条路此前直接漏掉了。邻位口径与单条同源：从可见顺序里
-                                // 排除掉待删集合后取当前位置的下一行；整列全删则退回欢迎页。
-                                // kelivo side_drawer.dart:744-762 批量删除同样先判定
-                                // deletingCurrent 再 _handlePostDeleteNavigation 落到邻位。
-                                let neighbor = this.NeighborExcluding ids
-                                // 与单条删除（对话「x」已删除）对称：批量也走
-                                // commandFeedback 的同一张挂号单，否则删除全程无声——
-                                // 成功没有汇总，被拒时 CommandRejected 又只对挂号过的
-                                // id 有效，用户以为删掉了，行还在列表里。
-                                // 汇总只挂第一条：命令在同一连接上按序提交，
-                                // 第一条受理即代表整批进入落库流程；其余条静默挂号，
-                                // 失败时共用一个 onCompleted 兜底提示。
-                                // kelivo side_drawer.dart:752-756 删完即给汇总 snackbar，
-                                // 同一约定。
-                                let mutable reported = false
-                                for id in ids do
-                                    let command =
-                                        DeleteConversation
-                                            {| invocationId = newInvocation (); conversationId = id |}
-                                    let message =
-                                        if reported then None
-                                        else
-                                            reported <- true
-                                            Some(sprintf "已删除 %d 个对话" count)
-                                    commandFeedback.TrackWithCompletion(
-                                        command,
-                                        message,
-                                        ignore,
-                                        (fun ok ->
-                                            if not ok then
-                                                toast "没有删除：主机拒绝了这次请求。请重试。" Warning))
-                                sidebar.ExitSelection()
-                                let deletedCurrent = Option.exists (fun id -> List.contains id ids) activeConvId
-                                if deletedCurrent then
-                                    this.SelectConversation neighbor
-                                    sidebar.SetActive None
-                                    this.Render())
+                    if not (List.isEmpty ids) then
+                        sidebar.ExitSelection()
+                        this.ScheduleDelete ids
               duplicateAsFork =
                 fun summary ->
                     this.OpenConversation summary.id
@@ -1807,6 +1796,13 @@ type MainView() as this =
         | _ -> toast "连接并选择对话后，可以调整上下文。" Warning
 
     member private this.BuildChat() =
+        MessageCard.setRecoverySink (fun recovery ->
+            match recovery with
+            | OpenProviderSettings ->
+                settings.ShowSection SettingsSection.Providers
+                this.ShowSettings()
+            | OpenConversationSettings -> this.ShowSessionContext()
+            | StartNewConversation -> this.CreateConversation() |> ignore)
         let messageActions =
             { copyText = copyToClipboard
               regenerate = fun () -> this.Regenerate()

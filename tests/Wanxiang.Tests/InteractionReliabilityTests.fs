@@ -558,32 +558,58 @@ let ``batch delete reports what it did instead of staying silent`` () =
     invoke sidebar "EnterSelection" [| box a |] |> ignore
     invoke sidebar "ToggleSelected" [| box b |] |> ignore
     Dispatcher.UIThread.RunJobs()
-    // 批量删除经侧栏确认框：与行上 Delete 同一条 DeleteSelected 路径。
+    // §214：批量删除不再弹确认框——立即隐去，提示条给汇总与「撤销」。
     invoke sidebar "DeleteSelected" [| |] |> ignore
     Dispatcher.UIThread.RunJobs()
-    Assert.True(overlay.IsDialogOpen, "前置条件：删除前应有确认框")
-    let confirm =
+    Assert.False(overlay.IsDialogOpen, "删除即撤销：不应再有确认框")
+    let texts () =
         controls root
-        |> Seq.tryFind (fun c -> AutomationProperties.GetName c = "删除")
-        |> Option.defaultWith (fun () -> failwith "确认框缺少「删除」按钮")
-    (confirm :?> Border).RaiseEvent(
-        KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
-    Dispatcher.UIThread.RunJobs()
-    // 命令上轨之后提交：批量拖 silences 的话到这一步什么都看不到。
-    // 提交事件需要 invocationId——从 tracker 的键里取（不写死任何 id 生成方式）。
+        |> Seq.choose (function :? TextBlock as tb -> Some tb.Text | _ -> None)
+        |> List.ofSeq
+    Assert.True(texts () |> List.exists (fun s -> s.Contains "已删除 2 个对话"), sprintf "批量删除必须给一条汇总反馈，实际 %A" (texts ()))
+    Assert.True(controls root |> Seq.exists (fun c -> AutomationProperties.GetName c = "撤销"), "提示条应带「撤销」")
+    // 宽限期内命令尚未提交
     let tracker = (field view "commandFeedback").GetValue view
     let pendingField = tracker.GetType().GetField("pending", flags)
     let pending = pendingField.GetValue tracker :?> System.Collections.IDictionary
+    Assert.Equal(0, pending.Count)
+    // 宽限期到：两条删除命令进入挂号
+    let pendingDeletes = (field view "pendingDeletes").GetValue view :?> PendingDeletions
+    invoke view "CommitDelete" [| box pendingDeletes.batches.Head.token |] |> ignore
     Assert.Equal(2, pending.Count)
-    for key in pending.Keys do
-        handle view (CommandCommitted {| invocationId = unbox<Guid> key; commandId = "0"; commitId = 1UL |})
+    )
+
+[<Trait("Category", "UI")>]
+[<Fact>]
+let ``§214 撤销把批量删除的行放回列表且不提交`` () =
+    Headless.run (fun () ->
+    let view = shell ()
+    let root = (field view "root").GetValue view :?> Control
+    let a = Guid.NewGuid()
+    let items = JsonArray()
+    let o = JsonObject()
+    o.Add("conversationId", JsonValue.Create(a.ToString()))
+    o.Add("title", JsonValue.Create("甲"))
+    o.Add("runtimeState", JsonValue.Create("idle"))
+    items.Add(o :> JsonNode)
+    handle view (ConversationListSnapshot {| items = items; lastCommitId = 0UL |})
+    let sidebar = (field view "sidebar").GetValue view
+    invoke sidebar "EnterSelection" [| box a |] |> ignore
     Dispatcher.UIThread.RunJobs()
-    let toasts =
+    invoke sidebar "DeleteSelected" [| |] |> ignore
+    Dispatcher.UIThread.RunJobs()
+    let order () = invoke sidebar "GetVisibleOrder" [| |] :?> string list
+    Assert.DoesNotContain(a.ToString(), order ())
+    let undo =
         controls root
-        |> Seq.choose (function :? TextBlock as tb -> Some tb.Text | _ -> None)
-        |> Seq.filter (fun s -> s.Contains "删除")
-        |> List.ofSeq
-    Assert.True(toasts |> List.exists (fun s -> s.Contains "已删除 2 个对话"), sprintf "批量删除必须给一条汇总反馈，实际 %A" toasts)
+        |> Seq.tryFind (fun c -> AutomationProperties.GetName c = "撤销")
+        |> Option.defaultWith (fun () -> failwith "缺少「撤销」")
+    (undo :?> Border).RaiseEvent(
+        KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
+    Dispatcher.UIThread.RunJobs()
+    Assert.Contains(a.ToString(), order ())
+    let pendingDeletes = (field view "pendingDeletes").GetValue view :?> PendingDeletions
+    Assert.Empty pendingDeletes.batches
     )
 
 // 重新生成主机语义 = 删掉尾部整段回复链再重来

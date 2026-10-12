@@ -440,7 +440,11 @@ type OverlayHost(root: Grid) =
     /// 提示条：只给跨上下文的成功确认与无更好归宿的短暂系统状态。
     /// 表单校验走行内错误、可恢复的错误走常驻入口、正文已有表达的不再弹条；
     /// 同文去重且最多同时保留 toastCap 条，失败默认停留更久以便读完。
-    member _.Toast(message: string, tone: ToastTone) =
+    member this.Toast(message: string, tone: ToastTone) = this.ToastWith(message, tone, None)
+
+    /// 带一个行内动作的提示条（§214：删除后的「撤销」）。动作按钮可聚焦、可读屏；
+    /// 点动作先执行动作再关条。有动作时停留至少 PendingDeletion 宽限期，读完再决定。
+    member _.ToastWith(message: string, tone: ToastTone, action: (string * (unit -> unit)) option) =
         if not (String.IsNullOrWhiteSpace message) then
             let accentBrush =
                 match tone with
@@ -473,6 +477,20 @@ type OverlayHost(root: Grid) =
             Grid.SetColumn(bodyScroller, 1)
             row.Children.Add bar
             row.Children.Add bodyScroller
+            let mutable removeRef: unit -> unit = ignore
+            match action with
+            | Some(actionLabel, onAction) ->
+                row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
+                let actionButton =
+                    Ui.button Ui.Secondary actionLabel (fun () ->
+                        removeRef ()
+                        onAction ())
+                actionButton.Focusable <- true
+                actionButton.VerticalAlignment <- VerticalAlignment.Center
+                AutomationProperties.SetName(actionButton, actionLabel)
+                Grid.SetColumn(actionButton, 2)
+                row.Children.Add actionButton
+            | None -> ()
             let toast =
                 ActionBorder(
                     Background = Tokens.surfaceRaised,
@@ -514,6 +532,7 @@ type OverlayHost(root: Grid) =
                 | Failure -> MotionLedger.toastDwellFailure.TotalMilliseconds
                 | Warning -> MotionLedger.toastDwellWarning.TotalMilliseconds
                 | _ -> MotionLedger.toastDwellDefault.TotalMilliseconds
+            if action.IsSome then remainingMs <- max remainingMs (TimeSpan.FromSeconds 8.0).TotalMilliseconds
             let expire = new DispatcherTimer(Interval = MotionLedger.toastDismissTick)
             let remove () =
                 if not removed then
@@ -535,6 +554,7 @@ type OverlayHost(root: Grid) =
             while toastEntries.Count >= toastCap do
                 let _, dismissOldest = toastEntries[0]
                 dismissOldest ()
+            removeRef <- remove
             toastEntries.Add(message, remove)
             Ui.onClick toast remove
             // Escape 唯一归属 HandleEscape（topmost-first）：这里不再自带局部 Esc 处理。
