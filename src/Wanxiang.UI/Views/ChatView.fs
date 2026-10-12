@@ -241,6 +241,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 搜索命中跳转（W4）：目标消息已定位后，“贴底自动滚到末尾”的延迟重试不得把它拽走。
     /// 用户滚轮、回到最新、换对话时解除。
     let mutable revealPinned = false
+    /// 平滑滚动动画最近一次写入的偏移。ScrollChanged 据此区分「动画自己往上走」和「用户往上滚」：
+    /// 向上的动画（定位到更早的消息、回到顶部）每一帧都是负增量，若当成用户手势就会在第一帧把自己打断（v4 走查）。
+    let mutable lastAnimatedOffset = nan
     let mutable headerBar: Border = Unchecked.defaultof<Border>
     let mutable pendingHistoryAnchor: (float * float) option = None
     let mutable compactMode = false
@@ -309,6 +312,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                     let progress = min 1.0 (elapsed / durationMs)
                     let eased = MotionPolicy.easeOutCubic.Ease progress
                     let newY = startOffset + (target - startOffset) * eased
+                    lastAnimatedOffset <- newY
                     scroller.Offset <- Vector(scroller.Offset.X, newY))
             smoothScrollTimer <- Some timer
             timer.Start()
@@ -1215,6 +1219,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                         // 同一 easeOutCubic：上滚与下滚共享同一条曲线，端点两条路手感不劈叉。
                         let eased = MotionPolicy.easeOutCubic.Ease progress
                         let newY = startOffset * (1.0 - eased)
+                        lastAnimatedOffset <- newY
                         scroller.Offset <- Vector(scroller.Offset.X, newY)
                         this.UpdateScrollToBottomAppearance())
                 smoothScrollTimer <- Some timer
@@ -1286,6 +1291,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                         // 曲线），替换本地手写 cubic，兑现 smoothScrollDuration 的 ease-out 注释。
                         let eased = MotionPolicy.easeOutCubic.Ease progress
                         let newY = startOffset + (target - startOffset) * eased
+                        lastAnimatedOffset <- newY
                         scroller.Offset <- Vector(scroller.Offset.X, newY))
                 smoothScrollTimer <- Some timer
                 timer.Start()
@@ -1438,6 +1444,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let viewport = scroller.Viewport.Height
             let offset = scroller.Offset.Y
             // 用户手动向上滚动（或滚轮/触控向上拉），立即打断平滑自动滚动，不与用户手势冲突
+            let fromAnimation = abs (offset - lastAnimatedOffset) < 1.0
             if e.OffsetDelta.Y < -0.1 then
                 returningToLatest <- false
                 smoothScrollTimer |> Option.iter (fun t -> t.Stop())
