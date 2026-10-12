@@ -313,7 +313,7 @@ module InteractabilityConvergenceTests =
                             defaultModel = "m-a"
                             timeoutSeconds = 30
                             maxRetries = 2
-                            enabled = true }
+                            enabled = true; visionOverrides = Map.empty; visionDetected = Map.empty }
                           { id = "p2"
                             label = "模型服务二"
                             kind = "openai"
@@ -323,7 +323,7 @@ module InteractabilityConvergenceTests =
                             defaultModel = "m-c"
                             timeoutSeconds = 30
                             maxRetries = 2
-                            enabled = true } ] }
+                            enabled = true; visionOverrides = Map.empty; visionDetected = Map.empty } ] }
             catalogField.SetValue(shell, catalog)
             // ShowModelPicker 是私有的：按 AppShell 空态路径反射调用（activeConvId = None）。
             let showPicker = typeof<MainView>.GetMethod("ShowModelPicker", flags)

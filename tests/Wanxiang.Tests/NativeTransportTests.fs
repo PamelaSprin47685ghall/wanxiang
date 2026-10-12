@@ -81,7 +81,7 @@ let private providerOf (kind: string) (baseUrl: string) : ProviderConfig =
       enabled = true
       promptCaching = false
       headers = Map.empty
-      extraJson = None }
+      extraJson = None; visionOverrides = Map.empty }
 
 /// 一轮真实的工具往返：系统指令、用户提问、模型的工具调用、工具结果。
 /// 这个形状能同时压到「system 提到顶层」「相邻同角色合并」「结果配回调用」三条规则。

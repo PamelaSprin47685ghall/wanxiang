@@ -28,6 +28,7 @@
     <Compile Include="Rich/MathVisual.fs" />
     <Compile Include="Model/Markdown.fs" />
     <Compile Include="Model/MessageModel.fs" />
+    <Compile Include="Model/ImageShrink.fs" />
     <Compile Include="Model/ConversationExport.fs" />
     <Compile Include="Model/ConversationSummary.fs" />
     <Compile Include="Model/ConversationTransfer.fs" />
@@ -96,6 +97,8 @@
     <PackageReference Include="IconPacks.Avalonia.Lucide" Version="2.0.0" />
     <PackageReference Include="Markdig" Version="1.3.2" />
     <PackageReference Include="QRCoder" Version="1.8.0" />
+    <!-- 决策 332：客户端缩小超大图片。与 Avalonia 12.1.2 自带的 Skia 同版本，原生库由 App / Pwa 提供。 -->
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
   </ItemGroup>
 
   <ItemGroup>

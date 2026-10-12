@@ -8,6 +8,125 @@ open System.Threading
 open System.Threading.Tasks
 open Wanxiang.Config
 
+/// 决策 330：模型能否看图的「模型服务提供的信息」。
+/// 来源：OpenAI 兼容 `/models` 里的能力字段（OpenRouter 的 architecture.input_modalities、
+/// 部分网关的 capabilities / modalities）、Ollama `/api/show` 的 capabilities、Anthropic 的已知清单。
+/// 只在用户点「获取模型列表」时联网补充（与决策 41 一致：不在后台偷偷请求模型服务），结果留在主机内存里。
+module ModelCapabilities =
+
+    open System.Collections.Concurrent
+
+    let private detected = ConcurrentDictionary<string, bool>(StringComparer.Ordinal)
+    let private key (p: ProviderConfig) (model: string) = p.id + "\n" + p.baseUrl.TrimEnd('/') + "\n" + model
+
+    let record (p: ProviderConfig) (pairs: (string * bool) list) =
+        for (m, v) in pairs do detected[key p m] <- v
+
+    /// Anthropic 原生接口不返回能力字段；Claude 3 起全系能看图，更早的只吃文字。
+    let anthropicKnown (model: string) : bool option =
+        let id = if isNull model then "" else model.Trim().ToLowerInvariant()
+        if id.StartsWith "claude-3" || id.StartsWith "claude-sonnet-4" || id.StartsWith "claude-opus-4"
+           || id.StartsWith "claude-haiku-4" || id.StartsWith "claude-4" || id.StartsWith "claude-sonnet-5"
+           || id.StartsWith "claude-opus-5" then Some true
+        elif id.StartsWith "claude-2" || id.StartsWith "claude-instant" then Some false
+        else None
+
+    /// 某模型的服务端信息：内存里探测到的优先，其次 Anthropic 已知清单。
+    let tryGet (p: ProviderConfig) (model: string) : bool option =
+        match detected.TryGetValue(key p model) with
+        | true, v -> Some v
+        | _ -> if p.kind = "anthropic" then anthropicKnown model else None
+
+    let private strings (n: JsonNode) =
+        match n with
+        | :? JsonArray as a ->
+            [ for x in a do
+                  if not (isNull x) && x.GetValueKind() = JsonValueKind.String then yield x.GetValue<string>().ToLowerInvariant() ]
+        | _ -> []
+
+    /// 从 `/models` 的单个条目读能力字段；没有任何能力字段时返回 None（交给名字推断）。
+    let ofModelEntry (o: JsonObject) : bool option =
+        let field (name: string) = match o[name] with null -> None | v -> Some v
+        let fromCaps =
+            match field "capabilities" with
+            | Some(:? JsonArray as a) ->
+                let caps = strings a
+                Some(caps |> List.exists (fun c -> c = "vision" || c = "image" || c = "image_input" || c = "images"))
+            | Some(:? JsonObject as c) ->
+                match c["vision"] with
+                | null -> None
+                | v when v.GetValueKind() = JsonValueKind.True -> Some true
+                | v when v.GetValueKind() = JsonValueKind.False -> Some false
+                | _ -> None
+            | _ -> None
+        let fromModalities (n: JsonNode) =
+            match n with
+            | :? JsonArray as a -> Some(strings a |> List.contains "image")
+            | _ -> None
+        let fromArchitecture =
+            match field "architecture" with
+            | Some(:? JsonObject as a) ->
+                match a["input_modalities"] with
+                | null ->
+                    match a["modality"] with
+                    | null -> None
+                    | m when m.GetValueKind() = JsonValueKind.String ->
+                        let input = m.GetValue<string>().Split("->").[0].ToLowerInvariant()
+                        Some(input.Contains "image")
+                    | _ -> None
+                | m -> fromModalities m
+            | _ -> None
+        fromCaps
+        |> Option.orElse fromArchitecture
+        |> Option.orElse (field "input_modalities" |> Option.bind fromModalities)
+        |> Option.orElse (field "modalities" |> Option.bind fromModalities)
+
+    /// 整份 `/models` 响应 → (模型, 能否看图)，只列出带能力字段的条目。
+    let ofModelsBody (body: string) : (string * bool) list =
+        try
+            match JsonNode.Parse body with
+            | :? JsonObject as root ->
+                match root["data"] with
+                | :? JsonArray as items ->
+                    [ for item in items do
+                          match item with
+                          | :? JsonObject as o ->
+                              match o["id"] with
+                              | null -> ()
+                              | id when id.GetValueKind() = JsonValueKind.String ->
+                                  match ofModelEntry o with
+                                  | Some v -> yield id.GetValue<string>(), v
+                                  | None -> ()
+                              | _ -> ()
+                          | _ -> () ]
+                | _ -> []
+            | _ -> []
+        with _ -> []
+
+    /// Ollama `/api/show` 响应 → 能否看图（新版 Ollama 才有 capabilities）。
+    let ofOllamaShow (body: string) : bool option =
+        try
+            match JsonNode.Parse body with
+            | :? JsonObject as root ->
+                match root["capabilities"] with
+                | :? JsonArray as a -> Some(strings a |> List.contains "vision")
+                | _ -> None
+            | _ -> None
+        with _ -> None
+
+    /// OpenAI 兼容地址是否像本地 Ollama（默认端口 11434 或地址里带 ollama）。
+    let looksLikeOllama (p: ProviderConfig) =
+        p.kind = "openai"
+        && (p.baseUrl.Contains(":11434", StringComparison.Ordinal)
+            || p.baseUrl.Contains("ollama", StringComparison.OrdinalIgnoreCase))
+
+    let ollamaRoot (p: ProviderConfig) =
+        let t = p.baseUrl.TrimEnd '/'
+        if t.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) then t.Substring(0, t.Length - 3) else t
+
+    /// 清空（测试用）。
+    let clear () = detected.Clear()
+
 /// 可选 provider / 模型 / 工具的目录。
 ///
 /// 客户端不该靠用户手打 provider id 和模型名——那是配置文件时代的交互。
@@ -31,6 +150,18 @@ module ProviderCatalog =
             let h = JsonObject()
             for KeyValue(k, v) in p.headers do h[k] <- v
             o["headers"] <- h
+        // 决策 330/331：看图能力的两层来源，客户端按「用户指定 > 服务信息 > 名字推断」合成。
+        // 都是可选键，旧客户端忽略。
+        if not (Map.isEmpty p.visionOverrides) then
+            let v = JsonObject()
+            for KeyValue(m, b) in p.visionOverrides do v[m] <- b
+            o["visionOverrides"] <- v
+        let detectedVision = JsonObject()
+        for m in p.models do
+            match ModelCapabilities.tryGet p m with
+            | Some b -> detectedVision[m] <- b
+            | None -> ()
+        if detectedVision.Count > 0 then o["visionDetected"] <- detectedVision
         o
 
     let private generationToJson (g: GenerationDefaults) : JsonObject =
@@ -263,7 +394,27 @@ module ProviderCatalog =
                     return Error(failure, describeFailure p failure detail)
                 else
                     match modelIdsFromProbe body with
-                    | Ok ids -> return Ok ids
+                    | Ok ids ->
+                        ModelCapabilities.record p (ModelCapabilities.ofModelsBody body)
+                        if ModelCapabilities.looksLikeOllama p then
+                            // 逐个问 Ollama 的 /api/show；失败或旧版本没有 capabilities 就跳过，不影响探测结果。
+                            let root = ModelCapabilities.ollamaRoot p
+                            for m in ids |> List.truncate 50 do
+                                try
+                                    use show = new HttpRequestMessage(HttpMethod.Post, root + "/api/show")
+                                    let payload = JsonObject()
+                                    payload["model"] <- m
+                                    show.Content <- new StringContent(payload.ToJsonString(), Text.Encoding.UTF8, "application/json")
+                                    use cts = CancellationTokenSource.CreateLinkedTokenSource ct
+                                    cts.CancelAfter(TimeSpan.FromSeconds 5.0)
+                                    let! r = client.SendAsync(show, cts.Token)
+                                    if r.IsSuccessStatusCode then
+                                        let! b = r.Content.ReadAsStringAsync cts.Token
+                                        match ModelCapabilities.ofOllamaShow b with
+                                        | Some v -> ModelCapabilities.record p [ m, v ]
+                                        | None -> ()
+                                with _ -> ()
+                        return Ok ids
                     | Error reason -> return Error(BadResponse, describeFailure p BadResponse reason)
             with
             | :? OperationCanceledException when ct.IsCancellationRequested ->

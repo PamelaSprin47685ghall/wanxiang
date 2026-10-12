@@ -180,6 +180,8 @@ type Composer(actions: ComposerActions) as this =
     let mutable visionModelLabel = ""
     // 决策 322：图片附件的缩略图，按 attachmentId 缓存解码结果（只解一次、按显示宽度解）。
     let thumbnails = System.Collections.Generic.Dictionary<Guid, Avalonia.Media.Imaging.Bitmap>()
+    /// 决策 332：自动缩小过的图片附件 → 「原图 vs 发送」说明。
+    let shrinkNotes = System.Collections.Generic.Dictionary<Guid, string>()
     let visionNoticeText =
         TextBlock(
             Text = "",
@@ -582,6 +584,25 @@ type Composer(actions: ComposerActions) as this =
                     Width = ControlMetrics.composerAttachmentStateWidth,
                     TextAlignment = TextAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Center)
+            let shrinkNote =
+                match shrinkNotes.TryGetValue attachment.attachmentId with
+                | true, n -> Some n
+                | _ -> None
+            let shrinkBadge =
+              match shrinkNote with
+              | Some n ->
+                let badge =
+                    TextBlock(
+                        Text = "已缩小",
+                        FontSize = Tokens.fontMicro,
+                        Foreground = Tokens.accent,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = Thickness(0.0, 0.0, 4.0, 0.0))
+                ToolTip.SetTip(badge, n)
+                Avalonia.Automation.AutomationProperties.SetName(badge, n)
+                Avalonia.Automation.AutomationProperties.SetAutomationId(badge, "attachment-shrink-note")
+                Some badge
+              | None -> None
             let formattedSize =
                 if attachment.ready || attachment.failed then AttachmentRef.formatSize attachment.size else "上传中"
             ToolTip.SetTip(
@@ -632,6 +653,9 @@ type Composer(actions: ComposerActions) as this =
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXs, VerticalAlignment = VerticalAlignment.Center)
             row.Children.Add iconSlot
             row.Children.Add name
+            match shrinkBadge with
+            | Some b -> row.Children.Add b
+            | None -> ()
             row.Children.Add size
             row.Children.Add remove
             let chipLabel =
@@ -641,7 +665,9 @@ type Composer(actions: ComposerActions) as this =
                     sprintf "附件上传失败：%s（%s），可移除或重新添加" attachment.fileName (AttachmentRef.formatSize attachment.size)
                 else
                     // V34: 全角括号，与同文案“上传失败：%s（%s）”统一，不中英半角混排。
-                    sprintf "附件：%s（%s）" attachment.fileName (AttachmentRef.formatSize attachment.size)
+                    match shrinkNote with
+                    | Some n -> sprintf "附件：%s（%s），%s" attachment.fileName (AttachmentRef.formatSize attachment.size) n
+                    | None -> sprintf "附件：%s（%s）" attachment.fileName (AttachmentRef.formatSize attachment.size)
             // 附件 chip 与其它输入壳内次级面同一几何：走 Ui.groupingCard
             // （surfaceContainer + 最轻发丝边 + chip 密度），不再手抄一份边框三重奏。
             let chip =
@@ -698,6 +724,15 @@ type Composer(actions: ComposerActions) as this =
 
     member _.HasThumbnail(attachmentId: Guid) = thumbnails.ContainsKey attachmentId
 
+    member this.SetShrinkNote(attachmentId: Guid, note: string) =
+        shrinkNotes.[attachmentId] <- note
+        if attachments |> List.exists (fun a -> a.attachmentId = attachmentId) then this.RenderAttachments()
+
+    member _.ShrinkNote(attachmentId: Guid) =
+        match shrinkNotes.TryGetValue attachmentId with
+        | true, n -> n
+        | _ -> ""
+
     /// 决策 320：当前对话（或新对话）将使用的模型能否看图。
     member _.SetModelVision(support: VisionSupport, modelLabel: string) =
         if visionSupport <> support || visionModelLabel <> modelLabel then
@@ -714,6 +749,8 @@ type Composer(actions: ComposerActions) as this =
                 if not (items |> List.exists (fun a -> a.attachmentId = id)) then
                     thumbnails.[id].Dispose()
                     thumbnails.Remove id |> ignore
+            for id in List.ofSeq shrinkNotes.Keys do
+                if not (items |> List.exists (fun a -> a.attachmentId = id)) then shrinkNotes.Remove id |> ignore
             // 数据型重渲染（兄弟附件完成/失败）：显式移除流程已通过 pendingFocusAttachmentId 占位，
             // 其它情况把当前聚焦的 remove 按钮原位恢复，避免焦点掉到页顶。
             if pendingFocusAttachmentId.IsNone then

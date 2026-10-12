@@ -72,7 +72,7 @@ let private provider (models: string list) (defaultModel: string) : ProviderConf
       enabled = true
       promptCaching = false
       headers = Map.empty
-      extraJson = None }
+      extraJson = None; visionOverrides = Map.empty }
 
 [<Fact>]
 let ``session model wins when the provider offers it`` () =

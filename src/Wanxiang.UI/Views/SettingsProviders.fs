@@ -138,7 +138,54 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let _, retriesBox = Ui.textField "2"
         Avalonia.Automation.AutomationProperties.SetName(retriesBox, "失败重试")
         let retriesField = Ui.inputFieldGroup "失败重试次数" "网络或偶发错误时的重试次数（0-10），默认 2 次。" retriesBox
-        let allBoxes = [ idBox; labelBox; urlBox; keyBox; modelsBox; defaultModelBox; timeoutBox; retriesBox ]
+        // 决策 331：单个模型的看图能力手动指定。留空 = 自动（服务信息 > 名字推断）。
+        let multiline (box: TextBox) =
+            box.AcceptsReturn <- true
+            box.TextWrapping <- TextWrapping.Wrap
+            box.VerticalContentAlignment <- VerticalAlignment.Top
+        let _, visionYesBox = Ui.textField "留空则自动判断"
+        Avalonia.Automation.AutomationProperties.SetName(visionYesBox, "指定能看图的模型")
+        Avalonia.Automation.AutomationProperties.SetAutomationId(visionYesBox, "provider-vision-yes")
+        multiline visionYesBox
+        let _, visionNoBox = Ui.textField "留空则自动判断"
+        Avalonia.Automation.AutomationProperties.SetName(visionNoBox, "指定只吃文字的模型")
+        Avalonia.Automation.AutomationProperties.SetAutomationId(visionNoBox, "provider-vision-no")
+        multiline visionNoBox
+        let visionAutoText =
+            match existing with
+            | Some p ->
+                let describe m =
+                    let support, source = Catalog.visionOf p.id m catalog
+                    let verdict =
+                        match support with
+                        | VisionYes -> "能看图"
+                        | VisionNo -> "只吃文字"
+                        | VisionUnknown -> "未知（放行，由模型服务决定）"
+                    let why =
+                        match source with
+                        | VisionFromUser -> "你的指定"
+                        | VisionFromProvider -> "模型服务提供"
+                        | VisionFromName -> "按名字推断"
+                    sprintf "%s：%s（%s）" m verdict why
+                p.models |> List.truncate 12 |> List.map describe |> String.concat "\n"
+            | None -> ""
+        let visionYesField =
+            Ui.inputFieldGroup "指定能看图的模型" "每行一个，必须在模型列表中。自动判断错了才需要填。" visionYesBox
+        let visionNoField =
+            Ui.inputFieldGroup
+                "指定只吃文字的模型"
+                "每行一个。这里的模型带图时会在发送前拦下。"
+                visionNoBox
+        let visionCurrent =
+            Ui.caption (if String.IsNullOrWhiteSpace visionAutoText then "保存后点「获取模型列表」，能读到模型服务提供的看图信息。" else "当前判断：\n" + visionAutoText)
+        visionCurrent.TextWrapping <- TextWrapping.Wrap
+        Avalonia.Automation.AutomationProperties.SetAutomationId(visionCurrent, "provider-vision-current")
+        match existing with
+        | Some p ->
+            visionYesBox.Text <- p.visionOverrides |> Map.filter (fun _ v -> v) |> Map.keys |> String.concat "\n"
+            visionNoBox.Text <- p.visionOverrides |> Map.filter (fun _ v -> not v) |> Map.keys |> String.concat "\n"
+        | None -> ()
+        let allBoxes = [ idBox; labelBox; urlBox; keyBox; modelsBox; defaultModelBox; visionYesBox; visionNoBox; timeoutBox; retriesBox ]
         for box in allBoxes do attachFieldValidation box
         // 表单错误摘要：与 SettingsGeneral / SettingsTools 同款的可聚焦 live region，
         // 多错时由 Ui.applyValidationFeedback 汇总呈现，单错时收起。
@@ -452,6 +499,22 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         fail retriesBox "重试次数必须是 0 到 10 之间的整数。"
                         2
 
+            let lines (box: TextBox) =
+                (if isNull box.Text then "" else box.Text)
+                    .Split([| '\n'; '\r'; ',' |], StringSplitOptions.RemoveEmptyEntries)
+                |> Array.map (fun s -> s.Trim())
+                |> Array.filter (String.IsNullOrWhiteSpace >> not)
+                |> Array.distinct
+                |> List.ofArray
+            let visionYes = lines visionYesBox
+            let visionNo = lines visionNoBox
+            match visionYes @ visionNo |> List.filter (fun m -> not (List.contains m models)) with
+            | m :: _ -> fail (if List.contains m visionYes then visionYesBox else visionNoBox) (sprintf "“%s”不在模型列表中，请先把它加到模型列表，或删掉这一行。" m)
+            | [] ->
+                match visionYes |> List.filter (fun m -> List.contains m visionNo) with
+                | m :: _ -> fail visionNoBox (sprintf "“%s”同时写在两栏里，请只保留一栏。" m)
+                | [] -> ()
+
             if List.isEmpty (List.ofSeq errors) then
                 let payload =
                     providerPayload
@@ -465,6 +528,10 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         (readEnabled ())
                         timeout
                         retries
+                let overrides = System.Text.Json.Nodes.JsonObject()
+                for m in visionYes do overrides[m] <- true
+                for m in visionNo do overrides[m] <- false
+                payload["visionOverrides"] <- overrides
                 // 需要密钥的模型服务没填密钥也允许先存（列表里会标「缺少密钥」），
                 // 但要当场说清后果与补救路径，而不是等到发消息失败才发现。
                 let keyEmpty = String.IsNullOrWhiteSpace(if isNull keyBox.Text then "" else keyBox.Text)
@@ -567,6 +634,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                   modelsField
                   defaultModelField
                   probeRow :> Control
+                  visionCurrent :> Control
+                  visionYesField
+                  visionNoField
                   timeoutField
                   retriesField
                   enabledRow ]

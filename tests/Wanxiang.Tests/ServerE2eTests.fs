@@ -46,7 +46,7 @@ module internal E2e =
                                 enabled = true
                                 promptCaching = false
                                 headers = Map.empty
-                                extraJson = None } ]
+                                extraJson = None; visionOverrides = Map.empty } ]
                     authClients =
                         [ { tokenHash = hash
                             name = "e2e-test"
@@ -833,7 +833,7 @@ let ``e2e deleting a conversation never sweeps attachment blobs`` () =
                             enabled = true
                             promptCaching = false
                             headers = Map.empty
-                            extraJson = None } ]
+                            extraJson = None; visionOverrides = Map.empty } ]
                 authClients =
                     [ { tokenHash = Auth.hashToken token
                         name = "e2e"

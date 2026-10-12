@@ -77,3 +77,18 @@ module MediaTypes =
         elif isModelImage mediaType && size > maxImageBytes then
             Error(sprintf "没有添加「%s」：图片超过 8 MiB，模型收不到。请压缩或截一部分后再添加。" fileName)
         else Ok()
+
+    /// 决策 333：附件选择器的筛选项。第一项是默认项：「所有文件」在前，什么都不藏；
+    /// 「图片」只列模型收的四种（PWA 在手机上据此给出拍照 / 相册），「文本与文档」列主机能内联的文本与 PDF。
+    let pickerFilters : (string * string list * string list) list =
+        let textExtensions =
+            table
+            |> Map.toList
+            |> List.filter (fun (_, mt) ->
+                mt.StartsWith("text/", StringComparison.Ordinal)
+                || mt = "application/pdf" || mt = "application/json" || mt = "application/xml"
+                || mt = "application/yaml" || mt = "application/toml")
+            |> List.map fst
+        [ "所有文件", [ "*.*" ], [ "*/*" ]
+          "图片（PNG、JPG、GIF、WebP）", [ "*.png"; "*.jpg"; "*.jpeg"; "*.gif"; "*.webp" ], [ "image/png"; "image/jpeg"; "image/gif"; "image/webp" ]
+          "文本与文档（TXT、Markdown、代码、PDF 等）", textExtensions |> List.map (fun e -> "*" + e), [ "text/*"; "application/pdf"; "application/json" ] ]

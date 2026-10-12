@@ -715,6 +715,8 @@ type WsConnection(
                                            models = JsonArray([| for m in models -> JsonNode.op_Implicit m |])
                                            error = None |})
                                 |> ignore
+                                // 探测顺带拿到了看图能力（决策 330），刷新目录让输入区立即用上。
+                                this.SendCatalog()
                             | Error e ->
                                 this.TrySend(
                                     ProviderProbeResult

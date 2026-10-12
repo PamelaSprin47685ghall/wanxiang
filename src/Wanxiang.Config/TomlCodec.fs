@@ -34,7 +34,7 @@ module TomlCodec =
 
     let private knownProviderKeys =
         set [ "kind"; "label"; "baseUrl"; "apiKey"; "models"; "defaultModel"
-              "timeoutSeconds"; "maxRetries"; "enabled"; "headers"; "extra"; "promptCaching" ]
+              "timeoutSeconds"; "maxRetries"; "enabled"; "headers"; "extra"; "promptCaching"; "visionModels"; "textOnlyModels" ]
 
     let private knownMcpKeys =
         set [ "label"; "command"; "args"; "env"; "url"; "maxConcurrency"; "callTimeoutSeconds"; "enabled" ]
@@ -297,7 +297,8 @@ module TomlCodec =
                                     enabled = true
                                     headers = Map.empty
                                     promptCaching = false
-                                    extraJson = extra }
+                                    extraJson = extra
+                                    visionOverrides = Map.empty }
                           | None -> errors.Add(sprintf "providers.%s: expected table" kv.Key) ]
                     |> Map.ofList
                 | None ->
@@ -577,7 +578,19 @@ module TomlCodec =
                                       (match pt.TryGetValue "promptCaching" with
                                        | true, b -> asBool b |> Option.defaultValue false
                                        | _ -> false)
-                                    extraJson = extra }
+                                    extraJson = extra
+                                    visionOverrides =
+                                      (let listOf k =
+                                          match pt.TryGetValue k with
+                                          | true, b ->
+                                              asStringList b |> Option.defaultValue []
+                                              |> List.map (fun s -> s.Trim())
+                                              |> List.filter (String.IsNullOrWhiteSpace >> not)
+                                          | _ -> []
+                                       // 同一模型两边都写时以「只吃文字」为准（保守，不误发图片）。
+                                       [ for m in listOf "visionModels" -> m, true
+                                         for m in listOf "textOnlyModels" -> m, false ]
+                                       |> Map.ofList) }
                           | None -> errors.Add(sprintf "providers.%s: expected table" kv.Key) ]
                     |> Map.ofList
                 | None ->
@@ -860,6 +873,17 @@ module TomlCodec =
             p.Add("maxRetries", int64 kv.Value.maxRetries)
             p.Add("enabled", kv.Value.enabled)
             if kv.Value.promptCaching then p.Add("promptCaching", true)
+            let overrides = kv.Value.visionOverrides |> Map.toList
+            let yes = overrides |> List.filter snd |> List.map fst
+            let no = overrides |> List.filter (snd >> not) |> List.map fst
+            if not (List.isEmpty yes) then
+                let a = TomlArray()
+                for m in yes do a.Add m
+                p.Add("visionModels", a)
+            if not (List.isEmpty no) then
+                let a = TomlArray()
+                for m in no do a.Add m
+                p.Add("textOnlyModels", a)
             if not (Map.isEmpty kv.Value.headers) then
                 let h = TomlTable()
                 for e in kv.Value.headers do h.Add(e.Key, e.Value)

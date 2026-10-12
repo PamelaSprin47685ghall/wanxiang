@@ -330,7 +330,7 @@ module DialogsTests =
                             defaultModel = "gpt-4o"
                             timeoutSeconds = 60
                             maxRetries = 2
-                            enabled = true
+                            enabled = true; visionOverrides = Map.empty; visionDetected = Map.empty
                         }
                     ]
                     tools = [

@@ -413,7 +413,7 @@ type private Host(port: int, token: string, providerUrl: string, tools: ToolsCon
                               { id = "test-provider"; kind = "openai"; label = "T"; baseUrl = providerUrl; apiKey = None
                                 models = [ "test-model" ]; defaultModel = "test-model"
                                 timeoutSeconds = ProviderConfig.defaultTimeoutSeconds; maxRetries = 0; enabled = true
-                                promptCaching = false; headers = Map.empty; extraJson = None } ]
+                                promptCaching = false; headers = Map.empty; extraJson = None; visionOverrides = Map.empty } ]
                     authClients =
                         [ { tokenHash = Auth.hashToken token; name = "w3"; createdAtUtc = DateTimeOffset.UtcNow
                             lastSeenUtc = None; revoked = false } ] }

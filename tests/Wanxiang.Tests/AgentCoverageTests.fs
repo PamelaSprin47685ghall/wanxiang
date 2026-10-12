@@ -48,7 +48,7 @@ module AgentCoverageTests =
         enabled = true
         promptCaching = false
         headers = Map.empty
-        extraJson = None
+        extraJson = None; visionOverrides = Map.empty
     }
 
     let dummySession : SessionConfig = {

@@ -1124,7 +1124,7 @@ let ``ProviderConfig 辅助函数：displayName, hasModel, resolveModel 覆盖``
         enabled = true
         promptCaching = false
         headers = Map.empty
-        extraJson = None
+        extraJson = None; visionOverrides = Map.empty
     }
     Assert.Equal("my-p", ProviderConfig.displayName pNoLabel)
 
@@ -1186,7 +1186,7 @@ let ``AppConfig usableProviders, defaultProvider, tryProvider 覆盖`` () =
         enabled = true
         promptCaching = false
         headers = Map.empty
-        extraJson = None
+        extraJson = None; visionOverrides = Map.empty
     }
     let p2 = { p1 with id = "p-alpha" }
     let pDisabled = { p1 with id = "p-disabled"; enabled = false }
