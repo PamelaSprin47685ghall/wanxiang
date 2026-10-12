@@ -36,6 +36,8 @@ type MessageContext = {
     usage: GenerationUsage option
     /// 内容已丢失的附件（下载失败）
     missingAttachments: Set<string>
+    /// 正等用户批准的工具调用 callId（审批卡仍在）：这些调用显示「等待批准」而不是「执行中」
+    awaitingApproval: Set<string>
     brandAvatar: unit -> Control
 }
 
@@ -610,27 +612,34 @@ module MessageCard =
                             | None -> None
         | _ -> None
 
-    let private resolveToolCallStatus (isStreaming: bool) (call: ToolCallView) : ToolCallStatus =
+    let private resolveToolCallStatusWith (awaiting: Set<string>) (isStreaming: bool) (call: ToolCallView) : ToolCallStatus =
         match call.result with
         | Some res ->
             match tryExtractToolError (Some res) with
             | Some err -> ToolCallStatus.Failed(Some err)
             | None -> ToolCallStatus.Success
         | None ->
-            if isStreaming then ToolCallStatus.Running
+            if isStreaming && awaiting.Contains call.callId then ToolCallStatus.AwaitingApproval
+            elif isStreaming then ToolCallStatus.Running
             else ToolCallStatus.Unknown
 
+    /// 测试入口：按上下文解析一条工具调用的状态。
+    let resolveStatus (ctx: MessageContext) (call: ToolCallView) =
+        resolveToolCallStatusWith ctx.awaitingApproval ctx.streaming call
+
     let private toolCallCard (ctx: MessageContext) (actions: MessageActions) (call: ToolCallView) : Control =
-        let status = resolveToolCallStatus ctx.streaming call
+        let status = resolveStatus ctx call
         let statusBrush: IBrush =
             match status with
             | ToolCallStatus.Running -> Tokens.accent
+            | ToolCallStatus.AwaitingApproval -> Tokens.warning
             | ToolCallStatus.Success -> Tokens.success
             | ToolCallStatus.Failed _ -> Tokens.danger
             | ToolCallStatus.Unknown -> Tokens.warning
         let statusBg: IBrush =
             match status with
-            | ToolCallStatus.Running -> Tokens.surfaceSoft :> IBrush
+            | ToolCallStatus.Running
+            | ToolCallStatus.AwaitingApproval -> Tokens.surfaceSoft :> IBrush
             | ToolCallStatus.Success -> Tokens.surfaceSoft :> IBrush
             | ToolCallStatus.Failed _ -> Tokens.dangerSoft :> IBrush
             | ToolCallStatus.Unknown -> Tokens.surfaceSoft :> IBrush
@@ -638,6 +647,7 @@ module MessageCard =
         let icon: Control =
             match status with
             | ToolCallStatus.Running -> Ui.spinner ControlMetrics.spinnerSize
+            | ToolCallStatus.AwaitingApproval -> Icons.wrench statusBrush
             | ToolCallStatus.Success -> Icons.wrench statusBrush
             | ToolCallStatus.Failed _ -> Icons.alert statusBrush
             | ToolCallStatus.Unknown -> Icons.info statusBrush
@@ -645,6 +655,7 @@ module MessageCard =
         let statusGlyph: Control =
             match status with
             | ToolCallStatus.Running -> Ui.spinner ControlMetrics.spinnerCompactSize
+            | ToolCallStatus.AwaitingApproval -> Icons.info statusBrush
             | ToolCallStatus.Success -> Icons.check statusBrush
             | ToolCallStatus.Failed _ -> Icons.alert statusBrush
             | ToolCallStatus.Unknown -> Icons.info statusBrush
@@ -908,9 +919,10 @@ module MessageCard =
     /// 当消息有工具调用时，在工具调用上方形成简短概览（如「调用 2 个工具 · 1 个完成」），
     /// 不创建独立执行看板，且可折叠/展开工具卡片列表。
     let private toolActivityBlock (ctx: MessageContext) (actions: MessageActions) (calls: ToolCallView list) : Control =
-        let statuses = calls |> List.map (resolveToolCallStatus ctx.streaming)
+        let statuses = calls |> List.map (resolveStatus ctx)
         let total = List.length calls
         let runningCount = statuses |> List.filter (function ToolCallStatus.Running -> true | _ -> false) |> List.length
+        let awaitingCount = statuses |> List.filter (function ToolCallStatus.AwaitingApproval -> true | _ -> false) |> List.length
         let successCount = statuses |> List.filter (function ToolCallStatus.Success -> true | _ -> false) |> List.length
         let failedCount = statuses |> List.filter (function ToolCallStatus.Failed _ -> true | _ -> false) |> List.length
         let unknownCount = statuses |> List.filter (function ToolCallStatus.Unknown -> true | _ -> false) |> List.length
@@ -919,12 +931,14 @@ module MessageCard =
             if total = 1 then
                 match List.head statuses with
                 | ToolCallStatus.Running -> "调用 1 个工具 · 执行中"
+                | ToolCallStatus.AwaitingApproval -> "调用 1 个工具 · 等待批准"
                 | ToolCallStatus.Success -> "调用 1 个工具 · 已完成"
                 | ToolCallStatus.Failed _ -> "调用 1 个工具 · 执行失败"
                 | ToolCallStatus.Unknown -> "调用 1 个工具 · 结果未知"
             else
                 let parts = [
                     if successCount > 0 then yield sprintf "%d 个完成" successCount
+                    if awaitingCount > 0 then yield sprintf "%d 个等待批准" awaitingCount
                     if runningCount > 0 then yield sprintf "%d 个执行中" runningCount
                     if failedCount > 0 then yield sprintf "%d 个失败" failedCount
                     if unknownCount > 0 then yield sprintf "%d 个结果未知" unknownCount

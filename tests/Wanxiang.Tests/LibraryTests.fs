@@ -811,3 +811,17 @@ let ``large history: 300k messages are scanned within budget, flagged truncated,
     let recent = run proj (query "对话 3000 的第 100 条")
     Assert.Equal(1, recent.items.Count)
     Assert.True recent.truncated
+
+[<Fact>]
+let ``同一父对话的多个分叉标题可区分（第 207 节）`` () =
+    let b = Builder()
+    let r = b.Conversation "旅行计划"
+    let _u = b.User(r, "问题")
+    let a = b.Assistant(r, "回答")
+    let f1 = b.Fork(r, Some a)
+    let f2 = b.Fork(r, Some a)
+    let f3 = b.Fork(r, Some a)
+    let title id = b.Projection.conversations[id].title
+    Assert.Equal("旅行计划（分叉）", title f1)
+    Assert.Equal("旅行计划（分叉 2）", title f2)
+    Assert.Equal("旅行计划（分叉 3）", title f3)

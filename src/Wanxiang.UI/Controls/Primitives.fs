@@ -549,6 +549,7 @@ module Ui =
         if not (String.IsNullOrWhiteSpace tip) then
             ToolTip.SetTip(host, tip)
             Avalonia.Automation.AutomationProperties.SetName(host, tip)
+            InputModality.suppressTooltipOnTouch host
         host
 
     /// 强调色实心图标按钮（发送等主操作）。
@@ -572,6 +573,7 @@ module Ui =
         if not (String.IsNullOrWhiteSpace tip) then
             ToolTip.SetTip(host, tip)
             Avalonia.Automation.AutomationProperties.SetName(host, tip)
+            InputModality.suppressTooltipOnTouch host
         host
 
     /// 禁用态保留足够对比度：过低的不透明度会让实心按钮上的图标彻底消失，

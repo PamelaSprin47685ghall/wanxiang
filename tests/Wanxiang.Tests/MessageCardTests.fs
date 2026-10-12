@@ -40,7 +40,7 @@ module MessageCardTests =
             isLastAssistant = true
             usage = None
             missingAttachments = Set.empty
-            brandAvatar = fun () -> TextBlock(Text = "Avatar") :> Control
+            awaitingApproval = Set.empty; brandAvatar = fun () -> TextBlock(Text = "Avatar") :> Control
         }
 
     let private createDefaultActions () : MessageActions * (string list ref) =

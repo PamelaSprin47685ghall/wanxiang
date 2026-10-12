@@ -43,6 +43,10 @@ public static partial class BrowserBridge
     [JSImport("wxViewportWidth", "wanxiang")]
     public static partial double ViewportWidth();
 
+    /// <summary>第一次完整对话成功结束：PWA 安装引导此后才允许出现（第 210 节）。</summary>
+    [JSImport("wxConversationSucceeded", "wanxiang")]
+    public static partial void ConversationSucceeded();
+
     /// <summary>在全局作用域执行一段脚本（highlight.js / KaTeX 的加载）。</summary>
     [JSImport("richLoad", "wanxiang")]
     public static partial void RichLoad(string source);

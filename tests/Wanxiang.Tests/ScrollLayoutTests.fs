@@ -55,7 +55,7 @@ let ``嵌套 ScrollViewer 与草稿/待发送滚动视口具备右侧安全留�
           isLastAssistant = true
           usage = None
           missingAttachments = Set.empty
-          brandAvatar = fun () -> Border() :> Control }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
     let msgActions: MessageActions =
         { copyText = ignore
           regenerate = ignore

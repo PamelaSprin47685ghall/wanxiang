@@ -414,3 +414,51 @@ module Interaction =
             | NavigationMethod.Pointer -> control.Classes.Remove programmaticFocusClass |> ignore
             | _ -> control.Classes.Add programmaticFocusClass |> ignore)
         control.LostFocus.Add(fun _ -> control.Classes.Remove programmaticFocusClass |> ignore)
+/// 最近一次输入来自触屏还是键盘/鼠标（第 212 节）。
+/// 只用于「要不要替用户做一件只对键盘有用的事」：抽屉打开时自动聚焦搜索框（触屏上会弹出软键盘遮住列表）、
+/// 悬停提示（触屏没有悬停，点一下会留下一个挡手的提示框）。
+module InputModality =
+
+    let mutable private lastWasTouch: bool option = None
+
+    /// 报告一次真实输入：触屏按下为 true，键盘 / 鼠标为 false。
+    let report (isTouch: bool) = lastWasTouch <- Some isTouch
+
+    /// 测试用：清除记录。
+    let reset () = lastWasTouch <- None
+
+    /// 当前是否按触屏对待。还没有任何输入时：浏览器（PWA，多为手机）按触屏，桌面按键盘。
+    let prefersTouch () =
+        match lastWasTouch with
+        | Some v -> v
+        | None -> OperatingSystem.IsBrowser()
+
+    /// 在根控件上挂隧道监听，记录输入方式（含已处理事件）。
+    let track (root: Control) =
+        root.AddHandler(
+            InputElement.PointerPressedEvent,
+            (fun _ (e: PointerPressedEventArgs) -> report (e.Pointer.Type = PointerType.Touch)),
+            Avalonia.Interactivity.RoutingStrategies.Tunnel,
+            true)
+        root.AddHandler(
+            InputElement.KeyDownEvent,
+            (fun _ (_: KeyEventArgs) -> report false),
+            Avalonia.Interactivity.RoutingStrategies.Tunnel,
+            true)
+
+    /// 触屏上不显示该控件的悬停提示（无障碍名称不受影响）。
+    let suppressTooltipOnTouch (control: Control) =
+        let sync (pointerType: PointerType) =
+            let touch = pointerType = PointerType.Touch
+            ToolTip.SetServiceEnabled(control, not touch)
+            if touch then ToolTip.SetIsOpen(control, false)
+        control.AddHandler(
+            InputElement.PointerEnteredEvent,
+            (fun _ (e: PointerEventArgs) -> sync e.Pointer.Type),
+            Avalonia.Interactivity.RoutingStrategies.Direct ||| Avalonia.Interactivity.RoutingStrategies.Bubble,
+            true)
+        control.AddHandler(
+            InputElement.PointerPressedEvent,
+            (fun _ (e: PointerPressedEventArgs) -> sync e.Pointer.Type),
+            Avalonia.Interactivity.RoutingStrategies.Tunnel ||| Avalonia.Interactivity.RoutingStrategies.Bubble,
+            true)

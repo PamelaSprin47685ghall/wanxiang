@@ -60,7 +60,9 @@ type private CardKey =
       /// 同一消息的版本切换控件（W4）：只影响带该控件的用户卡，其余恒为 0
       siblingTag: int
       /// 生成仍在进行、这条的工具调用还没有结果（等审批或执行中）
-      awaitingTools: bool }
+      awaitingTools: bool
+      /// 等待批准的调用集合（只在 awaitingTools 时有意义）
+      approvalTag: int }
 
 /// 聊天主区：顶栏（标题 / 模型 / 操作）+ 消息列表。
 type ChatView(actions: ChatActions, brandLogo: float -> Control) =
@@ -110,6 +112,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     // 顶栏只交代“正在看哪段对话”。低频管理与阅读导航进入有文字的菜单。
     let moreButton = Ui.iconButton Icons.more "对话操作"
     let mutable showMore: Control -> unit = ignore
+    let mutable awaitingApproval: Set<string> = Set.empty
+    let mutable lastFlashedCommit: uint64 option = None
     let mutable canJumpPrevious = false
     let mutable canJumpNext = false
     let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl+B / ⌘B）"
@@ -586,6 +590,37 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         | None -> false
 
     /// 把指定消息滚到视口。卡片不在已加载窗口里（更早的历史）时返回 false，由调用方先加载更早历史。
+    /// 最近一次被「闪一下」的消息（测试与无障碍：定位成功的可观察信号）。
+    member _.LastFlashedCommit = lastFlashedCommit
+
+    /// 滚到一条消息并短暂高亮（第 211 节）：搜索命中跳转后，眼睛要能立刻找到是哪一条。
+    /// 背景淡色停留约 1.6 秒后复原；不改布局，不抢焦点。
+    member this.RevealAndHighlight(commitId: uint64) : bool =
+        if this.ScrollToMessage commitId then
+            lastFlashedCommit <- Some commitId
+            Dispatcher.UIThread.Post(
+                (fun () ->
+                    let index = mountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
+                    match index with
+                    | Some i when i < messagePanel.Children.Count ->
+                        let card = messagePanel.Children.[i]
+                        let apply (get: unit -> IBrush) (set: IBrush -> unit) =
+                            let original = get ()
+                            set Tokens.accentSoft
+                            let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 1600.0)
+                            timer.Tick.Add(fun _ ->
+                                timer.Stop()
+                                set original)
+                            timer.Start()
+                        match card with
+                        | :? Border as b -> apply (fun () -> b.Background) (fun v -> b.Background <- v)
+                        | :? Panel as p -> apply (fun () -> p.Background) (fun v -> p.Background <- v)
+                        | _ -> ()
+                    | _ -> ()),
+                DispatcherPriority.Background)
+            true
+        else false
+
     member this.ScrollToMessage(commitId: uint64) : bool =
         let indexOf () =
             mountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
@@ -866,6 +901,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         Avalonia.Automation.AutomationProperties.SetName(bar, name)
         Ui.vstack Spacing.spaceXs [ card; bar :> Control ] :> Control
 
+    /// 主机发出 / 撤回审批请求时更新：对应工具调用显示「等待批准」（第 206 节）。
+    member _.SetAwaitingApproval(callIds: Set<string>) = awaitingApproval <- callIds
+    member _.AwaitingApproval = awaitingApproval
+
     member this.RenderMessages
         (
             messages: MessageView list,
@@ -897,7 +936,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
               isLastAssistant = (streamingMessage.IsNone && lastAssistantIndex = Some index)
               usage = usage
               missingAttachments = missingAttachments
-              brandAvatar = fun () -> brandLogo Tokens.logoAvatar }
+              awaitingApproval = awaitingApproval; brandAvatar = fun () -> brandLogo Tokens.logoAvatar }
         // 先列出这一帧想要的卡片：已提交的带身份（可复用），
         // 流式卡与错误卡没有身份（每帧必然变，本来就该重建）
         let desired = ResizeArray<CardKey option * (unit -> Control)>()
@@ -947,7 +986,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                           missingTag =
                             (if List.isEmpty message.attachments then 0 else hash ctx.missingAttachments)
                           siblingTag = (match siblings with Some s -> hash (s.index, s.count, s.targets) | None -> 0)
-                          awaitingTools = awaitingTools })
+                          awaitingTools = awaitingTools
+                          approvalTag = (if awaitingTools then hash awaitingApproval else 0) })
                 desired.Add(
                     key,
                     fun () ->
