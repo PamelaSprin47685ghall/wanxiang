@@ -869,5 +869,19 @@ Composer 原有的 `isImeComposing` 改为调用 `ImeGuard.isComposing`，判据
 `tools/qa_ime_pwa.js` 用 CDP `Input.imeSetComposition` + 组合中回车（keyCode 229）+ `Input.insertText` 提交，在 headless Chrome 验证输入框、侧栏搜索、命令面板：文本为「ab你」（组合中回车未提交、无重复字），并截预编辑与提交后的图。无需配对。
 
 # 389. r21 待办
-- PWA：不经组合直接 `beforeinput insertText`（CDP insertText、部分语音输入/联想上屏）不会落进 Avalonia 文本框——上游浏览器后端只认按键与 composition；需评估在 patch_avalonia_js.py 里补，或等上游。
+- ~~PWA：不经组合直接 `beforeinput insertText` 不会落进 Avalonia 文本框~~ → 已由 390 补上。
 - 重命名、配对码、设置表单的输入法行为只有全局守卫的单元覆盖，未在 PWA 里实机走（需配对后的会话）；iOS/Android 真机输入法、Windows 微软拼音未验证。
+
+# 390. PWA 非组合上屏桥
+Avalonia.Browser 只把「key 长度为 1 的 keydown」与 `compositionend` 变成 TextInput；`beforeinput` 的 `insertText` / `insertReplacementText` / `insertFromPaste` / `insertFromDrop`（CDP `Input.insertText`、iOS 自动更正与联想、语音听写、长按粘贴）被丢掉，隐藏 `<input>` 还会和 Avalonia 文本脱节。`tools/patch_avalonia_js.py` 在 `subscribeTextEvents` 里追加桥（标记 `/*wx-insert-bridge*/`，可重复执行）：
+- 组合中（`isComposing` 或自记的 compositionstart/end）一律放行给原有组合路径；
+- 其余这几类 `preventDefault`，文本经 `InputHelper.OnCompositionEnd(data)` → `RawTextEvent` 落一次（粘贴取 `dataTransfer` 的 text/plain，换行归一为 `\n`）；
+- 只有 `insertReplacementText` 先把目标区间（`getTargetRanges` 或隐藏框当前选区）经现有 `deleteContentBackward` 选区同步映射成 Avalonia 选区，再插入——替换只发生在被替换的那个词上；
+- Ctrl/⌘+V 之后 1 秒内的 `insertFromPaste` 跳过（Avalonia 自己处理快捷键粘贴，避免粘两次）。
+上游状态（2026-10-12）：AvaloniaUI/Avalonia#11665「[WASM] Virtual keyboard not working at all on Android Browsers」仍开着；部分修复 PR #20166 已关闭未合并；master 的 `input.ts` 仍只把 `beforeinput` 用作选区同步。上游修好后删掉这段补丁。
+
+# 391. qa_ime_pwa 覆盖非组合上屏
+`tools/qa_ime_pwa.js` 在输入框、侧栏搜索、命令面板、配对码、主机地址五处跑：CDP `Input.insertText` 两次（各落一次）→ 合成 `insertReplacementText` 替换光标前的词 → 合成 `insertFromPaste`；配对码框只收数字，用 5 位数字（满 6 位会自动提交）。判据读隐藏 `<input>` 的值：桥 `preventDefault` 后它只由 Avalonia 的 `SetSurroundingText` 回写。原有组合用例保留。重命名框需要已配对会话，未在脚本内覆盖。
+
+# 392. 测试不卡墙钟
+「外部非法编辑被告知」用例原先断言 2 秒（后放宽到 5 秒）内收到 `config.rejected`，满载 CI 偶发失败。主机没有轮询，该事件只能由文件监视推出，改为只等事件（30 秒总超时兜底「根本没告知」），用例更名为 `an invalid external edit is announced by the file watcher and clears once fixed`。同类审计：`sleep 固定时长后断言「某事已发生」` 的改为按条件/事件等待——ConfigTests 两处 reload 拒绝（等拒绝回调）、AsyncHighlight 合并通知（按调用计数轮询）、WsClient 五处（接收计数 / closed 回调轮询）。「固定时长内没有发生」这类反向断言与 `Stopwatch` 性能预算（有宽裕余量）保留不动。

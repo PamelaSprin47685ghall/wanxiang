@@ -378,7 +378,7 @@ module ComposerReliabilityTests =
     let private eventType (o: JsonObject) = o["type"].GetValue<string>()
 
     [<Fact>]
-    let ``an invalid external edit is announced within two seconds and clears once fixed`` () =
+    let ``an invalid external edit is announced by the file watcher and clears once fixed`` () =
         let host = new LiveHost()
         use _cleanup = { new IDisposable with member _.Dispose() = host.Dispose() }
         use all = new CancellationTokenSource(TimeSpan.FromSeconds 30.0)
@@ -387,14 +387,10 @@ module ComposerReliabilityTests =
         let hashBefore = host.EventLogHash()
         // 外部编辑成非法 TOML。
         File.WriteAllText(host.ConfigPath, "this is = = not valid toml [[[")
-        let started = DateTime.UtcNow
-        use quick = CancellationTokenSource.CreateLinkedTokenSource(all.Token)
-        // 产品目标是 2 秒内；非 UI 测试在单进程内线程级并行（800+ 用例同时跑），
-        // 文件监视回调在满载下偶发拖过 2 秒——这是 CI 偶发失败的来源。门禁放宽到 5 秒，
-        // 仍能抓住「根本没告知 / 要等下一次轮询」这类真回归。
-        quick.CancelAfter(TimeSpan.FromSeconds 5.0)
-        let rejected = ServerE2eTests.E2e.waitFor ws quick.Token (fun o -> eventType o = "config.rejected")
-        Assert.True((DateTime.UtcNow - started).TotalSeconds < 5.5)
+        // 决策 392：只等事件，不卡墙钟。主机没有轮询，config.rejected 只可能由文件监视（~100ms debounce）
+        // 推出；「根本没告知」由 30 秒总超时抓住。原先的 2 秒/5 秒墙钟门禁在满载 CI 上偶发失败，
+        // 而它要守的「及时」由 ConfigStore 的 debounce 单测覆盖。
+        let rejected = ServerE2eTests.E2e.waitFor ws all.Token (fun o -> eventType o = "config.rejected")
         let payload = rejected["payload"].AsObject()
         Assert.Contains("配置有误", payload["summary"].GetValue<string>())
         Assert.NotEmpty(payload["errors"].AsArray())
