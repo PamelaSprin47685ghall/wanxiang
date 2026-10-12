@@ -347,7 +347,7 @@ html, body {
 @media (display-mode: standalone) { .shell-install { display: none !important; } }
 /* 决策 271：桌面（精确指针、宽屏）上安装提示不再浮在画布上压住对话标题栏，
    而是停靠成顶部一条，画布整体让位下移；关闭后画布回到原位。手机仍是顶部浮条。 */
-@media (pointer: fine) and (min-width: 900px) {
+@media (min-width: 900px) and (not (pointer: coarse)) {
     .shell-install {
         top: 0; left: 0; right: 0;
         transform: none;

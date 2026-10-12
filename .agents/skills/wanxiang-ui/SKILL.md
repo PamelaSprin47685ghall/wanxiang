@@ -640,7 +640,7 @@ PWA 安装条在桌面浏览器上也写「安装到主屏幕」。现在按 `(p
 r9 #6：未连接时侧栏与正文各有一张品牌卡和一个「连接主机」按钮，文案还不同。现在正文是唯一主卡，标题统一为「先连接一台万象主机」，说明沿用 §260 的人话；宽屏侧栏只留一句「连接主机后，对话记录会显示在这里。」，按钮保持挂载但隐藏。窄屏抽屉遮住正文，侧栏按钮在 compact 下照常出现（`SetCompactMode` 同步）。
 
 # 271. 桌面上安装提示停靠，不压标题栏
-r9 #8：安装条是顶部浮层，在桌面上压住对话标题栏中部。`(pointer: fine) and (min-width: 900px)` 下安装条改为顶部停靠条（56px、全宽、无圆角阴影），`body:has(#shell-install:not([hidden])) #out` 让画布整体下移让位；关闭即复位。手机维持 §210 的顶部浮条。
+r9 #8：安装条是顶部浮层，在桌面上压住对话标题栏中部。`(min-width: 900px) and (not (pointer: coarse))` 下（与安装文案同一判据，§264）安装条改为顶部停靠条（56px、全宽、无圆角阴影），`body:has(#shell-install:not([hidden])) #out` 让画布整体下移让位；关闭即复位。手机维持 §210 的顶部浮条。
 
 # 272. 手写配置缺 instanceId 自动补齐
 r9 #9：最小手写 `config.toml` 缺 `instanceId` 时主机以 `instanceId: required UUID` 退出。`ConfigStore.Open` 读到语法正确、但没有顶层 instanceId 的文件时，在开头补一行注释和新 UUIDv7（`TomlCodec.ensureInstanceId`），原子写回后再解析；其余内容不动。热重载路径不补（运行中删掉 instanceId 仍按配置事故拒绝）。

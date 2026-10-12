@@ -237,7 +237,8 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
                         setStatus "" false
                         rebuildChips ()
                         syncControls ()
-                        if preset.needsApiKey then keyBox.Focus() |> ignore)
+                        if preset.key = "custom" then customUrlBox.Focus() |> ignore
+                        elif preset.needsApiKey then keyBox.Focus() |> ignore)
             button.Margin <- Thickness(0.0, 0.0, Spacing.spaceMd, Spacing.spaceMd)
             Avalonia.Automation.AutomationProperties.SetHelpText(button, "选择这家模型服务：" + preset.label)
             button
@@ -245,7 +246,7 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
             chipRow.Children.Add(chip preset)
         customPreset |> Option.iter (fun p -> chipRow.Children.Add(chip { p with label = "自定义地址" }))
         let moreLabel =
-            if ProviderPresets.more |> List.exists (fun p -> p.key = selected.key) then
+            if selected.key <> "custom" && ProviderPresets.more |> List.exists (fun p -> p.key = selected.key) then
                 "更多：" + selected.label
             else
                 "更多"
