@@ -67,7 +67,7 @@ module ControlMetrics =
     let fontSizeValueMinWidth = Spacing.Slot.wide
     let aboutKeyMinWidth = Spacing.Slot.wide2
 
-    /// 常规行的最小高度：设置页开关行与侧栏会话行同一行高语义的唯一真源。
+    /// 常规行的最小高度：设置页开关行与侧栏对话行同一行高语义的唯一真源。
     /// 此前 44.0 在 SettingsGeneral 与这里各写一份、同值不同源。
     let rowMinHeight = 44.0
 

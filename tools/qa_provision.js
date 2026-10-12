@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// QA 前置：在干净数据目录的服务端上写入 mock 服务商，否则 qa_shot 的
+// QA 前置：在干净数据目录的主机上写入 mock 模型服务，否则 qa_shot 的
 // LONG/TOOL/FAIL 发出去也没有模型接单，7 态截图全是同一屏（verify-round1 教训）。
 // 用法：node tools/qa_provision.js [--url ws://127.0.0.1:8765/ws] [--log /tmp/wanxiang.log]
 //   要求 mock_openai.py 已在 8799 运行。幂等：mock 已存在则直接 PASS。

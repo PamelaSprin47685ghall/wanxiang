@@ -24,15 +24,15 @@ type SettingsActions = {
     toast: string -> ToastTone -> unit
 }
 
-/// 服务商设置面板。
+/// 模型服务设置面板。
 ///
 /// 这是「不改配置文件也能用」的关键：预设一选、密钥一贴、模型一探，
-/// 就能开始对话。密钥永不回显（服务端只下发 hasApiKey）。
+/// 就能开始对话。密钥永不回显（主机只下发 hasApiKey）。
 type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
     let listPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
     let mutable catalog = Catalog.empty
-    /// 顶部「添加服务商」：列表为空时由空态里的同名主按钮接管，避免同屏两个相同主操作。
+    /// 顶部「添加模型服务」：列表为空时由空态里的同名主按钮接管，避免同屏两个相同主操作。
     let mutable topAddButton: Border option = None
 
     /// 外壳反馈只切描边颜色与外阴影（Stroke.thick 外环），不动厚度与内边距。
@@ -71,7 +71,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         Ui.clearFieldError box
         syncShellVisual box
 
-    /// 探活结果按服务商 id 暂存，用于在编辑器里回填模型列表。
+    /// 探活结果按模型服务 id 暂存，用于在编辑器里回填模型列表。
     let probeResults = System.Collections.Generic.Dictionary<string, string list>()
 
     /// 当前编辑器的探活挂钩：ApplyProbe 到达时清掉按钮 pending 并回填模型框，
@@ -94,7 +94,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
     let providerPayload (id: string) (label: string) (kind: string) (baseUrl: string) (apiKey: string option) (models: string list) (defaultModel: string) (enabled: bool) (timeout: int) (retries: int) =
         ProviderPresets.payload id label kind baseUrl apiKey models defaultModel enabled timeout retries
 
-    /// 服务商编辑器。`existing = None` 表示新增。
+    /// 模型服务编辑器。`existing = None` 表示新增。
     member private this.ShowEditor(existing: ProviderInfo option) =
         let mutable editorActive = true
         let takenIds = catalog.providers |> List.map (fun p -> p.id)
@@ -103,7 +103,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             | Some p -> ProviderPresets.matchByBaseUrl p.baseUrl
             | None -> ProviderPresets.tryFind "openai"
 
-        // 编辑已有服务商时沿用它的传输类型；新增时取预设的
+        // 编辑已有模型服务时沿用它的传输类型；新增时取预设的
         let mutable selectedKind =
             match existing with
             | Some p when not (System.String.IsNullOrWhiteSpace p.kind) -> p.kind
@@ -120,7 +120,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let urlField = Ui.inputFieldGroup "端点地址" "https:// 开头的服务地址；原生与兼容接口均可。" urlBox
         let _, keyBox = Ui.textField "粘贴密钥"
         Avalonia.Automation.AutomationProperties.SetName(keyBox, "API Key")
-        let keyField = Ui.inputFieldGroup "API Key" "只保存在服务端，界面不会回显。" keyBox
+        let keyField = Ui.inputFieldGroup "API Key" "只保存在主机，界面不会回显。" keyBox
         keyBox.PasswordChar <- '●'
         let _, modelsBox = Ui.textField "每行一个模型名"
         Avalonia.Automation.AutomationProperties.SetName(modelsBox, "模型列表")
@@ -310,10 +310,10 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             | Some preset -> applyPreset preset
             | None -> ()
 
-        // 编辑已有服务商时传输类型来自它自己，不走 applyPreset，这里补一次同步。
+        // 编辑已有模型服务时传输类型来自它自己，不走 applyPreset，这里补一次同步。
         syncKindCaption ()
 
-        let probeIdleText = "从服务器获取模型列表"
+        let probeIdleText = "从主机获取模型列表"
         let mutable setProbePending: bool -> unit = ignore
         /// 探活失败的常驻行内标记：toast 一闪而过，这行留到下一次探活。
         let probeStatus =
@@ -332,7 +332,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             if String.IsNullOrWhiteSpace id then
                 actions.toast "先填写稳定标识再探测。" Warning
             elif not (takenIds |> List.contains id) then
-                actions.toast "先保存服务商，然后再探测模型列表。" Warning
+                actions.toast "先保存模型服务，然后再探测模型列表。" Warning
             else
                 clearFieldError urlBox
                 setProbeStatus ""
@@ -344,12 +344,12 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         if String.IsNullOrWhiteSpace currentDefault || not (List.contains currentDefault models) then
                             defaultModelBox.Text <- models |> List.tryHead |> Option.defaultValue ""), setProbeStatus)
                 actions.probeProvider id
-                actions.toast "正在向服务商请求模型列表…" Info
+                actions.toast "正在向模型服务请求模型列表…" Info
         let probeButton = Ui.button Ui.Secondary probeIdleText runProbe
-        // 新增时服务商还不存在，探测无从谈起：按钮直接置灰并就地说明，
+        // 新增时模型服务还不存在，探测无从谈起：按钮直接置灰并就地说明，
         // 不再等用户点了才弹 toast（toast 一闪而过，也不告诉人下一步）。
         let probeNeedsSaveHint =
-            Ui.caption "保存服务商后即可从服务器获取模型列表；现在请手动填写模型名。"
+            Ui.caption "保存模型服务后即可从主机获取模型列表；现在请手动填写模型名。"
         probeNeedsSaveHint.IsVisible <- existing.IsNone
         if existing.IsNone then Ui.setEnabled probeButton false
         // pending 文案更长，预留最小宽度：label 切换不改变按钮几何。
@@ -361,7 +361,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         // 行最小高与其它设置页同一来源；读取端取值与开关语义不变。
         let enabledRow, readEnabled, _ =
             Ui.switchRow
-                "启用这个服务商"
+                "启用这个模型服务"
                 ""
                 (existing |> Option.map (fun p -> p.enabled) |> Option.defaultValue true)
                 ignore
@@ -464,7 +464,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                         (readEnabled ())
                         timeout
                         retries
-                // 需要密钥的服务商没填密钥也允许先存（列表里会标「缺少密钥」），
+                // 需要密钥的模型服务没填密钥也允许先存（列表里会标「缺少密钥」），
                 // 但要当场说清后果与补救路径，而不是等到发消息失败才发现。
                 let keyEmpty = String.IsNullOrWhiteSpace(if isNull keyBox.Text then "" else keyBox.Text)
                 let needsKey =
@@ -473,7 +473,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                     | None -> not (isLoopbackUrl url)
                 let hadKey = existing |> Option.map (fun p -> p.hasApiKey) |> Option.defaultValue false
                 if keyEmpty && needsKey && not hadKey then
-                    actions.toast "尚未填写 API Key：已先保存，在服务商列表点「编辑」补上后才能对话。" Info
+                    actions.toast "尚未填写 API Key：已先保存，在模型服务列表点「编辑」补上后才能对话。" Info
                 setPending true
                 actions.upsertProvider payload (fun ok ->
                     setPending false
@@ -508,13 +508,13 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         cancelButton.Margin <- Thickness 0.0
         cancelButton.Focusable <- true
         Avalonia.Automation.AutomationProperties.SetName(cancelButton, "取消")
-        Avalonia.Automation.AutomationProperties.SetHelpText(cancelButton, "取消并关闭服务商设置 (Esc)")
+        Avalonia.Automation.AutomationProperties.SetHelpText(cancelButton, "取消并关闭模型服务设置 (Esc)")
         ToolTip.SetTip(cancelButton, "取消并关闭 (Esc)")
         let saveButton = Ui.button Ui.Primary idleSaveText save
         saveButton.Margin <- Thickness 0.0
         saveButton.Focusable <- true
         Avalonia.Automation.AutomationProperties.SetName(saveButton, idleSaveText)
-        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, sprintf "确认%s服务商设置 (Ctrl+Enter)" idleSaveText)
+        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, sprintf "确认%s模型服务设置 (Ctrl+Enter)" idleSaveText)
         ToolTip.SetTip(saveButton, sprintf "确认%s (Ctrl+Enter)" idleSaveText)
         Ui.preparePendingButton saveButton
         setPending <- fun pending ->
@@ -530,7 +530,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             // 多行模型框里的回车也会误提交。Escape 不再本地处理，
             // 统一走 OverlayHost.HandleEscape（pending 保存中被 canDismiss 守卫拦截）。
             // 页脚左右键导航：与 Dialogs.fs sessionSettings 行同款——取消↔保存两键间来回。
-            //此前三个设置页（服务商/工具/通用）都缺这条：键盘用户到了按钮行只能 Tab
+            //此前三个设置页（模型服务/工具/通用）都缺这条：键盘用户到了按钮行只能 Tab
             // 绕圈，其它对话框却支持方向键，节律不一致。
             cancelButton.KeyDown.Add(fun e ->
                 if e.Key = Key.Right && saveButton.IsEnabled then
@@ -595,7 +595,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let form =
             Ui.vstack
                 Spacing.spaceXl
-                [ Ui.title (if existing.IsSome then "编辑服务商" else "添加服务商") :> Control
+                [ Ui.title (if existing.IsSome then "编辑模型服务" else "添加模型服务") :> Control
                   Ui.controlFieldGroup "预设" "" (presetButton :> Control)
                   kindCaption :> Control
                   presetHint :> Control
@@ -620,13 +620,13 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         overlay.ShowDialog(
             scroller :> Control,
             520.0,
-            // 无论新建还是编辑，首焦均落在快速接入的名称输入框（如果是已有服务商，名称即首个可编辑项；
+            // 无论新建还是编辑，首焦均落在快速接入的名称输入框（如果是已有模型服务，名称即首个可编辑项；
             // 如果是新建，名称已由预设填好且可改，保证首次交互直接处于输入就绪态，满足无障碍焦点契约）。
             initialFocus = labelBox,
             onClosed = (fun () -> editorActive <- false; activeProbe <- None),
             canDismiss = (fun () -> not savePending))
 
-    /// 探活结果回填：把服务商的模型列表回填到草稿中，不自动提交保存（W2.5）。
+    /// 探活结果回填：把模型服务的模型列表回填到草稿中，不自动提交保存（W2.5）。
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
         match activeProbe with
         | Some (pid, setPending, applyModels, setStatus) when pid = providerId ->
@@ -637,21 +637,21 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 applyModels models
                 actions.toast (sprintf "已获取 %d 个模型，已填入草稿，请确认后保存。" (List.length models)) Info
             elif ok then
-                setStatus "服务商返回了空模型列表，模型框未改动。"
-                actions.toast "服务商返回了空模型列表。" Warning
+                setStatus "模型服务返回了空模型列表，模型框未改动。"
+                actions.toast "模型服务返回了空模型列表。" Warning
             else
-                // 服务端下发 `[code] 说明`：类型决定下一步，说明本身是「发生了什么 / 为什么 / 下一步」。
+                // 主机下发 `[code] 说明`：类型决定下一步，说明本身是「发生了什么 / 为什么 / 下一步」。
                 let _, errMsg = ProbeFailureKind.parse (error |> Option.defaultValue "未知原因")
                 setStatus errMsg
                 actions.toast errMsg Failure
         | _ ->
-            // 编辑器未打开或不是当前服务商时的探活回调：仅缓存结果和给出反馈，绝不后台自动 upsert
+            // 编辑器未打开或不是当前模型服务时的探活回调：仅缓存结果和给出反馈，绝不后台自动 upsert
             if ok then
                 probeResults[providerId] <- models
                 if not (List.isEmpty models) then
-                    actions.toast (sprintf "已获取 %d 个模型。可在编辑服务商中确认后保存。" (List.length models)) Info
+                    actions.toast (sprintf "已获取 %d 个模型。可在编辑模型服务中确认后保存。" (List.length models)) Info
                 else
-                    actions.toast "服务商返回了空模型列表。" Warning
+                    actions.toast "模型服务返回了空模型列表。" Warning
             else
                 let _, errMsg = ProbeFailureKind.parse (error |> Option.defaultValue "未知原因")
                 actions.toast errMsg Failure
@@ -713,7 +713,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 (moreButton :> Control)
                 true
                 [ MenuEntry.create "获取模型列表" (fun () ->
-                      actions.toast "正在向服务商请求模型列表…" Info
+                      actions.toast "正在向模型服务请求模型列表…" Info
                       actions.probeProvider provider.id)
                   |> MenuEntry.withIcon Icons.refresh
                   // 全局默认：新对话优先用它（写入 `[generation] defaultProvider/defaultModel`，
@@ -752,7 +752,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         DockPanel.SetDock(actionsRow, Dock.Right)
         dock.Children.Add actionsRow
         dock.Children.Add column
-        // 列表行卡内边距走行卡档 (space4, space3)：服务商 / MCP / 内置工具等列表单行同一档；
+        // 列表行卡内边距走行卡档 (space4, space3)：模型服务 / MCP / 内置工具等列表单行同一档；
         // 分组面板（外观 / 关于卡）另用更宽松的面板档 (space4, space4)。
         Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.spaceXl)) dock Spacing.Radius.md
         :> Control
@@ -762,37 +762,37 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         listPanel.Children.Clear()
         topAddButton |> Option.iter (fun b -> b.IsVisible <- not (List.isEmpty next.providers))
         if List.isEmpty next.providers then
-            let emptyAdd = Ui.button Ui.Primary "添加服务商" (fun () -> this.ShowEditor None)
-            Avalonia.Automation.AutomationProperties.SetName(emptyAdd, "添加服务商")
+            let emptyAdd = Ui.button Ui.Primary "添加模型服务" (fun () -> this.ShowEditor None)
+            Avalonia.Automation.AutomationProperties.SetName(emptyAdd, "添加模型服务")
             listPanel.Children.Add(
                 // 空态统一为单行说明（logo + 一行 caption），与 SettingsTools 的两个空态同一节律：
-                // 不再单独给服务商面板加标题，三个设置空态一致。
+                // 不再单独给模型服务面板加标题，三个设置空态一致。
                 Ui.emptyState
                     (Brand.logo Tokens.logoEmpty)
                     None
-                    "添加一个服务商后就能开始对话。预设已经填好端点和常见模型，你只需要粘贴密钥。"
+                    "添加一个模型服务后就能开始对话。预设已经填好端点和常见模型，你只需要粘贴密钥。"
                     None
                     (Some emptyAdd))
         else
             for provider in next.providers do
                 listPanel.Children.Add(this.RenderRow provider)
 
-    /// 供外部直接触发新建服务商编辑器的公开入口（例如首次接入无模型时引导直达）
+    /// 供外部直接触发新建模型服务编辑器的公开入口（例如首次接入无模型时引导直达）
     member this.OpenAddEditor() =
         this.ShowEditor None
 
     member this.Build() : Control =
-        let addButton = Ui.button Ui.Primary "添加服务商" (fun () -> this.ShowEditor None)
+        let addButton = Ui.button Ui.Primary "添加模型服务" (fun () -> this.ShowEditor None)
         addButton.HorizontalAlignment <- HorizontalAlignment.Left
-        Avalonia.Automation.AutomationProperties.SetName(addButton, "添加服务商")
+        Avalonia.Automation.AutomationProperties.SetName(addButton, "添加模型服务")
         topAddButton <- Some addButton
         addButton.IsVisible <- not (List.isEmpty catalog.providers)
         Ui.vstack
             Spacing.space4xl
             [ Ui.vstack
                   Spacing.spaceXs
-                  [ Ui.heading "服务商" :> Control
-                    Ui.caption "万象通过服务商原生协议或 OpenAI 兼容接口访问模型。密钥保存在服务端配置里，界面不会回显。" :> Control ]
+                  [ Ui.heading "模型服务" :> Control
+                    Ui.caption "万象通过模型服务原生协议或 OpenAI 兼容接口访问模型。密钥保存在主机配置里，界面不会回显。" :> Control ]
               :> Control
               addButton :> Control
               listPanel :> Control ]

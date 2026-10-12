@@ -7,7 +7,7 @@ open Wanxiang.Server
 open Wanxiang.Store
 open Wanxiang.Tests.Helpers
 
-/// 会话列表摘要应包含决策 125 要求的字段（最后消息摘要、运行状态、配置摘要）。
+/// 对话列表摘要应包含决策 125 要求的字段（最后消息摘要、运行状态、配置摘要）。
 [<Fact>]
 let ``conversation list summary includes last message and runtime state`` () =
     let dir = tempDir ()
@@ -58,7 +58,7 @@ let ``snapshot messages carry commitId per message`` () =
     finally
         cleanup dir
 
-/// fork 规划：forkAfterId 必须是父会话可见消息的 commitId（决策 75/79）。
+/// fork 规划：forkAfterId 必须是父对话可见消息的 commitId（决策 75/79）。
 [<Fact>]
 let ``fork plan requires fork point to be a message commit id`` () =
     let dir = tempDir ()
@@ -67,7 +67,7 @@ let ``fork plan requires fork point to be a message commit id`` () =
         let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
-        // 创建会话 + 一条消息
+        // 创建对话 + 一条消息
         let c1 =
             coord.Submit
                 { events = [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ]
@@ -87,7 +87,7 @@ let ``fork plan requires fork point to be a message commit id`` () =
         match okPlan with
         | Planned p -> Assert.Equal(2, p.events.Length) // forked + message
         | r -> failwithf "valid fork should plan, got %A" r
-        // 非法：forkAfterId = 会话 lastCommitId（2 之后无消息提交，用 999 模拟非消息 id）
+        // 非法：forkAfterId = 对话 lastCommitId（2 之后无消息提交，用 999 模拟非消息 id）
         let badPlan =
             CommandEngine.plan coord.Projection 2UL
                 (ForkConversation {| invocationId = Guid.NewGuid(); conversationId = Guid.NewGuid(); parentConversationId = convId; forkAfterId = Some 999UL; config = testConfig (); editedMessageJson = userMessageJson "x" |})
@@ -130,7 +130,7 @@ let ``command id idempotency and conversation id collision`` () =
     finally
         cleanup dir
 
-/// 决策 81：fork 配置由父会话投影继承，客户端可发空 config（不再校验 isValid）；
+/// 决策 81：fork 配置由父对话投影继承，客户端可发空 config（不再校验 isValid）；
 /// 且 config 不参与 canonical/commandId（同内容重试幂等，config 变化不影响）。
 [<Fact>]
 let ``fork with empty config succeeds and is idempotent`` () =
@@ -141,7 +141,7 @@ let ``fork with empty config succeeds and is idempotent`` () =
         use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
         let emptyCfg = { provider = ""; model = ""; instructions = None; tools = []; temperature = None; topP = None; maxTokens = None; thinkingBudget = None; extraJson = None }
-        // 父会话 + 一条消息
+        // 父对话 + 一条消息
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "P"; config = testConfig () } ] |> ignore
         coord.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m1" } ] |> ignore
         let forkId = newConversationId ()
@@ -166,7 +166,7 @@ let ``fork with empty config succeeds and is idempotent`` () =
         match CommandEngine.plan coord.Projection 3UL forkCmdDiffCfg with
         | PlanResult.IdempotentReplay _ -> ()
         | r -> failwithf "fork retry with different config should still be idempotent, got %A" r
-        // fork 投影继承了父会话 config（testConfig：provider=openai, model=test-model）
+        // fork 投影继承了父对话 config（testConfig：provider=openai, model=test-model）
         let proj = coord.Projection
         match Projection.tryConversation proj forkId with
         | Some fc ->

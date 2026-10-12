@@ -30,7 +30,7 @@ module ConversationExportLimits =
     let maxMessageBytes = 16 * 1024 * 1024
     let maxTranscriptBytes = 64L * 1024L * 1024L
 
-/// 全文搜索查询（W4，决策 75）。queryId 是客户端生成的业务标识，只关联这次查询与它的结果页，
+/// 全文搜索查询（W4，决策 201）。queryId 是客户端生成的业务标识，只关联这次查询与它的结果页，
 /// 不是通用传输 requestId；查询在服务端内存投影上完成，不建索引、不写日志。
 type SearchQueryData = {
     queryId: Guid

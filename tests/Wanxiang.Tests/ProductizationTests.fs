@@ -40,7 +40,7 @@ let ``plain-text summary truncates with an ellipsis`` () =
 let ``image syntax leaves no stray exclamation mark`` () =
     Assert.Equal("示意图", PlainText.ofMarkdown "![示意图](a.png)")
 
-// ---------------------------------------------------------------- 会话标题
+// ---------------------------------------------------------------- 对话标题
 
 [<Fact>]
 let ``auto title keeps only the first sentence and strips markdown`` () =
@@ -53,8 +53,8 @@ let ``auto title falls back to the user question when the model returns nothing`
 
 [<Fact>]
 let ``only system placeholder titles are auto-renamed`` () =
-    Assert.True(TitleGenerator.isPlaceholder "新会话")
-    Assert.True(TitleGenerator.isPlaceholder "会话 3f8a1c22")
+    Assert.True(TitleGenerator.isPlaceholder "新对话")
+    Assert.True(TitleGenerator.isPlaceholder "对话 3f8a1c22")
     Assert.False(TitleGenerator.isPlaceholder "我给它起的名字")
 
 // ---------------------------------------------------------------- Provider 模型解析
@@ -479,7 +479,7 @@ let ``pinned conversations sort ahead of more recent ones`` () =
     finally
         cleanup dir
 
-// ---------------------------------------------------------------- 会话配置校验
+// ---------------------------------------------------------------- 对话配置校验
 
 [<Fact>]
 let ``session config reports every invalid field`` () =

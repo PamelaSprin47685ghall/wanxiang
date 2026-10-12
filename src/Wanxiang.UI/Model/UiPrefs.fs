@@ -44,7 +44,7 @@ type UiPrefs = {
     sidebarWidth: float
     /// 侧栏是否折叠
     sidebarCollapsed: bool
-    /// 是否展示归档会话
+    /// 是否展示归档对话
     showArchived: bool
     /// 减少非必要动态效果
     reduceMotion: bool

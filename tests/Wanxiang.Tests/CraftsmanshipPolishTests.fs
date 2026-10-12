@@ -422,7 +422,7 @@ let ``Composer drag over and drag leave updates visual affordance and resets cle
         KeyModifiers.None)
     composer.RaiseEvent dragOverArgs
     Assert.Equal(DragDropEffects.Copy, dragOverArgs.DragEffects)
-    Assert.Equal("释放文件以添加到当前会话附件", input.PlaceholderText)
+    Assert.Equal("释放文件以添加到当前对话附件", input.PlaceholderText)
 
     let dragLeaveArgs = DragEventArgs(
         DragDrop.DragLeaveEvent,
@@ -844,7 +844,7 @@ let ``Sidebar conversation row right click invokes context menu`` () =
             |> Seq.find (fun c ->
                 match Avalonia.Automation.AutomationProperties.GetName(c) with
                 | null -> false
-                | name -> name.StartsWith("会话“ContextMenu Test”的操作菜单"))
+                | name -> name.StartsWith("对话“ContextMenu Test”的操作菜单"))
         moreBtn.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
         Dispatcher.UIThread.RunJobs()
         Assert.True overlay.IsPopupOpen
@@ -1074,7 +1074,7 @@ let ``Sidebar search navigation moves focus and handles escape`` () =
         // Find the searchBox
         let searchBox =
             descendants sidebar
-            |> Seq.choose (function :? TextBox as tb when tb.PlaceholderText = "搜索会话" -> Some tb | _ -> None)
+            |> Seq.choose (function :? TextBox as tb when tb.PlaceholderText = "搜索对话" -> Some tb | _ -> None)
             |> Seq.head
 
         let sendSearchKey (key: Key) =
@@ -1342,7 +1342,7 @@ let ``ChatView header supports F2 to edit title and Escape to cancel`` () =
         Dispatcher.UIThread.RunJobs()
         let titleAction =
             descendants chat
-            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "重命名会话：Original Title")
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "重命名对话：Original Title")
         
         // Press F2 to begin edit
         titleAction.RaiseEvent(KeyEventArgs(Key = Key.F2, RoutedEvent = InputElement.KeyDownEvent))
@@ -1642,7 +1642,7 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
             list.GetRealizedContainers()
             |> Seq.collect visualControls
             |> Seq.find (fun c ->
-                Avalonia.Automation.AutomationProperties.GetName(c) = "会话“Alpha Session”的操作菜单")
+                Avalonia.Automation.AutomationProperties.GetName(c) = "对话“Alpha Session”的操作菜单")
             :?> Border
         // 桌面默认（与 compact 同构）：常驻一档淡显，可命中、可聚焦、读屏可见；
         // 命中面保持 iconButton——常驻可点不抬高行高，扫视密度优先。
@@ -1744,7 +1744,7 @@ let ``ChatView header title tooltip reflects full title and preserves character 
         Dispatcher.UIThread.RunJobs()
         let titleAction =
             descendants chat
-            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = sprintf "重命名会话：%s" fullTitle)
+            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = sprintf "重命名对话：%s" fullTitle)
         Assert.Equal(fullTitle, ToolTip.GetTip(titleAction) :?> string)
     finally
         window.Close()

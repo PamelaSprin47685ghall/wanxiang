@@ -342,7 +342,7 @@ module MessageCardTests =
 
             let error = {
                 kind = ProviderTimeout
-                message = "连接 AI 服务提供商超时，请检查网络设置"
+                message = "连接 AI 服务模型服务超时，请检查网络设置"
                 detail = Some "HttpRequestException: Connection timed out after 30000ms"
                 retryable = true
                 retryAfterSeconds = None

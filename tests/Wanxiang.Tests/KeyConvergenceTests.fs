@@ -12,7 +12,7 @@ open Xunit
 open Wanxiang.UI
 open Wanxiang.Tests
 
-/// 本轮借鉴 kelivo（侧栏行直达操作、删除当前会话后的回退、打开设置的焦点归宿）
+/// 本轮借鉴 kelivo（侧栏行直达操作、删除当前对话后的回退、打开设置的焦点归宿）
 /// 的收敛性改动。只锁可观察契约：
 ///   - P 键在行焦点下切换置顶，且不吞 Ctrl/Meta 变体；
 ///   - 问出的邻位与 FocusAfterDelete 用的是同一个答案（删除后「打开谁」与「焦点落谁」一致）；
@@ -133,22 +133,22 @@ let ``p key on a focused row toggles pin`` () =
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
     try
-        sidebar.SetConversations [ summary id "第一个会话" (DateTimeOffset.Now.AddMinutes(-3.0)) false ]
+        sidebar.SetConversations [ summary id "第一个对话" (DateTimeOffset.Now.AddMinutes(-3.0)) false ]
         Dispatcher.UIThread.RunJobs()
-        let row = rowByName sidebar "第一个会话"
+        let row = rowByName sidebar "第一个对话"
         row.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
         pressRow row Key.P KeyModifiers.None
         Dispatcher.UIThread.RunJobs()
         Assert.Equal<Guid * bool>([ (id, true) ], Seq.toList rowPins)
         // 再按一次翻回去：同一个键是切换，不是「置顶」单向动作。
-        // 键面取自服务端已确认的状态（summaryById），所以中间必须真的有一次
+        // 键面取自主机已确认的状态（summaryById），所以中间必须真的有一次
         // 列表快照到达——真实链路里 pin 命令提交后 ConversationListSnapshot 会带回新状态。
         rowPins.Clear()
-        sidebar.SetConversations [ summary id "第一个会话" (DateTimeOffset.Now.AddMinutes(-3.0)) true ]
+        sidebar.SetConversations [ summary id "第一个对话" (DateTimeOffset.Now.AddMinutes(-3.0)) true ]
         Dispatcher.UIThread.RunJobs()
         // 换 ItemsSource 后行容器重建：重新取那一行。
-        let row = rowByName sidebar "第一个会话"
+        let row = rowByName sidebar "第一个对话"
         row.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
         pressRow row Key.P KeyModifiers.None
@@ -168,9 +168,9 @@ let ``ctrl p on a focused row is left for the global table`` () =
     let id = Guid.NewGuid()
     let window = show root 320.0 420.0
     try
-        sidebar.SetConversations [ summary id "第一个会话" (DateTimeOffset.Now.AddMinutes(-3.0)) false ]
+        sidebar.SetConversations [ summary id "第一个对话" (DateTimeOffset.Now.AddMinutes(-3.0)) false ]
         Dispatcher.UIThread.RunJobs()
-        let row = rowByName sidebar "第一个会话"
+        let row = rowByName sidebar "第一个对话"
         row.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
         pressRow row Key.P KeyModifiers.Control
@@ -182,8 +182,8 @@ let ``ctrl p on a focused row is left for the global table`` () =
 
 // ── 删除后的邻位：打开谁与焦点落谁同一个答案 ────────────────────────────────
 
-// 删的正是正在看的会话时，落到邻行继续，不进空屏。邻位口径必须与
-// FocusAfterDelete 一致，否则键盘用户与主区看到的是两个会话。
+// 删的正是正在看的对话时，落到邻行继续，不进空屏。邻位口径必须与
+// FocusAfterDelete 一致，否则键盘用户与主区看到的是两个对话。
 [<Trait("Category", "UI")>]
 [<Fact>]
 let ``neighbor after delete matches the row focus falls to`` () =
@@ -195,9 +195,9 @@ let ``neighbor after delete matches the row focus falls to`` () =
         // 时间戳显式错开：行序 = 一二三（updatedAt 降序），断言才有确定性。
         let now = DateTimeOffset.Now
         sidebar.SetConversations
-            [ summary first "第一个会话" (now.AddMinutes(-3.0)) false
-              summary second "第二个会话" (now.AddMinutes(-2.0)) false
-              summary third "第三个会话" (now.AddMinutes(-1.0)) false ]
+            [ summary first "第一个对话" (now.AddMinutes(-3.0)) false
+              summary second "第二个对话" (now.AddMinutes(-2.0)) false
+              summary third "第三个对话" (now.AddMinutes(-1.0)) false ]
         Dispatcher.UIThread.RunJobs()
         // 行序由侧栏自己排（updatedAt 降序）：先读出真实顺序，
         // 断言邻位而不是断言「我认为的第几行」——组内顺序是实现细节。
@@ -218,7 +218,7 @@ let ``neighbor after delete matches the row focus falls to`` () =
     )
 
 // 只剩一条时没有邻位可言：必须给 None，让调用方退回欢迎页，
-// 而不是随便挑一个不存在的会话。
+// 而不是随便挑一个不存在的对话。
 [<Trait("Category", "UI")>]
 [<Fact>]
 let ``no neighbor when the list becomes empty`` () =
@@ -227,7 +227,7 @@ let ``no neighbor when the list becomes empty`` () =
     let only = Guid.NewGuid()
     let window = show root 320.0 420.0
     try
-        sidebar.SetConversations [ summary only "唯一会话" (DateTimeOffset.Now.AddMinutes(-1.0)) false ]
+        sidebar.SetConversations [ summary only "唯一对话" (DateTimeOffset.Now.AddMinutes(-1.0)) false ]
         Dispatcher.UIThread.RunJobs()
         Assert.Equal(None, sidebar.NeighborAfterDelete(only.ToString()))
     finally
@@ -238,7 +238,7 @@ let ``no neighbor when the list becomes empty`` () =
 
 // 分区导航按钮的无障碍名即分区标签（SettingsSection.label）。
 let private navSectionNames =
-    Set.ofList [ "\u670d\u52a1\u5546"; "\u5de5\u5177\u4e0e MCP"; "\u751f\u6210"; "\u5916\u89c2"; "\u5173\u4e8e" ]
+    SettingsSection.all |> List.map SettingsSection.label |> Set.ofList
 
 let private isNavFocused (control: Control) =
     not (isNull control) && navSectionNames.Contains(AutomationProperties.GetName control)
@@ -294,7 +294,7 @@ let ``focus initial lands on a settings section nav button`` () =
 // 键盘用户在侧栏里按翻页键毫无反应。Menu.fs:136-139 早已把 PageUp/PageDown 与
 // Home/End 视作同义，侧栏补齐同口径。
 // 落点断言走「ScrollIntoView 把目标行拉进虚拟化窗口」这条同步可见线索
-// （UiStabilityTests 同手法）：一个 20k 会话的列表里，焦点在末行时按 Home/PageUp
+// （UiStabilityTests 同手法）：一个 20k 对话的列表里，焦点在末行时按 Home/PageUp
 // 必须把首行实现出来；未接线时行永远是末行附近那一窗。
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -306,11 +306,11 @@ let ``page up on a sidebar row scrolls the list to the first item`` () =
         let count = 400
         let items =
             [ for index in 1 .. count ->
-                summary (Guid.NewGuid()) (sprintf "会话 %05d" index) DateTimeOffset.Now false
+                summary (Guid.NewGuid()) (sprintf "对话 %05d" index) DateTimeOffset.Now false
                 |> fun s -> { s with lastCommitId = uint64 index } ]
         sidebar.SetConversations items
         Dispatcher.UIThread.RunJobs()
-        let list = byAutomationName sidebar "会话列表" :?> ListBox
+        let list = byAutomationName sidebar "对话列表" :?> ListBox
         let realized () =
             list.GetRealizedContainers()
             |> Seq.collect (fun c -> c.GetVisualDescendants())
@@ -326,9 +326,9 @@ let ``page up on a sidebar row scrolls the list to the first item`` () =
                     name n list.ItemCount (String.Join("|", realized () |> Seq.truncate 5))
         // 先等首屏容器实现（UiStabilityTests 同手法），再滚到底：未挂载的
         // ItemsControl 上 ScrollIntoView 是空操作。
-        awaitRealized 20 (sprintf "会话 %05d" count) |> ignore
+        awaitRealized 20 (sprintf "对话 %05d" count) |> ignore
         list.ScrollIntoView(list.ItemCount - 1)
-        let bottomName = sprintf "会话 %05d" 1
+        let bottomName = sprintf "对话 %05d" 1
         awaitRealized 20 bottomName |> ignore
         let lastRow =
             list.GetRealizedContainers()
@@ -340,7 +340,7 @@ let ``page up on a sidebar row scrolls the list to the first item`` () =
         let pu = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.PageUp, KeyModifiers = KeyModifiers.None, Source = lastRow)
         lastRow.RaiseEvent pu
         Assert.True(pu.Handled, "PageUp 必须与 Home 同口径被行内消费")
-        awaitRealized 20 (sprintf "会话 %05d" count) |> ignore
+        awaitRealized 20 (sprintf "对话 %05d" count) |> ignore
         // 变异不变量：未接线时按键从默认路径穿过（Handled=true 但无位移），
         // 首行永远实现不出来。
     finally

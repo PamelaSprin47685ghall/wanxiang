@@ -26,7 +26,7 @@ self.addEventListener("fetch", (e) => {
   const isNav = e.request.mode === "navigate";
   if (!isNav && !STATIC_ASSETS.includes(url.pathname) && !url.pathname.startsWith("/_framework/")) return;
   // 全部 network-first：/_framework/ 与 main.js 的文件名并不带内容 hash（dotnet 默认产物），
-  // cache-first 会在服务端更新后永久提供旧版本（Q193 要求新版本可及时生效）。
+  // cache-first 会在主机更新后永久提供旧版本（Q193 要求新版本可及时生效）。
   // 命中缓存仅作为离线回退（Q192 只允许缓存静态资源）。
   e.respondWith(
     fetch(e.request).then((resp) => {

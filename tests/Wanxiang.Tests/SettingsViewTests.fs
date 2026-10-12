@@ -265,7 +265,7 @@ module SettingsViewTests =
             let emptyBlocks = descendants built |> Seq.choose (function :? TextBlock as tb when tb.Text.Contains("当前没有可用工具") -> Some tb | _ -> None)
             Assert.NotEmpty(emptyBlocks)
 
-            // 2. 装载内置工具与 MCP 服务器
+            // 2. 装载内置工具与 MCP 服务
             let sampleTool1: ToolInfo =
                 { id = "read_file"
                   label = "读取文件"
@@ -318,7 +318,7 @@ module SettingsViewTests =
         )
 
     // ==========================================
-    // 2. SettingsProviders: 供应商校验、Loopback、BaseUrl 缺省与模型增删改
+    // 2. SettingsProviders: 模型服务校验、Loopback、BaseUrl 缺省与模型增删改
     // ==========================================
 
     [<Trait("Category", "UI")>]
@@ -397,7 +397,7 @@ module SettingsViewTests =
             window.Show()
             Dispatcher.UIThread.RunJobs()
 
-            // 打开新建服务商编辑器（创建模式下按钮为“添加”）
+            // 打开新建模型服务编辑器（创建模式下按钮为“添加”）
             invokePrivate<unit> providers "ShowEditor" [| box None |]
             Dispatcher.UIThread.RunJobs()
 
@@ -516,7 +516,7 @@ module SettingsViewTests =
             window.Show()
             Dispatcher.UIThread.RunJobs()
 
-            // 打开新建服务商编辑器
+            // 打开新建模型服务编辑器
             invokePrivate<unit> providers "ShowEditor" [| box None |]
             Dispatcher.UIThread.RunJobs()
 
@@ -644,7 +644,7 @@ module SettingsViewTests =
             window.Show()
             Dispatcher.UIThread.RunJobs()
 
-            // 1. 打开服务商编辑器并触发探测
+            // 1. 打开模型服务编辑器并触发探测
             invokePrivate<unit> providers "ShowEditor" [| box (Some existingProvider) |]
             Dispatcher.UIThread.RunJobs()
 
@@ -657,7 +657,7 @@ module SettingsViewTests =
             submit toggleBtn
             Dispatcher.UIThread.RunJobs()
 
-            let probeBtn = byAutomationName root "从服务器获取模型列表" :?> Border
+            let probeBtn = byAutomationName root "从主机获取模型列表" :?> Border
             submit probeBtn
             Dispatcher.UIThread.RunJobs()
 

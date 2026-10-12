@@ -61,7 +61,7 @@ module MotionLedger =
     /// 流式光标呼吸帧：50ms 一级，驱动 opacity 在呼吸区间内起伏。
     /// 与 skeletonBreathFrame 数值相同但语义不同（光标不是骨架加载态），分记。
     let caretBreathFrame = TimeSpan.FromMilliseconds 50.0
-    /// 会话切换骨架延迟：会话快照 300ms 内到达就不挂任何 loading chrome。
+    /// 对话切换骨架延迟：对话快照 300ms 内到达就不挂任何 loading chrome。
     let conversationSkeletonDelay = TimeSpan.FromMilliseconds 300.0
     /// 平滑滚动帧节奏：约 60fps 的 16ms tick。
     let smoothScrollFrame = TimeSpan.FromMilliseconds 16.0

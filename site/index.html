@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="万象是 Linux x64 与 PWA 的对等对话底座。F# + Avalonia 重写，NDJSON 事件日志与 muxed WebSocket 对等通信，数据留在你手里。">
 <meta property="og:title" content="万象 · 你的对话底座">
-<meta property="og:description" content="F# + Avalonia 的对等对话底座。Linux x64 自带服务端，PWA 纯前端直连。NDJSON 落盘，WebSocket 对等同步。">
+<meta property="og:description" content="F# + Avalonia 的对等对话底座。Linux x64 自带主机，PWA 纯前端直连。NDJSON 落盘，WebSocket 对等同步。">
 <meta property="og:image" content="logo.png">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://wanxiang.example.com/">
@@ -184,7 +184,7 @@ footer.foot{margin-top:40px;padding:28px 26px;border:1px solid var(--border-soft
     <span class="hero-links"><a href="https://github.com/">GitHub</a><a href="#faq">文档</a></span>
   </div>
   <h1>万象</h1>
-  <p class="tagline">自己的服务，<b>自己的对话</b>。Linux 本地即服务端，浏览器即客户端；数据落 <b>NDJSON</b>，不寄放在别人家。</p>
+  <p class="tagline">自己的服务，<b>自己的对话</b>。Linux 本地即主机，浏览器即客户端；数据落 <b>NDJSON</b>，不寄放在别人家。</p>
   <div class="hero-tokens"><span><b>Linux x64</b> C+S 对等</span><span><b>PWA</b> 纯前端</span><span><b>F# · Avalonia</b> 重写</span><span><b>Agent Framework</b> 执行</span></div>
   <div class="hero-cta">
     <a class="btn-ghost" href="#features">了解原理</a>
@@ -197,14 +197,14 @@ footer.foot{margin-top:40px;padding:28px 26px;border:1px solid var(--border-soft
   <div class="section-head"><p class="section-num">00 · 预览</p><h2 class="section-title">先看纸感，再看对话</h2><p class="section-lede">以应用内真实布局做占位，不用库存图。暖纸区分侧栏，墨蓝只出现在气泡与选中态；截图就位后直接替换同一圆角与阴影。</p></div>
   <div class="gallery" data-gallery>
     <div class="gallery-frame" aria-live="polite">
-      <figure class="gallery-panel is-active" data-title="会话 · 搜索 · 新建" data-line="侧栏暖纸区分，选中墨蓝 tag，纸感不靠描边">
+      <figure class="gallery-panel is-active" data-title="对话 · 搜索 · 新建" data-line="侧栏暖纸区分，选中墨蓝 tag，纸感不靠描边">
         <div class="mock">
           <div class="mock-sidebar">
             <div class="mock-sidebar-top"><div class="mock-logo">万</div><div class="mock-app">万象</div></div>
-            <div class="mock-search"><b></b> 搜索会话…</div>
-            <div class="mock-item active"><div class="mock-item-title">会话 3f8a · 正在生成</div><div class="mock-item-preview">把重活交给机器…</div></div>
-            <div class="mock-item"><div class="mock-item-title">会话 9c2e · 已归档</div><div class="mock-item-preview">一行一提交，NDJSON 落盘…</div></div>
-            <div class="mock-item"><div class="mock-item-title">会话 a1d4</div><div class="mock-item-preview">PWA 纯前端直连…</div></div>
+            <div class="mock-search"><b></b> 搜索对话…</div>
+            <div class="mock-item active"><div class="mock-item-title">对话 3f8a · 正在生成</div><div class="mock-item-preview">把重活交给机器…</div></div>
+            <div class="mock-item"><div class="mock-item-title">对话 9c2e · 已归档</div><div class="mock-item-preview">一行一提交，NDJSON 落盘…</div></div>
+            <div class="mock-item"><div class="mock-item-title">对话 a1d4</div><div class="mock-item-preview">PWA 纯前端直连…</div></div>
           </div>
           <div class="mock-main">
             <div class="mock-bubble user">帮我把这段日志按 NDJSON 重放，丢弃损坏行</div>
@@ -217,9 +217,9 @@ footer.foot{margin-top:40px;padding:28px 26px;border:1px solid var(--border-soft
         <div class="mock">
           <div class="mock-sidebar">
             <div class="mock-sidebar-top"><div class="mock-logo">万</div><div class="mock-app">万象</div></div>
-            <div class="mock-search"><b></b> 搜索会话…</div>
-            <div class="mock-item"><div class="mock-item-title">会话 3f8a</div><div class="mock-item-preview">帮我把这段日志…</div></div>
-            <div class="mock-item active"><div class="mock-item-title">会话 7b12 · 推理中</div><div class="mock-item-preview">▾ 思考过程 · 1.2s</div></div>
+            <div class="mock-search"><b></b> 搜索对话…</div>
+            <div class="mock-item"><div class="mock-item-title">对话 3f8a</div><div class="mock-item-preview">帮我把这段日志…</div></div>
+            <div class="mock-item active"><div class="mock-item-title">对话 7b12 · 推理中</div><div class="mock-item-preview">▾ 思考过程 · 1.2s</div></div>
           </div>
           <div class="mock-main">
             <div class="mock-reason"><b>思考过程 · 1.2s</b> — 先读 NDJSON 头，再做幂等去重，最后落 CQRS 投影</div>
@@ -233,9 +233,9 @@ writer.write_ndjson(&event)?;</div></div>
         <div class="mock">
           <div class="mock-sidebar">
             <div class="mock-sidebar-top"><div class="mock-logo">万</div><div class="mock-app">万象</div></div>
-            <div class="mock-search"><b></b> 搜索会话…</div>
-            <div class="mock-item active"><div class="mock-item-title">会话 7b12</div><div class="mock-item-preview">附件已随消息记账…</div></div>
-            <div class="mock-item"><div class="mock-item-title">会话 3f8a</div><div class="mock-item-preview">下载走同一 WebSocket 面…</div></div>
+            <div class="mock-search"><b></b> 搜索对话…</div>
+            <div class="mock-item active"><div class="mock-item-title">对话 7b12</div><div class="mock-item-preview">附件已随消息记账…</div></div>
+            <div class="mock-item"><div class="mock-item-title">对话 3f8a</div><div class="mock-item-preview">下载走同一 WebSocket 面…</div></div>
           </div>
           <div class="mock-main">
             <div class="mock-bubble user">上传这份 PDF，带上 SHA-256 校验</div>
@@ -246,7 +246,7 @@ writer.write_ndjson(&event)?;</div></div>
       </figure>
     </div>
     <div class="gallery-caption"><p class="title" data-gallery-title></p><p class="line" data-gallery-line></p></div>
-    <div class="gallery-tabs" aria-label="选择截图"><button type="button" class="is-active" aria-pressed="true">会话</button><button type="button" aria-pressed="false">消息</button><button type="button" aria-pressed="false">附件</button></div>
+    <div class="gallery-tabs" aria-label="选择截图"><button type="button" class="is-active" aria-pressed="true">对话</button><button type="button" aria-pressed="false">消息</button><button type="button" aria-pressed="false">附件</button></div>
   </div>
 </section>
 
@@ -268,7 +268,7 @@ writer.write_ndjson(&event)?;</div></div>
     <li><span class="n">01</span><span class="body"><b>纸感优先</b><span>暖纸基底，墨蓝只点缀 5% 以内；分割靠 hairline，抬升靠 ivory。</span></span></li>
     <li><span class="n">02</span><span class="body"><b>一色到底</b><span>全站单强调色 #1B365D；tag 仅两档 tint，不开第二彩色。</span></span></li>
     <li><span class="n">03</span><span class="body"><b>字重克制</b><span>Serif 承重，400/500 两档；标题不加粗，靠字阶与留白分层。</span></span></li>
-    <li><span class="n">04</span><span class="body"><b>对话为王</b><span>会话与消息永远视觉主位；机制与设置退后，不抢焦点。</span></span></li>
+    <li><span class="n">04</span><span class="body"><b>对话为王</b><span>对话与消息永远视觉主位；机制与设置退后，不抢焦点。</span></span></li>
     <li><span class="n">05</span><span class="body"><b>同一协议</b><span>本机与远端走同一 WebSocket 面；不为本机开后门。</span></span></li>
     <li><span class="n">06</span><span class="body"><b>一行一真相</b><span>NDJSON 一行一原子提交；内存投影可随时重建。</span></span></li>
   </ol>
@@ -292,7 +292,7 @@ writer.write_ndjson(&event)?;</div></div>
     <div class="faq-pair"><dt>万象与 Kelivo 的关系？</dt><dd>Kelivo 为灵感来源，万象为 clean-room 独立实现。产品名、协议、配置与数据模型均不复用原文案与源码。</dd></div>
     <div class="faq-pair"><dt>数据存在哪里？如何恢复？</dt><dd>三件套即全部真相：<code>TOML</code> 配置、<code>NDJSON</code> 事件日志、附件目录。重启后自动重建投影。</dd></div>
     <div class="faq-pair"><dt>PWA 需要装什么？</dt><dd>不需要。现代浏览器打开即用；离线壳由 Service Worker 缓存静态资源，业务数据不缓存。</dd></div>
-    <div class="faq-pair"><dt>如何连接远端服务器？</dt><dd>输入地址与令牌直连；首次可走 6 位配对码，服务端终端输出，限流 5 次/分钟。</dd></div>
+    <div class="faq-pair"><dt>如何连接远端主机？</dt><dd>输入地址与令牌直连；首次可走 6 位配对码，主机终端输出，限流 5 次/分钟。</dd></div>
   </dl>
   <p class="faq-tail">更多细节见项目内 <code>skill://wanxiang</code> 决策记录。</p>
 </section>

@@ -15,7 +15,7 @@ open Wanxiang.Core
 
 /// 输入区对外暴露的动作。
 type ComposerActions = {
-    /// true 表示内容已由本地待发送记录接管，不代表服务端已经保存。
+    /// true 表示内容已由本地待发送记录接管，不代表主机已经保存。
     submit: string -> bool
     stopGeneration: unit -> unit
     pickAttachment: unit -> unit
@@ -28,7 +28,7 @@ type ComposerActions = {
 /// 消息输入区。
 ///
 /// 关键取舍：
-/// - 没有会话也可以直接输入；发送时沿既有路径创建会话；
+/// - 没有对话也可以直接输入；发送时沿既有路径创建对话；
 /// - 生成中把发送键换成停止键，同一位置同一手势；
 /// - 附件以可删除的小卡呈现，而不是一行状态文字；
 /// - 模型选择就在输入框里，换模型不必开设置。
@@ -131,7 +131,7 @@ type Composer(actions: ComposerActions) as this =
             IsVisible = false)
     let dropHintText =
         TextBlock(
-            Text = "释放文件以添加到当前会话附件",
+            Text = "释放文件以添加到当前对话附件",
             FontSize = Tokens.fontSmall,
             FontWeight = FontWeight.Medium,
             Foreground = Tokens.accent,
@@ -171,7 +171,7 @@ type Composer(actions: ComposerActions) as this =
     let mutable disabledReason = ""
     let mutable wasActiveBeforeDisabled = false
     let mutable isDraggingOver = false
-    // 发送历史全局共享（shell 风格，不随会话隔离）；半截输入由 uncommittedDraft + per-session draft 持有，不进历史。
+    // 发送历史全局共享（shell 风格，不随对话隔离）；半截输入由 uncommittedDraft + per-session draft 持有，不进历史。
     let promptHistory = ResizeArray<string>()
     let mutable historyIndex = -1
     let mutable uncommittedDraft = ""
@@ -223,7 +223,7 @@ type Composer(actions: ComposerActions) as this =
             if not enabled && not (String.IsNullOrWhiteSpace disabledReason) then
                 disabledReason
             elif isDraggingOver && enabled then
-                "释放文件以添加到当前会话附件"
+                "释放文件以添加到当前对话附件"
             else
                 "输入消息…"
 
@@ -264,7 +264,7 @@ type Composer(actions: ComposerActions) as this =
             queueButton.Focusable <- false
         let sendTip =
             if generating then
-                if canStop then "停止生成 (Escape)" else "等待服务器确认…"
+                if canStop then "停止生成 (Escape)" else "等待主机确认…"
             elif not enabled then
                 if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
             elif uploading then
@@ -299,7 +299,7 @@ type Composer(actions: ComposerActions) as this =
 
     do
         contextButton.IsVisible <- false
-        Avalonia.Automation.AutomationProperties.SetName(contextButton, "会话上下文")
+        Avalonia.Automation.AutomationProperties.SetName(contextButton, "对话上下文")
         modelChip.Child <-
             let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXs, VerticalAlignment = VerticalAlignment.Center)
             row.Children.Add modelCaption
@@ -313,8 +313,8 @@ type Composer(actions: ComposerActions) as this =
         Interaction.surface modelChip Interaction.HoverVariant.plain |> ignore
         Interaction.reportFocusOrigin modelChip
         Ui.onClick modelChip (fun () -> actions.openModelPicker(modelChip :> Control))
-        ToolTip.SetTip(modelChip, "切换本会话使用的模型")
-        Avalonia.Automation.AutomationProperties.SetName(modelChip, "切换本会话使用的模型")
+        ToolTip.SetTip(modelChip, "切换本对话使用的模型")
+        Avalonia.Automation.AutomationProperties.SetName(modelChip, "切换本对话使用的模型")
 
         Ui.onClick attachButton (fun () -> actions.pickAttachment ())
         let attachHint = "添加附件，也可以将文件拖入输入区"
@@ -649,7 +649,7 @@ type Composer(actions: ComposerActions) as this =
             refreshSendState ()
 
     /// 历史召回中输入框显示的是旧发送，真正的半截草稿在 uncommittedDraft；
-    /// 会话切换经由它保存，半截输入不会被召回项覆盖。
+    /// 对话切换经由它保存，半截输入不会被召回项覆盖。
     member _.Text =
         if historyIndex <> -1 then uncommittedDraft
         elif isNull input.Text then ""
@@ -695,9 +695,9 @@ type Composer(actions: ComposerActions) as this =
                 // （surfaceContainer + 发丝边，比常规 surface+border 卡片轻一档），不抢输入壳层级。
                 pendingPanel.Children.Add(
                     Ui.groupingCard (Thickness(Spacing.spaceXl, Spacing.spaceMd)) body Spacing.Radius.md)
-            // 首条消息创建会话失败时尚无侧栏条目，切走后仍要有找回入口。
+            // 首条消息创建对话失败时尚无侧栏条目，切走后仍要有找回入口。
             for conversationId, pending in elsewhere |> List.groupBy _.conversationId do
-                let label = sprintf "查看另一个会话的未确认消息（%d 条）" pending.Length
+                let label = sprintf "查看另一个对话的未确认消息（%d 条）" pending.Length
                 pendingPanel.Children.Add(Ui.button Ui.Secondary label (fun () -> openConversation conversationId))
             if not (List.isEmpty items) then
                 let pendingNotice = Ui.caption "未确认内容只保留在当前窗口，关闭或刷新前请先确认保存。"
@@ -762,7 +762,7 @@ type Composer(actions: ComposerActions) as this =
 
     member _.SetSessionContext(config: SessionConfig option, canEdit: bool, onOpen: unit -> unit) =
         openSessionSettings <- onOpen
-        // 上下文完整入口始终在会话菜单里；只有这段会话真的作了特殊设置，
+        // 上下文完整入口始终在对话菜单里；只有这段对话真的作了特殊设置，
         // 输入区才显示摘要。这是状态标记，不再是第二份常驻设置导航。
         let isCustomized (value: SessionConfig) =
             value.instructions.IsSome || not (List.isEmpty value.tools)
@@ -777,9 +777,9 @@ type Composer(actions: ComposerActions) as this =
                 elif value.instructions.IsSome then "系统指令"
                 else "生成参数"
             Ui.setButtonText contextButton label
-            Avalonia.Automation.AutomationProperties.SetName(contextButton, "会话上下文")
+            Avalonia.Automation.AutomationProperties.SetName(contextButton, "对话上下文")
             let detail =
-                sprintf "%s，%d 项工具。修改只影响当前会话。"
+                sprintf "%s，%d 项工具。修改只影响当前对话。"
                     (if value.instructions.IsSome then "已设系统指令" else "默认系统指令") value.tools.Length
             ToolTip.SetTip(contextButton, detail)
             Avalonia.Automation.AutomationProperties.SetHelpText(contextButton, detail)

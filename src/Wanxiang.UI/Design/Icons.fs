@@ -137,7 +137,7 @@ module Icons =
     /// 复制
     let copy : IBrush -> Control = glyph PackIconLucideKind.Copy
 
-    /// 派生会话
+    /// 派生对话
     let fork : IBrush -> Control = glyph PackIconLucideKind.GitFork
 
     /// 刷新
@@ -170,7 +170,7 @@ module Icons =
     /// 工具
     let wrench : IBrush -> Control = glyph PackIconLucideKind.Wrench
 
-    /// 服务端
+    /// 主机
     let server : IBrush -> Control = glyph PackIconLucideKind.Server
 
     /// 认证令牌

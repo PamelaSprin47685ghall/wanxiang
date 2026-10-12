@@ -559,15 +559,15 @@ module McpTests =
         let logs = ConcurrentQueue<string>()
         let registry = new ToolRegistry((fun () -> currentAppConfig), logs.Enqueue)
 
-        // 初始无 MCP 服务器
+        // 初始无 MCP 服务
         Assert.True((registry.GetMcpClient "mcp1").IsNone)
 
-        // 添加一个已禁用的服务器
+        // 添加一个已禁用的 MCP 服务
         let srvDisabled = { defaultMcpConfig "mcp1" with enabled = false }
         currentAppConfig <- { currentAppConfig with mcpServers = Map.ofList [ "mcp1", srvDisabled ] }
         Assert.True((registry.GetMcpClient "mcp1").IsNone)
 
-        // 启用服务器
+        // 启用 MCP 服务
         let srvEnabled = { defaultMcpConfig "mcp1" with enabled = true; command = Some "echo" }
         currentAppConfig <- { currentAppConfig with mcpServers = Map.ofList [ "mcp1", srvEnabled ] }
         let client1 = registry.GetMcpClient "mcp1"

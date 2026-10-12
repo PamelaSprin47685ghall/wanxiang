@@ -543,7 +543,7 @@ module OnboardingUiTests =
             let payloads = List<JsonObject>()
             let _, root, _, window = mountSettings (settingsActions payloads (List()))
             try
-                invoke (byName root "添加服务商")
+                invoke (byName root "添加模型服务")
                 (byName root "API Key" :?> TextBox).Text <- "sk-same"
                 invoke (byName root "添加")
                 Assert.Single payloads |> ignore
@@ -564,7 +564,7 @@ module OnboardingUiTests =
         Headless.run (fun () ->
             let _, root, overlay, window = mountSettings (settingsActions (List()) (List()))
             try
-                invoke (byName root "添加服务商")
+                invoke (byName root "添加模型服务")
                 let presetButton =
                     visual root |> List.find (fun c -> (ToolTip.GetTip c :?> string) = "OpenAI")
                 presetButton.RaiseEvent(
@@ -591,7 +591,7 @@ module OnboardingUiTests =
             let payloads = List<JsonObject>()
             let _, root, _, window = mountSettings (settingsActions payloads (List()))
             try
-                invoke (byName root "添加服务商")
+                invoke (byName root "添加模型服务")
                 // OpenAI 没有另一条传输：切换入口不出现
                 Assert.DoesNotContain(named root "改用兼容端点", fun c -> c.IsVisible)
                 let presetButton = visual root |> List.find (fun c -> (ToolTip.GetTip c :?> string) = "OpenAI")

@@ -166,7 +166,7 @@ module WireAguiCommandTests =
             CreateConversation {|
                 invocationId = invId
                 conversationId = convId
-                title = "新契约会话"
+                title = "新契约对话"
                 config = SessionConfig.empty
             |}
         let json = WireAgui.encodeCommand cmd
@@ -180,7 +180,7 @@ module WireAguiCommandTests =
         let payload = value["payload"].AsObject()
         Assert.Equal(invId.ToString("D"), payload["invocationId"].GetValue<string>())
         Assert.Equal(convId.ToString("D"), payload["threadId"].GetValue<string>())
-        Assert.Equal("新契约会话", payload["title"].GetValue<string>())
+        Assert.Equal("新契约对话", payload["title"].GetValue<string>())
 
     [<Fact>]
     let ``encodeCommand produces AG-UI CUSTOM carrier for SendUserMessage`` () =
@@ -216,7 +216,7 @@ module WireAguiCommandTests =
             CreateConversation {|
                 invocationId = invId
                 conversationId = convId
-                title = "往返测试会话"
+                title = "往返测试对话"
                 config = SessionConfig.empty
             |}
         let wireJson = WireAgui.encodeCommand cmd
@@ -225,7 +225,7 @@ module WireAguiCommandTests =
         | ParsedEvent.Custom(name, value) ->
             Assert.Equal("wanxiang.dev/conversation.create", name)
             Assert.True(name.StartsWith Capabilities.Namespace)
-            // 2. 模拟服务端入站命令归一路径（WsConnection.HandleJson 核心逻辑）
+            // 2. 模拟主机入站命令归一路径（WsConnection.HandleJson 核心逻辑）
             let normalizedPayload =
                 match value with
                 | :? JsonObject as vo when vo.ContainsKey "type" -> value.ToJsonString()
@@ -240,7 +240,7 @@ module WireAguiCommandTests =
             | Ok (CreateConversation decoded) ->
                 Assert.Equal(invId, decoded.invocationId)
                 Assert.Equal(convId, decoded.conversationId)
-                Assert.Equal("往返测试会话", decoded.title)
+                Assert.Equal("往返测试对话", decoded.title)
             | other -> failwithf "tryDecodeCommand 解码失败: %A" other
         | other -> failwithf "WireAgui.encodeCommand 输出未能被 TolerantReader 解析为 Custom: %A" other
 
@@ -252,7 +252,7 @@ module WireAguiCommandTests =
             CreateConversation {|
                 invocationId = invId
                 conversationId = convId
-                title = "回归防线会话"
+                title = "回归防线对话"
                 config = SessionConfig.empty
             |}
         // 旧外壳（WireCodec.encodeCommand 输出）：{ "type": "conversation.create", "payload": { ... } }
@@ -260,7 +260,7 @@ module WireAguiCommandTests =
         // 新承载（WireAgui.encodeCommand 输出）：{ "type": "CUSTOM", "name": "wanxiang.dev/conversation.create", "value": { ... } }
         let newCarrierJson = WireAgui.encodeCommand cmd
 
-        // 验证缺陷根因：旧外壳被 TolerantReader 判定为 Unrecognized（导致服务端静默忽略，前端完全不可用）
+        // 验证缺陷根因：旧外壳被 TolerantReader 判定为 Unrecognized（导致主机静默忽略，前端完全不可用）
         match TolerantReader.parse legacyJson with
         | ParsedEvent.Unrecognized typeName ->
             Assert.Equal("conversation.create", typeName)
@@ -272,7 +272,7 @@ module WireAguiCommandTests =
             Assert.Equal("wanxiang.dev/conversation.create", name)
         | other -> failwithf "新承载必须被 TolerantReader 判为 Custom，实际得到: %A" other
 
-        // 服务端入站识别判定器（忠实复刻 WsConnection.HandleJson 中的分支行为）：
+        // 主机入站识别判定器（忠实复刻 WsConnection.HandleJson 中的分支行为）：
         // 若客户端退回旧编码，该判定器返回 false；新编码则必须返回 true。
         let serverAcceptsCommand (rawJson: string) : bool =
             match TolerantReader.parse rawJson with

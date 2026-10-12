@@ -83,7 +83,7 @@ let ``language annotations resolve through hljs aliases`` () =
     Assert.Equal(Some "python", RichAssets.resolveLanguage "py")
     Assert.Equal(Some "bash", RichAssets.resolveLanguage "sh")
     Assert.Equal(Some "latex", RichAssets.resolveLanguage "tex")
-    // shell 是 hljs 里独立的一门语言（shell 会话），不是 bash 的别名
+    // shell 是 hljs 里独立的一门语言（shell 对话），不是 bash 的别名
     Assert.Equal(Some "shell", RichAssets.resolveLanguage "shell")
 
 [<Fact>]
@@ -191,7 +191,7 @@ let ``a live fork keeps attachments owned by its deleted parent`` () =
         |> ignore
         coordinator.SubmitEvents [ EventData.ConversationDeleted { conversationId = parent } ] |> ignore
 
-        // 父会话已删，但子分支仍继承那条带附件的消息
+        // 父对话已删，但子分支仍继承那条带附件的消息
         let referenced = ServerModel.referencedAttachments coordinator.Projection
         Assert.Contains(sha, referenced)
     finally

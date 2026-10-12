@@ -136,9 +136,9 @@ module ChatOrchestratorTests =
         Assert.True(runtime.pendingInvocationIds.Contains invId)
 
     [<Fact>]
-    let ``GenerationError 配置失效格式化包含服务商标识`` () =
+    let ``GenerationError 配置失效格式化包含模型服务标识`` () =
         let providerId = "unconfigured-ai-provider"
-        let err = GenerationError.create ConfigInvalid (sprintf "会话使用的服务商「%s」不在当前配置中。" providerId)
+        let err = GenerationError.create ConfigInvalid (sprintf "对话使用的模型服务「%s」不在当前配置中。" providerId)
         Assert.Equal(ConfigInvalid, err.kind)
         Assert.Contains(providerId, err.message)
         Assert.False(err.retryable)
@@ -197,24 +197,24 @@ module ChatOrchestratorTests =
         Assert.Equal(invId2, ClientCommand.invocationId (fst rt.pendingQueue[1]))
 
     [<Fact>]
-    let ``SessionConfig 思维链预算层级回退契约：会话显式设置优先于全局默认`` () =
+    let ``SessionConfig 思维链预算层级回退契约：对话显式设置优先于全局默认`` () =
         let defaultAppConfig = {
             AppConfig.defaults (Guid.NewGuid()) with
                 generation = { (AppConfig.defaults (Guid.NewGuid())).generation with thinkingBudget = 2048 }
         }
 
-        // 1. 会话显式设置 4096 -> 优先使用 4096
+        // 1. 对话显式设置 4096 -> 优先使用 4096
         let explicitConfig = { SessionConfig.empty with thinkingBudget = Some 4096 }
         let budget1 = explicitConfig.thinkingBudget |> Option.defaultValue defaultAppConfig.generation.thinkingBudget
         Assert.Equal(4096, budget1)
 
-        // 2. 会话未显式设置 (None) -> 回退到全局默认 2048
+        // 2. 对话未显式设置 (None) -> 回退到全局默认 2048
         let fallbackConfig = { SessionConfig.empty with thinkingBudget = None }
         let budget2 = fallbackConfig.thinkingBudget |> Option.defaultValue defaultAppConfig.generation.thinkingBudget
         Assert.Equal(2048, budget2)
 
     [<Fact>]
-    let ``MediaSupport 传输支持判定：无服务商或未知服务商回退至保守 OpenAI 兼容能力`` () =
+    let ``MediaSupport 传输支持判定：无模型服务或未知模型服务回退至保守 OpenAI 兼容能力`` () =
         // 验证 MediaSupport.openAiCompatible 的默认边界
         let compat = MediaSupport.openAiCompatible
         Assert.True(compat.image)
@@ -252,7 +252,7 @@ module ChatOrchestratorTests =
         Assert.Equal("tool unknown_function_call not found", parsed["error"].GetValue<string>())
 
     [<Fact>]
-    let ``会话删除后内存运行时被移除且可重建（R5 无界集合）`` () =
+    let ``对话删除后内存运行时被移除且可重建（R5 无界集合）`` () =
         let dir = tempDir ()
         try
             DataPaths.ensureDataDirs dir
@@ -280,10 +280,10 @@ module ChatOrchestratorTests =
                        messageJson = userMessageJson "hello" |}
             orch.HandleSendUserMessage cmd
             Assert.Equal(1, orch.RuntimeCount)
-            // 2. 删除会话 → runtime 移除
+            // 2. 删除对话 → runtime 移除
             orch.OnConversationDeleted convId
             Assert.Equal(0, orch.RuntimeCount)
-            // 3. 同会话再次发消息 → runtime 可重建（无残留状态冲突）
+            // 3. 同对话再次发消息 → runtime 可重建（无残留状态冲突）
             let cmd2 =
                 SendUserMessage
                     {| invocationId = Guid.NewGuid()

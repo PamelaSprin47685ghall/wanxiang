@@ -21,20 +21,20 @@ type SettingsSection =
 module SettingsSection =
 
     let groups =
-        [ "当前服务器", [ Providers; Tools; Generation; Devices ]
+        [ "主机", [ Providers; Tools; Generation; Devices ]
           "这台客户端", [ Appearance; About ] ]
 
     let all = groups |> List.collect snd
 
     let scope = function
-        | Providers | Tools | Generation | Devices -> "当前服务器"
+        | Providers | Tools | Generation | Devices -> "主机"
         | Appearance | About -> "这台客户端"
 
     let label (section: SettingsSection) =
         match section with
-        | Providers -> "服务商"
-        | Tools -> "工具与 MCP"
-        | Generation -> "新会话默认值"
+        | Providers -> "模型服务"
+        | Tools -> "工具"
+        | Generation -> "默认设置"
         | Devices -> "设备"
         | Appearance -> "外观与操作"
         | About -> "关于"
@@ -50,7 +50,7 @@ module SettingsSection =
 
 /// 设置界面：左侧分区导航 + 右侧内容。
 ///
-/// 存在的意义很直接——在此之前，加一个服务商必须手改 TOML 并重启。
+/// 存在的意义很直接——在此之前，加一个模型服务必须手改 TOML 并重启。
 type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged: UiPrefs -> unit, onClose: unit -> unit) =
     inherit Border()
 
@@ -63,8 +63,8 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     let mutable contentScroll: ScrollViewer option = None
     let navPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXs)
     let groupLabels = ResizeArray<TextBlock>()
-    let scopeCaption = Ui.sectionLabel "当前服务器"
-    let targetCaption = Ui.caption "尚未连接服务器"
+    let scopeCaption = Ui.sectionLabel "主机"
+    let targetCaption = Ui.caption "尚未连接主机"
     let mutable current = Providers
     let mutable instanceId = ""
     let mutable serverUrl = ""
@@ -137,12 +137,12 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         scopeCaption.Text <- SettingsSection.scope section
         targetCaption.Text <-
             match section with
-            | Appearance -> "仅在这台客户端即时生效，不修改服务器配置。"
+            | Appearance -> "仅在这台客户端即时生效，不修改主机配置。"
             | About -> "应用版本与当前连接信息。"
             | _ ->
                 match Uri.TryCreate(serverUrl, UriKind.Absolute) with
-                | true, uri -> sprintf "%s · 配置由连接这台服务器的客户端共用。" uri.Authority
-                | _ -> "尚未连接服务器"
+                | true, uri -> sprintf "%s · 配置由连接这台主机的客户端共用。" uri.Authority
+                | _ -> "尚未连接主机"
         this.UpdateNavButtonStates()
         contentHost.Content <- renderSection section
         // 设备列表是运行时状态：每次切进来都向主机要最新的
@@ -285,7 +285,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         providersPanel.SetCatalog catalog
         toolsPanel.SetCatalog catalog
         generalPanel.SetCatalog catalog
-        // 服务商与工具面板自己维护列表内容，无需重建；生成面板的字段已被 SetCatalog 回填。
+        // 模型服务与工具面板自己维护列表内容，无需重建；生成面板的字段已被 SetCatalog 回填。
         // 只有「关于」依赖构建时的快照，交给切换时重建。
         invalidate [ About ]
         if current = About then contentHost.Content <- renderSection current
@@ -312,7 +312,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
         providersPanel.ApplyProbe(providerId, ok, models, error)
 
-    /// 供外部直接打开添加服务商编辑器的公开入口
+    /// 供外部直接打开添加模型服务编辑器的公开入口
     member this.OpenAddProvider() =
         this.Select Providers
         providersPanel.OpenAddEditor()
@@ -320,8 +320,8 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     member this.Build() =
         this.Background <- Tokens.canvas
 
-        let closeButton = Ui.button Ui.Ghost "返回会话" onClose
-        Avalonia.Automation.AutomationProperties.SetHelpText(closeButton, "返回会话（Esc），未保存的草稿留在当前窗口")
+        let closeButton = Ui.button Ui.Ghost "返回对话" onClose
+        Avalonia.Automation.AutomationProperties.SetHelpText(closeButton, "返回对话（Esc），未保存的草稿留在当前窗口")
         let header =
             let dock = DockPanel(LastChildFill = false, VerticalAlignment = VerticalAlignment.Center)
             // 窗口标题用页面主标题档（fontDisplay=25），明确高于分区内的小节标题（Ui.heading=19）；

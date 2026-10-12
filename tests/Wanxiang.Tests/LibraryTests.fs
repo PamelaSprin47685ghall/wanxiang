@@ -292,7 +292,7 @@ let ``search events roundtrip through the wire codec and the AG-UI carrier`` () 
     | other -> failwithf "bad minimal query: %A" other
 
 // ---------------------------------------------------------------------------
-// 端到端：真服务端 + WebSocket；搜索只读，日志条数不变；旧客户端不发搜索，行为不变
+// 端到端：真主机 + WebSocket；搜索只读，日志条数不变；旧客户端不发搜索，行为不变
 // ---------------------------------------------------------------------------
 
 [<Fact>]
@@ -593,7 +593,7 @@ let ``sidebar shows hit snippets under message content and clicking opens the hi
         window.Show()
         try
             Dispatcher.UIThread.RunJobs()
-            let box = descendantsOf sidebar |> Seq.pick (function :? TextBox as tb when tb.PlaceholderText = "搜索会话" -> Some tb | _ -> None)
+            let box = descendantsOf sidebar |> Seq.pick (function :? TextBox as tb when tb.PlaceholderText = "搜索对话" -> Some tb | _ -> None)
             box.Text <- "Quetzal"
             fireSearch sidebar
             Assert.Equal<(string * bool * int) list>([ ("Quetzal", false, 0) ], List.ofSeq requests)
@@ -655,7 +655,7 @@ let ``sidebar marks fork rows and does not search when no handler is wired`` () 
                 |> Seq.toList
             Assert.Contains("分叉 · 预览", texts)
             // 未接线的侧栏：输入搜索词不进入“正在搜索”
-            let box = descendantsOf sidebar |> Seq.pick (function :? TextBox as tb when tb.PlaceholderText = "搜索会话" -> Some tb | _ -> None)
+            let box = descendantsOf sidebar |> Seq.pick (function :? TextBox as tb when tb.PlaceholderText = "搜索对话" -> Some tb | _ -> None)
             box.Text <- "zzz"
             fireSearch sidebar
             Assert.DoesNotContain(descendantsOf sidebar, fun c -> nameOf c = "正在搜索消息…")

@@ -83,7 +83,7 @@ module RichBackend =
     let install (value: IRichBackend) = backend <- Some value
     let current () = backend
 
-    /// 带上限的记忆化。长会话里代码块会被反复重渲染（流式追加、主题切换、
+    /// 带上限的记忆化。长对话里代码块会被反复重渲染（流式追加、主题切换、
     /// 滚动复用），不缓存就会把 JS 引擎当成每帧都要付费的热路径。
     type Cache<'K, 'V when 'K: equality>(limit: int) =
         let map = Dictionary<'K, 'V>()

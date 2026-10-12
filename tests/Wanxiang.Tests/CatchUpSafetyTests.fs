@@ -90,7 +90,7 @@ let ``concurrent submits keep ids strictly contiguous`` () =
         let outcome = replayOutcome dir
         use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
         let convId = newConversationId ()
-        // 先建会话（并发提交会以会话不存在失败——先建立）
+        // 先建对话（并发提交会以对话不存在失败——先建立）
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
         let threads =
             [ for i in 1..8 ->

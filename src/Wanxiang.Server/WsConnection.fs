@@ -82,7 +82,7 @@ type WsConnection(
     /// 全文搜索进行中的数量（W4，预算 SearchLimits.maxInFlightPerConnection）。
     let mutable searchesInFlight = 0
 
-    /// 快照携带的最大消息数（Q127/P1-2：长会话只带尾部，更早历史走 history.request 分页）。
+    /// 快照携带的最大消息数（Q127/P1-2：长对话只带尾部，更早历史走 history.request 分页）。
     let snapshotMessageLimit = 200
     /// catch-up 连续异常重试上限（R5：无界循环必须有界；coordinator 停止等持续故障时
     /// 耗尽后退出 catch-up 模式恢复实时推送，避免无限重试与悬挂连接）。
@@ -126,7 +126,7 @@ type WsConnection(
                 ws.Abort()
         with _ -> ()
 
-    /// 是否应接收某会话的权威增量（快照模式下跳过）。
+    /// 是否应接收某对话的权威增量（快照模式下跳过）。
     member _.ShouldReceiveAuthority(convId: Guid) : bool =
         lock cursorLock (fun () -> not snapshotMode && (observedList || observedConversations.Contains convId))
 
@@ -152,10 +152,10 @@ type WsConnection(
             |> ignore
 
     /// 客户端确认应用游标后继续 catch-up；权威提交从内存 replay 列表读取，
-    /// 但只发送该连接观察范围内的事件（过滤未观察会话，决策 133：多会话观察共用游标）。
+    /// 但只发送该连接观察范围内的事件（过滤未观察对话，决策 133：多对话观察共用游标）。
     /// 每批最多 64 条；客户端应用后发送 cursor.advanced 驱动下一批（决策 34）。
     /// 本方法只允许在非 coordinator mailbox 线程调用（Task.Run / recvTask / 连接线程）。
-    /// catchUpRunning 守卫在整个会话（含延迟重试）内持有，函数末尾单一释放，避免并发重跑与状态收尾交叠。
+    /// catchUpRunning 守卫在整个对话（含延迟重试）内持有，函数末尾单一释放，避免并发重跑与状态收尾交叠。
     member private this.SendCatchUp(startCursor: CommitId) : unit =
         if Interlocked.CompareExchange(&catchUpRunning, 1, 0) <> 0 then
             () // 已有 catch-up 进行中：跳过，避免重复批次
@@ -284,9 +284,9 @@ type WsConnection(
                             doneCatchUp <- true
             Interlocked.Exchange(&catchUpRunning, 0) |> ignore
 
-    /// 发送会话快照（当前投影）。快照携带全局 lastCommitId；
+    /// 发送对话快照（当前投影）。快照携带全局 lastCommitId；
     /// 客户端完整应用后发送 cursor.advanced 推进游标（决策 33/135）。
-    /// 长会话只携带尾部消息（P1-2/Q127），更早历史由客户端通过 history.request 分页。
+    /// 长对话只携带尾部消息（P1-2/Q127），更早历史由客户端通过 history.request 分页。
     member this.SendConversationSnapshot(convId: Guid) : bool =
         let proj = getProjection ()
         match Projection.tryConversation proj convId with
@@ -373,7 +373,7 @@ type WsConnection(
             try
                 if ws.State = WebSocketState.Open then
                     do! ws.CloseAsync(status, reason, CancellationToken.None)
-                    // CloseAsync 后服务端本地 ReceiveAsync 可能仍阻塞；Abort 强制 recvTask 退出，
+                    // CloseAsync 后主机本地 ReceiveAsync 可能仍阻塞；Abort 强制 recvTask 退出，
                     // 使 Task.WhenAll 返回、AbortByConnection 附件清理及时执行（认证超时/协议违规路径）
                     ws.Abort()
             with _ -> ()
@@ -524,9 +524,9 @@ type WsConnection(
                 lock cursorLock (fun () -> observedConversations <- observedConversations.Remove d.conversationId)
             | CursorAdvanced d ->
                 // 决策 33/35：游标表示客户端已成功应用的最后全局提交 id。
-                // 上限保护：客户端声明的 id 超过服务端最新提交时按最新提交处理，
+                // 上限保护：客户端声明的 id 超过主机最新提交时按最新提交处理，
                 // 防止 uint64.MaxValue 等超界值把 appliedCursor 抬到虚构位置、令 catch-up 起点错乱。
-                // （陈旧检测本身仍信任客户端确认值——决策 149：服务端只信任已明确确认的游标。）
+                // （陈旧检测本身仍信任客户端确认值——决策 149：主机只信任已明确确认的游标。）
                 match handshakeState with
                 | Authenticated ->
                     let latest = (getProjection ()).latestCommitId
@@ -697,7 +697,7 @@ type WsConnection(
                                    providerId = d.providerId
                                    ok = false
                                    models = JsonArray()
-                                   error = Some(sprintf "服务商 %s 不存在" d.providerId) |})
+                                   error = Some(sprintf "模型服务 %s 不存在" d.providerId) |})
                         |> ignore
                     | Some provider ->
                         // 探活可能等上十几秒，绝不阻塞接收循环
@@ -857,7 +857,7 @@ type WsConnection(
                     this.SendDevices()
                 | Error e -> reject e
 
-    /// 下发目录快照（可用服务商 / 模型 / 工具 / 生成默认值）。
+    /// 下发目录快照（可用模型服务 / 模型 / 工具 / 生成默认值）。
     member private this.SendCatalog() : unit =
         let cfg = getConfig ()
         this.TrySend(
@@ -1044,16 +1044,16 @@ type ConnectionRegistry() =
     member _.All() : WsConnection list =
         connections.Values |> List.ofSeq
 
-    /// 广播一个与具体会话无关的事件（配置变更、目录快照）。
-    /// 只发给已认证连接：未认证连接不该看到服务商清单。
+    /// 广播一个与具体对话无关的事件（配置变更、目录快照）。
+    /// 只发给已认证连接：未认证连接不该看到模型服务清单。
     member this.BroadcastToAll(ev: WireEvent) : unit =
         for conn in this.All() do
             if conn.IsAuthenticated then conn.PushTransient ev
 
     /// 广播权威提交（coordinator.onCommitted 注入）。
     member this.BroadcastCommit(commit: Events.Commit) : unit =
-        // 收集受影响会话与变更种类
-        // 每个 (会话, 变更种类) 只处理一次：下面的内层循环会重走整个 events 数组，
+        // 收集受影响对话与变更种类
+        // 每个 (对话, 变更种类) 只处理一次：下面的内层循环会重走整个 events 数组，
         // 若 affected 里同一对出现 N 次，同一条消息就会被推送 N 次
         // （一次提交含多条消息时必然发生，例如「重新生成」的批量作废）。
         let affected =
@@ -1096,8 +1096,8 @@ type ConnectionRegistry() =
                     // （避免在单写者线程内读取投影）
                 | _ -> ()
 
-    /// 广播临时事件（generation.delta 等）给观察某会话的连接。
-    /// P2-6：generation 状态变化同步推送轻量列表更新（会话摘要含 runtimeState，Q125）。
+    /// 广播临时事件（generation.delta 等）给观察某对话的连接。
+    /// P2-6：generation 状态变化同步推送轻量列表更新（对话摘要含 runtimeState，Q125）。
     member this.BroadcastTransient(convId: Guid, ev: WireEvent) : unit =
         for conn in this.All() do
             if conn.Observes convId then

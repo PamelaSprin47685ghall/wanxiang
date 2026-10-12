@@ -19,7 +19,7 @@ module AcceptanceScenario =
     // 场景 A：正常使用（§31 场景 A）
     // -------------------------------------------------------------------------
 
-    /// 生成 n 条提交：1 会话创建 + n-1 消息，落盘为 RFC 7464 日志。
+    /// 生成 n 条提交：1 对话创建 + n-1 消息，落盘为 RFC 7464 日志。
     let private seedLog (n: int) : string * Guid =
         let dir = tempDir ()
         DataPaths.ensureDataDirs dir
@@ -37,7 +37,7 @@ module AcceptanceScenario =
         fs.Flush()
         dir, convId
 
-    /// 投影内容指纹：会话数 + 消息总数 + 最新 commitId（内容对比，不只 id）。
+    /// 投影内容指纹：对话数 + 消息总数 + 最新 commitId（内容对比，不只 id）。
     let private projectionFingerprint (p: Projection) : string =
         let msgCount =
             p.conversations.Values
@@ -353,7 +353,7 @@ module AcceptanceScenario =
             DataPaths.ensureDataDirs dir
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
             let convId = newConversationId ()
-            // 3 条提交：1 会话 + 2 消息。分步落盘，每步 replay 得到真实前缀投影再快照
+            // 3 条提交：1 对话 + 2 消息。分步落盘，每步 replay 得到真实前缀投影再快照
             let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "scenario-d"; config = testConfig () } ]
             let c2 = Events.Commit.create 2UL (DateTimeOffset(day.AddHours 1.0)) [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m1" } ]
             let c3 = Events.Commit.create 3UL (DateTimeOffset(day.AddHours 2.0)) [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "m2" } ]

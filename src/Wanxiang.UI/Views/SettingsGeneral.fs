@@ -14,19 +14,19 @@ open Wanxiang.Core
 
 /// 生成默认值、外观偏好与关于信息。
 ///
-/// 生成参数落到服务端配置（新会话继承）；外观偏好只存本机
+/// 生成参数落到主机配置（新对话继承）；外观偏好只存本机
 /// （Q195：窗口尺寸与主题是客户端偏好，不进业务 TOML、不经 NDJSON）。
 type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged: UiPrefs -> unit) =
 
     let mutable catalog = Catalog.empty
     let mutable prefs = UiPrefs.defaults
 
-    let temperatureBox = snd (Ui.textField "留空 = 使用服务商默认")
+    let temperatureBox = snd (Ui.textField "留空 = 使用模型服务默认")
     let topPBox = snd (Ui.textField "0–1，留空不设")
     let maxTokensBox = snd (Ui.textField "留空不限制")
     let contextBox = snd (Ui.textField "200")
     let toolRoundsBox = snd (Ui.textField "12")
-    let instructionsBox = snd (Ui.textArea "新会话的默认系统指令（可留空）" ControlMetrics.textAreaMinHeight)
+    let instructionsBox = snd (Ui.textArea "新对话的默认系统指令（可留空）" ControlMetrics.textAreaMinHeight)
     let generationErrorSummary =
         let summary =
             TextBlock(
@@ -55,7 +55,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
     let mutable generationScope = ""
     let mutable draftScope = ""
     let mutable scopeEpoch = 0
-    let generationStatus = Ui.caption "修改后保存，仅用于新会话。"
+    let generationStatus = Ui.caption "修改后保存，仅用于新对话。"
     let mutable syncAppearance: UiPrefs -> unit = ignore
 
     let markGenerationDirty () =
@@ -64,7 +64,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             generationRevision <- generationRevision + 1
             generationDirty <- true
             generationStatus.Text <-
-                if draftScope <> generationScope then "服务器已切换。旧草稿仍在，但不能保存到另一台服务器。请返回原服务器，或放弃修改。"
+                if draftScope <> generationScope then "主机已切换。旧草稿仍在，但不能保存到另一台主机。请返回原主机，或放弃修改。"
                 else "有未保存的修改。离开设置后，草稿仍留在当前窗口。"
 
     do
@@ -118,9 +118,9 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             finally
                 generationSyncing <- false
         elif not generationSaving && draftScope = generationScope && next.generation <> generationBaseline then
-            generationStatus.Text <- "服务器默认值已变化。草稿已保留；请核对后保存，或放弃修改。"
+            generationStatus.Text <- "主机默认值已变化。草稿已保留；请核对后保存，或放弃修改。"
 
-    /// 只保留一份可见草稿；切换目标后阻止把旧服务器的表单误写给新服务器。
+    /// 只保留一份可见草稿；切换目标后阻止把旧主机的表单误写给新主机。
     member _.SetGenerationScope(instance: string) =
         if generationScope <> instance then
             scopeEpoch <- scopeEpoch + 1
@@ -129,8 +129,8 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             setGenerationPending false
             if generationDirty then
                 generationStatus.Text <-
-                    if draftScope = instance then "已回到草稿所属的服务器。修改尚未保存。"
-                    else "服务器已切换。旧草稿仍在，但不能保存到另一台服务器。请返回原服务器，或放弃修改。"
+                    if draftScope = instance then "已回到草稿所属的主机。修改尚未保存。"
+                    else "主机已切换。旧草稿仍在，但不能保存到另一台主机。请返回原主机，或放弃修改。"
 
     member _.HasUnsavedGeneration = generationDirty
 
@@ -142,7 +142,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             this.SetCatalog catalog
             for box in [ temperatureBox; topPBox; maxTokensBox; contextBox; toolRoundsBox ] do Ui.clearFieldError box
             generationErrorSummary.IsVisible <- false
-            generationStatus.Text <- "已恢复当前服务器的默认值。"
+            generationStatus.Text <- "已恢复当前主机的默认值。"
             setGenerationPending false
 
     member this.SetPrefs(next: UiPrefs) =
@@ -214,7 +214,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             let submittedRevision = generationRevision
             let submittedEpoch = scopeEpoch
             setGenerationPending true
-            generationStatus.Text <- "正在保存到服务器…"
+            generationStatus.Text <- "正在保存到主机…"
             actions.updateGeneration payload (fun ok ->
                 if submittedEpoch <> scopeEpoch then ()
                 elif ok then
@@ -225,7 +225,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                     generationDirty <- generationRevision <> submittedRevision
                     generationStatus.Text <-
                         if generationDirty then "上一版已保存，后续修改尚未保存。"
-                        else "已保存。之后新建的会话将使用这些默认值。"
+                        else "已保存。之后新建的对话将使用这些默认值。"
                 else
                     setGenerationPending false
                     generationDirty <- true
@@ -241,11 +241,11 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
 
     member this.BuildGeneration() : Control =
         let autoTitleRow, readAuto, writeAuto =
-            Ui.switchRow "自动生成会话标题" "首轮对话后用同一个模型起一个短标题；失败时回落到你的第一句话。" catalog.generation.autoTitle (fun _ -> markGenerationDirty ())
+            Ui.switchRow "自动生成对话标题" "首轮对话后用同一个模型起一个短标题；失败时回落到你的第一句话。" catalog.generation.autoTitle (fun _ -> markGenerationDirty ())
         readAutoTitle <- readAuto
         setAutoTitle <- writeAuto
         let saveButton = Ui.button Ui.Primary "保存生成设置" (fun () -> this.SaveGeneration())
-        // 键盘位与文案都在按钮上自描述：本地表单（服务商、MCP、会话参数）
+        // 键盘位与文案都在按钮上自描述：本地表单（模型服务、MCP、对话参数）
         // 一律「Ctrl/⌘+Enter 保存」，这里此前只响应鼠标点击。
         Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, "保存生成设置 (Ctrl+Enter)")
         ToolTip.SetTip(saveButton, "保存生成设置 (Ctrl+Enter)")
@@ -257,10 +257,10 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             Ui.setButtonPending saveButton pending "保存生成设置" "正在保存…"
             if not pending then Ui.setEnabled saveButton (not generationDirty || draftScope = generationScope)
             Ui.setEnabled discardButton (not pending)
-        let temperatureField = Ui.inputFieldGroup "Temperature" "越高越发散。留空则用服务商默认值。" temperatureBox
+        let temperatureField = Ui.inputFieldGroup "Temperature" "越高越发散。留空则用模型服务默认值。" temperatureBox
         let topPField = Ui.inputFieldGroup "Top P" "核采样阈值，0–1。" topPBox
         let maxTokensField = Ui.inputFieldGroup "最大输出 token" "限制单次回复长度。" maxTokensBox
-        let contextField = Ui.inputFieldGroup "上下文消息上限" "每次请求最多携带多少条历史，防止长会话撞上模型上限。" contextBox
+        let contextField = Ui.inputFieldGroup "上下文消息上限" "每次请求最多携带多少条历史，防止长对话撞上模型上限。" contextBox
         let toolRoundsField = Ui.inputFieldGroup "工具调用轮数上限" "模型连续调用工具超过这个轮数就中止本次生成。" toolRoundsBox
         let grid, applyGridLayout =
             Ui.twoColumnForm Spacing.space2xl Spacing.spaceXl 5
@@ -274,8 +274,8 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                 Spacing.space4xl
                 [ Ui.vstack
                       Spacing.spaceXs
-                      [ Ui.heading "新会话默认值" :> Control
-                        Ui.caption "保存到当前服务器，供所有客户端新建会话时使用。不会改动已有会话。" :> Control ]
+                      [ Ui.heading "默认设置" :> Control
+                        Ui.caption "保存到当前主机，供所有客户端新建对话时使用。不会改动已有对话。" :> Control ]
                   :> Control
                   generationErrorSummary :> Control
                   // 数值表单、指令框与开关行收进与 Appearance/About 同档的分组面板卡
@@ -298,7 +298,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             if e.Key = Key.Enter && ctrl then
                 e.Handled <- true
                 this.SaveGeneration())
-        // 五个数值单行框 Enter 即保存：与连接对话框、服务商/工具编辑页同一约定。
+        // 五个数值单行框 Enter 即保存：与连接对话框、模型服务/工具编辑页同一约定。
         // 系统指令是多行 textArea，那里的回车是换行，不接。
         let ctrl (e: KeyEventArgs) =
             e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
@@ -478,7 +478,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                 prefs <- { prefs with codeWrap = value }
                 onPrefsChanged prefs)
         let archivedRow, _, setArchived =
-            Ui.switchRow "在侧栏显示已归档会话" "归档会话默认收起，避免长列表。" prefs.showArchived (fun value ->
+            Ui.switchRow "在侧栏显示已归档对话" "归档对话默认收起，避免长列表。" prefs.showArchived (fun value ->
                 prefs <- { prefs with showArchived = value }
                 onPrefsChanged prefs)
         let motionRow, _, setReduceMotion =
@@ -507,7 +507,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             [ Ui.vstack
                   Spacing.spaceXs
                   [ Ui.heading "外观与交互" :> Control
-                    Ui.caption "这些偏好只保存在本机，不会同步到服务端。" :> Control ]
+                    Ui.caption "这些偏好只保存在本机，不会同步到主机。" :> Control ]
               :> Control
               // 分组面板内边距走面板档 (space4, space4)：比列表行卡 (space4/space3) 更宽松、四角均衡，
               // 用于承载多行/多字段的容器卡；设置四页共用这一小档集合。
@@ -590,7 +590,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                         row "日志格式版本" (string Constants.FormatVersion)
                         row "客户端平台" platformDesc
                         row "操作系统" osDesc
-                        row "服务器实例" (if String.IsNullOrWhiteSpace instanceId then "未连接" else instanceId)
+                        row "主机实例" (if String.IsNullOrWhiteSpace instanceId then "未连接" else instanceId)
                         row "连接地址" (if String.IsNullOrWhiteSpace serverUrl then "未连接" else serverUrl)
                         Ui.hairline () :> Control
                         copyDiagButton :> Control ])
@@ -602,8 +602,8 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                   (Ui.vstack
                       Spacing.spaceMd
                       [ Ui.label "设计与实现" :> Control
-                        Ui.caption "万象是独立实现的对等 C/S 聊天客户端：每个实例既是服务端也是客户端，" :> Control
-                        Ui.caption "会话以 NDJSON 事件日志为唯一权威，界面只是投影的一个视图。" :> Control ])
+                        Ui.caption "万象是独立实现的对等 C/S 聊天客户端：每个实例既是主机也是客户端，" :> Control
+                        Ui.caption "对话以 NDJSON 事件日志为唯一权威，界面只是投影的一个视图。" :> Control ])
                   Spacing.Radius.lg
               :> Control
               Ui.groupingCard

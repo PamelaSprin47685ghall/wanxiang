@@ -77,7 +77,7 @@ type ConversationExportDialog(
             | ExportReady count ->
                 let empty = count = 0
                 status.Text <-
-                    if empty then "当前会话没有已保存的消息，无需导出"
+                    if empty then "当前对话没有已保存的消息，无需导出"
                     elif saving then "正在保存…"
                     elif saved then sprintf "已保存完整记录（%d 条消息）。" count
                     else saveError |> Option.defaultValue (sprintf "已完整读取 %d 条消息，可以保存。" count)
@@ -193,7 +193,7 @@ type ConversationExportDialog(
                 | None -> ())
         buttons.HorizontalAlignment <- HorizontalAlignment.Right
         let content = Ui.vstack Spacing.spaceXl
-                          [ Ui.title "导出会话" :> Control; Ui.caption initialTitle :> Control
+                          [ Ui.title "导出对话" :> Control; Ui.caption initialTitle :> Control
                             status :> Control; progress :> Control
                             // 进度区与说明/操作区之间一条最轻发丝线：上方是实时反馈，
                             // 下面是静态说明与按钮，分层不靠间距硬猜。
@@ -206,7 +206,7 @@ type ConversationExportDialog(
         AutomationProperties.SetName(closeButton, "取消导出")
         AutomationProperties.SetHelpText(closeButton, "读取中取消导出（对话框保持打开，可重新导出）；取消后此按钮为关闭 (Esc 随时关闭)")
         AutomationProperties.SetName(retryButton, "重新导出")
-        AutomationProperties.SetHelpText(retryButton, "重新读取并导出当前会话")
+        AutomationProperties.SetHelpText(retryButton, "重新读取并导出当前对话")
         AutomationProperties.SetName(saveButton, "保存 Markdown")
         AutomationProperties.SetHelpText(saveButton, "保存导出的 Markdown 文件")
         overlay.ShowDialog(content :> Control, 480.0, onClosed = (fun () ->
@@ -265,7 +265,7 @@ type ConversationExportDialog(
                     let picking =
                         top.StorageProvider.SaveFilePickerAsync(
                             FilePickerSaveOptions(
-                                Title = "导出会话",
+                                Title = "导出对话",
                                 SuggestedFileName = Export.safeFileName document.title,
                                 DefaultExtension = "md",
                                 FileTypeChoices =

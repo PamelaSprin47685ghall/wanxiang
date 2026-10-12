@@ -19,7 +19,7 @@ open Wanxiang.Tests.Helpers
 /// 1. 当前 Wire 解码器仍能读旧客户端事件形态（黄金 wire 样本，冻结为字面量）。
 /// 2. 未知事件类型（未来客户端）→ 宽容忽略，不切断连接（AG-UI 增量安全）。
 /// 3. 已知类型但畸形载荷 → 明确协议错误（不是静默部分工作）。
-/// 4. 当前服务端 + 旧式客户端（auth.present 无 Hello 握手）→ 正常工作。
+/// 4. 当前主机 + 旧式客户端（auth.present 无 Hello 握手）→ 正常工作。
 /// 5. 未认证业务事件 → 明确 protocol error（绝不半工作状态）。
 module N1Compat =
 
@@ -91,14 +91,14 @@ module N1Compat =
         | other -> failwithf "expected Malformed, got %A" other
 
     // ==========================================
-    // 3. 服务端 N-1：旧式客户端可用；未认证业务事件明确拒绝
+    // 3. 主机 N-1：旧式客户端可用；未认证业务事件明确拒绝
     // ==========================================
 
     [<Fact>]
-    let ``当前服务端 + 旧式客户端（auth.present 无 Hello）正常认证`` () =
+    let ``当前主机 + 旧式客户端（auth.present 无 Hello）正常认证`` () =
         // 端到端：真实 ServerApp + ClientWebSocket。旧式客户端不发送 Hello 握手事件，
         // 连接后第一个动作即 auth.present（ADR-001 方案 B）。
-        // 复用 ServerE2eTests 的 ServerHandle（同进程真实服务端）。
+        // 复用 ServerE2eTests 的 ServerHandle（同进程真实主机）。
         let port = Wanxiang.Tests.ServerE2eTests.pickPort ()
         let token = Wanxiang.Config.Auth.generateToken ()
         let server = Wanxiang.Tests.ServerE2eTests.E2e.ServerHandle(port, token)
@@ -114,7 +114,7 @@ module N1Compat =
     [<Fact>]
     let ``未认证业务事件被明确拒绝（protocol error）而非半工作`` () =
         // 场景 G：不得「基本能用但部分事件被静默忽略」。
-        // 未认证即发业务命令 → 服务端必须明确 protocol error 关闭连接。
+        // 未认证即发业务命令 → 主机必须明确 protocol error 关闭连接。
         let port = Wanxiang.Tests.ServerE2eTests.pickPort ()
         let token = Wanxiang.Config.Auth.generateToken ()
         let server = Wanxiang.Tests.ServerE2eTests.E2e.ServerHandle(port, token)
@@ -131,7 +131,7 @@ module N1Compat =
             carrier["value"] <- JsonNode.Parse(WireCodec.encodeCommand cmd).AsObject()
             let bytes = Encoding.UTF8.GetBytes(carrier.ToJsonString())
             ws.SendAsync(ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, ct).GetAwaiter().GetResult()
-            // 服务端必须关闭连接（ProtocolError），不能静默接受
+            // 主机必须关闭连接（ProtocolError），不能静默接受
             // 第一次 Receive 返回 Close 帧（状态 + 原因）；连接进入 CloseReceived。
             // 第二次 Receive 抛 WebSocketException（连接已关闭）。
             let buf = Array.zeroCreate<byte> 1024

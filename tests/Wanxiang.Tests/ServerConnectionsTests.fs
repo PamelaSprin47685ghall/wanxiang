@@ -165,7 +165,7 @@ module ServerConnectionsTests =
                 conversations = Map.ofList [ convId, conv ]
         }
 
-        // 1. 会话不存在
+        // 1. 对话不存在
         let qNonExistent: ConversationExportQuery = {
             exportId = Guid.NewGuid()
             conversationId = Guid.NewGuid()
@@ -173,10 +173,10 @@ module ServerConnectionsTests =
             beforeCommitId = 0UL
         }
         match ServerModel.exportPage proj qNonExistent with
-        | Error msg -> Assert.Contains("会话不存在", msg)
+        | Error msg -> Assert.Contains("对话不存在", msg)
         | Ok _ -> Assert.Fail("Expected error for non-existent conversation")
 
-        // 2. 会话已删除
+        // 2. 对话已删除
         let deletedConv = { conv with deleted = true }
         let projWithDeleted = { proj with conversations = Map.ofList [ convId, deletedConv ] }
         let qDeleted: ConversationExportQuery = {
@@ -186,7 +186,7 @@ module ServerConnectionsTests =
             beforeCommitId = 0UL
         }
         match ServerModel.exportPage projWithDeleted qDeleted with
-        | Error msg -> Assert.Contains("会话已删除", msg)
+        | Error msg -> Assert.Contains("对话已删除", msg)
         | Ok _ -> Assert.Fail("Expected error for deleted conversation")
 
         // 3. atCommitId 超过 latestCommitId
@@ -211,7 +211,7 @@ module ServerConnectionsTests =
         | Error msg -> Assert.Contains("导出首页不能指定分页边界", msg)
         | Ok _ -> Assert.Fail("Expected error for non-zero beforeCommitId without atCommitId")
 
-        // 5. 正常导出空会话页面
+        // 5. 正常导出空对话页面
         let qOk: ConversationExportQuery = {
             exportId = Guid.NewGuid()
             conversationId = convId
@@ -226,7 +226,7 @@ module ServerConnectionsTests =
         | Error e -> Assert.Fail(sprintf "Expected Ok, got: %s" e)
 
     [<Fact>]
-    let ``ServerModel conversationListItems 格式化有效会话摘要并过滤思维链`` () =
+    let ``ServerModel conversationListItems 格式化有效对话摘要并过滤思维链`` () =
         let convId = Guid.NewGuid()
         let now = DateTimeOffset.UtcNow
         // 构造含 reasoning 的消息和文本消息

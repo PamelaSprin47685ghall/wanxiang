@@ -1268,19 +1268,19 @@ module MessageCard =
         if not (String.IsNullOrWhiteSpace message.text) && not ctx.streaming then
             addCopyButton message.text
         if MessageView.isUser message && not ctx.streaming then
-            addButton Icons.pencil "编辑并分叉" "编辑并分叉" "以编辑后的消息创建分叉会话" (fun () ->
+            addButton Icons.pencil "编辑并分叉" "编辑并分叉" "以编辑后的消息创建分叉对话" (fun () ->
                 actions.editAndFork message)
         if not (MessageView.isUser message) && ctx.isLastAssistant && not ctx.streaming then
             addButton Icons.refresh "重新生成" "重新生成" "丢弃最后一次回复并重新生成" (fun () ->
                 actions.regenerate ())
         match message.commitId with
         | Some commitId when not ctx.streaming ->
-            addButton Icons.trash "删除这条消息" "删除这条消息" "从会话历史中删除这条消息" (fun () ->
+            addButton Icons.trash "删除这条消息" "删除这条消息" "从对话历史中删除这条消息" (fun () ->
                 actions.deleteMessage commitId)
         | _ -> ()
         row
 
-    /// 错误标题必须是人话：兼容路径（旧服务端纯文本 error）可能把原始异常直接塞进 message；
+    /// 错误标题必须是人话：兼容路径（旧主机纯文本 error）可能把原始异常直接塞进 message；
     /// 含换行、堆栈帧或异常类名的原文一律降级为固定标题，原文只进按需展开的「技术细节」。
     let private errorTitle (error: GenerationError) : string =
         let m = if isNull error.message then "" else error.message.Trim()
@@ -1642,7 +1642,7 @@ module MessageCard =
     /// 重启，呼吸节奏随 delta 密度碎裂。这里把「一段呼吸运行的原点」放在模块级持久状态中：
     /// 所有流式光标（含每个 delta 新建出来的）都从同一原点、按全局单调时钟的流逝时间
     /// 取相位，重建因此不再重启节奏。原点只在尚无运行中的段落时开启（进程内第一枚
-    /// 流式光标仍从峰值起步）；beginBreathRun 供新会话或测试显式开启一段新运行。
+    /// 流式光标仍从峰值起步）；beginBreathRun 供新对话或测试显式开启一段新运行。
     let mutable private breathOriginTicks = 0L
     let mutable private breathRunLive = false
 
@@ -1962,7 +1962,7 @@ module MessageCard =
                 host.Focus(NavigationMethod.Pointer) |> ignore
             | _ -> ())
         // 不为卡片本身加 Shift+F10 / Apps 键盘入口：那要求 host 可聚焦，而每张消息卡
-        // 都变成一个 Tab 停靠点等于把整段会话变成 Tab 迷宫。消息动作的键盘路径本来就
+        // 都变成一个 Tab 停靠点等于把整段对话变成 Tab 迷宫。消息动作的键盘路径本来就
         // 有——Tab 到脚注行按钮（它们各自可聚焦且带焦点环）。右键只做指针入口。
         host.GotFocus.Add(fun _ -> syncVisual ())
         host.LostFocus.Add(fun _ -> dim ())

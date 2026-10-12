@@ -11,7 +11,7 @@ open Wanxiang.Config
 /// 可选 provider / 模型 / 工具的目录。
 ///
 /// 客户端不该靠用户手打 provider id 和模型名——那是配置文件时代的交互。
-/// 这里把服务端已知的一切可选项整理成快照下发，选择器直接渲染。
+/// 这里把主机已知的一切可选项整理成快照下发，选择器直接渲染。
 /// **密钥永不出现在快照里**，只用 `hasApiKey` 表示是否已配置。
 module ProviderCatalog =
 
@@ -75,8 +75,8 @@ module ProviderCatalog =
             [| for m in cfg.mcpServers |> Map.toList |> List.map snd |> List.sortBy (fun m -> m.id) ->
                    mcpToJson m :> JsonNode |])
 
-    /// 目录快照的 generation 段：生成默认值 + MCP 服务器清单
-    /// （客户端设置界面与会话设置共用同一份数据）。
+    /// 目录快照的 generation 段：生成默认值 + MCP 服务清单
+    /// （客户端设置界面与对话设置共用同一份数据）。
     let generation (cfg: AppConfig) : JsonObject =
         let o = generationToJson cfg.generation
         o["mcpServers"] <- mcpServers cfg
@@ -199,7 +199,7 @@ module ProviderCatalog =
         /// 把类型与说明编码成线上字符串：`[code] 说明`。
         let encode (f: ProbeFailure) (message: string) = sprintf "[%s] %s" (code f) message
 
-        /// 解码 `[code] 说明`；没有前缀（旧服务端）返回 None 与原文。
+        /// 解码 `[code] 说明`；没有前缀（旧主机）返回 None 与原文。
         let decode (text: string) : ProbeFailure option * string =
             if not (isNull text) && text.StartsWith("[", StringComparison.Ordinal) then
                 let close = text.IndexOf ']'

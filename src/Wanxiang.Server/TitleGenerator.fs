@@ -8,9 +8,9 @@ open Wanxiang.Agent
 open Wanxiang.Config
 open Wanxiang.Core
 
-/// 首轮对话后自动给会话起标题。
+/// 首轮对话后自动给对话起标题。
 ///
-/// 用户不该被迫看着一列「会话 3f8a1c22」。这里用同一个 provider
+/// 用户不该被迫看着一列「对话 3f8a1c22」。这里用同一个 provider
 /// 做一次极短的旁路补全；失败就静默回落到用户首句的截断，
 /// 绝不因为起标题失败影响正常对话。
 module TitleGenerator =
@@ -19,13 +19,13 @@ module TitleGenerator =
     let maxLength = 24
 
     let private instruction =
-        "用一句不超过 12 个字的短语概括这段对话的主题，作为会话标题。"
+        "用一句不超过 12 个字的短语概括这段对话的主题，作为对话标题。"
         + "只输出标题本身，不要引号、句号、前后缀或解释。"
 
     /// 从用户首句截断出兜底标题。
     let fallback (userText: string) : string =
         let cleaned = PlainText.ofMarkdown userText
-        if String.IsNullOrWhiteSpace cleaned then "新会话"
+        if String.IsNullOrWhiteSpace cleaned then "新对话"
         elif cleaned.Length <= maxLength then cleaned
         else cleaned.Substring(0, maxLength) + "…"
 
@@ -51,13 +51,13 @@ module TitleGenerator =
             elif firstSentence.Length <= maxLength then firstSentence
             else firstSentence.Substring(0, maxLength) + "…"
 
-    /// 该会话标题是否还是系统生成的占位（只有占位标题才自动改名，
-    /// 用户手动命名过的会话绝不覆盖）。
+    /// 该对话标题是否还是系统生成的占位（只有占位标题才自动改名，
+    /// 用户手动命名过的对话绝不覆盖）。
     let isPlaceholder (title: string) : bool =
         if String.IsNullOrWhiteSpace title then true
         else
             let t = title.Trim()
-            t = "新会话" || t.StartsWith("会话 ", StringComparison.Ordinal)
+            t = "新对话" || t = "新会话" || t.StartsWith("对话 ", StringComparison.Ordinal) || t.StartsWith("会话 ", StringComparison.Ordinal)
 
     /// 请求一个标题。已有真实标题、关闭开关或消息不足时返回 None。
     let suggest

@@ -123,7 +123,7 @@ let ``[AC-2] 设置页载荷：updateTools 与老的 updateGeneration 都不会�
 // ---------------------------------------------------------------- 目录整理与人话摘要
 
 [<Fact>]
-let ``[AC-7] builtin_echo 默认不进目录；tools.exposeDebug 打开才可见；老会话照常可用`` () =
+let ``[AC-7] builtin_echo 默认不进目录；tools.exposeDebug 打开才可见；老对话照常可用`` () =
     let cfg0 = AppConfig.defaults (Guid.NewGuid())
     let withRoots = { cfg0 with tools = { cfg0.tools with fileReadRoots = [ "/tmp" ] } }
     let ids (cfg: AppConfig) =
@@ -134,7 +134,7 @@ let ``[AC-7] builtin_echo 默认不进目录；tools.exposeDebug 打开才可见
     Assert.Contains("builtin:file.read", ids withRoots)
     let debug = { withRoots with tools = { withRoots.tools with exposeDebug = true } }
     Assert.Contains("builtin:echo", ids debug)
-    // 已经选了 echo 的老会话：仍能构建出该工具，也不会被报成「配置漂移」
+    // 已经选了 echo 的老对话：仍能构建出该工具，也不会被报成「配置漂移」
     let registry = ToolRegistry((fun () -> withRoots), ignore)
     let session = { SessionConfig.empty with tools = [ "builtin:echo" ] }
     Assert.Single(registry.BuildTools session) |> ignore
@@ -336,7 +336,7 @@ let ``[AC-2] 取消生成时等待中的审批作废`` () =
     broker.ClearConversation conv
     Assert.Equal(ApprovalCancelled, t2.Result)
 
-// ---------------------------------------------------------------- 端到端（真实服务端 + 假上游）
+// ---------------------------------------------------------------- 端到端（真实主机 + 假上游）
 
 /// 假的 OpenAI 兼容上游：第一次请求回一个 builtin_time 调用，之后回一句文字。
 type private FakeModel() =
@@ -450,7 +450,7 @@ let private withSession (tools: ToolsConfig) (body: Session -> CancellationToken
     use timeout = new CancellationTokenSource(TimeSpan.FromSeconds 40.0)
     body { host = host; model = model; port = port; token = token; conv = Guid.NewGuid() } timeout.Token
 
-/// 连接、认证、建会话、观察、（可选）声明审批能力，返回 socket。
+/// 连接、认证、建对话、观察、（可选）声明审批能力，返回 socket。
 let private connect (s: Session) (ct: CancellationToken) (capable: bool) (create: bool) =
     let ws = Wanxiang.Tests.ServerE2eTests.E2e.conn s.port s.token ct
     Ws.wait ws ct "auth.accepted" |> ignore
@@ -539,7 +539,7 @@ let ``[AC-4] e2e 拒绝：日志里有一条含「用户拒绝」的完整工具
         Assert.DoesNotContain("approval", s.host.LogText()))
 
 [<Fact>]
-let ``[AC-6] e2e 旧客户端遇到需要审批的调用：服务端立即拒绝，不会永远挂住`` () =
+let ``[AC-6] e2e 旧客户端遇到需要审批的调用：主机立即拒绝，不会永远挂住`` () =
     withSession askEach (fun s ct ->
         use ws = connect s ct false true // 观察了对话，但没声明审批能力
         ask s ws ct

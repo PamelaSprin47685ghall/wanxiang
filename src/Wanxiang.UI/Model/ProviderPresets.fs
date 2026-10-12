@@ -24,7 +24,7 @@ module ProviderKind =
         | _ when System.String.IsNullOrWhiteSpace raw -> OpenAiCompatible
         | _ -> UnknownKind raw
 
-/// 一个服务商预设：填好端点与常见模型，用户只需要粘贴密钥。
+/// 一个模型服务预设：填好端点与常见模型，用户只需要粘贴密钥。
 type ProviderPreset = {
     key: string
     label: string
@@ -41,9 +41,9 @@ type ProviderPreset = {
     alternate: (string * string) option
 }
 
-/// 服务商预设表。
+/// 模型服务预设表。
 ///
-/// 大多数服务商走 OpenAI 兼容端点，这套协议已是事实标准，不必为每家写 SDK。
+/// 大多数模型服务走 OpenAI 兼容端点，这套协议已是事实标准，不必为每家写 SDK。
 /// Claude 与 Gemini 另有**原生**预设：兼容层会丢掉思维链、prompt caching、
 /// systemInstruction 这些只在原生协议里存在的能力。
 /// 预设的价值在于用户不用去翻文档找 baseUrl 和模型名。
@@ -204,7 +204,7 @@ module ProviderPresets =
         if System.String.IsNullOrWhiteSpace url then ""
         else url.Trim().TrimEnd('/')
 
-    /// 用 baseUrl 反查预设，便于编辑已有服务商时高亮当前预设。
+    /// 用 baseUrl 反查预设，便于编辑已有模型服务时高亮当前预设。
     let matchByBaseUrl (baseUrl: string) =
         if System.String.IsNullOrWhiteSpace baseUrl then None
         else
@@ -216,7 +216,7 @@ module ProviderPresets =
                     | Some(_, alt) -> normalizeBaseUrl alt = normalized
                     | None -> false))
 
-    /// 给新服务商建议一个不冲突的稳定标识。
+    /// 给新模型服务建议一个不冲突的稳定标识。
     let suggestId (preset: ProviderPreset) (taken: string list) =
         let baseId = if preset.key = "custom" then "provider" else preset.key
         if not (List.contains baseId taken) then baseId
@@ -226,7 +226,7 @@ module ProviderPresets =
                 if List.contains candidate taken then probe (n + 1) else candidate
             probe 2
 
-    /// 服务商保存载荷。设置页编辑器与首次运行卡片**共用这一个**构造函数，
+    /// 模型服务保存载荷。设置页编辑器与首次运行卡片**共用这一个**构造函数，
     /// 两个入口因此经同一个 `ConfigMutation.upsertProvider` 写出相同的 TOML。
     let payload
         (id: string)

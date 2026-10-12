@@ -124,7 +124,7 @@ module SupportBundle =
             let configPath, _ = writeConfig dir
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
             let convId = newConversationId ()
-            let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "机密会话"; config = testConfig () } ]
+            let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "机密对话"; config = testConfig () } ]
             let p = DataPaths.eventFilePath dir day
             Directory.CreateDirectory(Path.GetDirectoryName p) |> ignore
             File.WriteAllBytes(p, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1))
@@ -134,7 +134,7 @@ module SupportBundle =
             | Ok _ ->
                 let layout = File.ReadAllText(Path.Combine(outPath, "storage-layout.json"))
                 Assert.Contains("2026-08-01.jsonseq", layout)
-                // 不包含业务内容（消息正文/会话标题）
-                Assert.DoesNotContain("机密会话", layout)
+                // 不包含业务内容（消息正文/对话标题）
+                Assert.DoesNotContain("机密对话", layout)
         finally
             cleanup dir

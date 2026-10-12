@@ -7,7 +7,7 @@ open System.Text
 open System.Text.Json.Nodes
 open Wanxiang.Core
 
-/// 上传会话（运行时状态）。
+/// 上传对话（运行时状态）。
 type AttachmentUpload = {
     attachmentId: Guid
     /// 发起上传的连接 id（断线清理用）

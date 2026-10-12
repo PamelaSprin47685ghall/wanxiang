@@ -2,7 +2,7 @@
   "id": "/",
   "name": "万象 wanxiang",
   "short_name": "万象",
-  "description": "万象聊天客户端（PWA，纯前端，通过配对码接入服务端）",
+  "description": "万象聊天客户端（PWA，纯前端，通过配对码接入主机）",
   "lang": "zh-CN",
   "dir": "ltr",
   "start_url": "/",

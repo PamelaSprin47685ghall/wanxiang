@@ -157,7 +157,7 @@ type WsClient() =
                             let text = Encoding.UTF8.GetString(ms.ToArray())
                             ms.SetLength 0L
                             // AG-UI 承载：宽容解码。未知类型（Ok None）与解码失败都忽略——
-                            // 客户端对协议错误的兜底是重连，不是断言（与服务端的严格度不同）。
+                            // 客户端对协议错误的兜底是重连，不是断言（与主机的严格度不同）。
                             match WireAgui.tryDecode text with
                             | Ok(Some ev) when isCurrent () ->
                                 onConnectionEvent.Trigger(generation, ev)
@@ -172,7 +172,7 @@ type WsClient() =
             | e -> if shouldNotify then closed (Some e)
         }
 
-/// 客户端会话状态（内存态；PWA 不持久缓存，决策 3）。
+/// 客户端对话状态（内存态；PWA 不持久缓存，决策 3）。
 type ConversationView = {
     conversationId: Guid
     mutable title: string
@@ -182,7 +182,7 @@ type ConversationView = {
     /// 快照携带的最早 commitId 与是否还有更早历史（Q127 分页）
     mutable pageEarliest: CommitId
     mutable pageHasMore: bool
-    /// 会话级配置快照（P0-4：UI 读写 SessionConfig）
+    /// 对话级配置快照（P0-4：UI 读写 SessionConfig）
     mutable config: SessionConfig
 }
 
@@ -203,7 +203,7 @@ type ClientState() =
     member _.Cursor = cursor
     member _.LatestCommitId = latestCommitId
 
-    /// 实例身份改变时清空旧投影，绝不把另一台服务端的游标带过来。
+    /// 实例身份改变时清空旧投影，绝不把另一台主机的游标带过来。
     member _.Reset() =
         conversationList <- JsonArray()
         conversations <- Map.empty
@@ -214,7 +214,7 @@ type ClientState() =
     member _.ConversationChanged = convChanged.Publish
     member _.CursorChanged = cursorChanged.Publish
 
-    /// 处理服务端事件，更新本地状态。
+    /// 处理主机事件，更新本地状态。
     member this.Handle(ev: WireEvent) : unit =
         match ev with
         | ConversationListSnapshot d ->
@@ -437,11 +437,11 @@ type ClientState() =
         cursor <- latestCommitId
         cursorChanged.Trigger cursor
 
-    /// catch-up 批次应用完成后推进游标：只确认实际应用的 commit（不含被服务端过滤的跳号区间）。
+    /// catch-up 批次应用完成后推进游标：只确认实际应用的 commit（不含被主机过滤的跳号区间）。
     member this.AdvanceCursorTo(applied: CommitId) : unit =
         cursor <- max cursor applied
         cursorChanged.Trigger cursor
 
-    /// 生成要发送给服务端的游标确认事件。
+    /// 生成要发送给主机的游标确认事件。
     member this.CursorAdvancedEvent() : WireEvent =
         CursorAdvanced {| id = cursor |}

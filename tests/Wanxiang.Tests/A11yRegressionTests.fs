@@ -117,15 +117,17 @@ let ``共享图标按钮原语同时设置提示与自动化名称`` () =
 // ---------- 文案一致性：术语表 ----------
 
 let private uiStrings () =
-    let files = Directory.GetFiles(Path.Combine(repoRoot, "src", "Wanxiang.UI"), "*.fs", SearchOption.AllDirectories)
+    // UI、Client、App 三个项目里含中文的字符串字面量（W6：术语扫描范围）。
     let lit = Regex("\"([^\"\\\\\\n]|\\\\.)*[\\u4e00-\\u9fff]([^\"\\\\\\n]|\\\\.)*\"")
-    [ for f in files do
-        let lines = File.ReadAllLines f
-        for i in 0 .. lines.Length - 1 do
-            let t = lines.[i].TrimStart()
-            if not (t.StartsWith "//") && not (t.StartsWith "///") then
-                for m in lit.Matches lines.[i] do
-                    yield Path.GetRelativePath(repoRoot, f), i + 1, m.Value ]
+    [ for proj in [ "Wanxiang.UI"; "Wanxiang.Client"; "Wanxiang.App" ] do
+        let files = Directory.GetFiles(Path.Combine(repoRoot, "src", proj), "*.fs", SearchOption.AllDirectories)
+        for f in files do
+            let lines = File.ReadAllLines f
+            for i in 0 .. lines.Length - 1 do
+                let t = lines.[i].TrimStart()
+                if not (t.StartsWith "//") && not (t.StartsWith "///") then
+                    for m in lit.Matches lines.[i] do
+                        yield Path.GetRelativePath(repoRoot, f), i + 1, m.Value ]
 
 [<Fact>]
 let ``界面文案不使用已淘汰的同义词`` () =
@@ -133,9 +135,6 @@ let ``界面文案不使用已淘汰的同义词`` () =
     let banned =
         [ "设定", "统一用「设置」"
           "秘钥", "统一用「密钥」"
-          "提供商", "统一用「服务商」"
-          "供应商", "统一用「服务商」"
-          "提供方", "统一用「服务商」"
           "Api Key", "统一写作「API Key」"
           "api key", "统一写作「API Key」"
           "Apikey", "统一写作「API Key」" ]
@@ -144,6 +143,23 @@ let ``界面文案不使用已淘汰的同义词`` () =
             for (word, hint) in banned do
                 if s.Contains(word, StringComparison.Ordinal) then
                     sprintf "%s:%d 含「%s」（%s）：%s" f line word hint s ]
+    Assert.True(bad.IsEmpty, String.Join("\n", bad))
+
+[<Fact>]
+let ``README 与 PWA 页面文案同样不使用已淘汰术语`` () =
+    // README、站点页、PWA 壳的用户可见文字与界面同一套术语。
+    let banned = [ "会话"; "服务器"; "服务端"; "服务商"; "提供商"; "供应商"; "提供方" ]
+    let files =
+        [ "README.md"; "site/index.html"
+          "src/Wanxiang.Pwa/wwwroot/index.html"; "src/Wanxiang.Pwa/wwwroot/main.js"
+          "src/Wanxiang.Pwa/wwwroot/manifest.webmanifest" ]
+    let bad =
+        [ for f in files do
+            let lines = File.ReadAllLines(Path.Combine(repoRoot, f))
+            for i in 0 .. lines.Length - 1 do
+                for w in banned do
+                    if lines.[i].Contains(w, StringComparison.Ordinal) then
+                        sprintf "%s:%d 含「%s」" f (i + 1) w ]
     Assert.True(bad.IsEmpty, String.Join("\n", bad))
 
 [<Fact>]

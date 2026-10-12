@@ -20,7 +20,7 @@ open Wanxiang.Core
 open Wanxiang.Protocol
 open Wanxiang.Store
 
-/// 万象服务器实例（组装：数据锁 → replay → 配置 → 协调器 → 编排 → 连接 → HTTP）。
+/// 万象主机实例（组装：数据锁 → replay → 配置 → 协调器 → 编排 → 连接 → HTTP）。
 /// 数据锁（决策 105/Q110）：运行期全程持有到 Stop，确保同一数据目录只有一个 S 进程。
 /// startupOutcome：调用方（Program）在持锁状态下完成的一次性 replay/fix 结果，避免二次 replay；
 /// 锁仍由本构造器独立获取并持有。
@@ -148,9 +148,9 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         with e ->
             // O-001：吊销令牌/重建限流器失败是 DEGRADED——记录证据，不阻断配置生效。
             Stderr.write "config-reload-revoke-failed" [ "message", e.Message ]
-        // 配置变了必须告诉客户端：否则设置界面看到的服务商列表、
-        // 会话里的模型选择器都会停留在旧数据上（历史上这个事件从未被发出）。
-        // 只发信号，不塞目录——工具发现可能要连 MCP 服务器，
+        // 配置变了必须告诉客户端：否则设置界面看到的模型服务列表、
+        // 对话里的模型选择器都会停留在旧数据上（历史上这个事件从未被发出）。
+        // 只发信号，不塞目录——工具发现可能要连 MCP 服务，
         // 不该在配置回调里同步做；客户端收到后自行 catalog.request。
         try
             match registry with
@@ -178,7 +178,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             | Some c -> c
             | None -> failwith "coordinator not ready"
         try
-            // 默认会话配置注入：客户端创建/修改会话时若未提供有效 provider+model
+            // 默认对话配置注入：客户端创建/修改对话时若未提供有效 provider+model
             // （SessionConfig.empty 或已被删除的 provider），用第一个可用 provider 的默认模型填充。
             // 幂等性：注入是确定性的（同配置下同输入同输出），commandId 基于注入后 cmd 计算，重试一致。
             let cmd =
@@ -203,7 +203,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 // UpdateConversationConfig：仅当客户端 config 无效/为空时注入 TOML 默认 provider；
                 // 显式有效的 config（含用户选定 provider/model）绝不改写（决策 86 完整快照语义）
                 | UpdateConversationConfig d -> UpdateConversationConfig {| d with config = fill d.config |}
-                // ForkConversation：配置由父会话投影继承（决策 81），无需填充
+                // ForkConversation：配置由父对话投影继承（决策 81），无需填充
                 | other -> other
             match CommandEngine.plan (coord.Projection) clientCursor cmd with
             | Rejected e ->
@@ -241,15 +241,15 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                     match coord.Submit submit with
                     | SubmitResult.Committed c ->
                         // 「重新生成」= 作废末尾模型消息 + 立刻重跑一次生成。
-                        // 作废已经落盘，此处只需触发生成；由编排层沿用会话当前配置。
+                        // 作废已经落盘，此处只需触发生成；由编排层沿用对话当前配置。
                         match cmd with
                         | RegenerateResponse d ->
                             match orchestrator with
                             | Some o -> o.StartRegeneration d.conversationId
                             | None -> ()
                         | DeleteConversation d ->
-                            // R5：删除是 runtime 的唯一移除点——会话已从投影删除，
-                            // 残留 runtime 会随会话创建数无界增长。
+                            // R5：删除是 runtime 的唯一移除点——对话已从投影删除，
+                            // 残留 runtime 会随对话创建数无界增长。
                             match orchestrator with
                             | Some o -> o.OnConversationDeleted d.conversationId
                             | None -> ()
@@ -291,7 +291,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
 
     let toolRegistry = ToolRegistry(currentConfig, mcpLog)
 
-    /// 启动服务器（server 开关）。
+    /// 启动主机（server 开关）。
     member this.Start(servePwa: bool) : unit =
         hostStatus.DoctorRunner <- Some(fun () -> Doctor.runLive (configPath, dataDir))
         match ConfigStore.Open(configPath, onConfigReloaded, onConfigRejected) with
@@ -311,7 +311,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 | Some reg -> reg.BroadcastCommit commit
                 | None -> ()
             with _ -> ()
-            // 决策 73：首版不做附件 GC——删会话不断触发任何 blob 清扫，孤儿留待未来压缩处理。
+            // 决策 73：首版不做附件 GC——删对话不断触发任何 blob 清扫，孤儿留待未来压缩处理。
         let onTruncated (commit: Events.Commit, err: WanxiangError, byteOffset: int64, file: string) =
             Stderr.truncated commit file byteOffset err
         coordinator <- Some(new CommitCoordinator(dataDir, replayOutcome, broadcastCommit, onTruncated))

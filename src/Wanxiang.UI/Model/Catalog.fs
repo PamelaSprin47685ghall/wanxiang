@@ -4,7 +4,7 @@ open System
 open System.Text.Json
 open System.Text.Json.Nodes
 
-/// 服务端下发的一个服务商（`catalog.snapshot`）。密钥永不下发，只有 `hasApiKey`。
+/// 主机下发的一个模型服务（`catalog.snapshot`）。密钥永不下发，只有 `hasApiKey`。
 type ProviderInfo = {
     id: string
     label: string
@@ -28,7 +28,7 @@ type ToolInfo = {
     serverId: string option
 }
 
-/// 一个 MCP 服务器配置。
+/// 一个 MCP 服务配置。
 type McpInfo = {
     id: string
     label: string
@@ -61,8 +61,8 @@ type GenerationInfo = {
     exposeDebug: bool
 }
 
-/// 服务端能力目录。客户端所有选择器（模型、工具）都从这里取数据，
-/// 用户永远不需要手打服务商 id 或模型名。
+/// 主机能力目录。客户端所有选择器（模型、工具）都从这里取数据，
+/// 用户永远不需要手打模型服务 id 或模型名。
 type Catalog = {
     providers: ProviderInfo list
     tools: ToolInfo list
@@ -216,7 +216,7 @@ module Catalog =
               approvalTimeoutSeconds = intOf toolsConfig "approvalTimeoutSeconds" 300
               exposeDebug = boolOf toolsConfig "exposeDebug" false } }
 
-    /// 参与模型选择的服务商：启用且至少一个模型。
+    /// 参与模型选择的模型服务：启用且至少一个模型。
     let usableProviders (catalog: Catalog) =
         catalog.providers |> List.filter (fun p -> p.enabled && not (List.isEmpty p.models))
 
@@ -225,7 +225,7 @@ module Catalog =
     let tryProvider (id: string) (catalog: Catalog) =
         catalog.providers |> List.tryFind (fun p -> p.id = id)
 
-    /// 展示名：「服务商 · 模型」。找不到服务商时退化成裸模型名。
+    /// 展示名：「模型服务 · 模型」。找不到模型服务时退化成裸模型名。
     let describeModel (providerId: string) (model: string) (catalog: Catalog) =
         match tryProvider providerId catalog with
         | Some p when not (String.IsNullOrWhiteSpace model) -> sprintf "%s · %s" p.label model
@@ -235,7 +235,7 @@ module Catalog =
 
     /// 新对话的默认 (模型服务 id, 模型)：
     /// 全局默认存在且可用 → 它（模型不在列表中则回落该服务的 defaultModel）；
-    /// 否则首个可用的模型服务及其默认模型。与服务端 `AppConfig.defaultSelection` 同一规则。
+    /// 否则首个可用的模型服务及其默认模型。与主机 `AppConfig.defaultSelection` 同一规则。
     let defaultSelection (catalog: Catalog) =
         let usable = usableProviders catalog
         let modelOf (p: ProviderInfo) (requested: string) =
@@ -255,7 +255,7 @@ module Catalog =
         | Some(id, _) -> id = providerId && catalog.generation.defaultProvider = Some providerId
         | None -> false
 
-/// 模型探测失败的类型（与服务端 `ProviderCatalog.ProbeFailure` 的稳定错误码一一对应）。
+/// 模型探测失败的类型（与主机 `ProviderCatalog.ProbeFailure` 的稳定错误码一一对应）。
 /// 界面按类型决定下一步，不再靠文案关键词判断。
 type ProbeFailureKind =
     | ProbeInvalidKey
@@ -267,7 +267,7 @@ type ProbeFailureKind =
     | ProbeBadResponse
     | ProbeRejected
     | ProbeCancelled
-    /// 旧服务端（无错误码前缀）或未知码
+    /// 旧主机（无错误码前缀）或未知码
     | ProbeUnclassified
 
 module ProbeFailureKind =

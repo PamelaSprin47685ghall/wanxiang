@@ -79,7 +79,7 @@ module internal E2e =
 
 
     /// 入站 AG-UI 事件归一化回 {type, payload} 外壳，供既有断言复用。
-    /// 服务端出站承载（SSOT 55）：
+    /// 主机出站承载（SSOT 55）：
     /// - 标准事件（生成流）→ {type:"RUN_STARTED",...}（扁平）
     /// - 其余语义 → {type:"CUSTOM", name:"wanxiang.dev/<wireType>", value:{type,payload}}
     /// 这里统一折成 {type:<wireType>, payload:<payload>}；标准面事件按语义事件名折算。
@@ -371,14 +371,14 @@ let ``e2e write command succeeds after snapshot cursor advance`` () =
         ap["id"] <- lastCommit
         adv["payload"] <- ap
         E2e.send ws adv cts.Token
-        // 创建会话（此时游标已追平，不应 stale）
+        // 创建对话（此时游标已追平，不应 stale）
         let convId = Guid.NewGuid()
         let create = JsonObject()
         create["type"] <- "conversation.create"
         let cp = JsonObject()
         cp["invocationId"] <- Guid.NewGuid().ToString("D")
         cp["threadId"] <- convId.ToString("D")
-        cp["title"] <- "e2e 会话"
+        cp["title"] <- "e2e 对话"
         cp["config"] <- JsonNode.Parse("""{"provider":"openai","model":"test-model"}""")
         create["payload"] <- cp
         E2e.send ws create cts.Token
@@ -392,7 +392,7 @@ let ``e2e write command succeeds after snapshot cursor advance`` () =
     finally
         handle.Dispose()
 
-/// 观察会话 → 推进游标 → 发送消息：enqueue 响应与 message-committed 推送都应到达（回归）。
+/// 观察对话 → 推进游标 → 发送消息：enqueue 响应与 message-committed 推送都应到达（回归）。
 [<Fact>]
 let ``e2e observe advance cursor then enqueue gets response and push`` () =
     let port = pickPort ()
@@ -468,7 +468,7 @@ let ``e2e observe advance cursor then enqueue gets response and push`` () =
 
 [<Fact>]
 let ``e2e slow client (never reads) does not block other clients' commits`` () =
-    // §22 资源预算：慢客户端不得阻塞服务器提交。发送队列 BoundedChannel(2048, Wait)
+    // §22 资源预算：慢客户端不得阻塞主机提交。发送队列 BoundedChannel(2048, Wait)
     // 只阻塞该连接自己的发送循环；coordinator mailbox 与其他连接不受影响。
     // 断言：连接 A 不读 ws（队列积压），连接 B 的提交仍能在超时内完成。
     let port = pickPort ()
@@ -477,7 +477,7 @@ let ``e2e slow client (never reads) does not block other clients' commits`` () =
     try
         use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
         let ct = cts.Token
-        // 慢客户端 A：连接 + 认证后**不再读取**（服务端发送队列持续积压）
+        // 慢客户端 A：连接 + 认证后**不再读取**（主机发送队列持续积压）
         use slow = E2e.conn port token ct
         E2e.waitFor slow ct (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
         let obsList = JsonObject()
@@ -528,7 +528,7 @@ let ``e2e slow client (never reads) does not block other clients' commits`` () =
             ap2["id"] <- newCommit
             adv2["payload"] <- ap2
             E2e.send fast adv2 ct
-        // B 的提交全部成功 → 慢客户端未阻塞服务器
+        // B 的提交全部成功 → 慢客户端未阻塞主机
         Assert.Equal(5, handle.CommitCount)
         slow.Dispose()
     finally
@@ -541,7 +541,7 @@ let ``e2e history paging slices by commit id`` () =
     let dir = tempDir ()
     let configPath = Path.Combine(dir, "config.toml")
     try
-        // 预写日志：会话创建 + 5 条消息（id 1..6）
+        // 预写日志：对话创建 + 5 条消息（id 1..6）
         DataPaths.ensureDataDirs dir
         let convId = Guid.NewGuid()
         let cfg =
@@ -569,7 +569,7 @@ let ``e2e history paging slices by commit id`` () =
             use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
             let ws = E2e.conn port token cts.Token
             E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
-            // observe 会话 → 快照含全部 5 条（未超快照上限）+ hasMore=false
+            // observe 对话 → 快照含全部 5 条（未超快照上限）+ hasMore=false
             let obs = JsonObject()
             obs["type"] <- "conversation.observe"
             let op = JsonObject()
@@ -619,7 +619,7 @@ let ``e2e attachment upload and download round trip`` () =
         use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
         let ws = E2e.conn port token cts.Token
         E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
-        // 1x1 PNG：声明 octet-stream，服务端嗅探为 image/png（P2-2/Q176）
+        // 1x1 PNG：声明 octet-stream，主机嗅探为 image/png（P2-2/Q176）
         let png = [| 0x89uy; 0x50uy; 0x4Euy; 0x47uy; 0x0Duy; 0x0Auy; 0x1Auy; 0x0Auy; 0x00uy; 0x00uy; 0x00uy; 0x0Duy; 0x49uy; 0x48uy; 0x44uy; 0x52uy |]
         let hash = Convert.ToHexString(SHA256.HashData png).ToLowerInvariant()
         let aid = Guid.NewGuid()
@@ -681,7 +681,7 @@ let ``e2e stale client write command is rejected`` () =
         let ws = E2e.conn port token cts.Token
         E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
         // 不 observe 也不推进游标（游标保持 0）
-        // 直接尝试创建会话 —— 需要全局最新水位；空库时 latestCommitId=0，可能成功。
+        // 直接尝试创建对话 —— 需要全局最新水位；空库时 latestCommitId=0，可能成功。
         // 先通过另一连接创建一条提交使全局水位 > 0
         let ws2 = E2e.conn port token cts.Token
         E2e.waitFor ws2 cts.Token (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
@@ -710,7 +710,7 @@ let ``e2e stale client write command is rejected`` () =
         E2e.waitFor ws2 cts.Token (fun o ->
             let t = o["type"].GetValue<string>()
             t = "command.committed" || t = "command.rejected") |> ignore
-        // 现在 ws1 游标仍为 0，全局水位已 > 0 → 创建新会话应被 stale 拒绝
+        // 现在 ws1 游标仍为 0，全局水位已 > 0 → 创建新对话应被 stale 拒绝
         let convId2 = Guid.NewGuid()
         let create2 = JsonObject()
         create2["type"] <- "conversation.create"
@@ -733,7 +733,7 @@ let ``e2e stale client write command is rejected`` () =
     finally
         handle.Dispose()
 
-/// 默认会话配置注入：客户端发空 config 创建会话，服务端用 TOML 第一个 provider 填充（不硬编码）。
+/// 默认对话配置注入：客户端发空 config 创建对话，主机用 TOML 第一个 provider 填充（不硬编码）。
 [<Fact>]
 let ``e2e empty session config is filled from toml default provider`` () =
     let port = pickPort ()
@@ -756,7 +756,7 @@ let ``e2e empty session config is filled from toml default provider`` () =
         ap["id"] <- lastCommit
         adv["payload"] <- ap
         E2e.send ws adv cts.Token
-        // 发空 config 创建会话
+        // 发空 config 创建对话
         let convId = Guid.NewGuid()
         let create = JsonObject()
         create["type"] <- "conversation.create"
@@ -771,7 +771,7 @@ let ``e2e empty session config is filled from toml default provider`` () =
             let t = o["type"].GetValue<string>()
             t = "command.committed" || t = "command.rejected")
         Assert.Equal("command.committed", resp["type"].GetValue<string>())
-        // observe 该会话并验证 config 已被服务端填充为 test-provider/test-model
+        // observe 该对话并验证 config 已被主机填充为 test-provider/test-model
         let ob = JsonObject()
         ob["type"] <- "conversation.observe"
         let op = JsonObject()
@@ -779,7 +779,7 @@ let ``e2e empty session config is filled from toml default provider`` () =
         ob["payload"] <- op
         E2e.send ws ob cts.Token
         let snap = E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "conversation.snapshot")
-        // 会话列表摘要带 config（ServerModel.conversationListItems）
+        // 对话列表摘要带 config（ServerModel.conversationListItems）
         let listObs = JsonObject()
         listObs["type"] <- "conversation-list.observe"
         E2e.send ws listObs cts.Token
@@ -804,7 +804,7 @@ let ``e2e empty session config is filled from toml default provider`` () =
     finally
         handle.Dispose()
 
-/// D5/决策 73 回归：删会话绝不触发 blob 清扫——即使 blob 又老又没有任何引用。
+/// D5/决策 73 回归：删对话绝不触发 blob 清扫——即使 blob 又老又没有任何引用。
 /// 旧行为（后台 sweep：1.5s 延迟 + 10 分钟 grace）会删掉这个倒签 mtime 的孤儿；
 /// 新行为下没有任何删 blob 的路径，断言无条件成立（sleep 只给旧代码留开火时间）。
 [<Fact>]
@@ -881,7 +881,7 @@ let ``e2e deleting a conversation never sweeps attachment blobs`` () =
             let blobPath = Path.Combine(dir, "attachments", hash.Substring(0, 2), hash.Substring(2, 2), hash)
             Assert.True(File.Exists blobPath)
             File.SetLastWriteTimeUtc(blobPath, DateTime.UtcNow - TimeSpan.FromDays 1.0)
-            // 建会话再删掉：旧代码在每次 conversation.deleted 后调度后台清扫
+            // 建对话再删掉：旧代码在每次 conversation.deleted 后调度后台清扫
             let obs = JsonObject()
             obs["type"] <- "conversation-list.observe"
             E2e.send ws obs cts.Token
@@ -898,7 +898,7 @@ let ``e2e deleting a conversation never sweeps attachment blobs`` () =
             let ccp = JsonObject()
             ccp["invocationId"] <- Guid.NewGuid().ToString("D")
             ccp["threadId"] <- convId.ToString("D")
-            ccp["title"] <- "待删会话"
+            ccp["title"] <- "待删对话"
             ccp["config"] <- JsonNode.Parse("""{"provider":"","model":""}""")
             create["payload"] <- ccp
             E2e.send ws create cts.Token
@@ -932,7 +932,7 @@ let ``e2e deleting a conversation never sweeps attachment blobs`` () =
         cleanup dir
 
 /// 端到端验证：客户端通过真实 WsClient.TrySendCommandAsync 发送命令，
-/// 服务端正常识别 AG-UI CUSTOM 承载并回传 command.committed（若使用旧外壳则会被服务端作为 Unrecognized 忽略而超时失败）。
+/// 主机正常识别 AG-UI CUSTOM 承载并回传 command.committed（若使用旧外壳则会被主机作为 Unrecognized 忽略而超时失败）。
 [<Fact>]
 let ``e2e wsclient sends command through agui custom carrier and server commits`` () =
     let port = pickPort ()
@@ -965,7 +965,7 @@ let ``e2e wsclient sends command through agui custom carrier and server commits`
             let snapArrived = listSnapTcs.Task.Wait(TimeSpan.FromSeconds 5.0)
             Assert.True(snapArrived)
             client.TrySendAsync(CursorAdvanced {| id = listSnapTcs.Task.Result |}).GetAwaiter().GetResult() |> ignore
-            // 发送创建会话命令
+            // 发送创建对话命令
             let invId = Guid.NewGuid()
             let convId = Guid.NewGuid()
             let cmd =
@@ -977,8 +977,8 @@ let ``e2e wsclient sends command through agui custom carrier and server commits`
                 |}
             let sent = client.TrySendCommandAsync(cmd).GetAwaiter().GetResult()
             Assert.True sent
-            // 若客户端发的是旧外壳，服务端作为 Unrecognized 忽略，不会回传 command.committed，此处必定超时红掉；
-            // 只有修复为 AG-UI CUSTOM 承载后，服务端正常解码处理，才会回传 command.committed。
+            // 若客户端发的是旧外壳，主机作为 Unrecognized 忽略，不会回传 command.committed，此处必定超时红掉；
+            // 只有修复为 AG-UI CUSTOM 承载后，主机正常解码处理，才会回传 command.committed。
             let committed = commitTcs.Task.Wait(TimeSpan.FromSeconds 5.0)
             Assert.True(committed)
             Assert.Equal(invId.ToString("D"), commitTcs.Task.Result)
@@ -1022,7 +1022,7 @@ let ``e2e damaged log starts read-only degraded and rejects writes without touch
             use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
             let ws = E2e.conn port token cts.Token
             E2e.waitFor ws cts.Token (fun o -> o["type"].GetValue<string>() = "auth.accepted") |> ignore
-            // 历史可读：observe 会话 → 快照含 id=1 的会话
+            // 历史可读：observe 对话 → 快照含 id=1 的对话
             let obs = JsonObject()
             obs["type"] <- "conversation.observe"
             let op = JsonObject()

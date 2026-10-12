@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// 万象端到端冒烟：配对 → 目录 → 建会话 → 发消息 → 流式 → 工具 → 自动标题。
-// 仅开发期使用。需要服务端在 127.0.0.1:8765 运行，且 mock provider 在 8799。
+// 万象端到端冒烟：配对 → 目录 → 建对话 → 发消息 → 流式 → 工具 → 自动标题。
+// 仅开发期使用。需要主机在 127.0.0.1:8765 运行，且 mock provider 在 8799。
 //   node tools/e2e_smoke.js [--url ws://127.0.0.1:8765/ws] [--log /tmp/wanxiang.log]
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -147,12 +147,12 @@ async function main() {
     c.send('conversation-list.observe');
     await c.waitFor(byType('conversation-list.snapshot'), 10000, 'list snapshot');
 
-    // 建会话（显式选一个非默认模型，验证会话模型真的生效）
+    // 建对话（显式选一个非默认模型，验证对话模型真的生效）
     const convId = uuid();
     c.send('conversation.create', {
         invocationId: uuid(),
         conversationId: convId,
-        title: '新会话',
+        title: '新对话',
         config: {
             provider: 'mock',
             model: 'mock-gpt-mini',
@@ -191,13 +191,13 @@ async function main() {
         const snaps = c.ofType('conversation-list.snapshot');
         const last = snaps[snaps.length - 1];
         const item = (last?.payload.items || []).find((x) => x.conversationId === convId);
-        if (item && item.title && item.title !== '新会话') {
+        if (item && item.title && item.title !== '新对话') {
             titled = item.title;
             break;
         }
         await sleep(400);
     }
-    check('title is generated automatically', !!titled, titled || 'still 新会话');
+    check('title is generated automatically', !!titled, titled || 'still 新对话');
 
     // 工具调用
     c.send('chat.user-message.enqueue', {

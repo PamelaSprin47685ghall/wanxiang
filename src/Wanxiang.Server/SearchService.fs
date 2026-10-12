@@ -7,7 +7,7 @@ open System.Text.Json.Nodes
 open Wanxiang.Core
 open Wanxiang.Protocol
 
-/// 全文搜索（W4，`wanxiang-chat` 决策 75）。
+/// 全文搜索（W4，`wanxiang-protocol` 决策 201）。
 ///
 /// 只读：输入是不可变 `Projection` 快照，输出是一页命中。不建数据库、不建持久索引、
 /// 不写日志、不创建文件——内存投影是唯一事实来源，搜索只是它的一次查询。

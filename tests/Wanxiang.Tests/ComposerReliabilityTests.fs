@@ -291,7 +291,7 @@ module ComposerReliabilityTests =
         Assert.True(PendingMessage.canRetry back, "必须是可重试的未确认状态，而不是已排队/发送中")
         Assert.Equal("还没确认的消息", back.text)
         Assert.Equal(1, back.attachments.Length)
-        // 重试发出的命令载荷与原命令逐字相同（服务端据此幂等核对，不会重复保存）。
+        // 重试发出的命令载荷与原命令逐字相同（主机据此幂等核对，不会重复保存）。
         Assert.Equal(
             WireCodec.encodeCommand item.command,
             WireCodec.encodeCommand back.command)
@@ -338,7 +338,7 @@ module ComposerReliabilityTests =
         let mixed = """{"version":1,"extra":true,"drafts":[{"instanceId":"h","text":"ok","unknown":1},{"text":"no instance"},5]}"""
         Assert.Equal("ok", (Assert.Single (DraftCodec.tryParse mixed).drafts).text)
 
-    // ---------- 事件日志字节不变；配置被拒绝；检查主机（真实服务端） ----------
+    // ---------- 事件日志字节不变；配置被拒绝；检查主机（真实主机） ----------
 
     type private LiveHost() =
         let dir = tempDir ()

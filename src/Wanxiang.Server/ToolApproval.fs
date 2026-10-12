@@ -69,7 +69,7 @@ type ToolApprovalBroker(getConfig: unit -> AppConfig, broadcast: Guid -> WireEve
         | AskEach -> true
         | AskFirst -> not (grants.ContainsKey(struct (conversationId, toolId)))
 
-    /// 是否有具备审批能力的客户端正在观察该对话。由服务端接线时设置；默认没有（保守地拒绝）。
+    /// 是否有具备审批能力的客户端正在观察该对话。由主机接线时设置；默认没有（保守地拒绝）。
     member val CapabilityProbe: Guid -> bool = (fun _ -> false) with get, set
 
     /// 尝试以第一个有效决定结束一个审批。返回是否由本次调用结束。

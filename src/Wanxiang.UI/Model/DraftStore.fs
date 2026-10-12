@@ -32,7 +32,7 @@ type StoredDraft = {
     attachments: DraftAttachmentRef list
 }
 
-/// 一条未被服务端确认保存的发送。保留原 invocationId，重试时由服务端幂等核对。
+/// 一条未被主机确认保存的发送。保留原 invocationId，重试时由主机幂等核对。
 type StoredUnsent = {
     instanceId: string
     conversationId: Guid
@@ -291,8 +291,8 @@ module DraftPolicy =
 
     /// 当前内存 → 快照。
     /// - 草稿：文字或附件非空才存；附件只存「已就绪」与「已是恢复引用」的（上传中/失败的字节本机没有意义）。
-    /// - 未发送：outbox 中「未确认/被拒/排队/发送中」且会话已确认创建的，存为未确认；
-    ///   会话尚未确认创建的，其文字折回该主机的起步草稿（对话在服务端并不存在，没有可重试的目标）。
+    /// - 未发送：outbox 中「未确认/被拒/排队/发送中」且对话已确认创建的，存为未确认；
+    ///   对话尚未确认创建的，其文字折回该主机的起步草稿（对话在主机并不存在，没有可重试的目标）。
     let snapshotOf (drafts: ComposerDrafts) (outbox: MessageOutbox) (savedAtOf: Guid -> DateTimeOffset) : DraftSnapshot =
         let draftRows =
             [ for (instanceId, conversationId), draft in drafts.Entries do

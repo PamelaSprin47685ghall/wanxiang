@@ -90,7 +90,7 @@ let ``认不出的语言不进后台队列`` () =
 [<Fact>]
 let ``多段代码同时算完只通知一次`` () =
     Headless.run (fun () ->
-    // 打开含二十个代码块的旧会话时，每次通知都会触发一次全量重画。
+    // 打开含二十个代码块的旧对话时，每次通知都会触发一次全量重画。
     // 不合并的话屏幕要连抖几秒。
     let backend = CountingBackend()
     RichBackend.install backend
