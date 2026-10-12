@@ -52,6 +52,23 @@ type Composer(actions: ComposerActions) as this =
             MaxHeight = ControlMetrics.composerMaxHeight,
             VerticalContentAlignment = VerticalAlignment.Center)
 
+    // 决策 334：输入框自带「各状态透明底 + 万象前景色」资源，不依赖 App 级改写。
+    // 截图复核发现：没有 App 级改写的宿主（无头测试、嵌入）里，Fluent 聚焦态会画白底，
+    // 深色下成了白板配浅字。真实桌面因 App.FlattenTextBoxChrome 本来正常，这里让两边一致。
+    do
+        let transparent = Brushes.Transparent :> IBrush
+        for key in
+            [ "TextControlBackground"; "TextControlBackgroundPointerOver"; "TextControlBackgroundFocused"
+              "TextControlBackgroundDisabled"; "TextControlBorderBrush"; "TextControlBorderBrushPointerOver"
+              "TextControlBorderBrushFocused"; "TextControlBorderBrushDisabled" ] do
+            input.Resources[key] <- transparent
+        for key in [ "TextControlForeground"; "TextControlForegroundPointerOver"; "TextControlForegroundFocused" ] do
+            input.Resources[key] <- Tokens.text
+        for key in
+            [ "TextControlPlaceholderForeground"; "TextControlPlaceholderForegroundPointerOver"
+              "TextControlPlaceholderForegroundFocused" ] do
+            input.Resources[key] <- Tokens.textMuted
+
     let attachmentStrip =
         WrapPanel(
             Orientation = Orientation.Horizontal,
