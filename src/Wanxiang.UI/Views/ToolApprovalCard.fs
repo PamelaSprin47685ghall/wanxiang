@@ -22,6 +22,14 @@ type ApprovalRequestView = {
 
 module ToolApprovalCard =
 
+    /// 审批按钮与「查看参数」的命中高度下限：触控下限（PWA / 手机）。
+    let touchTarget = Spacing.Hit.touch
+
+    /// 按钮行最大宽度：宽屏上不把两个按钮拉成横贯整卡的长条。
+    let buttonRowMaxWidth = 360.0
+
+    let argsToggleText (expanded: bool) = if expanded then "收起参数" else "查看参数"
+
     /// 审批卡上给用户看的策略说明：批准会产生什么后续效果要说清楚。
     let policyNote (policy: string) : string =
         match policy with
@@ -91,9 +99,22 @@ module ToolApprovalCard =
         Avalonia.Automation.AutomationProperties.SetAutomationId(denyButton, "tool-approval-deny")
         Avalonia.Automation.AutomationProperties.SetName(approveButton, sprintf "批准工具调用：%s" req.summary)
         Avalonia.Automation.AutomationProperties.SetName(denyButton, sprintf "拒绝工具调用：%s" req.summary)
-        let buttons = Ui.hstack Spacing.spaceMd [ approveButton :> Control; denyButton :> Control ]
+        // 触控优先（PWA / 手机与桌面同一张卡）：两个按钮等宽平分一行，命中高度不低于触控下限 44，
+        // 窄屏上也是拇指一按就中的大块目标；桌面上只是略高一点，不另做分支。
+        for b in [ approveButton; denyButton ] do
+            b.MinHeight <- max b.MinHeight touchTarget
+            b.HorizontalAlignment <- HorizontalAlignment.Stretch
+        let buttons = Grid(ColumnSpacing = Spacing.spaceMd, HorizontalAlignment = HorizontalAlignment.Stretch)
+        // 两个等宽星号列，各自封顶，宽屏上靠左而不是拉成横贯整卡的长条。
+        for _ in 1..2 do
+            buttons.ColumnDefinitions.Add(ColumnDefinition(GridLength.Star, MaxWidth = buttonRowMaxWidth / 2.0))
+        Grid.SetColumn(approveButton, 0)
+        Grid.SetColumn(denyButton, 1)
+        buttons.Children.Add approveButton
+        buttons.Children.Add denyButton
         // 参数默认折叠在一行里：想核对原始参数的人展开，其余人看摘要即可。
         let hasArgs = not (String.IsNullOrWhiteSpace req.argumentsJson) && req.argumentsJson <> "{}"
+        // 原始参数：默认一行省略；触屏没有悬停提示，所以给一个可点的「查看参数」展开全文（桌面同样可用）。
         let argsLine =
             TextBlock(
                 Text = (if hasArgs then req.argumentsJson else ""),
@@ -101,18 +122,39 @@ module ToolApprovalCard =
                 FontSize = Tokens.fontMicro,
                 Foreground = Tokens.textFaint,
                 TextTrimming = TextTrimming.CharacterEllipsis,
+                TextWrapping = TextWrapping.NoWrap,
                 IsVisible = hasArgs)
+        Avalonia.Automation.AutomationProperties.SetAutomationId(argsLine, "tool-approval-args")
         ToolTip.SetTip(argsLine, req.argumentsJson)
+        let mutable argsExpanded = false
+        let mutable argsToggle: Border = null
+        let toggleArgs () =
+            argsExpanded <- not argsExpanded
+            argsLine.TextWrapping <- (if argsExpanded then TextWrapping.Wrap else TextWrapping.NoWrap)
+            argsLine.TextTrimming <- (if argsExpanded then TextTrimming.None else TextTrimming.CharacterEllipsis)
+            Ui.setButtonText argsToggle (argsToggleText argsExpanded)
+        argsToggle <- Ui.button Ui.Ghost (argsToggleText false) toggleArgs
+        argsToggle.IsVisible <- hasArgs
+        argsToggle.HorizontalAlignment <- HorizontalAlignment.Left
+        argsToggle.MinHeight <- max argsToggle.MinHeight touchTarget
+        Avalonia.Automation.AutomationProperties.SetAutomationId(argsToggle, "tool-approval-args-toggle")
         let column =
             Ui.vstack
                 Spacing.spaceMd
                 [ title :> Control
                   summary :> Control
                   argsLine :> Control
+                  argsToggle :> Control
                   note :> Control
                   buttons :> Control
                   status :> Control ]
-        let row = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXl)
+        // 图标 + 正文用 Auto/Star 网格而不是横向 StackPanel：横向 StackPanel 给子项无限宽，
+        // 窄屏（手机 PWA）上摘要不会换行而是被裁掉。
+        let row = Grid(ColumnSpacing = Spacing.spaceXl)
+        row.ColumnDefinitions.Add(ColumnDefinition(GridLength.Auto))
+        row.ColumnDefinitions.Add(ColumnDefinition(GridLength.Star))
+        Grid.SetColumn(icon, 0)
+        Grid.SetColumn(column, 1)
         row.Children.Add icon
         row.Children.Add column
         let card = Ui.groupingCard (Thickness(Spacing.space2xl, Spacing.spaceXl)) row Spacing.Radius.md
@@ -139,7 +181,8 @@ type ToolApprovalPanel(decide: Guid -> bool -> unit) as this =
         this.Orientation <- Orientation.Vertical
         this.Spacing <- Spacing.spaceMd
         this.VerticalAlignment <- VerticalAlignment.Bottom
-        this.HorizontalAlignment <- HorizontalAlignment.Center
+        // 拉伸 + MaxWidth：窄屏占满可用宽度，宽屏居中且不超过 720。
+        this.HorizontalAlignment <- HorizontalAlignment.Stretch
         this.MaxWidth <- 720.0
         this.Margin <- Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, Spacing.spaceXl)
         this.IsVisible <- false

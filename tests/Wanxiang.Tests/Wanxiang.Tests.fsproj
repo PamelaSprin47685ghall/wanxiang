@@ -94,6 +94,7 @@
     <Compile Include="DialogsTests.fs" />
     <Compile Include="MessageCardTests.fs" />
     <Compile Include="W3ToolApprovalUiTests.fs" />
+    <Compile Include="PwaToolApprovalTests.fs" />
     <Compile Include="ToolCallStatusTests.fs" />
     <Compile Include="UiPureLogicTests.fs" />
     <Compile Include="A11yRegressionTests.fs" />
