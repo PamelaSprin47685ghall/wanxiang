@@ -22,6 +22,13 @@ module TextFlyoutLocale =
         for key, text in strings do
             resources[key] <- text
 
+/// 决策 276：触屏时隐藏菜单项右侧的快捷键文字（Fluent MenuItem 模板部件 PART_InputGestureText）。
+module TouchMenuGestures =
+    let style () =
+        let s = Style(fun selector -> selector.OfType<MenuItem>().Template().OfType<TextBlock>().Name "PART_InputGestureText")
+        s.Setters.Add(Setter(Visual.IsVisibleProperty, false))
+        s
+
 /// 万象应用（clean-room：仅以原项目为灵感，UI 独立设计）。
 ///
 /// 视觉体系完全由 `Tokens` 决定，Fluent 只提供控件模板。
@@ -101,6 +108,33 @@ type App() =
         let flyoutFont = Style(fun selector -> selector.OfType<MenuFlyoutPresenter>())
         flyoutFont.Setters.Add(Setter(TemplatedControl.FontFamilyProperty, Tokens.fontFamily))
         this.Styles.Add flyoutFont
+        // 决策 276：画布固定浅色变体，输入框菜单因此在深色主题下仍是一块白板。
+        // 菜单底色 / 描边 / 文字改走万象的实时画笔，随主题补间一起变。
+        let flyoutChrome = Style(fun selector -> selector.OfType<MenuFlyoutPresenter>())
+        flyoutChrome.Setters.Add(Setter(TemplatedControl.BackgroundProperty, Tokens.surfaceRaised))
+        flyoutChrome.Setters.Add(Setter(TemplatedControl.BorderBrushProperty, Tokens.border))
+        flyoutChrome.Setters.Add(Setter(TemplatedControl.ForegroundProperty, Tokens.text))
+        this.Styles.Add flyoutChrome
+        let flyoutItem = Style(fun selector -> selector.OfType<MenuFlyoutPresenter>().Descendant().OfType<MenuItem>())
+        flyoutItem.Setters.Add(Setter(TemplatedControl.ForegroundProperty, Tokens.text))
+        this.Styles.Add flyoutItem
+        for key, brush in
+            [ "MenuFlyoutPresenterBackground", Tokens.surfaceRaised
+              "MenuFlyoutPresenterBorderBrush", Tokens.border
+              "MenuFlyoutItemForeground", Tokens.text
+              "MenuFlyoutItemForegroundPointerOver", Tokens.text
+              "MenuFlyoutItemBackgroundPointerOver", Tokens.hover
+              "MenuFlyoutItemBackgroundPressed", Tokens.pressed
+              "MenuFlyoutItemKeyboardAcceleratorTextForeground", Tokens.textMuted ] do
+            this.Resources[key] <- brush
+        // 决策 276：触屏上没有键盘，菜单里的「Ctrl+X」提示只是噪声——按输入方式挂 / 摘一条样式。
+        let hideGestures = TouchMenuGestures.style ()
+        let syncGestures (touch: bool) =
+            let present = this.Styles.Contains hideGestures
+            if touch && not present then this.Styles.Add hideGestures
+            elif not touch && present then this.Styles.Remove hideGestures |> ignore
+        syncGestures (InputModality.prefersTouch ())
+        InputModality.Changed.Publish.Add syncGestures
 
         // 选中/悬停一律走万象的强调浅底与暖灰，不用 Fluent 的糖果蓝
         this.Resources["SystemControlHighlightListAccentLowBrush"] <- Tokens.accentSoft

@@ -422,7 +422,13 @@ module InputModality =
     let mutable private lastWasTouch: bool option = None
 
     /// 报告一次真实输入：触屏按下为 true，键盘 / 鼠标为 false。
-    let report (isTouch: bool) = lastWasTouch <- Some isTouch
+    /// 决策 276：输入方式翻转时通知（App 据此在触屏上收起菜单里的 Ctrl+X 等快捷键提示）。
+    let Changed = Event<bool>()
+
+    let report (isTouch: bool) =
+        if lastWasTouch <> Some isTouch then
+            lastWasTouch <- Some isTouch
+            Changed.Trigger isTouch
 
     /// 测试用：清除记录。
     let reset () = lastWasTouch <- None

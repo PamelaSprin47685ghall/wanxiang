@@ -345,3 +345,23 @@ html, body {
 @media (prefers-reduced-motion: reduce) { .shell-bar { animation: none; } }
 /* PWA 独立窗口：无浏览器地址栏，壳层不再需要额外让位 */
 @media (display-mode: standalone) { .shell-install { display: none !important; } }
+/* 决策 271：桌面（精确指针、宽屏）上安装提示不再浮在画布上压住对话标题栏，
+   而是停靠成顶部一条，画布整体让位下移；关闭后画布回到原位。手机仍是顶部浮条。 */
+@media (pointer: fine) and (min-width: 900px) {
+    .shell-install {
+        top: 0; left: 0; right: 0;
+        transform: none;
+        width: 100%;
+        height: 56px;
+        border-radius: 0 !important;
+        border-width: 0 0 1px 0;
+        box-shadow: none;
+        animation: none;
+        padding: 0 16px 0 24px;
+    }
+    .shell-install .shell-btn { min-height: 36px; }
+    body:has(#shell-install:not([hidden])) #out {
+        top: 56px;
+        height: calc(var(--wx-vvh, 100dvh) - 56px);
+    }
+}

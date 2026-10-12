@@ -1238,3 +1238,28 @@ let ``ConfigStore Update 原子读改写与 Path 属性覆盖`` () =
         if Directory.Exists dir then Directory.Delete(dir, true)
 
 
+
+[<Fact>]
+let ``hand-written config without instanceId gets one generated instead of failing`` () =
+    // 决策 272：r9 走查中手写最小 config.toml 缺 instanceId 时主机直接退出。
+    let dir = Path.Combine(Path.GetTempPath(), "wx-cfg-" + Guid.NewGuid().ToString("N"))
+    Directory.CreateDirectory dir |> ignore
+    let path = Path.Combine(dir, "wanxiang.toml")
+    try
+        let minimal =
+            (TomlCodec.serialize (AppConfig.defaults (Guid.NewGuid()))).Split('\n')
+            |> Array.filter (fun line -> not (line.TrimStart().StartsWith "instanceId"))
+            |> String.concat "\n"
+        Assert.True(Result.isError (TomlCodec.tryParse minimal))
+        use store =
+            match ConfigStore.Open(path |> fun p -> (File.WriteAllText(p, minimal); p), ignore, ignore) with
+            | Ok value -> value
+            | Error e -> failwith e
+        Assert.NotEqual(Guid.Empty, store.Current.instanceId)
+        // 补写落盘：重启后仍是同一个实例标识
+        match TomlCodec.tryParse (File.ReadAllText path) with
+        | Ok cfg -> Assert.Equal(store.Current.instanceId, cfg.instanceId)
+        | Error e -> failwithf "%A" e
+        Assert.True((TomlCodec.ensureInstanceId (File.ReadAllText path) (Guid.NewGuid())).IsNone)
+    finally
+        try Directory.Delete(dir, true) with _ -> ()

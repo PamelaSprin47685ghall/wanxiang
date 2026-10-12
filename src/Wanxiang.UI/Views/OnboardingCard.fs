@@ -120,8 +120,13 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
     let mutable disposed = false
 
     let chipRow = WrapPanel(Orientation = Orientation.Horizontal)
-    let title = Ui.title "连接一个模型"
-    let subtitle = Ui.caption "选一家模型服务，粘贴密钥，就能开始对话。"
+    // 决策 274：与「连接主机」分开说——这一步是给已连上的主机添加模型服务（AI 能力来源）。
+    let title = Ui.title "添加一个模型服务"
+    let subtitle = Ui.caption "主机已连上。再选一家模型服务、粘贴密钥，就能开始对话；密钥只保存在主机上。"
+    /// 决策 274：兼容 OpenAI 的自定义地址不再藏在「更多」里，作为常驻选项直接给出地址框。
+    let customPreset = ProviderPresets.tryFind "custom"
+    let _, customUrlBox = Ui.textField "https://example.com/v1"
+    let customUrlGroup = Ui.inputFieldGroup "服务地址" "兼容 OpenAI 的接口地址，通常以 /v1 结尾。" customUrlBox
     let _, keyBox = Ui.textField "粘贴 API Key"
     let keyGroup = Ui.inputFieldGroup "API Key" "只保存在主机上，界面不会回显。" keyBox
     let hintText =
@@ -154,12 +159,16 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
     let effectivePreset () : ProviderPreset =
         match useAlternate, selected.alternate with
         | true, Some(kind, url) -> { selected with kind = kind; baseUrl = url }
+        | _ when selected.key = "custom" ->
+            { selected with label = "自定义 OpenAI 兼容端点"; baseUrl = (if isNull customUrlBox.Text then "" else customUrlBox.Text.Trim()) }
         | _ -> selected
 
     let syncControls () =
         let busy = step <> Idle
         Ui.setButtonPending connectButton busy "连接" "正在连接…"
         keyGroup.IsVisible <- selected.needsApiKey
+        customUrlGroup.IsVisible <- (selected.key = "custom")
+        customUrlBox.IsEnabled <- not busy
         keyBox.IsEnabled <- not busy
         hintText.Text <- selected.hint
         hintText.IsVisible <- not (String.IsNullOrWhiteSpace selected.hint)
@@ -193,7 +202,10 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
         if step = Idle then
             let preset = effectivePreset ()
             let key = if isNull keyBox.Text then "" else keyBox.Text.Trim()
-            if preset.needsApiKey && String.IsNullOrWhiteSpace key then
+            if preset.key = "custom" && String.IsNullOrWhiteSpace preset.baseUrl then
+                setStatus "还没有填写服务地址。请先填入兼容 OpenAI 的接口地址，再点「连接」。" true
+                customUrlBox.Focus() |> ignore
+            elif preset.needsApiKey && String.IsNullOrWhiteSpace key then
                 setStatus "还没有填写密钥。请先粘贴 API Key，再点「连接」。" true
                 keyBox.Focus() |> ignore
             else
@@ -231,6 +243,7 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
             button
         for preset in ProviderPresets.featured do
             chipRow.Children.Add(chip preset)
+        customPreset |> Option.iter (fun p -> chipRow.Children.Add(chip { p with label = "自定义地址" }))
         let moreLabel =
             if ProviderPresets.more |> List.exists (fun p -> p.key = selected.key) then
                 "更多：" + selected.label
@@ -292,6 +305,7 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
         form.Children.Add discoveryPanel
         form.Children.Add chipRow
         form.Children.Add hintText
+        form.Children.Add customUrlGroup
         form.Children.Add keyGroup
         form.Children.Add statusText
         form.Children.Add switchButton
@@ -303,7 +317,7 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
         // 拉伸到 MaxWidth（受限后自动居中）：宽度不随内容变化，
         // 出现错误提示或切换服务商时卡片不再忽宽忽窄（视觉走查 06 号截图）。
         card.HorizontalAlignment <- HorizontalAlignment.Stretch
-        Avalonia.Automation.AutomationProperties.SetName(card, "连接一个模型")
+        Avalonia.Automation.AutomationProperties.SetName(card, "添加一个模型服务")
         card :> Control
 
     do

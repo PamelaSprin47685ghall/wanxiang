@@ -263,6 +263,10 @@ module DialogsTests =
 
             let pairOkBtn = findButton overlay2.Root "提交配对码"
             Assert.True(pairOkBtn.IsSome)
+            // 决策 273：配对模式下页脚「连接」退场，「提交配对码」是唯一主按钮。
+            let footerConnect = findButton overlay2.Root "连接"
+            Assert.True(footerConnect.IsNone || not footerConnect.Value.IsVisible)
+            Assert.True(pairOkBtn.Value.IsVisible)
 
             // 校验非 6 位输入拒绝
             codeBox.Text <- "123"

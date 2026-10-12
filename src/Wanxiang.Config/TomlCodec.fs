@@ -745,6 +745,19 @@ module TomlCodec =
             | 2 | 3 -> tryParseV2 top
             | v -> Error [ sprintf "configVersion %d not supported (expected %d)" v AppConfig.CurrentVersion ]
 
+    /// 决策 272：手写的最小 config.toml 缺顶层 `instanceId` 时不再让主机退出，
+    /// 而是在文件开头补一行新 UUID（其余内容原样保留）。返回 Some 补好的文本；
+    /// 已有 instanceId、或 TOML 本身语法错误（交给 tryParse 报错）时返回 None。
+    let ensureInstanceId (text: string) (fresh: Guid) : string option =
+        try
+            let mutable result: System.Collections.Generic.Dictionary<string, obj> = null
+            let mutable options = TomlSerializerOptions()
+            let ok = TomlSerializer.TryDeserialize<System.Collections.Generic.Dictionary<string, obj>>(text, &result, options)
+            if ok && not (isNull result) && not (result.ContainsKey "instanceId") then
+                Some(sprintf "# 万象自动补上的实例标识（决策 272）\ninstanceId = \"%s\"\n%s" (fresh.ToString "D") text)
+            else None
+        with _ -> None
+
     /// 将配置完整重写为 TOML 文本（决策 42：不保留注释/未知字段/布局）。
     let serialize (cfg: AppConfig) : string =
         let top = TomlTable()

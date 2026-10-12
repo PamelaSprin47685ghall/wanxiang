@@ -388,7 +388,7 @@ module OnboardingUiTests =
             try
                 handle shell (AuthAccepted {| instanceId = "i-empty" |})
                 handle shell (emptyCatalog ())
-                let card = named shell "连接一个模型"
+                let card = named shell "添加一个模型服务"
                 Assert.NotEmpty card
                 Assert.True(card.Head.IsEffectivelyVisible, "卡片应当可见")
                 let settingsHost = field<Grid> shell "settingsHost"
@@ -440,7 +440,7 @@ module OnboardingUiTests =
                     | Error e -> failwithf "%A" e
                 handle shell (catalogOf cfg)
                 // 卡片已收起；输入框预填第一句话并获得焦点
-                Assert.Empty(named shell "连接一个模型" |> List.filter (fun c -> c.IsEffectivelyVisible))
+                Assert.Empty(named shell "添加一个模型服务" |> List.filter (fun c -> c.IsEffectivelyVisible))
                 let composer = field<Composer> shell "composer"
                 Assert.Equal(Onboarding.FirstPrompt, composer.Text)
                 match window.FocusManager.GetFocusedElement() with
@@ -478,7 +478,7 @@ module OnboardingUiTests =
                     | Error e -> failwithf "%A" e
                 handle shell (AuthAccepted {| instanceId = "i-ready" |})
                 handle shell (catalogOf cfg)
-                Assert.Empty(named shell "连接一个模型" |> List.filter (fun c -> c.IsEffectivelyVisible))
+                Assert.Empty(named shell "添加一个模型服务" |> List.filter (fun c -> c.IsEffectivelyVisible))
             finally
                 window.Close()
         )

@@ -1258,8 +1258,19 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     // V20: 与 ChatView NotConnected 同句式，不在 Sidebar 另造术语。
                     // 内嵌入口与底部状态行重连是同一动作，不新造连接路径。
                     setEmptyAction "连接主机" actions.reconnect
-                    emptyStateHost.Child <-
-                        Ui.emptyState (brandLogo Tokens.logoEmpty) (Some "先连接一台万象主机") "连接后即可看到对话记录。" (Some(emptySkeleton :> Control)) (Some emptyActionButton)
+                    // 决策 270：桌面首屏正文已有唯一的「连接主机」主卡；侧栏只留一句说明，
+                    // 不再摆第二张品牌卡和同义按钮（按钮保持挂载但隐藏，读屏树连续）。
+                    // 窄屏抽屉里正文被遮住，侧栏才是唯一入口，这时按钮照常出现。
+                    emptyActionButton.IsVisible <- compactMode
+                    let note = Ui.caption "连接主机后，对话记录会显示在这里。"
+                    note.HorizontalAlignment <- HorizontalAlignment.Center
+                    note.TextAlignment <- TextAlignment.Center
+                    let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
+                    stack.Children.Add note
+                    stack.Children.Add emptySkeleton
+                    stack.Children.Add emptyActionButton
+                    stack.Margin <- Thickness(Spacing.spaceXl)
+                    emptyStateHost.Child <- stack
                 | EmptyVariant.ListLoading ->
                     emptySkeleton.IsVisible <- true
                     // 行动按钮保持挂载但隐藏：读屏与自动化树里它始终在场（跨空态
@@ -1342,6 +1353,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
     member this.SetCompactMode(value: bool) =
         compactMode <- value
+        if currentEmptyVariant = Some EmptyVariant.NotConnected then emptyActionButton.IsVisible <- value
         compactBackButton.IsVisible <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         for button in [ compactBackButton; settingsButton; clearSearchButton ] do

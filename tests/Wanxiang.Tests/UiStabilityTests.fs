@@ -2334,8 +2334,12 @@ let ``sidebar empty state separates list loading from confirmed empty and embeds
         let pressEnter (control: Control) =
             control.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
         // 未连接：原空态 + 内嵌「连接主机」，与底部状态行重连同一动作。
-        Assert.True(hasText "先连接一台万象主机")
+        // 决策 270：桌面宽屏侧栏只留说明，主 CTA 在正文；窄屏抽屉里按钮才出现。
+        Assert.True(hasText "连接主机后，对话记录会显示在这里。")
+        Assert.False(hasText "先连接一台万象主机")
         let connectButton = byName "连接主机" |> Option.get
+        Assert.False(connectButton.IsVisible)
+        sidebar.SetCompactMode true
         Assert.True(connectButton.IsVisible)
         pressEnter connectButton
         Assert.Equal(1, reconnectCount)
@@ -2361,7 +2365,7 @@ let ``sidebar empty state separates list loading from confirmed empty and embeds
         // 断连：加载中随连接翻转作废，回到未连接空态（断连清空列表的既有路径不变）。
         sidebar.SetConversationListLoading true
         sidebar.SetConnection(false, "连接已断开")
-        Assert.True(hasText "先连接一台万象主机")
+        Assert.True(hasText "连接主机后，对话记录会显示在这里。")
         Assert.False(hasText "正在加载对话…")
         Assert.True((byName "连接主机" |> Option.get).IsVisible)
     finally

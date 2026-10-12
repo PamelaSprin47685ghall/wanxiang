@@ -1374,12 +1374,8 @@ module MessageCard =
         | Some info when error.retryable ->
             match info.limit with
             | Some limit when ProviderRateLimit.isExhausted limit ->
-                column.Children.Add(
-                    TextBlock(
-                        Text = "这个模型服务当前时段的额度已用完。",
-                        FontSize = Tokens.fontCaption,
-                        Foreground = Tokens.textMuted,
-                        TextWrapping = TextWrapping.Wrap))
+                // 决策 277：额度用尽时改写同一行说明，而不是在「限流或额度已用尽」下再叠一行同义话。
+                hint.Text <- "这个模型服务当前时段的额度已用完：等倒计时结束再试，或换个模型继续。"
             | _ -> ()
             let countdown =
                 TextBlock(

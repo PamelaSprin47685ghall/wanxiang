@@ -284,7 +284,29 @@ async function main() {
     await resizeSweep('connected');
 
     // 02 空对话：点第一行（WS 建的 QA 对话，按更新时间置顶）
-    await clickExpectChange(rowX, 190, 'open-qa-conversation');
+    // r10（决策 279）：抽屉布局下坐标点行不可靠（抽屉可能没开、行高随密度变）。
+    // 先走 Ctrl+1（契约 C2：按列表顺序打开第 1 个对话，与布局无关），像素变化自证；
+    // 不成再在 compact 下先确保抽屉打开、按行高扫几个候选 y。
+    async function openFirstConversation() {
+        const probe = join(OUT, `${TAG}-.probe.png`);
+        await page.screenshot({ path: probe });
+        const before = hashFile(probe);
+        await page.keyboard.down('Control');
+        await page.keyboard.press('Digit1');
+        await page.keyboard.up('Control');
+        await sleep(1200);
+        await page.screenshot({ path: probe });
+        if (hashFile(probe) !== before) return 'ctrl+1';
+        if (compact) {
+            await page.mouse.click(geo.x + 20, geo.y + 26); // 汉堡按钮：打开抽屉
+            await sleep(1000);
+        }
+        for (const y of [150, 190, 230, 120]) {
+            try { await clickExpectChange(rowX, y, `open-qa-conversation@${y}`); return `row@${y}`; } catch { }
+        }
+        throw new Error('could not open the QA conversation');
+    }
+    console.log('open conversation via', await openFirstConversation());
     await sleep(800);
     await shot('02-new-conversation');
 
