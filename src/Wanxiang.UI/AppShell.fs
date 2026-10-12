@@ -51,6 +51,7 @@ type MainView() as this =
     let mutable activeConvId: Guid option = None
     let runs = ConversationRuns()
     let mutable summaries: ConversationSummary list = []
+    let mutable paletteRecent: string list = CommandPalette.loadRecent ()
     /// §214：宽限期内的待删批次——列表里隐去，过期才提交删除命令。
     let mutable pendingDeletes = PendingDeletion.empty
     /// W4：分叉谱系（随列表快照更新）、最近一次搜索的 queryId、待滚动到的消息。
@@ -1429,6 +1430,147 @@ type MainView() as this =
             exportDialog <- Some dialog
             dialog.Show()
 
+    member private this.CycleTheme() =
+        // 主题三态轮转：跟随系统 → 浅色 → 深色 → 回到跟随系统。
+        let nextTheme =
+            match prefs.theme with
+            | FollowSystem -> AlwaysLight
+            | AlwaysLight -> AlwaysDark
+            | AlwaysDark -> FollowSystem
+        this.SavePrefs { prefs with theme = nextTheme }
+        toast
+            (match nextTheme with
+             | FollowSystem -> "已切换为跟随系统主题"
+             | AlwaysDark -> "已切换为深色主题"
+             | AlwaysLight -> "已切换为浅色主题")
+            Info
+
+    member private this.FocusSidebarSearch(query: string option) =
+        let state = navigation.EnsureSearchVisible()
+        mainLayout.Apply state
+        if not state.compactMode && prefs.sidebarCollapsed <> state.sidebarCollapsed then
+            prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
+            UiPrefs.save prefs
+        query |> Option.iter sidebar.SetSearchText
+        sidebar.FocusSearch()
+
+    /// 决策 370–379：命令面板条目。每次输入现取，对话列表与当前对话状态永远是新的。
+    member private this.PaletteItems() : PaletteItem list =
+        let act id title subtitle keywords shortcut =
+            { id = "act:" + id; kind = PaletteAction; title = title; subtitle = subtitle; keywords = keywords; shortcut = shortcut }
+        let hasConv = activeConvId.IsSome
+        let actions =
+            [ act "new" "新建对话" "" [ "new"; "chat"; "xinjian" ] (Some "Ctrl / ⌘ + N")
+              act "model" "切换模型" (if hasConv then "本对话" else "新对话使用的模型") [ "model"; "switch" ] (Some "Ctrl / ⌘ + M")
+              if hasConv then
+                  act "export" "导出当前对话" "Markdown 或 JSON" [ "export"; "download" ] (Some "Ctrl / ⌘ + Shift + E")
+                  act "fork" "从最新提问分叉" "编辑后另开一个分叉" [ "fork"; "branch"; "分支" ] None
+                  act "copy-reply" "复制最新回复" "" [ "copy" ] (Some "Ctrl / ⌘ + Shift + C")
+                  act "regenerate" "重新生成最新回复" "" [ "regenerate"; "retry"; "重试" ] (Some "Ctrl / ⌘ + Shift + G")
+              act "import" "导入对话" "从导出的 JSON 文件" [ "import"; "upload" ] None
+              act "theme" "切换主题" (sprintf "当前：%s" (ThemePreference.label prefs.theme)) [ "theme"; "dark"; "light"; "深色"; "浅色" ] (Some "Ctrl / ⌘ + Shift + S")
+              act "sidebar" "显示 / 隐藏侧栏" "" [ "sidebar" ] (Some "Ctrl / ⌘ + B")
+              act "shortcuts" "键盘快捷键" "" [ "shortcuts"; "keyboard"; "help"; "帮助" ] (Some "F1")
+              act "settings" "打开设置" "" [ "settings"; "preferences" ] (Some "Ctrl / ⌘ + ,")
+              act "add-provider" "添加模型服务" "" [ "provider"; "api key"; "密钥" ] None ]
+        let sectionItems =
+            SettingsSection.all
+            |> List.map (fun section ->
+                { id = "set:" + (string section).ToLowerInvariant()
+                  kind = PaletteSetting
+                  title = "设置 › " + SettingsSection.label section
+                  subtitle = SettingsSection.scope section
+                  keywords = [ string section; SettingsSection.label section ]
+                  shortcut = None })
+        let settingItems =
+            [ "appearance", "主题", [ "theme" ]
+              "appearance", "消息字号", [ "font"; "字体" ]
+              "appearance", "发送键（Enter / Ctrl+Enter）", [ "enter"; "send" ]
+              "appearance", "减弱动态效果", [ "motion"; "动画" ]
+              "appearance", "本机保存草稿", [ "draft" ]
+              "appearance", "代码块折行", [ "wrap"; "code" ]
+              "generation", "默认模型与温度", [ "temperature"; "default model" ]
+              "generation", "导入对话", [ "import" ]
+              "devices", "配对新设备", [ "pair"; "qr"; "二维码" ]
+              "tools", "工具审批", [ "approval"; "tool" ] ]
+            |> List.map (fun (section, title, keywords) ->
+                { id = "set:" + section + ":" + title
+                  kind = PaletteSetting
+                  title = title
+                  subtitle = "设置 › " + (SettingsSection.all |> List.find (fun s -> (string s).ToLowerInvariant() = section) |> SettingsSection.label)
+                  keywords = keywords
+                  shortcut = None })
+        let conversations =
+            summaries
+            |> List.filter (fun s -> not s.archived || prefs.showArchived)
+            |> List.map (fun s ->
+                { id = "conv:" + string s.id
+                  kind = PaletteConversation
+                  title = (if String.IsNullOrWhiteSpace s.title then "新对话" else s.title)
+                  subtitle =
+                      let tags =
+                          [ (s.pinned, "已置顶"); (s.archived, "已归档"); (s.isFork, "分叉") ]
+                          |> List.filter fst |> List.map snd
+                      String.Join(" · ", tags @ [ s.updatedAt.ToLocalTime().ToString("M月d日 HH:mm") ])
+                  keywords = []
+                  shortcut = None })
+        actions @ sectionItems @ settingItems @ conversations
+
+    member private this.RunPaletteItem(item: PaletteItem, query: string) =
+        paletteRecent <- CommandPalette.pushRecent item.id paletteRecent
+        CommandPalette.saveRecent paletteRecent
+        let closeDrawer () =
+            if navigation.State.compactMode && navigation.State.compactNavigationOpen then this.SetCompactNavigation false
+        let sectionOf (key: string) =
+            SettingsSection.all |> List.tryFind (fun s -> (string s).ToLowerInvariant() = key)
+        match item.id with
+        | id when id = CommandPalette.fullTextId -> this.FocusSidebarSearch(Some(query.Trim()))
+        | id when id.StartsWith "conv:" ->
+            match Guid.TryParse(id.Substring 5) with
+            | true, convId -> closeDrawer (); this.OpenConversation convId
+            | _ -> ()
+        | id when id.StartsWith "set:" ->
+            let key = id.Substring(4).Split(':')[0]
+            closeDrawer ()
+            this.ShowSettings()
+            sectionOf key |> Option.iter settings.ShowSection
+        | "act:new" -> closeDrawer (); this.CreateConversation() |> ignore
+        | "act:model" ->
+            closeDrawer ()
+            this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
+        | "act:export" ->
+            match activeSummary () with
+            | Some summary -> this.ExportConversation summary
+            | None -> toast "没有打开的对话可导出" Warning
+        | "act:fork" ->
+            match activeConversation () with
+            | Some view ->
+                let seed = messagesOf view |> List.filter MessageView.isUser |> List.tryLast |> Option.map (fun m -> m.text) |> Option.defaultValue ""
+                this.ForkFrom(None, seed)
+            | None -> toast "当前没有可分叉的对话。" Warning
+        | "act:copy-reply" -> this.CopyLatestReply()
+        | "act:regenerate" -> closeDrawer (); this.RegenerateLatest()
+        | "act:import" -> this.ImportConversation()
+        | "act:theme" -> this.CycleTheme()
+        | "act:sidebar" -> this.ToggleSidebar()
+        | "act:shortcuts" -> Dialogs.shortcuts overlay
+        | "act:settings" -> closeDrawer (); this.ShowSettings()
+        | "act:add-provider" -> closeDrawer (); this.ShowAddProvider()
+        | _ -> ()
+
+    member this.ShowCommandPalette() =
+        if not overlay.IsDialogOpen then
+            if overlay.IsPopupOpen then overlay.ClosePopup()
+            let content, search =
+                CommandPaletteView.build
+                    (fun () -> this.PaletteItems())
+                    (fun () -> paletteRecent)
+                    (fun item query ->
+                        overlay.CloseDialog()
+                        // 先让焦点归还、对话层关闭，再执行（执行可能再开对话框或切页面）。
+                        Dispatcher.UIThread.Post(fun () -> this.RunPaletteItem(item, query)))
+            overlay.ShowDialog(content, 560.0, initialFocus = search, scrollWholeContent = false)
+
     member this.ToggleSidebar() =
         let state = navigation.ToggleSidebar()
         mainLayout.Apply state
@@ -1471,15 +1613,7 @@ type MainView() as this =
                 window.Close()
             | _ -> ()
         | NewConversation -> e.Handled <- true; this.CreateConversation() |> ignore
-        | FocusSearch ->
-            e.Handled <- true
-            let state = navigation.EnsureSearchVisible()
-            mainLayout.Apply state
-            // 以返回的状态为准回写偏好，不读更新前的 prefs（D3/D4）。
-            if not state.compactMode && prefs.sidebarCollapsed <> state.sidebarCollapsed then
-                prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
-                UiPrefs.save prefs
-            sidebar.FocusSearch()
+        | FocusSearch -> e.Handled <- true; this.FocusSidebarSearch None
         | OpenSettings -> e.Handled <- true; this.ShowSettings()
         | OpenModelPicker ->
             e.Handled <- true
@@ -1500,21 +1634,8 @@ type MainView() as this =
             e.Handled <- true
             // 与重新生成/重试后「焦点回家」同一个入口（Composer.Focus 自带线程与可见性守卫）。
             composer.Focus()
-        | ToggleTheme ->
-            e.Handled <- true
-            // 主题三态轮转：跟随系统 → 浅色 → 深色 → 回到跟随系统。
-            let nextTheme =
-                match prefs.theme with
-                | FollowSystem -> AlwaysLight
-                | AlwaysLight -> AlwaysDark
-                | AlwaysDark -> FollowSystem
-            this.SavePrefs { prefs with theme = nextTheme }
-            toast
-                (match nextTheme with
-                 | FollowSystem -> "已切换为跟随系统主题"
-                 | AlwaysDark -> "已切换为深色主题"
-                 | AlwaysLight -> "已切换为浅色主题")
-                Info
+        | ToggleTheme -> e.Handled <- true; this.CycleTheme()
+        | OpenCommandPalette -> e.Handled <- true; this.ShowCommandPalette()
         | CopyLastReply -> e.Handled <- true; this.CopyLatestReply()
         | RegenerateLast -> e.Handled <- true; this.RegenerateLatest()
         | UndoPending ->
@@ -2279,6 +2400,7 @@ type MainView() as this =
         this.BuildComposer()
         overlay.SetToastFocusHome(fun () -> composer.Focus())
         sidebar.ConfigureImport(fun () -> this.ImportConversation())
+        sidebar.ConfigurePalette(fun () -> this.ShowCommandPalette())
         this.BuildSettings()
         settings.ConfigureImport(fun () ->
             this.CloseSettings()

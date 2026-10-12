@@ -695,6 +695,8 @@ type ShortcutAction =
     | ToggleSidebar
     | NewConversation
     | FocusSearch
+    /// 命令面板（决策 370/372）：Ctrl/⌘+K。侧栏搜索改到 Ctrl/⌘+Shift+F。
+    | OpenCommandPalette
     | OpenSettings
     | ToggleTheme
     | ExportConversation
@@ -732,7 +734,8 @@ module ShortcutRouter =
         // 与指针点右上角叉号同一个动作：桌面端关窗只有一条路，键盘用户也得有。
         elif ctrl && not shift && e.Key = Key.W then CloseWindow
         elif ctrl && e.Key = Key.N then NewConversation
-        elif ctrl && e.Key = Key.K then FocusSearch
+        elif ctrl && e.Key = Key.K then OpenCommandPalette
+        elif ctrl && shift && e.Key = Key.F then FocusSearch
         elif ctrl && e.Key = Key.OemComma then OpenSettings
         elif ctrl && e.Key = Key.L then FocusComposer
         elif ctrl && not shift && e.Key = Key.M then OpenModelPicker
