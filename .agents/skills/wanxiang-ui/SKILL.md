@@ -671,3 +671,24 @@ r9 QA 工具待办：`tools/qa_shot.js` 在抽屉布局下坐标点行不可靠�
 
 # 288. 未配对视角 QA 脚本
 `tools/qa_pairing.js --steps "tap:x,y;type:123456;shot:name"`：全新浏览器（无凭据）按步骤点按、输入、截图，用于抽屉连接按钮和配对码输入等未配对状态。
+
+# 290. 感知性能基准（r12 · 2026-10-12）
+数字先于优化。四条可复跑的基准，改动启动 / 渲染 / PWA 产物时必须前后各跑一次：
+- 桌面冷启动：`tools/perf_seed.fsx` 生成 1500 对话 + 3000 条长对话的数据目录，`tools/perf_desktop.sh <dir>` 读 `WANXIANG_STARTUP_TRACE` 打点（`firstFrame` 首帧、`listReady` 侧栏可用；距进程启动毫秒）。打点默认关闭，零开销。
+- PWA：`tools/perf_pwa.js`（首访 / 关掉浏览器再开的二次加载，以启动画面收起为准）；`tools/perf_pwa_count.sh` 经 `tools/throttle_proxy.js` 统计每阶段真正到达主机的请求数与字节。二次加载必须重开浏览器量——同进程重载命中 Blink 内存缓存，数字失真。
+- 界面：`PerceivedPerfTests`（UI 分组）在真实窗口里量「数据到达 → 布局完成」：打开 200 条长对话、80 批 delta 流式 20 KB 含代码 / 公式的回复、2000 对话侧栏；主机侧量快照切片与全文搜索。数字以 `PERF name = x ms` 写进 stderr，上界只防数量级回归。
+
+# 291. 桌面：先画窗口，后台重放日志
+主机 + 桌面同进程时，事件日志重放与主机启动放进后台任务，窗口立刻构建。客户端第一次连接等 `LocalHostGate.ready`（门已开则立即连），不会先报「连接失败」再退避 1 秒。纯主机模式仍同步启动。历史越长收益越大（7.5k 提交：首帧 2.05 s → 1.49 s）。
+
+# 292. 流式卡原位增量渲染
+流式卡外形（思考、工具调用、附件、字号、审批集合）不变时，同一张卡留在面板上，正文交给 `StreamingMarkdown.Update`：只替换第一个变了的块之后的控件，已写完的块既不重建也不重新挂树（重新挂树会让继承的字体等属性抖动，整段重新排字）。外形变了才换代。20 KB 回复的每批 delta 从约 410 ms 降到约 20 ms。
+
+# 293. 长对话只挂尾部窗口
+打开对话只挂最后 `ChatView.InitialMountWindow`（40）张卡；用户把视口推到顶时先把本机已加载、未挂载的消息按 `MountWindowStep`（60）挂上（沿用分页的 prepend 锚点，视口不跳），本机挂完才向主机要更早一页。搜索命中 / 消息链接 / 版本切换指向窗口外的消息时窗口直接扩到那条。首屏布局判据：只认偏移在减小的滚动（首帧偏移本来是 0，不能因此一次挂满）。换对话复位。已知局限：「上一轮」跳转只在已挂载范围内。
+
+# 294. 主机快照只序列化尾部
+`conversationMessagesTail` 不再先把整段对话逐条 DeepClone 再截尾；2 万条对话打开快照 ~10 ms → <1 ms。
+
+# 295. PWA：framework 产物按启动清单版本缓存，首访不下调试产物
+`sw.js`：`/_framework/dotnet.boot.js` 回源（`no-cache`）并与上一版逐字比较，变了先清空 `wanxiang-fw` 缓存再返回；`dotnet.js` network-first；其余 framework 产物 cache-first。二次打开到达主机的请求 224 → 2。`WasmDebugLevel=0`、不生成符号表：首访少下约 4 MB，且不初始化调试器。主机升级后首次打开会整包重下（已验证）。静态壳仍 network-first。
