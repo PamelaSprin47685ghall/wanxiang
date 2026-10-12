@@ -740,7 +740,7 @@ r9 QA 工具待办：`tools/qa_shot.js` 在抽屉布局下坐标点行不可靠�
 粘贴（文件 / 位图）、拖入、文件选择器（PWA 在手机上即系统的拍照 / 照片图库 / 文件选项）、分块上传、内容寻址存储、历史持久化、OpenAI 兼容（含 Ollama `/v1`，image_url）/ Anthropic（image + document）/ Gemini（inlineData）三种格式转发、Markdown 导出列出附件名与大小、JSON 导出保留附件引用——r15 审视后确认都已具备，不重做。
 
 # 330. 模型能否看图：先看模型服务给的信息
-三层来源，越靠前越可信：用户手动指定（决策 331）> 模型服务提供的信息 > 名字推断（决策 320）。模型服务信息只在用户点「获取模型列表」时顺带拿（不在后台偷偷请求，与决策 41 一致），存在主机内存里：OpenAI 兼容 `/models` 条目的 `architecture.input_modalities` / `architecture.modality`（OpenRouter）、`capabilities`（数组含 vision，或对象 `{vision: bool}`）、`input_modalities` / `modalities`；地址像 Ollama（:11434 或含 ollama）时逐个问 `/api/show` 的 `capabilities`（每次最多 50 个、单个 5 秒，失败跳过）；Anthropic 原生接口按已知清单（Claude 3 起能看图，claude-2 / instant 不能），不联网。目录快照的 provider 多两个可选键 `visionOverrides`、`visionDetected`（模型 → bool），旧客户端忽略；探测成功后主机重发目录，输入区立即用上。主机重启后服务信息需再点一次「获取模型列表」（只剩 Anthropic 清单与名字推断）。
+三层来源，越靠前越可信：用户手动指定（决策 331）> 模型服务提供的信息 > 名字推断（决策 320）。模型服务信息只在用户点「获取模型列表」时顺带拿（不在后台偷偷请求，与决策 41 一致），存在主机内存里：OpenAI 兼容 `/models` 条目的 `architecture.input_modalities` / `architecture.modality`（OpenRouter）、`capabilities`（数组含 vision，或对象 `{vision: bool}`）、`input_modalities` / `modalities`；是 Ollama 时（见决策 341）逐个问 `/api/show` 的 `capabilities`（每次最多 50 个、单个 5 秒，失败跳过）；Anthropic 原生接口按已知清单（Claude 3 起能看图，claude-2 / instant 不能），不联网。目录快照的 provider 多两个可选键 `visionOverrides`、`visionDetected`（模型 → bool），旧客户端忽略；探测成功后主机重发目录，输入区立即用上。探测结果落盘，重启后仍在（决策 340）。
 
 # 331. 单个模型的看图能力可手动指定
 编辑模型服务 › 高级设置里，在「获取模型列表」下面列出每个模型的当前判断与来源（你的指定 / 模型服务提供 / 按名字推断），再给两栏「指定能看图的模型」「指定只吃文字的模型」，每行一个，留空即自动。保存时校验：必须在模型列表里、不能两栏都写。TOML 为 provider 下的 `visionModels` / `textOnlyModels` 两个列表（同一模型两边都写以只吃文字为准）；`provider.upsert` 带 `visionOverrides` 对象则整体替换、不带则保持原值，且自动丢掉已不在模型列表里的模型。
@@ -753,3 +753,15 @@ r9 QA 工具待办：`tools/qa_shot.js` 在抽屉布局下坐标点行不可靠�
 
 # 334. 输入框各状态的底色由输入框自己保证
 截图复核发现深色主题下聚焦的输入框是白底浅字。真实桌面（Xvfb 实机截图）其实正常——App 级 `FlattenTextBoxChrome` 已把 Fluent 的 TextControl 资源改成透明；白底只出现在没有这层改写的宿主（无头测试、嵌入）。为了截图与实机一致，输入区 TextBox 自带一份同名资源（各状态透明底、万象前景色与占位色），不再依赖 App 级改写。
+
+# 340. 模型服务报告的能力落盘
+决策 330 探测到的看图能力连同探测时间写到 `<数据目录>/model-capabilities.json`（临时文件 + 原子替换），主机启动时读回；文件损坏只记日志并忽略——它只是缓存。每次「获取模型列表」成功都整组替换该模型服务（id + 地址）的条目，模型服务已删掉的模型不残留。仍然只在用户点「获取模型列表」时联网（决策 41）。
+
+# 341. Ollama 靠身份而不是地址识别
+不再用「端口 11434 / 地址含 ollama」猜。种类为 `ollama`，或 OpenAI 兼容地址的根路径 `GET /api/version` 在 3 秒内返回 `{"version": "…"}` 时才当作 Ollama，再去问 `/api/show`。换了端口、走反向代理的 Ollama 也能识别；地址里碰巧带 ollama 的网关不会被白问 50 次 `/api/show`。
+
+# 342. PWA 的图片缩小交给浏览器
+wasm 是单线程，Skia 在 wasm 里处理一张 12 MP 照片（16 MB JPEG → 7.9 MB）约 1.3 s，期间界面完全不动。PWA 改用浏览器原生解码（`createImageBitmap`，按 EXIF 摆正）+ OffscreenCanvas（不支持时用普通 canvas）编码，规则与决策 332 相同（≤4096 px，PNG/WebP 先试 PNG，JPEG 质量 85→75→65，仍超限按 0.75 缩边，最多 8 次）。实测同一张图约 1.1 s，最长单帧卡顿约 0.3 s（字节在 .NET 与 JS 之间搬运）。缩小期间的提示仍是「正在自动缩小…」，界面保持可操作。浏览器解码失败时回退到 Skia；动图仍在 F# 侧先判断。桌面端继续用 Skia（后台线程，不卡界面）。
+
+# 343. 稳定性：退出与落盘不得无限等待或静默失败
+主机停止时排空连接最多 12 秒；桌面退出时等主机启动最多 15 秒；半截回复（决策 250）落盘或读取失败要写日志，不再静默吞掉。

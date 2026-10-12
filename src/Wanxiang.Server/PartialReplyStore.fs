@@ -23,7 +23,7 @@ type PartialReplyStore(directory: string option) =
                         match WireCodec.tryDecode (File.ReadAllText file) with
                         | Ok(GenerationPartial p as ev) -> items[p.conversationId] <- ev
                         | _ -> ()
-                    with _ -> ()
+                    with ex -> eprintfn "[wanxiang] 跳过无法读取的半截回复 %s：%s" file ex.Message
             with _ -> ()
         | None -> ()
 
@@ -37,7 +37,9 @@ type PartialReplyStore(directory: string option) =
                     let tmp = path + ".tmp"
                     File.WriteAllText(tmp, WireCodec.encode ev)
                     File.Move(tmp, path, true)
-                with _ -> ()
+                with ex ->
+                    // 稳定性（r17）：落盘失败不能静默——否则重启后「继续生成」悄悄消失
+                    eprintfn "[wanxiang] 半截回复落盘失败（%s）：%s" path ex.Message
             | None -> ()
         | _ -> ()
 
