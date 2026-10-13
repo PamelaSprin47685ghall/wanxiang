@@ -6,14 +6,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="ConfigModel.fs" />
-    <Compile Include="TomlCodec.fs" />
-    <Compile Include="ConfigStore.fs" />
     <Compile Include="Auth.fs" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Tomlyn" Version="2.10.1" />
+    <!-- 配置模型、TOML 编解码、ConfigStore 来自 wanxiang2 交付包（tools/wanxiang2-feed.sh） -->
+    <PackageReference Include="Wanxiang2.ConfigStore" Version="0.0.0-local" />
   </ItemGroup>
 
   <ItemGroup>
