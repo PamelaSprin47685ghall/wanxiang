@@ -25,7 +25,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
     <ProjectReference Include="..\Wanxiang.Store\Wanxiang.Store.fsproj" />
-    <ProjectReference Include="..\Wanxiang.Config\Wanxiang.Config.fsproj" />
     <ProjectReference Include="..\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
     <ProjectReference Include="..\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
     <ProjectReference Include="..\Wanxiang.Server\Wanxiang.Server.fsproj" />
@@ -51,4 +50,8 @@
     <Copy SourceFiles="@(_WxPwaBundleFiles)" DestinationFiles="@(_WxPwaBundleFiles->'$(PublishDir)pwa\%(RecursiveDir)%(Filename)%(Extension)')" />
     <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)../../tools/verify_avalonia_patch.py&quot; &quot;$(PublishDir)pwa&quot;" />
   </Target>
+  <ItemGroup>
+    <PackageReference Include="Wanxiang2.ConfigStore" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PairingDesk" Version="0.0.0-local" />
+  </ItemGroup>
 </Project>

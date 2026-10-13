@@ -415,7 +415,7 @@ type private Host(port: int, token: string, providerUrl: string, tools: ToolsCon
                                 timeoutSeconds = ProviderConfig.defaultTimeoutSeconds; maxRetries = 0; enabled = true
                                 promptCaching = false; headers = Map.empty; extraJson = None; visionOverrides = Map.empty } ]
                     authClients =
-                        [ { tokenHash = Auth.hashToken token; name = "w3"; createdAtUtc = DateTimeOffset.UtcNow
+                        [ { tokenHash = ClientToken.ClientToken.hash token; name = "w3"; createdAtUtc = DateTimeOffset.UtcNow
                             lastSeenUtc = None; revoked = false } ] }
             File.WriteAllText(configPath, TomlCodec.serialize cfg)
         let app = new ServerApp(dir, configPath, false, None, ignore)
@@ -460,7 +460,7 @@ type private Session = { host: Host; model: FakeModel; port: int; token: string;
 
 let private withSession (tools: ToolsConfig) (body: Session -> CancellationToken -> unit) =
     use model = new FakeModel()
-    let port, token = Wanxiang.Tests.ServerE2eTests.pickPort (), Auth.generateToken ()
+    let port, token = Wanxiang.Tests.ServerE2eTests.pickPort (), ClientToken.ClientToken.generate ()
     use host = new Host(port, token, model.Url, tools, tempDir ())
     host.Start()
     use timeout = new CancellationTokenSource(TimeSpan.FromSeconds 40.0)
@@ -647,7 +647,7 @@ let ``[AC-2] e2e 取消生成：等待中的审批作废，且不留工具结果
 [<Fact>]
 let ``[AC-5] e2e 重启：挂起的审批消失，对话不卡死（不再下发、不再等待）`` () =
     use model = new FakeModel()
-    let port, token = Wanxiang.Tests.ServerE2eTests.pickPort (), Auth.generateToken ()
+    let port, token = Wanxiang.Tests.ServerE2eTests.pickPort (), ClientToken.ClientToken.generate ()
     use host = new Host(port, token, model.Url, askEach, tempDir ())
     host.Start()
     let s = { host = host; model = model; port = port; token = token; conv = Guid.NewGuid() }

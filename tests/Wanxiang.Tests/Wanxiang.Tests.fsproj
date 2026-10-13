@@ -41,7 +41,6 @@
     <Compile Include="ServerStoreMutationTests.fs" />
     <Compile Include="ChatOrchestratorTests.fs" />
     <Compile Include="ServerConnectionsTests.fs" />
-    <Compile Include="ConfigTests.fs" />
     <Compile Include="AttachmentTests.fs" />
     <Compile Include="BugfixTests.fs" />
     <Compile Include="CodecTests.fs" />
@@ -149,7 +148,6 @@
     <ProjectReference Include="..\..\src\Wanxiang.Agui\Wanxiang.Agui.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Store\Wanxiang.Store.fsproj" />
-    <ProjectReference Include="..\..\src\Wanxiang.Config\Wanxiang.Config.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Server\Wanxiang.Server.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
@@ -157,4 +155,8 @@
     <ProjectReference Include="..\..\src\Wanxiang.Client\Wanxiang.Client.fsproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Wanxiang2.ConfigStore" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PairingDesk" Version="0.0.0-local" />
+  </ItemGroup>
 </Project>

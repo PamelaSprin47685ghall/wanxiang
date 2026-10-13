@@ -349,13 +349,13 @@ module ComposerReliabilityTests =
             let p = (l.LocalEndpoint :?> Net.IPEndPoint).Port
             l.Stop()
             p
-        let token = Auth.generateToken ()
+        let token = ClientToken.ClientToken.generate ()
         let validToml =
             let cfg =
                 { AppConfig.defaults (Guid.CreateVersion7()) with
                     listen = sprintf "127.0.0.1:%d" port
                     authClients =
-                        [ { tokenHash = Auth.hashToken token; name = "w5"; createdAtUtc = DateTimeOffset.UtcNow
+                        [ { tokenHash = ClientToken.ClientToken.hash token; name = "w5"; createdAtUtc = DateTimeOffset.UtcNow
                             lastSeenUtc = None; revoked = false } ] }
             TomlCodec.serialize cfg
         let app =

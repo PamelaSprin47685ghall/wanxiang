@@ -96,8 +96,8 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
     let mutable stopping = false
 
     let hostStatus = HostStatus()
-    let pairing = Auth.PairingState()
-    let mutable failureTracker = Auth.FailureTracker(TimeSpan.FromMinutes 1.0, 5, TimeSpan.FromMinutes 5.0)
+    /// 配对柜台（wanxiang2 PairingDesk）：码、失败限流、令牌签发的顺序都在它里面。
+    let desk = PairingDesk.PairingDesk({ window = TimeSpan.FromMinutes 1.0; maxFailures = 5; freeze = TimeSpan.FromMinutes 5.0 }, TimeSpan.FromMinutes 5.0)
 
     let currentConfig () =
         match configStore with
@@ -111,11 +111,10 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
 
     /// 按 TOML 重建配对限流器（Q188：每远端地址每分钟失败次数/冻结分钟可通过 TOML 调整；启动即生效）
     let rebuildFailureTracker (cfg: AppConfig) =
-        failureTracker <-
-            Auth.FailureTracker(
-                TimeSpan.FromMinutes(float cfg.pairingFailureWindowMinutes),
-                cfg.pairingMaxFailures,
-                TimeSpan.FromMinutes(float cfg.pairingFreezeMinutes))
+        desk.Reconfigure
+            { window = TimeSpan.FromMinutes(float cfg.pairingFailureWindowMinutes)
+              maxFailures = cfg.pairingMaxFailures
+              freeze = TimeSpan.FromMinutes(float cfg.pairingFreezeMinutes) }
 
     let onConfigReloaded (cfg: AppConfig) =
         // W5：配置重新加载成功，之前的「配置有误」状态随之消失（客户端由下面的 config.changed 清除）。
@@ -390,8 +389,8 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             Func<HttpContext, Task>(fun (ctx: HttpContext) ->
                 task {
                     let origin = string ctx.Request.Headers.Origin
-                    if ctx.WebSockets.IsWebSocketRequest && (not (Auth.isAllowedWsOrigin origin (string ctx.Request.Host))
-                             || (origin <> "" && not (Auth.isAllowedWsHost (string ctx.Request.Host) allowedHosts))) then
+                    if ctx.WebSockets.IsWebSocketRequest && (not (WsHandshake.WsHandshake.isAllowedOrigin origin (string ctx.Request.Host))
+                             || (origin <> "" && not (WsHandshake.WsHandshake.isAllowedHost (string ctx.Request.Host) allowedHosts))) then
                         // 决策 281：跨源网页不得打开主机 WebSocket（含 DNS 重绑定）
                         ctx.Response.StatusCode <- 403
                     elif ctx.WebSockets.IsWebSocketRequest then
@@ -423,8 +422,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                                 // 分页取批：慢客户端每批最多 64 条（§13/§22 单批有限），
                                 // 避免 O(n) 全量复制剩余提交（长历史下 O(n²) 并阻塞单写者 mailbox）
                                 (fun cursor limit -> coordinator.Value.CommitsAfter(cursor, limit)),
-                                pairing,
-                                failureTracker,
+                                desk,
                                 (fun code ->
                                     // 决策 46：配对码输出到 stderr，能读取 stderr 的用户有权批准
                                     Stderr.write "pairing-code" [ "code", code; "expiresInSeconds", 300 ]),

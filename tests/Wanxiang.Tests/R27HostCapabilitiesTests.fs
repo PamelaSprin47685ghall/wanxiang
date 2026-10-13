@@ -61,7 +61,7 @@ let ``command tracker expires newer commands but leaves message delivery to outb
 [<Fact>]
 let ``host announces capabilities right after authentication`` () =
     let port = ServerE2eTests.pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let handle = ServerE2eTests.E2e.ServerHandle(port, token)
     try
         use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)

@@ -294,18 +294,18 @@ module Program =
                                 existingToken
                                 |> Option.exists (fun tok ->
                                     cfg.authClients
-                                    |> List.exists (fun c -> c.tokenHash = Wanxiang.Config.Auth.hashToken tok && not c.revoked))
+                                    |> List.exists (fun c -> c.tokenHash = ClientToken.ClientToken.hash tok && not c.revoked))
                             let outcome =
                                 if tokenValid then
                                     Ok()
                                 else
-                                    let token = Wanxiang.Config.Auth.generateToken ()
-                                    let hash = Wanxiang.Config.Auth.hashToken token
+                                    let token = ClientToken.ClientToken.generate ()
+                                    let hash = ClientToken.ClientToken.hash token
                                     let newCfg =
                                         { cfg with
                                             authClients =
                                                 { tokenHash = hash
-                                                  name = Wanxiang.Config.Auth.desktopClientName
+                                                  name = DesktopClient.DesktopClient.Name
                                                   createdAtUtc = DateTimeOffset.UtcNow
                                                   lastSeenUtc = None
                                                   revoked = false }

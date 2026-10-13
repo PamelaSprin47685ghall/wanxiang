@@ -21,7 +21,7 @@ open Wanxiang.Tests.DevicesTests
 [<InlineData("chrome-extension://abc", "127.0.0.1:8765", false)>]
 [<InlineData("http://127.0.0.1:8765", "", false)>]
 let ``Origin 必须与 Host 同源`` (origin: string, host: string, expected: bool) =
-    Assert.Equal(expected, Auth.isAllowedWsOrigin origin host)
+    Assert.Equal(expected, WsHandshake.WsHandshake.isAllowedOrigin origin host)
 
 [<Theory>]
 [<InlineData("127.0.0.1:8765", true)>]
@@ -32,12 +32,12 @@ let ``Origin 必须与 Host 同源`` (origin: string, host: string, expected: bo
 [<InlineData("wx.example.com", false)>]
 [<InlineData("", false)>]
 let ``Host 只放行 IP 与 localhost`` (host: string, expected: bool) =
-    Assert.Equal(expected, Auth.isAllowedWsHost host [])
+    Assert.Equal(expected, WsHandshake.WsHandshake.isAllowedHost host [])
 
 [<Fact>]
 let ``登记过的反向代理域名放行`` () =
-    Assert.True(Auth.isAllowedWsHost "wx.example.com" [ "wx.example.com" ])
-    Assert.False(Auth.isAllowedWsHost "wx.example.com.evil" [ "wx.example.com" ])
+    Assert.True(WsHandshake.WsHandshake.isAllowedHost "wx.example.com" [ "wx.example.com" ])
+    Assert.False(WsHandshake.WsHandshake.isAllowedHost "wx.example.com.evil" [ "wx.example.com" ])
 
 let private tryConnect (port: int) (origin: string option) : bool =
     use ws = new ClientWebSocket()

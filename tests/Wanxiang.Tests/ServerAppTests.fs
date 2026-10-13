@@ -27,7 +27,7 @@ module ServerAppTests =
         let configPath = Path.Combine(dir, "config.toml")
         let instanceId = Guid.CreateVersion7()
         let token = "test-token-secret"
-        let hash = Auth.hashToken token
+        let hash = ClientToken.ClientToken.hash token
         let cfg =
             { AppConfig.defaults instanceId with
                 listen = sprintf "%s:%d" listenHost port

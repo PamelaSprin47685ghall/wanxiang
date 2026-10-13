@@ -26,7 +26,7 @@ module internal E2e =
         let mutable server: Wanxiang.Server.ServerApp option = None
         do
             let instanceId = Guid.CreateVersion7()
-            let hash = Auth.hashToken token
+            let hash = ClientToken.ClientToken.hash token
             let cfg =
                 { AppConfig.defaults instanceId with
                     listen = sprintf "127.0.0.1:%d" port
@@ -217,7 +217,7 @@ let internal pickPort () =
 
 [<Fact>]
 let ``e2e full export is read-only and stable while another client deletes and renames`` () =
-    let port, token, id = pickPort (), Auth.generateToken (), Guid.NewGuid()
+    let port, token, id = pickPort (), ClientToken.ClientToken.generate (), Guid.NewGuid()
     let now = DateTimeOffset.UtcNow
     let commits =
         Events.Commit.create 1UL now [ ConversationCreated { conversationId = id; title = "原始标题"; config = testConfig () } ]
@@ -283,7 +283,7 @@ let ``e2e reobserve restores cancel identity and retrying the original send is i
     upstream.Prefixes.Add(sprintf "http://127.0.0.1:%d/" upstreamPort)
     upstream.Start()
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let server = E2e.ServerHandle(port, token, providerUrl = sprintf "http://127.0.0.1:%d/v1" upstreamPort)
     try
         use timeout = new CancellationTokenSource(TimeSpan.FromSeconds 20.0)
@@ -349,7 +349,7 @@ let ``e2e reobserve restores cancel identity and retrying the original send is i
 [<Fact>]
 let ``e2e write command succeeds after snapshot cursor advance`` () =
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let handle = E2e.ServerHandle(port, token)
     try
         use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
@@ -396,7 +396,7 @@ let ``e2e write command succeeds after snapshot cursor advance`` () =
 [<Fact>]
 let ``e2e observe advance cursor then enqueue gets response and push`` () =
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let dir = tempDir ()
     let configPath = Path.Combine(dir, "config.toml")
     try
@@ -406,7 +406,7 @@ let ``e2e observe advance cursor then enqueue gets response and push`` () =
             { AppConfig.defaults (Guid.NewGuid()) with
                 listen = sprintf "127.0.0.1:%d" port
                 authClients =
-                    [ { tokenHash = Auth.hashToken token
+                    [ { tokenHash = ClientToken.ClientToken.hash token
                         name = "e2e"
                         createdAtUtc = DateTimeOffset.UtcNow
                         lastSeenUtc = None
@@ -473,7 +473,7 @@ let ``e2e slow client (never reads) does not block other clients' commits`` () =
     // 只阻塞该连接自己的发送循环；coordinator mailbox 与其他连接不受影响。
     // 断言：连接 A 不读 ws（队列积压），连接 B 的提交仍能在超时内完成。
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let handle = E2e.ServerHandle(port, token)
     try
         use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
@@ -538,7 +538,7 @@ let ``e2e slow client (never reads) does not block other clients' commits`` () =
 [<Fact>]
 let ``e2e history paging slices by commit id`` () =
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let dir = tempDir ()
     let configPath = Path.Combine(dir, "config.toml")
     try
@@ -549,7 +549,7 @@ let ``e2e history paging slices by commit id`` () =
             { AppConfig.defaults (Guid.NewGuid()) with
                 listen = sprintf "127.0.0.1:%d" port
                 authClients =
-                    [ { tokenHash = Auth.hashToken token
+                    [ { tokenHash = ClientToken.ClientToken.hash token
                         name = "e2e"
                         createdAtUtc = DateTimeOffset.UtcNow
                         lastSeenUtc = None
@@ -615,7 +615,7 @@ let ``e2e history paging slices by commit id`` () =
 [<Fact>]
 let ``e2e attachment upload and download round trip`` () =
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let handle = E2e.ServerHandle(port, token)
     try
         use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
@@ -676,7 +676,7 @@ let ``e2e attachment upload and download round trip`` () =
 [<Fact>]
 let ``e2e stale client write command is rejected`` () =
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let handle = E2e.ServerHandle(port, token)
     try
         use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
@@ -739,7 +739,7 @@ let ``e2e stale client write command is rejected`` () =
 [<Fact>]
 let ``e2e empty session config is filled from toml default provider`` () =
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let handle = E2e.ServerHandle(port, token)
     try
         use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
@@ -812,7 +812,7 @@ let ``e2e empty session config is filled from toml default provider`` () =
 [<Fact>]
 let ``e2e deleting a conversation never sweeps attachment blobs`` () =
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let dir = tempDir ()
     let configPath = Path.Combine(dir, "config.toml")
     try
@@ -837,7 +837,7 @@ let ``e2e deleting a conversation never sweeps attachment blobs`` () =
                             headers = Map.empty
                             extraJson = None; visionOverrides = Map.empty } ]
                 authClients =
-                    [ { tokenHash = Auth.hashToken token
+                    [ { tokenHash = ClientToken.ClientToken.hash token
                         name = "e2e"
                         createdAtUtc = DateTimeOffset.UtcNow
                         lastSeenUtc = None
@@ -938,7 +938,7 @@ let ``e2e deleting a conversation never sweeps attachment blobs`` () =
 [<Fact>]
 let ``e2e wsclient sends command through agui custom carrier and server commits`` () =
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let handle = E2e.ServerHandle(port, token)
     try
         use cts = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
@@ -995,7 +995,7 @@ let ``e2e wsclient sends command through agui custom carrier and server commits`
 [<Fact>]
 let ``e2e damaged log starts read-only degraded and rejects writes without touching files`` () =
     let port = pickPort ()
-    let token = Auth.generateToken ()
+    let token = ClientToken.ClientToken.generate ()
     let dir = tempDir ()
     let configPath = Path.Combine(dir, "config.toml")
     try
@@ -1004,7 +1004,7 @@ let ``e2e damaged log starts read-only degraded and rejects writes without touch
             { AppConfig.defaults (Guid.NewGuid()) with
                 listen = sprintf "127.0.0.1:%d" port
                 authClients =
-                    [ { tokenHash = Auth.hashToken token
+                    [ { tokenHash = ClientToken.ClientToken.hash token
                         name = "e2e-degraded"
                         createdAtUtc = DateTimeOffset.UtcNow
                         lastSeenUtc = None

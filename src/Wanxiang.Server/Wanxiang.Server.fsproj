@@ -35,9 +35,13 @@
   <ItemGroup>
     <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
     <ProjectReference Include="..\Wanxiang.Store\Wanxiang.Store.fsproj" />
-    <ProjectReference Include="..\Wanxiang.Config\Wanxiang.Config.fsproj" />
     <ProjectReference Include="..\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
     <ProjectReference Include="..\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Wanxiang2.ConfigStore" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PairingDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.WsHandshake" Version="0.0.0-local" />
+  </ItemGroup>
 </Project>

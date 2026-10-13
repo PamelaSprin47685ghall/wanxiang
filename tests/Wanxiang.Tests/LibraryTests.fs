@@ -297,7 +297,7 @@ let ``search events roundtrip through the wire codec and the AG-UI carrier`` () 
 
 [<Fact>]
 let ``e2e search over the wire is read-only and an old client never sees search events`` () =
-    let port, token = ServerE2eTests.pickPort (), Wanxiang.Config.Auth.generateToken ()
+    let port, token = ServerE2eTests.pickPort (), ClientToken.ClientToken.generate ()
     let b = Builder()
     for n in 1 .. 30 do
         let c = b.Conversation(sprintf "对话 %d" n)

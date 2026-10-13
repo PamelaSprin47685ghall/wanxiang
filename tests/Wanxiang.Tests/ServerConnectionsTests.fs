@@ -330,36 +330,6 @@ module ServerConnectionsTests =
     // =========================================================================
 
     [<Fact>]
-    let ``Auth.FailureTracker 连续 5 次配对失败进入冻结状态，并在冻结期后或成功后解冻`` () =
-        let tracker = Auth.FailureTracker(TimeSpan.FromMinutes 1.0, 5, TimeSpan.FromMinutes 15.0)
-        let remote = "192.168.1.100"
-        let t0 = DateTimeOffset.UtcNow
-
-        // 连续 4 次失败：尚未冻结
-        for _ in 1 .. 4 do
-            let frozen = tracker.RecordFailure(t0, remote)
-            Assert.False(frozen)
-            Assert.False(tracker.IsFrozen(t0, remote))
-
-        // 第 5 次失败：立即触发冻结
-        let frozen5 = tracker.RecordFailure(t0, remote)
-        Assert.True(frozen5)
-        Assert.True(tracker.IsFrozen(t0, remote))
-
-        // 在 15 分钟冻结期内仍然冻结
-        let tInFreeze = t0.AddMinutes 10.0
-        Assert.True(tracker.IsFrozen(tInFreeze, remote))
-
-        // 超过 15 分钟冻结期：自动解冻
-        let tAfterFreeze = t0.AddMinutes 16.0
-        Assert.False(tracker.IsFrozen(tAfterFreeze, remote))
-
-        // 清理状态：显式 Clear 立即解冻
-        tracker.RecordFailure(t0, remote) |> ignore
-        tracker.Clear remote
-        Assert.False(tracker.IsFrozen(t0, remote))
-
-    [<Fact>]
     let ``ConfigMutation 动态配置变更：非法 Provider 与 MCP 配置被明确拒绝并返回错误清单`` () =
         let instanceId = Guid.NewGuid()
         let cfg = AppConfig.defaults instanceId

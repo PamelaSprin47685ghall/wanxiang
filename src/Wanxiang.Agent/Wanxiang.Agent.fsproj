@@ -27,7 +27,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
-    <ProjectReference Include="..\Wanxiang.Config\Wanxiang.Config.fsproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Wanxiang2.ConfigStore" Version="0.0.0-local" />
+  </ItemGroup>
 </Project>

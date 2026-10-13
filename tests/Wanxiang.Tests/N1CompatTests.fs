@@ -100,7 +100,7 @@ module N1Compat =
         // 连接后第一个动作即 auth.present（ADR-001 方案 B）。
         // 复用 ServerE2eTests 的 ServerHandle（同进程真实主机）。
         let port = Wanxiang.Tests.ServerE2eTests.pickPort ()
-        let token = Wanxiang.Config.Auth.generateToken ()
+        let token = ClientToken.ClientToken.generate ()
         let server = Wanxiang.Tests.ServerE2eTests.E2e.ServerHandle(port, token)
         try
             use timeout = new CancellationTokenSource(TimeSpan.FromSeconds 20.0)
@@ -116,7 +116,7 @@ module N1Compat =
         // 场景 G：不得「基本能用但部分事件被静默忽略」。
         // 未认证即发业务命令 → 主机必须明确 protocol error 关闭连接。
         let port = Wanxiang.Tests.ServerE2eTests.pickPort ()
-        let token = Wanxiang.Config.Auth.generateToken ()
+        let token = ClientToken.ClientToken.generate ()
         let server = Wanxiang.Tests.ServerE2eTests.E2e.ServerHandle(port, token)
         try
             use timeout = new CancellationTokenSource(TimeSpan.FromSeconds 20.0)
