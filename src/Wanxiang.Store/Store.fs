@@ -1,20 +1,15 @@
 namespace Wanxiang.Store
 
 open System
-open System.Collections.Concurrent
 open System.IO
-open System.Threading.Tasks
 open System.Text.Json.Nodes
 open Wanxiang.Core
 
 // 组装层：在 wanxiang2 的对象之间路由消息。
 //   Ledger（actor）发 AppendRequested -> 这里写 JsonSeqFile -> 回 Appended / AppendFailed。
 //   读取：Ledger 回答位置（PositionsAfter / PositionOf），这里按位置读 JsonSeqFile。
-// 位置 'P = 一条记录在日志里的字节区间 [start, end)。
+// 位置 = Ledger.Span，一条记录在日志里的字节区间 [start, end)，首尾相接。
 // 本文件不持锁：串行化由账本的邮箱负责。
-
-/// 记录在日志里的字节区间。
-type Span = int64 * int64
 
 /// 领域类型与库类型之间的映射。
 module Assembly =
@@ -54,13 +49,19 @@ module Assembly =
     /// 一条提交在日志里的完整一帧。
     let frame (c: Events.Commit) : byte[] = envelope c |> JsonSeq.Frame.encode
 
-    /// 折叠。lastError 记下领域错误原样（账本只传字符串），供协调器还原 WanxiangError。
-    let fold (lastError: WanxiangError option ref) (p: Projection) (c: Ledger.Commit<EventData>) : Result<Projection, string> =
-        match Projection.applyCommit p (toCommit c) with
-        | Ok p' -> Ok p'
-        | Error e ->
-            lastError.Value <- Some e
-            Error(WanxiangError.message e)
+    /// 折叠：领域错误原样交给账本（Ledger 对错误类型泛型）。
+    let fold (p: Projection) (c: Ledger.Commit<EventData>) : Result<Projection, WanxiangError> =
+        Projection.applyCommit p (toCommit c)
+
+    let span (r: JsonSeq.Record) : Ledger.Span = { start = r.startOffset; ``end`` = r.endOffset }
+
+    let describe (p: Ledger.ReplayProblem<WanxiangError>) : string =
+        match p with
+        | Ledger.IdGap(e, g) -> sprintf "id gap: expected %d, got %d" e g
+        | Ledger.SpanGap(e, g) -> sprintf "span gap: expected start %d, got %d" e g.start
+        | Ledger.RepeatedStamp cid -> sprintf "repeats commandId %s" cid
+        | Ledger.FoldRejected e -> "fold rejected: " + WanxiangError.message e
+        | Ledger.Busy -> "ledger busy"
 
     /// 只读读取 [from, until)：不持写句柄，可与运行中的主机共存。until = None 读到末尾。
     let read (path: string) (from: int64) (until: int64 option) : JsonSeq.Record list =
@@ -85,7 +86,7 @@ module Assembly =
             | Ledger.Envelope.Invalid why -> Error(Choice1Of2("undecodable record: " + why))
             | Ledger.Envelope.NewerVersion v -> Error(Choice2Of2 v)
 
-type Checkpoint = Ledger.Checkpoint<Projection, Span>
+type Checkpoint = Ledger.Checkpoint<Projection>
 
 /// 启动重放结果。checkpoint 交给协调器续播，也可直接存成快照。
 type ReplayOutcome =
@@ -97,7 +98,10 @@ module ReplayOutcome =
     let ofCheckpoint (cp: Checkpoint) : ReplayOutcome =
         { projection = cp.state; lastCommitId = cp.throughId; checkpoint = cp }
 
-    let emptyCheckpoint: Checkpoint = { state = Projection.empty; throughId = 0UL; stamps = Map.empty; positions = [] }
+    let emptyCheckpoint: Checkpoint = { state = Projection.empty; throughId = 0UL; stamps = Map.empty; origin = 0L; ends = [||] }
+
+    /// 基线覆盖到的日志末尾。
+    let covered (cp: Checkpoint) = if cp.ends.Length = 0 then cp.origin else Array.last cp.ends
 
     let empty = ofCheckpoint emptyCheckpoint
 
@@ -119,10 +123,10 @@ module Replay =
 
     /// 记录 -> 账本的 Replay 消息；遇到第一个故障、解码失败或 ReplayRejected 即停，报告损坏点。
     let internal run (path: string) (from: Checkpoint) : InspectResult =
-        let ledger = Ledger.Ledger<Projection, EventData, Span>(Assembly.fold (ref None), from)
+        let ledger = Ledger.Ledger<Projection, EventData, WanxiangError>(Assembly.fold, from)
         let mutable rejected: string option = None
-        ledger.Outbox.Add(function Ledger.ReplayRejected(_, _, why) -> rejected <- Some why | _ -> ())
-        let start = match List.tryLast from.positions with Some(_, e) -> e | None -> 0L
+        ledger.Outbox.Add(function Ledger.ReplayRejected(_, _, p) -> rejected <- Some(Assembly.describe p) | _ -> ())
+        let start = ReplayOutcome.covered from
         let damaged (r: JsonSeq.Record) why =
             RepairRequired(
                 ReplayOutcome.ofCheckpoint ledger.Checkpoint,
@@ -135,7 +139,7 @@ module Replay =
                 | Error(Choice2Of2 v) -> UnsupportedFormat(sprintf "event log written by a newer version (envelope v%d)" v)
                 | Error(Choice1Of2 why) -> damaged r why
                 | Ok c ->
-                    ledger.Post(Ledger.Replay(c, (r.startOffset, r.endOffset)))
+                    ledger.Post(Ledger.Replay(c, Assembly.span r))
                     match rejected with
                     | Some why -> damaged r why
                     | None -> go rest
@@ -197,10 +201,10 @@ module Snapshot =
             s["commitId"] <- string id
             stamps.Add s
         o["stamps"] <- stamps
-        let pos = JsonArray()
-        for (a, b) in cp.positions do
-            pos.Add(JsonArray(JsonValue.Create a, JsonValue.Create b))
-        o["positions"] <- pos
+        o["origin"] <- cp.origin
+        let ends = JsonArray()
+        for e in cp.ends do ends.Add(JsonValue.Create e)
+        o["ends"] <- ends
         o["projection"] <- ProjectionCodec.toJson cp.state
         o.ToJsonString()
 
@@ -214,16 +218,13 @@ module Snapshot =
                     o["stamps"].AsArray()
                     |> Seq.map (fun s -> s["commandId"].GetValue<string>(), (s["hash"].GetValue<string>(), u64 s["commitId"]))
                     |> Map.ofSeq
-                let positions =
-                    o["positions"].AsArray()
-                    |> Seq.map (fun n -> let a = n.AsArray() in a[0].GetValue<int64>(), a[1].GetValue<int64>())
-                    |> List.ofSeq
+                let ends = o["ends"].AsArray() |> Seq.map (fun n -> n.GetValue<int64>()) |> Array.ofSeq
                 let throughId = u64 o["throughId"]
-                if uint64 positions.Length <> throughId then Error "positions do not match throughId"
+                if uint64 ends.Length <> throughId then Error "ends do not match throughId"
                 else
                     Ok(
                         DateTimeOffset.Parse(o["createdAt"].GetValue<string>(), Globalization.CultureInfo.InvariantCulture),
-                        { state = p; throughId = throughId; stamps = stamps; positions = positions }
+                        { state = p; throughId = throughId; stamps = stamps; origin = o["origin"].GetValue<int64>(); ends = ends }
                     )
         with e -> Error e.Message
 
@@ -247,7 +248,7 @@ module Snapshot =
             | Ok(createdAt, cp) ->
                 let log = DataPaths.logFile dataDir
                 let logLen = if File.Exists log then FileInfo(log).Length else 0L
-                let covered = match List.tryLast cp.positions with Some(_, e) -> e | None -> 0L
+                let covered = ReplayOutcome.covered cp
                 if covered > logLen then
                     SnapshotStale(sprintf "snapshot covers %d bytes but log has %d" covered logLen)
                 else
@@ -295,46 +296,36 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
     let file = new JsonSeq.JsonSeqFile(path)
     do try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
 
-    let lastError = ref None
-    let ledger = Ledger.Ledger<Projection, EventData, Span>(Assembly.fold lastError, start)
-    let replies = ConcurrentDictionary<Guid, TaskCompletionSource<Choice<Ledger.Commit<EventData>, Ledger.Refusal<Span>>>>()
+    let ledger = Ledger.Ledger<Projection, EventData, WanxiangError>(Assembly.fold, start)
     let mutable stopped = false
 
-    let reply ticket r =
-        let mutable tcs = null
-        if replies.TryRemove(ticket, &tcs) then tcs.SetResult r
-
     /// 写入。fault 注入点：BeforeAppend（未写即失败）、AfterAppend（写了再失败，必须截回）。
-    let append (c: Ledger.Commit<EventData>) : Ledger.LedgerIn<EventData, Span> =
-        let before = file.Length
+    let append (c: Ledger.Commit<EventData>) (startOffset: int64) : Ledger.LedgerIn<EventData> =
         try
+            if file.Length <> startOffset then invalidOp (sprintf "log end %d != ledger start %d" file.Length startOffset)
             if FaultInjector.tryFail FaultInjector.BeforeAppend then raise (IOException "injected fault: BeforeAppend")
             let after = file.Append(Ledger.Envelope.write (Assembly.toJson c))
             if FaultInjector.tryFail FaultInjector.AfterAppend then raise (IOException "injected fault: AfterAppend")
-            Ledger.Appended(c.id, (before, after))
+            Ledger.Appended(c.id, after)
         with e ->
-            (try file.Truncate before with _ -> ())
-            onTruncated (Assembly.toCommit c, Poisoned(sprintf "append failed: %s" e.Message), before, path)
+            (try file.Truncate startOffset with _ -> ())
+            onTruncated (Assembly.toCommit c, Poisoned(sprintf "append failed: %s" e.Message), startOffset, path)
             Ledger.AppendFailed(c.id, e.Message)
 
     do
         ledger.Outbox.Add(fun o ->
             match o with
-            | Ledger.AppendRequested(_, c) -> ledger.Post(append c)
-            | Ledger.Committed(Some t, c, _) ->
-                (try onCommitted (Assembly.toCommit c) with _ -> ())
-                reply t (Choice1Of2 c)
-            | Ledger.Refused(t, r) -> reply t (Choice2Of2 r)
-            | Ledger.Committed(None, _, _)
-            | Ledger.ReplayRejected _ -> ())
+            | Ledger.AppendRequested(_, c, startOffset) -> ledger.Post(append c startOffset)
+            | Ledger.Committed(Some _, c, _) -> (try onCommitted (Assembly.toCommit c) with _ -> ())
+            | _ -> ())
 
     /// 按位置读出提交。
-    let readSpans (spans: Span list) : Events.Commit list =
+    let readSpans (spans: Ledger.Span list) : Events.Commit list =
         match spans with
         | [] -> []
         | _ ->
-            let from = fst (List.head spans)
-            let until = snd (List.last spans)
+            let from = (List.head spans).start
+            let until = (List.last spans).``end``
             Assembly.read path from (Some until)
             |> List.choose (fun r -> match Assembly.decode r with Ok c -> Some(Assembly.toCommit c) | Error _ -> None)
 
@@ -348,22 +339,22 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
                 match submit.commandId, submit.commandHash with
                 | Some cid, Some h -> Some(({ commandId = cid; hash = h }: Ledger.Stamp))
                 | _ -> None
-            let ticket = Guid.NewGuid()
-            let tcs = TaskCompletionSource<_>(TaskCreationOptions.RunContinuationsAsynchronously)
-            replies[ticket] <- tcs
-            lastError.Value <- None
             let at = submit.nowUtc |> Option.defaultWith (fun () -> DateTimeOffset.UtcNow)
-            ledger.Post(Ledger.Submit(ticket, submit.events, at, stamp))
-            match tcs.Task.Result with
-            | Choice1Of2 c -> Committed(Assembly.toCommit c)
-            | Choice2Of2(Ledger.Duplicate(_, span)) ->
+            let answer =
+                match stamp with
+                | Some st -> ledger.Ask(submit.events, at, st)
+                | None -> ledger.Ask(submit.events, at)
+            match answer with
+            | Ledger.Committed(_, c, _) -> Committed(Assembly.toCommit c)
+            | Ledger.Refused(_, Ledger.Duplicate(_, span)) ->
                 match readSpans [ span ] with
                 | [ c ] -> IdempotentReplay c
                 | _ -> CommandIdRejected(Poisoned "idempotency stamp references unreadable commit")
-            | Choice2Of2(Ledger.StampConflict _) ->
+            | Ledger.Refused(_, Ledger.StampConflict _) ->
                 CommandIdRejected(CommandIdConflict(sprintf "commandId %s reused with different payload" (defaultArg submit.commandId "")))
-            | Choice2Of2(Ledger.Rejected msg) -> CommitFailed(lastError.Value |> Option.defaultValue (ValidationError msg))
-            | Choice2Of2(Ledger.WriteFailed _) -> CommitFailed(Poisoned "append failed")
+            | Ledger.Refused(_, Ledger.Rejected err) -> CommitFailed err
+            | Ledger.Refused(_, Ledger.WriteFailed _) -> CommitFailed(Poisoned "append failed")
+            | other -> CommitFailed(Poisoned(sprintf "unexpected ledger answer: %A" other))
 
     member this.SubmitEvents(events: EventData list) : SubmitResult =
         this.Submit { events = events; commandId = None; commandType = None; commandHash = None; nowUtc = None }
@@ -380,8 +371,8 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
     member _.CommitsAfter(cursor: CommitId, ?limit: int) : Events.Commit list =
         let positions =
             match limit with
-            | Some n -> ledger.PositionsAfter(cursor, max 0 n)
-            | None -> ledger.PositionsAfter cursor
+            | Some n -> ledger.SpansAfter(cursor, max 0 n)
+            | None -> ledger.SpansAfter cursor
         positions |> List.map snd |> readSpans
 
     member _.Shutdown() : unit =

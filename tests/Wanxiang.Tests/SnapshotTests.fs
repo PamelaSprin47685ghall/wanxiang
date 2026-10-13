@@ -146,7 +146,7 @@ module Snapshot =
                   latestCommitId = 1UL }
             // throughOffset = c1 帧末尾 = c2 起点（c1 已折叠进快照，c2 待续播）
             let c1FrameLen = int64 (Wanxiang.Store.Assembly.frame (c1)).Length
-            match Snapshot.write dir ({ state = proj1; throughId = proj1.latestCommitId; stamps = Map.empty; positions = Wanxiang.Store.Assembly.read (DataPaths.logFile dir) 0L (Some(c1FrameLen)) |> List.map (fun r -> r.startOffset, r.endOffset) }: Wanxiang.Store.Checkpoint) with
+            match Snapshot.write dir ({ state = proj1; throughId = proj1.latestCommitId; stamps = Map.empty; origin = 0L; ends = Wanxiang.Store.Assembly.read (DataPaths.logFile dir) 0L (Some(c1FrameLen)) |> List.map (fun r -> r.endOffset) |> Array.ofList }: Wanxiang.Store.Checkpoint) with
             | Error e -> failwith e
             | Ok _ ->
                 // 快照启动：从 throughCommitId+1=2 续播
@@ -189,7 +189,7 @@ module Snapshot =
                   latestCommitId = 1UL }
             // throughOffset = c1 帧末尾（c1 已折叠进快照；后续追加内容待续播）
             let c1FrameLen = int64 (Wanxiang.Store.Assembly.frame (c1)).Length
-            match Snapshot.write dir ({ state = proj1; throughId = proj1.latestCommitId; stamps = Map.empty; positions = Wanxiang.Store.Assembly.read (DataPaths.logFile dir) 0L (Some(c1FrameLen)) |> List.map (fun r -> r.startOffset, r.endOffset) }: Wanxiang.Store.Checkpoint) with
+            match Snapshot.write dir ({ state = proj1; throughId = proj1.latestCommitId; stamps = Map.empty; origin = 0L; ends = Wanxiang.Store.Assembly.read (DataPaths.logFile dir) 0L (Some(c1FrameLen)) |> List.map (fun r -> r.endOffset) |> Array.ofList }: Wanxiang.Store.Checkpoint) with
             | Error e -> failwith e
             | Ok _ ->
                 // 续播文件：id 3（缺 2）
