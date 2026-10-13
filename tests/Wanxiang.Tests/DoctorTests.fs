@@ -203,7 +203,7 @@ module Doctor =
             // 排除 lock 文件（DataLock.Acquire 会写入 PID，属运行时工件，非 doctor 修改）
             let snapshotFiles () =
                 Directory.GetFiles(dir, "*", SearchOption.AllDirectories)
-                |> Array.filter (fun f -> Path.GetFileName f <> "lock")
+                |> Array.filter (fun f -> not (Path.GetFileName(f).StartsWith ".lock"))
                 |> Array.map (fun f -> f, File.ReadAllBytes f)
             let before = snapshotFiles ()
             Wanxiang.Server.Doctor.run (configPath, dir) |> ignore

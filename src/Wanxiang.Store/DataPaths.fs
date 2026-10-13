@@ -7,12 +7,12 @@ open System.IO
 ///   data/
 ///     events/yyyy-MM-dd.jsonseq    事件日志（RFC 7464 JSON Text Sequence，按 UTC 日期分文件）
 ///     attachments/                 附件内容寻址存储
-///     lock                         实例独占锁
+///     .lock                        实例独占锁（DirLock）
 module DataPaths =
 
     let eventsDir (dataDir: string) = Path.Combine(dataDir, "events")
     let attachmentsDir (dataDir: string) = Path.Combine(dataDir, "attachments")
-    let lockFile (dataDir: string) = Path.Combine(dataDir, "lock")
+    let lockFile (dataDir: string) = Path.Combine(dataDir, ".lock")
 
     let eventFileName (dateUtc: DateTime) = sprintf "%04d-%02d-%02d.jsonseq" dateUtc.Year dateUtc.Month dateUtc.Day
 

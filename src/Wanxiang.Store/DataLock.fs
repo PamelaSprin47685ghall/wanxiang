@@ -1,38 +1,19 @@
 namespace Wanxiang.Store
 
 open System
-open System.IO
 
 /// 数据目录独占锁：同一数据目录只允许一个 S 进程打开（严格单进程）。
-/// 获取失败即启动失败，不尝试多写者协调。
-type DataLock private (stream: FileStream) =
+/// 获取失败即启动失败，不尝试多写者协调。机制由 wanxiang2 DirLock 库提供。
+type DataLock private (inner: DirLock.DirLock) =
 
-    /// 非致命诊断：PID 写入失败时记录（R6：不允许无证据继续运行）。
-    /// 锁已持有（排他性不依赖 PID 内容），故不阻止启动，但必须留下证据。
+    /// 非致命诊断。DirLock 自己写 pid 旁注，这里恒为 None；保留字段让调用方不变。
     member val PidWarning: string option = None with get, set
 
     static member Acquire(dataDir: string) : Result<DataLock, string> =
         DataPaths.ensureDataDirs dataDir
-        let path = DataPaths.lockFile dataDir
-        try
-            let fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
-            // 写入 PID 便于诊断
-            let warning =
-                try
-                    fs.SetLength 0L
-                    let bytes = Text.Encoding.UTF8.GetBytes(sprintf "pid=%d\n" Environment.ProcessId)
-                    fs.Write(bytes, 0, bytes.Length)
-                    fs.Flush()
-                    None
-                with e ->
-                    Some(sprintf "cannot write pid to %s: %s" path e.Message)
-            let lockObj = new DataLock(fs)
-            lockObj.PidWarning <- warning
-            Ok lockObj
-        with :? IOException ->
-            Error(sprintf "data directory %s is locked by another process" dataDir)
+        DirLock.DirLock.TryAcquire dataDir |> Result.map (fun l -> new DataLock(l))
 
-    member _.Dispose() = stream.Dispose()
+    member _.Dispose() = (inner :> IDisposable).Dispose()
 
     interface IDisposable with
         member this.Dispose() = this.Dispose()

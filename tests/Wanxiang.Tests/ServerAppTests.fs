@@ -75,7 +75,7 @@ module ServerAppTests =
                 match lockResult2 with
                 | Ok _ -> failwith "同一目录不应被两个锁实例同时获取"
                 | Error err ->
-                    Assert.Contains("locked by another process", err)
+                    Assert.Contains("is locked", err)
 
                 // 释放第一个锁
                 (lock1 :> IDisposable).Dispose()
@@ -106,7 +106,7 @@ module ServerAppTests =
             // 第二个实例尝试在相同 dataDir 构造必须因为抢占锁而抛出异常（failwith）
             let ex = Assert.Throws<Exception>(fun () ->
                 new ServerApp(dir, configPath1, false, None, ignore) |> ignore)
-            Assert.Contains("locked by another process", ex.Message)
+            Assert.Contains("is locked", ex.Message)
 
             // 释放 app1
             (app1 :> IDisposable).Dispose()

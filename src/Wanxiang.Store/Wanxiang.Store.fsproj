@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
+    <ProjectReference Include="..\..\vendor\wanxiang2\libs\DirLock\DirLock.fsproj" />
   </ItemGroup>
 
 </Project>
