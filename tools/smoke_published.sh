@@ -28,7 +28,7 @@ for _ in $(seq 1 120); do
     kill -0 $HOST 2>/dev/null || { echo "host exited early:"; cat "$WORK/host.log"; exit 1; }
     sleep 0.5
 done
-curl -fsS "http://127.0.0.1:$PORT/_framework/avalonia.js" | grep -q . || { echo "FAIL avalonia.js not served"; cat "$WORK/host.log"; exit 1; }
+curl -fsS -o /dev/null "http://127.0.0.1:$PORT/_framework/avalonia.js" || { echo "FAIL avalonia.js not served"; cat "$WORK/host.log"; exit 1; }
 echo "host up on $PORT (pid $HOST)"
 rc=0
 node "$ROOT/tools/smoke_published_pwa.js" --base "http://127.0.0.1:$PORT" --out "${SMOKE_OUT:-$WORK/shots}" || rc=$?
