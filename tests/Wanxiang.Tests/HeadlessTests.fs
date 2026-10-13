@@ -32,3 +32,16 @@ module HeadlessTests =
             // Transitions 只有显式设置过才非 null，不能拿它当构造成功标志。
             constructed <- true)
         Assert.True(constructed)
+
+    /// 决策 421 回归：程序集夹具必须真的在 UI 线程上触发 `Tokens` 的静态初始化。
+    /// 旧的 `Tokens.canvas |> ignore` 被优化器整句消掉，夹具形同虚设，谁先碰 `Tokens`
+    /// 谁就拥有整套画笔——工作线程先碰（本测试第一行）即毒化后续所有 UI 测试。
+    /// 单独运行本测试即可确定性复现。
+    [<Trait("Category", "UI")>]
+    [<Fact>]
+    let ``Tokens are owned by the ui thread even when a worker thread touches them first`` () =
+        // 工作线程上的纯逻辑读取（xunit 线程，不在 Headless.run 内）
+        Assert.False(obj.ReferenceEquals(Wanxiang.UI.Tokens.canvas, null))
+        let mutable owned = false
+        Headless.run (fun () -> owned <- Wanxiang.UI.Tokens.canvas.CheckAccess())
+        Assert.True(owned, "Tokens 画笔必须归 headless UI 线程所有（决策 421）")

@@ -119,7 +119,14 @@ module Headless =
     let private warmed =
         lazy
             (session.Value.Dispatch(
-                Action(fun () -> Wanxiang.UI.Tokens.canvas |> ignore),
+                // 必须真的「用」到画笔：`Tokens.canvas |> ignore` 会被 F# 优化器整句消掉，
+                // 静态初始化根本不发生，夹具形同虚设（决策 421 的根因）。CheckAccess 是方法调用，消不掉。
+                Action(fun () ->
+                    if not (Wanxiang.UI.Tokens.canvas.CheckAccess()) then
+                        failwithf
+                            "预热时 Tokens 画笔已归线程 %d 所有，不是 headless UI 线程 %d（决策 421）"
+                            Wanxiang.UI.Tokens.canvas.Dispatcher.Thread.ManagedThreadId
+                            Environment.CurrentManagedThreadId),
                 CancellationToken.None
             ).GetAwaiter().GetResult())
 
