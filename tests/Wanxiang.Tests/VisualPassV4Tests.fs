@@ -161,7 +161,11 @@ let ``定位后的下一次重绘不把视口拉回底部`` () =
             // 与 AppShell.Render 同序：HideEmpty → RenderMessages
             chat.HideEmpty()
             chat.RenderMessages(history, None, None, 14.0, false, None, Set.empty)
-            pump 900
+            // 决策 461：等条件成立（动画结束且布局稳定），上限 5 秒；不按固定墙钟判定。
+            let deadline = DateTime.UtcNow.AddSeconds 5.0
+            pump 400
+            while scroller.Offset.Y >= bottom - 300.0 && DateTime.UtcNow < deadline do pump 50
+            pump 200
             Assert.True(chat.RevealPinned, "reveal stays pinned across a re-render")
             Assert.True(scroller.Offset.Y < bottom - 300.0, sprintf "viewport stays at the hit: bottom=%f now=%f" bottom scroller.Offset.Y)
             // 换对话（AppShell 显式复位）后钉住解除

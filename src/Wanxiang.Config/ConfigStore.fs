@@ -10,17 +10,21 @@ open System.Threading
 /// - 应用自身修改也必须先落盘再重新加载（单一路径）；
 /// - 文件变化后 debounce 100ms 重新读取；
 /// - 写入采用临时文件 + flush + 原子 rename。
-type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfig -> unit, onRejected: string -> unit) as this =
+type ConfigStore private (path: string, initial: AppConfig, initialText: string, onReloaded: AppConfig -> unit, onRejected: string -> unit) as this =
 
     let lockObj = obj()
     let mutable current: AppConfig = initial
     let mutable disposed = false
+    /// 决策 462：最后一次本进程读到或写出的文件原文。应用自身的读-改-写（如 lastSeen 回写）
+    /// 落盘前先比对：磁盘已被外部改过而监视器还没来得及重载时，绝不能拿旧快照覆盖用户的编辑。
+    let mutable lastKnownText: string = initialText
     let watcher = new FileSystemWatcher(Path.GetDirectoryName path, Path.GetFileName path)
 
     let reloadFromDisk () : Result<AppConfig, string list> =
         let readResult =
             try
                 let text = File.ReadAllText path
+                lock lockObj (fun () -> lastKnownText <- text)
                 TomlCodec.tryParse text
             with e ->
                 Error [ sprintf "read failed: %s" e.Message ]
@@ -86,6 +90,9 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
     /// 否则并发写同一临时文件（.%s.tmp.<pid>）会互相截断、rename 出半写配置。
     member this.Rewrite(newConfig: AppConfig) : Result<unit, string> =
         lock lockObj (fun () ->
+          match this.SyncExternalEdit() with
+          | Error e -> Error e
+          | Ok () ->
             let dir = Path.GetDirectoryName path
             let tmp = Path.Combine(dir, sprintf ".%s.tmp.%d" (Path.GetFileName path) Environment.ProcessId)
             try
@@ -99,6 +106,7 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
                     fs.Write(bytes, 0, bytes.Length)
                     fs.Flush()
                 File.Move(tmp, path, true)
+                lastKnownText <- text
                 match reloadFromDisk () with
                 | Ok _ -> Ok()
                 | Error errs -> Error(sprintf "config reload failed after rewrite: %s" (String.concat "; " errs))
@@ -109,7 +117,25 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
     /// 锁内原子读-改-写（决策 46/59：多个连接并发配对/吊销/lastSeen 写回时，
     /// 各自基于同一旧快照派生新配置会互相覆盖——必须把"读最新值→改→落盘"放进同一把锁）。
     member this.Update(mutate: AppConfig -> AppConfig) : Result<unit, string> =
-        lock lockObj (fun () -> this.Rewrite(mutate current))
+        lock lockObj (fun () ->
+            match this.SyncExternalEdit() with
+            | Error e -> Error e
+            | Ok () -> this.Rewrite(mutate current))
+
+    /// 决策 462：磁盘内容与最后已知原文不同 → 外部编辑尚未被监视器处理。先同步重载：
+    /// 有效则以新配置为基础继续；无效则拒绝本次写盘（保留用户的编辑，拒绝由监视器照常公告）。
+    member private _.SyncExternalEdit() : Result<unit, string> =
+        let onDisk = try Some(File.ReadAllText path) with _ -> None
+        match onDisk with
+        | Some text when text <> lastKnownText ->
+            match TomlCodec.tryParse text with
+            | Ok cfg ->
+                lastKnownText <- text
+                current <- cfg
+                Ok()
+            | Error errs ->
+                Error(sprintf "config on disk was edited externally and is invalid; not overwriting: %s" (String.concat "; " errs))
+        | _ -> Ok()
 
     member _.Path = path
 
@@ -157,5 +183,5 @@ type ConfigStore private (path: string, initial: AppConfig, onReloaded: AppConfi
         | Ok cfg ->
             // Q118：确保配置文件始终为最小用户权限（首建或外部创建时 umask 可能放宽）
             try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
-            Ok(new ConfigStore(path, cfg, onReloaded, onRejected))
+            Ok(new ConfigStore(path, cfg, text, onReloaded, onRejected))
         | Error errs -> Error(String.concat "; " errs)

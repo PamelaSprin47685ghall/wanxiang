@@ -1267,3 +1267,34 @@ let ``hand-written config without instanceId gets one generated instead of faili
         Assert.True((TomlCodec.ensureInstanceId (File.ReadAllText path) (Guid.NewGuid())).IsNone)
     finally
         try Directory.Delete(dir, true) with _ -> ()
+
+// 决策 462：lastSeen 回写这类应用内读-改-写，不得覆盖监视器尚未处理的外部编辑（CI 偶发：
+// auth.accepted 之后的 lastSeen 回写把测试刚写进去的非法配置换回旧的有效配置，config.rejected 永远不来）。
+[<Fact>]
+let ``app-side update never clobbers a pending external edit`` () =
+    let dir = Path.Combine(Path.GetTempPath(), "wanxiang-config-" + Guid.NewGuid().ToString("N"))
+    Directory.CreateDirectory dir |> ignore
+    let path = Path.Combine(dir, "wanxiang.toml")
+    try
+        let initial = AppConfig.defaults (Guid.NewGuid())
+        File.WriteAllText(path, TomlCodec.serialize initial)
+        use store =
+            match ConfigStore.Open(path, ignore, ignore) with
+            | Ok value -> value
+            | Error e -> failwith e
+        // 外部改成非法：应用内更新被拒，文件原样保留
+        File.WriteAllText(path, "this is = = not valid toml [[[")
+        Assert.True(Result.isError (store.Update(fun c -> { c with listen = "127.0.0.1:9001" })))
+        Assert.Equal("this is = = not valid toml [[[", File.ReadAllText path)
+        // 外部改成另一份有效配置：应用内更新以它为基础，不丢外部改动
+        File.WriteAllText(path, TomlCodec.serialize { initial with pairingFreezeMinutes = 37 })
+        match store.Update(fun c -> { c with listen = "127.0.0.1:9002" }) with
+        | Error e -> failwith e
+        | Ok () ->
+            match TomlCodec.tryParse (File.ReadAllText path) with
+            | Ok cfg ->
+                Assert.Equal(37, cfg.pairingFreezeMinutes)
+                Assert.Equal("127.0.0.1:9002", cfg.listen)
+            | Error e -> failwithf "%A" e
+    finally
+        try Directory.Delete(dir, true) with _ -> ()

@@ -373,3 +373,6 @@ GET /service-worker.js
 # 70–74（W3 指针）：`[tools]` 追加键
 
 2026-10-12：`tools.approvalTimeoutSeconds`（缺省 300）、`tools.exposeDebug`（缺省 false）、`[tools.policy]`（缺省空 = 全自动）。既有配置缺省行为不变，仅全新安装写入“先询问”的默认。详见 `wanxiang-tools` 第 70–74 节。
+
+# 462. 应用内写盘不覆盖未处理的外部编辑
+ConfigStore 记住最后一次本进程读到或写出的原文。Update / Rewrite 落盘前先比对磁盘：外部改过且有效 → 以磁盘配置为基础再改；外部改过且无效 → 拒绝本次写盘（返回 Error，记 stderr），保留用户编辑，由文件监视器照常公告 config.rejected。根因：认证后的 lastSeen 回写曾把用户刚写入的（非法）配置换回旧的有效配置，拒绝提示永远不出现，外部有效编辑也会被吞。
