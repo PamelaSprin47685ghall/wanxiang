@@ -324,6 +324,12 @@ module WireCodec =
         | ConfigUpdateGeneration d ->
             putGuid p "requestId" d.requestId
             p["generation"] <- d.generation.DeepClone()
+        | ConfigUpsertPreset d ->
+            putGuid p "requestId" d.requestId
+            p["preset"] <- d.preset.DeepClone()
+        | ConfigDeletePreset d ->
+            putGuid p "requestId" d.requestId
+            p["presetId"] <- d.presetId
         | ConfigApplied d ->
             putGuid p "requestId" d.requestId
             p["ok"] <- d.ok
@@ -837,6 +843,14 @@ module WireCodec =
                     match tryGuid p "requestId" with
                     | Some rid -> Ok(ConfigUpdateGeneration {| requestId = rid; generation = tryObject p "generation" |})
                     | None -> Error "config.generation-update: missing requestId"
+                | Some "config.preset-upsert" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(ConfigUpsertPreset {| requestId = rid; preset = tryObject p "preset" |})
+                    | None -> Error "config.preset-upsert: missing requestId"
+                | Some "config.preset-delete" ->
+                    match tryGuid p "requestId" with
+                    | Some rid -> Ok(ConfigDeletePreset {| requestId = rid; presetId = tryString p "presetId" |> Option.defaultValue "" |})
+                    | None -> Error "config.preset-delete: missing requestId"
                 | Some "config.applied" ->
                     match tryGuid p "requestId" with
                     | Some rid ->

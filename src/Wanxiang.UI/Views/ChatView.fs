@@ -222,6 +222,28 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         btn.IsVisible <- false
         btn
     let mutable lastEmptyState: (ChatEmptyState * string option) option = None
+    /// 决策 433：空态里的「从预设开始」。没有预设时整行不出现，首次使用的空态保持原样。
+    let mutable presetStarters: (string * string * (unit -> unit)) list = []
+    /// 决策 434：顶栏「⋯」里的「存为预设…」；未接线时不显示。
+    let mutable savePresetAction: (unit -> unit) option = None
+    let presetRow () : Control =
+        let row = WrapPanel(Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center)
+        for (name, detail, run) in presetStarters do
+            let chip = Ui.button Ui.Secondary name run
+            chip.Margin <- Thickness(Spacing.spaceXs)
+            chip.Focusable <- true
+            chip.Name <- "preset-chip"
+            ToolTip.SetTip(chip, detail)
+            Avalonia.Automation.AutomationProperties.SetName(chip, sprintf "套用预设 %s" name)
+            Avalonia.Automation.AutomationProperties.SetHelpText(chip, detail)
+            row.Children.Add chip
+        let caption = Ui.caption "从预设开始"
+        caption.HorizontalAlignment <- HorizontalAlignment.Center
+        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXs)
+        column.Margin <- Thickness(0.0, Spacing.spaceXl, 0.0, 0.0)
+        column.Children.Add caption
+        column.Children.Add row
+        column :> Control
     /// 空对话的起手式（决策 222）：点一下只把半句话填进输入框，不替用户发送。
     let mutable starterPick: (string -> unit) option = None
     let starterRow () : Control =
@@ -639,6 +661,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                       MenuEntry.create "重命名" (fun () -> this.BeginTitleEdit()) |> MenuEntry.withIcon Icons.pencil
                   MenuEntry.create "对话上下文" actions.openSessionSettings |> MenuEntry.withIcon Icons.sliders
                   MenuEntry.create "从此分叉" actions.forkFromHere |> MenuEntry.withIcon Icons.fork
+                  match savePresetAction with
+                  | Some save -> MenuEntry.create "存为预设…" save |> MenuEntry.withIcon Icons.sliders
+                  | None -> ()
                   MenuEntry.create "导出（Markdown / JSON）…" exportConversation |> MenuEntry.withIcon Icons.download ]
             let reading =
                 [ if canJumpPrevious then
@@ -826,6 +851,16 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         starterPick <- Some pick
         lastEmptyState <- None
 
+    /// 决策 433：空态的预设芯片（名称, 说明, 套用）。列表变化时下次 ShowEmpty 重建。
+    member _.SetPresetStarters(items: (string * string * (unit -> unit)) list) =
+        let names l = l |> List.map (fun (n, d, _) -> n, d)
+        if names items <> names presetStarters then lastEmptyState <- None
+        presetStarters <- items
+
+    member _.PresetStarterCount = presetStarters.Length
+
+    member _.SetSavePresetAction(action: (unit -> unit) option) = savePresetAction <- action
+
     member this.ShowEmpty(state: ChatEmptyState, onPrimary: (string * (unit -> unit)) option) =
         match onPrimary with
         | Some(_, action) -> currentPrimaryAction <- action
@@ -857,6 +892,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             | NoConversation | EmptyConversation ->
                 emptyPanel.Children.Add(
                     Ui.conversationPrompt title hint (onPrimary |> Option.map (fun _ -> emptyActionButton)))
+                if not (List.isEmpty presetStarters) then emptyPanel.Children.Add(presetRow ())
                 if starterPick.IsSome then emptyPanel.Children.Add(starterRow ())
             | NotConnected | ConnectionFailed _ | NoProvider ->
                 let logo = brandLogo Tokens.logoEmpty

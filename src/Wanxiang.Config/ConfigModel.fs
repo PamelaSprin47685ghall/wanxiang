@@ -209,6 +209,28 @@ type RuntimeSwitches = {
 }
 
 /// 唯一配置事实来源的强类型视图（TOML 是权威；本类型是其投影）。
+/// 对话预设（决策 431）：可复用的「名称 + 系统指令 + 模型 + 生成参数 + 启用的工具」。
+/// 存在主机配置里（`[presets.<id>]`），随目录快照同步到所有客户端；只用于新建对话时
+/// 一次性填入会话配置，之后改预设不会回写已有对话。
+type ConversationPreset = {
+    id: string
+    name: string
+    /// 空 = 用主机的默认模型服务
+    provider: string
+    /// 空 = 用该模型服务的默认模型
+    model: string
+    instructions: string option
+    tools: string list
+    temperature: float option
+    topP: float option
+    maxTokens: int option
+    thinkingBudget: int option
+}
+
+module ConversationPreset =
+    let maxNameLength = 40
+    let maxCount = 50
+
 type AppConfig = {
     configVersion: int
     instanceId: Guid
@@ -228,6 +250,8 @@ type AppConfig = {
     providers: Map<string, ProviderConfig>
     mcpServers: Map<string, McpServerConfig>
     authClients: ClientAuthRecord list
+    /// 对话预设（决策 431）；空列表时配置文件里不写这一节。
+    presets: Map<string, ConversationPreset>
 }
 
 module AppConfig =
@@ -242,8 +266,14 @@ module AppConfig =
     let GlobalDefaultVersion = 3
 
     /// 当前配置落盘时应使用的 configVersion。
+    /// 写入了对话预设时使用的版本（决策 431）。旧主机读到 4 会明确报「不支持」，
+    /// 而不是把 `[presets]` 当未知字段静默拒绝；没有预设时仍按 2/3 写。
+    [<Literal>]
+    let PresetsVersion = 4
+
     let versionToWrite (cfg: AppConfig) : int =
-        if cfg.generation.defaultProvider.IsSome || cfg.generation.defaultModel.IsSome then GlobalDefaultVersion
+        if not (Map.isEmpty cfg.presets) then PresetsVersion
+        elif cfg.generation.defaultProvider.IsSome || cfg.generation.defaultModel.IsSome then GlobalDefaultVersion
         else CurrentVersion
 
     let defaults (instanceId: Guid) : AppConfig =
@@ -262,7 +292,8 @@ module AppConfig =
           tools = ToolsConfig.defaults
           providers = Map.empty
           mcpServers = Map.empty
-          authClients = [] }
+          authClients = []
+          presets = Map.empty }
 
     /// 参与模型选择的 provider（启用且至少有一个模型），按 id 稳定排序。
     let usableProviders (cfg: AppConfig) : ProviderConfig list =

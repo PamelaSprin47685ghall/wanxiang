@@ -177,6 +177,10 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     // 文字按钮自带唯一 Invoke/Enter/Space 路径，不可先绑 ignore 再追加第二条 onClick。
     let newConversationButton = Ui.button Ui.Secondary "新建对话" actions.newConversation
     let settingsButton = Ui.iconButton Icons.gear "设置（Ctrl+,）"
+    /// 决策 433：「新建对话」旁的预设下拉。只在主机上至少有一个预设时出现。
+    let presetMenuButton = Ui.iconButton Icons.chevronDown "用预设新建"
+    let mutable presetEntries: (string * string * (unit -> unit)) list = []
+    let mutable presetMenu: (Control -> (string * string * (unit -> unit)) list -> unit) option = None
     /// 决策 313：导入入口与「新建对话」同属对话库，放在侧栏页脚、设置旁。由 AppShell 接线后才显示。
     let importButton = Ui.iconButton Icons.upload "导入对话（JSON）"
     let mutable importHandler: unit -> unit = ignore
@@ -598,6 +602,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         paletteButton.IsVisible <- true
 
     member _.PaletteButton = paletteButton
+
+    /// 决策 433：预设下拉的内容与弹出方式。空列表 = 按钮隐藏（首次使用不多一个入口）。
+    member _.SetPresets(entries: (string * string * (unit -> unit)) list, show: Control -> (string * string * (unit -> unit)) list -> unit) =
+        presetEntries <- entries
+        presetMenu <- Some show
+        presetMenuButton.IsVisible <- not (List.isEmpty entries)
+
+    member _.PresetMenuButton = presetMenuButton
 
     /// 命令面板把全文搜索交接给侧栏（决策 371）。
     member _.SetSearchText(text: string) = searchBox.Text <- text
@@ -1400,7 +1412,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         if currentEmptyVariant = Some EmptyVariant.NotConnected then emptyActionButton.IsVisible <- value
         compactBackButton.IsVisible <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
-        for button in [ compactBackButton; settingsButton; paletteButton; clearSearchButton ] do
+        for button in [ compactBackButton; settingsButton; paletteButton; clearSearchButton; presetMenuButton ] do
             Ui.setSquareTarget button size
         newConversationButton.MinHeight <- if value then LayoutPolicy.compactActionTarget else ControlMetrics.textButtonMinHeight
         // 已渲染的行同步 compact 态：行菜单按钮常驻弱显（可见性两种模式同一路径），
@@ -1596,7 +1608,20 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         ToolTip.SetTip(newConversationButton, "新建对话（Ctrl+N）")
         brandHeader <-
             let brandLine = Border(Height = Tokens.barHeight, Child = leading)
-            let column = Ui.vstack Spacing.spaceMd [ brandLine :> Control; newConversationButton :> Control ]
+            presetMenuButton.IsVisible <- not (List.isEmpty presetEntries)
+            presetMenuButton.Name <- "preset-menu-button"
+            Avalonia.Automation.AutomationProperties.SetName(presetMenuButton, "用预设新建对话")
+            ToolTip.SetTip(presetMenuButton, "用预设新建对话")
+            Ui.onClick presetMenuButton (fun () ->
+                match presetMenu with
+                | Some show when not (List.isEmpty presetEntries) -> show (presetMenuButton :> Control) presetEntries
+                | _ -> ())
+            let newRow = DockPanel(LastChildFill = true)
+            DockPanel.SetDock(presetMenuButton, Dock.Right)
+            presetMenuButton.Margin <- Thickness(Spacing.spaceXs, 0.0, 0.0, 0.0)
+            newRow.Children.Add presetMenuButton
+            newRow.Children.Add newConversationButton
+            let column = Ui.vstack Spacing.spaceMd [ brandLine :> Control; newRow :> Control ]
             Border(
                 Padding = Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, Spacing.spaceMd),
                 Child = column)

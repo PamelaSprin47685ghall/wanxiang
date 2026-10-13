@@ -282,6 +282,8 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
 
     /// 主机状态（配置有误、检查主机）与本机草稿控件：W5 的外壳接线点。
     member _.ConfigureImport(handler: unit -> unit) = generalPanel.SetImportHandler handler
+    member _.ConfigurePresets(rename: PresetInfo -> unit, delete: PresetInfo -> unit) = generalPanel.SetPresetHandlers(rename, delete)
+    member _.PresetsPanel = generalPanel.PresetsPanel
     member _.Health = generalPanel.Health
     member _.LocalDrafts = generalPanel.LocalDrafts
 

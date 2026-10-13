@@ -19,7 +19,10 @@ module TomlCodec =
     let private knownMcpKeysV1 = set [ "command"; "args"; "env"; "url"; "maxConcurrency" ]
 
     let private knownTopKeys =
-        set [ "configVersion"; "instanceId"; "runtime"; "network"; "pairing"; "generation"; "tools"; "providers"; "mcp"; "auth" ]
+        set [ "configVersion"; "instanceId"; "runtime"; "network"; "pairing"; "generation"; "tools"; "providers"; "mcp"; "auth"; "presets" ]
+
+    let private knownPresetKeys =
+        set [ "name"; "provider"; "model"; "instructions"; "tools"; "temperature"; "topP"; "maxTokens"; "thinkingBudget" ]
 
     let private knownRuntimeKeys = set [ "server"; "client"; "pwa"; "fix" ]
     let private knownNetworkKeys =
@@ -401,7 +404,8 @@ module TomlCodec =
                   tools = ToolsConfig.defaults
                   providers = providers
                   mcpServers = mcpServers
-                  authClients = authClients }
+                  authClients = authClients
+                  presets = Map.empty }
 
     /// 解析当前版本（v2）配置。
     let private tryParseV2 (top: System.Collections.Generic.Dictionary<string, obj>) : Result<AppConfig, string list> =
@@ -641,6 +645,50 @@ module TomlCodec =
 
         let authClients = parseAuthClients top errors
 
+        // 决策 431：对话预设
+        let presets =
+            match top.TryGetValue "presets" with
+            | true, v ->
+                match asTable v with
+                | Some t ->
+                    [ for kv in t do
+                          match asTable kv.Value with
+                          | Some pt ->
+                              checkKeys pt knownPresetKeys (sprintf "presets.%s" kv.Key) errors
+                              let getStr k =
+                                  match pt.TryGetValue k with
+                                  | true, b -> asString b |> Option.filter (String.IsNullOrWhiteSpace >> not)
+                                  | _ -> None
+                              let getInt k = match pt.TryGetValue k with | true, b -> asInt b | _ -> None
+                              let getFloat k = match pt.TryGetValue k with | true, b -> asFloat b | _ -> None
+                              let preset : ConversationPreset =
+                                  { id = kv.Key
+                                    name = getStr "name" |> Option.defaultValue kv.Key
+                                    provider = getStr "provider" |> Option.defaultValue ""
+                                    model = getStr "model" |> Option.defaultValue ""
+                                    instructions = getStr "instructions"
+                                    tools = match pt.TryGetValue "tools" with | true, b -> asStringList b |> Option.defaultValue [] | _ -> []
+                                    temperature = getFloat "temperature"
+                                    topP = getFloat "topP"
+                                    maxTokens = getInt "maxTokens"
+                                    thinkingBudget = getInt "thinkingBudget" }
+                              match preset.temperature with
+                              | Some x when x < 0.0 || x > 2.0 -> errors.Add(sprintf "presets.%s.temperature: must be within [0, 2]" kv.Key)
+                              | _ -> ()
+                              match preset.topP with
+                              | Some x when x <= 0.0 || x > 1.0 -> errors.Add(sprintf "presets.%s.topP: must be within (0, 1]" kv.Key)
+                              | _ -> ()
+                              match preset.maxTokens with
+                              | Some m when m <= 0 -> errors.Add(sprintf "presets.%s.maxTokens: must be positive" kv.Key)
+                              | _ -> ()
+                              yield kv.Key, preset
+                          | None -> errors.Add(sprintf "presets.%s: expected table" kv.Key) ]
+                    |> Map.ofList
+                | None ->
+                    errors.Add "presets: expected table"
+                    Map.empty
+            | _ -> Map.empty
+
         match instanceId with
         | None -> errors.Add "instanceId: required UUID"
         | Some _ -> ()
@@ -727,7 +775,8 @@ module TomlCodec =
                   tools = toolsCfg
                   providers = providers
                   mcpServers = mcpServers
-                  authClients = authClients }
+                  authClients = authClients
+                  presets = presets }
 
     /// 解析并校验 TOML 文本。未知字段/类型错误返回错误列表。
     /// 旧版本通过显式升级函数读入（决策 184）。
@@ -755,7 +804,8 @@ module TomlCodec =
             | 1 -> tryParseV1 top
             // 3 = 2 + `[generation] defaultProvider/defaultModel`；读入后统一视为当前结构，
             // 写回时按是否设置了全局默认重新决定 2 或 3（`AppConfig.versionToWrite`）。
-            | 2 | 3 -> tryParseV2 top
+            // 4 = 3 + `[presets]`（决策 431），同样读入为当前结构。
+            | 2 | 3 | 4 -> tryParseV2 top
             | v -> Error [ sprintf "configVersion %d not supported (expected %d)" v AppConfig.CurrentVersion ]
 
     /// 决策 272：手写的最小 config.toml 缺顶层 `instanceId` 时不再让主机退出，
@@ -913,6 +963,26 @@ module TomlCodec =
             m.Add("enabled", kv.Value.enabled)
             mcp.Add(kv.Key, m)
         top.Add("mcp", mcp)
+
+        if not (Map.isEmpty cfg.presets) then
+            let presets = TomlTable()
+            for kv in cfg.presets do
+                let p = kv.Value
+                let t = TomlTable()
+                t.Add("name", p.name)
+                if not (String.IsNullOrWhiteSpace p.provider) then t.Add("provider", p.provider)
+                if not (String.IsNullOrWhiteSpace p.model) then t.Add("model", p.model)
+                match p.instructions with Some i -> t.Add("instructions", i) | None -> ()
+                if not (List.isEmpty p.tools) then
+                    let arr = TomlArray()
+                    for x in p.tools do arr.Add x
+                    t.Add("tools", arr)
+                match p.temperature with Some x -> t.Add("temperature", x) | None -> ()
+                match p.topP with Some x -> t.Add("topP", x) | None -> ()
+                match p.maxTokens with Some x -> t.Add("maxTokens", int64 x) | None -> ()
+                match p.thinkingBudget with Some x -> t.Add("thinkingBudget", int64 x) | None -> ()
+                presets.Add(kv.Key, t)
+            top.Add("presets", presets)
 
         let auth = TomlTable()
         let clients = TomlTableArray()

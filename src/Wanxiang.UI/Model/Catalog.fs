@@ -65,6 +65,20 @@ type GenerationInfo = {
     exposeDebug: bool
 }
 
+/// 对话预设（决策 431）：主机配置里的可复用起点。provider/model 为空表示跟随默认。
+type PresetInfo = {
+    id: string
+    name: string
+    provider: string
+    model: string
+    instructions: string option
+    tools: string list
+    temperature: float option
+    topP: float option
+    maxTokens: int option
+    thinkingBudget: int option
+}
+
 /// 主机能力目录。客户端所有选择器（模型、工具）都从这里取数据，
 /// 用户永远不需要手打模型服务 id 或模型名。
 type Catalog = {
@@ -72,6 +86,8 @@ type Catalog = {
     tools: ToolInfo list
     mcpServers: McpInfo list
     generation: GenerationInfo
+    /// 决策 432：随目录快照下发；旧主机没有这一项 = 空列表。
+    presets: PresetInfo list
 }
 
 module Catalog =
@@ -80,6 +96,7 @@ module Catalog =
         { providers = []
           tools = []
           mcpServers = []
+          presets = []
           generation =
             { temperature = None
               topP = None
@@ -210,6 +227,23 @@ module Catalog =
         { providers = objects providers |> List.map providerOf |> List.filter (fun p -> p.id <> "")
           tools = objects tools |> List.map toolOf |> List.filter (fun t -> t.id <> "")
           mcpServers = objects mcpArray |> List.map mcpOf |> List.filter (fun m -> m.id <> "")
+          presets =
+            (let mutable n: JsonNode = null
+             if generation.TryGetPropertyValue("presets", &n) && not (isNull n) && n.GetValueKind() = JsonValueKind.Array then
+                 objects (n.AsArray())
+                 |> List.map (fun o ->
+                     { id = str o "id" ""
+                       name = str o "name" ""
+                       provider = str o "provider" ""
+                       model = str o "model" ""
+                       instructions = strOpt o "instructions"
+                       tools = strings o "tools"
+                       temperature = floatOpt o "temperature"
+                       topP = floatOpt o "topP"
+                       maxTokens = intOpt o "maxTokens"
+                       thinkingBudget = intOpt o "thinkingBudget" })
+                 |> List.filter (fun p -> p.id <> "" && p.name <> "")
+             else [])
           generation =
             { temperature = floatOpt generation "temperature"
               topP = floatOpt generation "topP"
@@ -280,6 +314,98 @@ module Catalog =
         match defaultSelection catalog with
         | Some(id, _) -> id = providerId && catalog.generation.defaultProvider = Some providerId
         | None -> false
+
+/// 对话预设的纯逻辑（决策 433–436）：套用、另存、描述。界面只负责画。
+module Presets =
+    open Wanxiang.Core
+
+    /// 套用预设得到的会话配置。预设里的模型服务不可用（被删、停用、没有该模型）时
+    /// 回落到新对话默认模型，并返回 Some 提示文案；不可用的工具静默剔除并计入提示。
+    let toSessionConfig (catalog: Catalog) (preset: PresetInfo) : SessionConfig * string option =
+        let usable = Catalog.usableProviders catalog
+        let requested =
+            if String.IsNullOrWhiteSpace preset.provider then None
+            else usable |> List.tryFind (fun p -> p.id = preset.provider)
+        let provider, model, modelNote =
+            match requested with
+            | Some p ->
+                let model =
+                    if not (String.IsNullOrWhiteSpace preset.model) && List.contains preset.model p.models then preset.model
+                    elif not (String.IsNullOrWhiteSpace p.defaultModel) then p.defaultModel
+                    else p.models |> List.tryHead |> Option.defaultValue ""
+                let note =
+                    if not (String.IsNullOrWhiteSpace preset.model) && model <> preset.model then
+                        Some(sprintf "预设里的模型 %s 已不可用，改用 %s。" preset.model model)
+                    else None
+                p.id, model, note
+            | None ->
+                let p, m = Catalog.defaultSelection catalog |> Option.defaultValue ("", "")
+                let note =
+                    if String.IsNullOrWhiteSpace preset.provider then None
+                    else Some(sprintf "预设里的模型服务已不可用，改用默认模型 %s。" (Catalog.describeModel p m catalog))
+                p, m, note
+        let available = catalog.tools |> List.map (fun t -> t.id) |> Set.ofList
+        let tools = preset.tools |> List.filter available.Contains
+        let dropped = List.length preset.tools - List.length tools
+        let toolNote = if dropped > 0 then Some(sprintf "有 %d 个工具主机上已没有，已跳过。" dropped) else None
+        let note =
+            match [ modelNote; toolNote ] |> List.choose id with
+            | [] -> None
+            | parts -> Some(String.concat "" parts)
+        { SessionConfig.empty with
+            provider = provider
+            model = model
+            instructions = preset.instructions |> Option.orElse catalog.generation.instructions
+            tools = tools
+            temperature = preset.temperature |> Option.orElse catalog.generation.temperature
+            topP = preset.topP |> Option.orElse catalog.generation.topP
+            maxTokens = preset.maxTokens |> Option.orElse catalog.generation.maxTokens
+            thinkingBudget = preset.thinkingBudget },
+        note
+
+    /// 「存为预设」的上行负载：取对话当前的完整会话配置。id 缺省 = 新建。
+    let payloadOf (id: string option) (name: string) (config: SessionConfig) : JsonObject =
+        let o = JsonObject()
+        id |> Option.iter (fun i -> o["id"] <- i)
+        o["name"] <- name.Trim()
+        o["provider"] <- config.provider
+        o["model"] <- config.model
+        config.instructions |> Option.iter (fun i -> o["instructions"] <- i)
+        o["tools"] <- JsonArray([| for t in config.tools -> JsonNode.op_Implicit t |])
+        config.temperature |> Option.iter (fun x -> o["temperature"] <- x)
+        config.topP |> Option.iter (fun x -> o["topP"] <- x)
+        config.maxTokens |> Option.iter (fun x -> o["maxTokens"] <- x)
+        config.thinkingBudget |> Option.iter (fun x -> o["thinkingBudget"] <- x)
+        o
+
+    let ofPreset (p: PresetInfo) : SessionConfig =
+        { SessionConfig.empty with
+            provider = p.provider; model = p.model; instructions = p.instructions; tools = p.tools
+            temperature = p.temperature; topP = p.topP; maxTokens = p.maxTokens; thinkingBudget = p.thinkingBudget }
+
+    /// 一行说明：模型 · 指令首句 · 工具数，用在命令面板副标题和设置列表。
+    let describe (catalog: Catalog) (p: PresetInfo) : string =
+        let model =
+            if String.IsNullOrWhiteSpace p.provider then "默认模型"
+            else Catalog.describeModel p.provider p.model catalog
+        let instr =
+            p.instructions
+            |> Option.map (fun i ->
+                let line = i.Split('\n').[0].Trim()
+                if line.Length > 24 then line.Substring(0, 24) + "…" else line)
+        let tools = if List.isEmpty p.tools then None else Some(sprintf "%d 个工具" p.tools.Length)
+        String.Join(" · ", [ Some model; instr; tools ] |> List.choose id)
+
+    /// 新名字的建议：对话标题，重名时补序号。
+    let suggestName (existing: PresetInfo list) (title: string) : string =
+        let baseName =
+            let t = if String.IsNullOrWhiteSpace title || title = "新对话" then "我的预设" else title.Trim()
+            if t.Length > 30 then t.Substring(0, 30) else t
+        let taken = existing |> List.map (fun p -> p.name.ToLowerInvariant()) |> Set.ofList
+        if not (taken.Contains(baseName.ToLowerInvariant())) then baseName
+        else
+            Seq.initInfinite (fun i -> sprintf "%s %d" baseName (i + 2))
+            |> Seq.find (fun n -> not (taken.Contains(n.ToLowerInvariant())))
 
 /// 模型探测失败的类型（与主机 `ProviderCatalog.ProbeFailure` 的稳定错误码一一对应）。
 /// 界面按类型决定下一步，不再靠文案关键词判断。

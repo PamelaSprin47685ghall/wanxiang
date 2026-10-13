@@ -207,6 +207,52 @@ module ConfigMutation =
             else
                 Error errors
 
+    /// 决策 431/432：新建或覆盖一个对话预设。名称必填、去重（不区分大小写，同 id 覆盖除外）；
+    /// 模型服务与工具只做「存在即可」的弱校验——预设可能早于模型服务被删，套用时再回落。
+    let upsertPreset (cfg: AppConfig) (payload: JsonObject) : Result<AppConfig, string list> =
+        let id =
+            str payload "id"
+            |> Option.defaultWith (fun () -> "p" + Guid.CreateVersion7().ToString("N").Substring(20))
+        let name = str payload "name" |> Option.defaultValue ""
+        let preset : ConversationPreset =
+            { id = id
+              name = name
+              provider = str payload "provider" |> Option.defaultValue ""
+              model = str payload "model" |> Option.defaultValue ""
+              instructions = str payload "instructions"
+              tools = stringList payload "tools" |> List.distinct
+              temperature = floatOf payload "temperature"
+              topP = floatOf payload "topP"
+              maxTokens = intOf payload "maxTokens"
+              thinkingBudget = intOf payload "thinkingBudget" }
+        let errors =
+            [ if String.IsNullOrWhiteSpace name then "预设名称不能为空"
+              elif name.Length > ConversationPreset.maxNameLength then
+                  sprintf "预设名称最多 %d 个字符" ConversationPreset.maxNameLength
+              if cfg.presets |> Map.exists (fun k p -> k <> id && String.Equals(p.name, name, StringComparison.OrdinalIgnoreCase)) then
+                  sprintf "已经有一个叫「%s」的预设" name
+              if not (cfg.presets.ContainsKey id) && cfg.presets.Count >= ConversationPreset.maxCount then
+                  sprintf "预设最多 %d 个" ConversationPreset.maxCount
+              if id |> Seq.exists (fun c -> not (Char.IsLetterOrDigit c || c = '-' || c = '_')) then "预设 id 只能含字母、数字、- 与 _"
+              match preset.temperature with
+              | Some t when t < 0.0 || t > 2.0 -> "temperature: 需在 0–2 之间"
+              | _ -> ()
+              match preset.topP with
+              | Some p when p <= 0.0 || p > 1.0 -> "topP: 需在 0–1 之间"
+              | _ -> ()
+              match preset.maxTokens with
+              | Some m when m <= 0 -> "maxTokens: 需为正整数"
+              | _ -> ()
+              match preset.thinkingBudget with
+              | Some b when b < 0 -> "thinkingBudget: 不能为负"
+              | _ -> () ]
+        if List.isEmpty errors then Ok { cfg with presets = cfg.presets.Add(id, preset) }
+        else Error errors
+
+    let deletePreset (cfg: AppConfig) (id: string) : Result<AppConfig, string list> =
+        if cfg.presets.ContainsKey id then Ok { cfg with presets = cfg.presets.Remove id }
+        else Error [ "这个预设已经不存在" ]
+
     let deleteMcp (cfg: AppConfig) (id: string) : Result<AppConfig, string list> =
         if cfg.mcpServers.ContainsKey id then Ok { cfg with mcpServers = cfg.mcpServers.Remove id }
         else Error [ sprintf "MCP 服务 %s 不存在" id ]
