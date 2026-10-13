@@ -422,7 +422,7 @@ let ``selection mode gives up the brand header and footer`` () =
         let newConversationVisible =
             descendants sidebar
             |> Seq.exists (fun c ->
-                Avalonia.Automation.AutomationProperties.GetName(c) = "新建对话（Ctrl+N）"
+                Avalonia.Automation.AutomationProperties.GetName(c) = "新建对话（Ctrl / ⌘ + N）"
                 && c.IsEffectivelyVisible)
         Assert.False(newConversationVisible, "选择模式下右上角新建按钮应让位")
         Assert.True(sidebar.IsSelectionMode)

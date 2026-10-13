@@ -502,7 +502,7 @@ type OverlayHost(root: Grid) =
                 // 决策 305：读屏把快捷键念出来。
                 if actionLabel = "撤销" then
                     AutomationProperties.SetAcceleratorKey(actionButton, "Ctrl+Z")
-                    AutomationProperties.SetHelpText(actionButton, "按 Ctrl+Z 直接撤销；按 F6 或 Tab 可移到这里")
+                    AutomationProperties.SetHelpText(actionButton, "按 Ctrl / ⌘ + Z 直接撤销；按 F6 或 Tab 可移到这里")
                 toastButtons.Add(message, actionButton :> Control)
                 // 键盘用户正停在按钮上：倒计时暂停，读完再决定，不会在 Tab 到达后眨眼消失。
                 actionButton.GotFocus.Add(fun _ -> paused <- true)

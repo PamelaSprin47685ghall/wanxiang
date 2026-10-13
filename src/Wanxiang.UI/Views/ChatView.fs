@@ -156,7 +156,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable pendingJumpPrevious = false
     let mutable pendingJumpFirst: uint64 option = None
     let mutable canJumpNext = false
-    let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl+B / ⌘B）"
+    let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl / ⌘ + B）"
 
     // W4：分叉面包屑。只在“当前对话是某个对话的分叉”时出现；父对话在时可点击回到它，
     // 父对话已删除时是纯文字（分叉本身仍完整可用，决策 202）。

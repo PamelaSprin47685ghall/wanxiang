@@ -276,9 +276,9 @@ type Composer(actions: ComposerActions) as this =
         let keyboardHint =
             if generating then
                 if enterSends then "正在回复 · Enter 排队 / Esc 停止"
-                else "正在回复 · Ctrl+Enter 排队 / Esc 停止"
-            elif enterSends then "Enter 发送 / Shift+Enter 换行"
-            else "Ctrl+Enter 发送 / Enter 换行"
+                else "正在回复 · Ctrl / ⌘ + Enter 排队 / Esc 停止"
+            elif enterSends then "Enter 发送 / Shift + Enter 换行"
+            else "Ctrl / ⌘ + Enter 发送 / Enter 换行"
         // 快捷键是输入框的帮助，而不是永久占一整行的视觉内容。
         Avalonia.Automation.AutomationProperties.SetHelpText(input, keyboardHint)
         ToolTip.SetTip(input, keyboardHint)
@@ -326,7 +326,7 @@ type Composer(actions: ComposerActions) as this =
             elif not hasText && not hasAttachment then
                 "请输入消息或添加附件"
             else
-                if enterSends then "发送 (Enter)" else "发送 (Ctrl+Enter / ⌘Enter)"
+                if enterSends then "发送（Enter）" else "发送（Ctrl / ⌘ + Enter）"
         ToolTip.SetTip(sendButton, sendTip)
         let sendLabel = if generating then "停止生成" else "发送"
         Avalonia.Automation.AutomationProperties.SetName(sendButton, sendLabel)
@@ -342,7 +342,7 @@ type Composer(actions: ComposerActions) as this =
                 elif hasFailed then "有附件上传失败，移除或重新添加后发送"
                 elif not hasText && not hasAttachment then "请输入消息或添加附件"
                 else
-                    if enterSends then "排队发送 (Enter)" else "排队发送 (Ctrl+Enter / ⌘Enter)"
+                    if enterSends then "排队发送（Enter）" else "排队发送（Ctrl / ⌘ + Enter）"
             ToolTip.SetTip(queueButton, queueTip)
             Avalonia.Automation.AutomationProperties.SetName(queueButton, "排队发送")
             Avalonia.Automation.AutomationProperties.SetHelpText(queueButton, queueTip)
