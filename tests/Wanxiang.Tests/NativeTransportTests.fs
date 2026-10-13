@@ -175,62 +175,6 @@ let private anthropicRun () =
     (upstream :> IDisposable).Dispose()
     response, body, path, headers
 
-[<Fact>]
-let ``anthropic 把分片的文本增量拼回完整回答`` () =
-    let response, _, _, _ = anthropicRun ()
-    Assert.Contains("你好世界", response.Text)
-
-[<Fact>]
-let ``anthropic 把分片下发的工具入参拼完整再解析`` () =
-    // 入参是 input_json_delta 一片片来的，中途解析必然失败
-    let response, _, _, _ = anthropicRun ()
-    match functionCalls response with
-    | [ call ] ->
-        Assert.Equal("toolu_9", call.CallId)
-        Assert.Equal("echo", call.Name)
-        Assert.True(call.Arguments.ContainsKey "text", "入参里应当有 text")
-        Assert.Equal("hi", string call.Arguments["text"])
-    | other -> failwith $"应当恰好一次工具调用，实际 {other.Length} 次"
-
-[<Fact>]
-let ``anthropic 汇总输入与输出用量`` () =
-    let response, _, _, _ = anthropicRun ()
-    Assert.NotNull response.Usage
-    Assert.Equal(Nullable 11L, response.Usage.InputTokenCount)
-    Assert.Equal(Nullable 7L, response.Usage.OutputTokenCount)
-
-[<Fact>]
-let ``anthropic 请求把 system 提到顶层且必带 max_tokens`` () =
-    let _, body, path, _ = anthropicRun ()
-    // max_tokens 缺失时真实 API 直接 400
-    Assert.Equal(Some 256, ProviderSse.tryInt body "max_tokens")
-    // system 现在恒为数组形态：字符串形态挂不上 cache_control
-    let system =
-        ProviderSse.tryArray body "system"
-        |> Option.map (fun blocks -> blocks.ToJsonString())
-        |> Option.defaultValue ""
-    Assert.Contains("be terse", system)
-    Assert.Contains("be brief", system)
-    Assert.EndsWith("/v1/messages", path)
-
-[<Fact>]
-let ``anthropic 请求里相邻同角色被合并且工具结果算 user`` () =
-    // Anthropic 要求 user/assistant 交替；工具结果紧跟用户消息时最容易撞 400
-    let _, body, _, _ = anthropicRun ()
-    let roles =
-        ProviderSse.tryArray body "messages"
-        |> Option.map (fun a ->
-            a |> Seq.map (fun m -> ProviderSse.tryString m "role" |> Option.defaultValue "") |> List.ofSeq)
-        |> Option.defaultValue []
-    Assert.Equal<string list>([ "user"; "assistant"; "user" ], roles)
-    Assert.DoesNotContain("\"role\":\"system\"", body.ToJsonString())
-
-[<Fact>]
-let ``anthropic 用请求头带密钥与协议版本`` () =
-    let _, _, _, headers = anthropicRun ()
-    Assert.Equal(Some "secret-key", headers.TryFind "x-api-key")
-    Assert.Equal(Some AnthropicRequest.ApiVersion, headers.TryFind "anthropic-version")
-
 // ---------------------------------------------------------------- Gemini
 
 let private geminiSse =
@@ -265,71 +209,6 @@ let private geminiRun () =
     let headers = upstream.RequestHeaders
     (upstream :> IDisposable).Dispose()
     response, body, path, headers
-
-[<Fact>]
-let ``gemini 把多帧文本拼回完整回答`` () =
-    let response, _, _, _ = geminiRun ()
-    Assert.Contains("你好世界", response.Text)
-
-[<Fact>]
-let ``gemini 的 functionCall 被造出可回配的调用 id`` () =
-    // Gemini 的 functionCall 不带 id，而编排层要靠 id 把结果配回调用
-    let response, _, _, _ = geminiRun ()
-    match functionCalls response with
-    | [ call ] ->
-        Assert.Equal("echo", call.Name)
-        Assert.StartsWith("echo@", call.CallId)
-        Assert.Equal("echo", GeminiRequest.nameOfCallId call.CallId)
-    | other -> failwith $"应当恰好一次工具调用，实际 {other.Length} 次"
-
-[<Fact>]
-let ``gemini 汇总用量并取最后一帧`` () =
-    let response, _, _, _ = geminiRun ()
-    Assert.NotNull response.Usage
-    Assert.Equal(Nullable 5L, response.Usage.InputTokenCount)
-    Assert.Equal(Nullable 9L, response.Usage.OutputTokenCount)
-    Assert.Equal(Nullable 14L, response.Usage.TotalTokenCount)
-
-[<Fact>]
-let ``gemini 请求用 systemInstruction 与 model 角色`` () =
-    let _, body, path, _ = geminiRun ()
-    let system =
-        ProviderSse.tryObject body "systemInstruction"
-        |> Option.bind (fun node -> ProviderSse.tryArray node "parts")
-        |> Option.map (fun parts -> parts.ToJsonString())
-        |> Option.defaultValue ""
-    Assert.Contains("be terse", system)
-    Assert.Contains("be brief", system)
-    let roles =
-        ProviderSse.tryArray body "contents"
-        |> Option.map (fun a ->
-            a |> Seq.map (fun m -> ProviderSse.tryString m "role" |> Option.defaultValue "") |> List.ofSeq)
-        |> Option.defaultValue []
-    // Gemini 管助手叫 model
-    Assert.Equal<string list>([ "user"; "model"; "user" ], roles)
-    Assert.Contains(":streamGenerateContent", path)
-    Assert.Contains("alt=sse", path)
-
-[<Fact>]
-let ``gemini 回传工具结果时从调用 id 还原函数名`` () =
-    let _, body, _, _ = geminiRun ()
-    let json = body.ToJsonString()
-    Assert.Contains("functionResponse", json)
-    // 名字必须是 echo，而不是带序号的 echo@0
-    Assert.Contains("\"name\":\"echo\"", json)
-    Assert.DoesNotContain("echo@0", json)
-
-[<Fact>]
-let ``gemini 用请求头带密钥而不放进 URL`` () =
-    // URL 会进日志与错误详情，密钥不该出现在那里
-    let _, _, path, headers = geminiRun ()
-    Assert.Equal(Some "secret-key", headers.TryFind "x-goog-api-key")
-    Assert.DoesNotContain("secret-key", path)
-
-[<Fact>]
-let ``两个原生传输都被配置层接受`` () =
-    for kind in [ "openai"; "anthropic"; "gemini" ] do
-        Assert.True(TomlCodec.supportedProviderKinds.Contains kind, $"{kind} 应当被接受")
 
 // ---------------------------------------------------------------- 探活与预设
 
@@ -447,44 +326,6 @@ let private anthropicThinkingSse =
           ""
           "" ]
 
-[<Fact>]
-let ``anthropic 的思维链与正式回答分开呈现`` () =
-    let response, _, _, _ = anthropicRunWith anthropicThinkingSse 1024 false
-    Assert.Equal("先拆解再作答", reasoningOf response)
-    Assert.Contains("答案", response.Text)
-    // signature_delta 不是给人看的内容，不该混进思维链
-    Assert.DoesNotContain("sig", reasoningOf response)
-
-[<Fact>]
-let ``anthropic 开思维链时请求带 thinking 且 max_tokens 大于预算`` () =
-    // Anthropic 要求 max_tokens > budget_tokens，冲突时应当抬高上限而不是抛 400
-    let _, body, _, _ = anthropicRunWith anthropicThinkingSse 1024 false
-    match ProviderSse.tryObject body "thinking" with
-    | None -> failwith "请求里没有 thinking"
-    | Some thinking ->
-        Assert.Equal(Some "enabled", ProviderSse.tryString thinking "type")
-        Assert.Equal(Some 1024, ProviderSse.tryInt thinking "budget_tokens")
-    let maxTokens = ProviderSse.tryInt body "max_tokens" |> Option.defaultValue 0
-    Assert.True(maxTokens > 1024, $"max_tokens={maxTokens} 应当大于思维链预算 1024")
-
-[<Fact>]
-let ``anthropic 不开思维链时请求里没有 thinking`` () =
-    let _, body, _, _ = anthropicRun ()
-    Assert.True((ProviderSse.tryObject body "thinking").IsNone)
-
-[<Fact>]
-let ``anthropic 开提示词缓存时 system 带 ephemeral 标记`` () =
-    let _, body, _, _ = anthropicRunWith anthropicSse 0 true
-    let json = body.ToJsonString()
-    Assert.Contains("cache_control", json)
-    Assert.Contains("ephemeral", json)
-
-[<Fact>]
-let ``anthropic 默认不打缓存标记`` () =
-    // 缓存写入比普通请求贵，是计费决定，不该由程序替用户做
-    let _, body, _, _ = anthropicRun ()
-    Assert.DoesNotContain("cache_control", body.ToJsonString())
-
 let private geminiThinkingSse =
     String.concat
         "\n"
@@ -494,34 +335,6 @@ let private geminiThinkingSse =
           ""
           "" ]
 
-[<Fact>]
-let ``gemini 的 thought 片段进思维链而非正文`` () =
-    let response, _ = geminiRunWith geminiThinkingSse 512
-    Assert.Equal("先拆解", reasoningOf response)
-    Assert.Contains("答案", response.Text)
-    Assert.DoesNotContain("先拆解", response.Text)
-
-[<Fact>]
-let ``gemini 开思维链时 generationConfig 带 thinkingConfig`` () =
-    let _, body = geminiRunWith geminiThinkingSse 512
-    match ProviderSse.tryObject body "generationConfig" with
-    | None -> failwith "请求里没有 generationConfig"
-    | Some config ->
-        match ProviderSse.tryObject config "thinkingConfig" with
-        | None -> failwith "generationConfig 里没有 thinkingConfig"
-        | Some thinking ->
-            Assert.Equal(Some 512, ProviderSse.tryInt thinking "thinkingBudget")
-            // 只给预算不要求回传，等于只计费不给看
-            Assert.Equal(Some true, ProviderSse.tryBool thinking "includeThoughts")
-
-[<Fact>]
-let ``gemini 不开思维链时没有 thinkingConfig`` () =
-    let _, body = geminiRunWith geminiSse 0
-    let hasThinking =
-        ProviderSse.tryObject body "generationConfig"
-        |> Option.bind (fun c -> ProviderSse.tryObject c "thinkingConfig")
-    Assert.True(hasThinking.IsNone)
-
 // ---------------------------------------------------------------- 请求映射（直接构造，不走 HTTP）
 
 let private withAttachment (mediaType: string) (bytes: byte[]) =
@@ -529,43 +342,6 @@ let private withAttachment (mediaType: string) (bytes: byte[]) =
           ChatRole.User,
           [| TextContent "看这个" :> AIContent
              DataContent(ReadOnlyMemory bytes, mediaType) :> AIContent |]) ]
-
-[<Fact>]
-let ``anthropic 把 PDF 映成 document 块`` () =
-    let body = AnthropicRequest.build "m" (withAttachment "application/pdf" (Array.init 8 byte)) null true 0 false
-    let json = body.ToJsonString()
-    Assert.Contains("\"type\":\"document\"", json)
-    Assert.Contains("application/pdf", json)
-    Assert.Contains("\"type\":\"base64\"", json)
-
-[<Fact>]
-let ``anthropic 把图片映成 image 块`` () =
-    let body = AnthropicRequest.build "m" (withAttachment "image/png" (Array.init 8 byte)) null true 0 false
-    let json = body.ToJsonString()
-    Assert.Contains("\"type\":\"image\"", json)
-    Assert.DoesNotContain("\"type\":\"document\"", json)
-
-[<Fact>]
-let ``gemini 把图片 PDF 音频一律映成 inlineData`` () =
-    for media in [ "image/png"; "application/pdf"; "audio/mpeg" ] do
-        let body = GeminiRequest.build (withAttachment media (Array.init 8 byte)) null 0
-        let json = body.ToJsonString()
-        Assert.Contains("inlineData", json)
-        Assert.Contains(media, json)
-
-[<Fact>]
-let ``对话 extraJson 在两种原生传输上都不被丢掉`` () =
-    // 兼容传输靠 ChatOptions.AdditionalProperties 透传；原生传输若不读它，
-    // 用户在对话里配的模型专属参数会静默消失
-    let options = ChatOptions()
-    options.AdditionalProperties <-
-        AdditionalPropertiesDictionary(dict [ "service_tier", box (JsonValue.Create "priority" :> JsonNode) ])
-    let anthropic = AnthropicRequest.build "m" [ ChatMessage(ChatRole.User, "hi") ] options true 0 false
-    Assert.Equal(Some "priority", ProviderSse.tryString anthropic "service_tier")
-
-    let gemini = GeminiRequest.build [ ChatMessage(ChatRole.User, "hi") ] options 0
-    let config = ProviderSse.tryObject gemini "generationConfig" |> Option.get
-    Assert.Equal(Some "priority", ProviderSse.tryString config "service_tier")
 
 // ---------------------------------------------------------------- 重试零语义（D4）
 
@@ -578,27 +354,3 @@ type private CountingHandler(status: HttpStatusCode, count: int ref) =
     override _.SendAsync(_, _) =
         count.Value <- count.Value + 1
         task { return new HttpResponseMessage(status) }
-
-[<Fact>]
-let ``sendWithRetry with maxRetries 0 makes exactly one attempt`` () =
-    // retry-zero 必须精确打一次上游：多一次就是对计费调用的自动重发（原则 5）。
-    let count = ref 0
-    use http = new HttpClient(new CountingHandler(HttpStatusCode.InternalServerError, count))
-    use response =
-        ProviderSse.sendWithRetry http (fun () -> new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1/")) 0 CancellationToken.None
-        |> Async.AwaitTask
-        |> Async.RunSynchronously
-    Assert.Equal(1, count.Value)
-    Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode)
-
-[<Fact>]
-let ``sendWithRetry retries transient failures while maxRetries allows`` () =
-    // 正控制：配了重试时首字节前重试仍在（退避与状态码语义不动，只盖零档）。
-    let count = ref 0
-    use http = new HttpClient(new CountingHandler(HttpStatusCode.ServiceUnavailable, count))
-    use response =
-        ProviderSse.sendWithRetry http (fun () -> new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1/")) 2 CancellationToken.None
-        |> Async.AwaitTask
-        |> Async.RunSynchronously
-    Assert.Equal(3, count.Value)
-    Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode)

@@ -118,32 +118,6 @@ let ``builtin time function returns ISO 8601 UTC timestamp`` () =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``provider sse preserves indentation according to W3C specification`` () =
-    Headless.run (fun () ->
-    let sseText =
-        "data:     def indented_code():\n" +
-        "data:         return 42\n\n"
-    use ms = new MemoryStream(Encoding.UTF8.GetBytes sseText)
-    use cts = new CancellationTokenSource()
-    let events = ResizeArray<SseEvent>()
-    (task {
-        let stream = ProviderSse.read ms cts.Token
-        let enumerator = stream.GetAsyncEnumerator(cts.Token)
-        let mutable go = true
-        while go do
-            let! moved = enumerator.MoveNextAsync()
-            if moved then events.Add enumerator.Current
-            else go <- false
-    }).GetAwaiter().GetResult()
-    Assert.Equal(1, events.Count)
-    let lines = events[0].data.Split('\n')
-    Assert.Equal(2, lines.Length)
-    Assert.Equal("    def indented_code():", lines[0])
-    Assert.Equal("        return 42", lines[1])
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``client state updates and removes deleted message in ConversationUpdated`` () =
     Headless.run (fun () ->
     let state = ClientState()

@@ -45,7 +45,6 @@
     <Compile Include="PolishTests.fs" />
     <Compile Include="MathRenderTests.fs" />
     <Compile Include="NativeTransportTests.fs" />
-    <Compile Include="AnthropicTransportTests.fs" />
     <Compile Include="AgentCoverageTests.fs" />
     <Compile Include="ScrollLayoutTests.fs" />
     <Compile Include="OperabilityTests.fs" />

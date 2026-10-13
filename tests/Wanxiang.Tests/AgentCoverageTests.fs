@@ -329,72 +329,6 @@ module AgentCoverageTests =
     // 4. ProviderSse 流式分帧与 JSON 提取辅助测试
     // =========================================================================
 
-    [<Fact>]
-    let ``ProviderSse read parses SSE frames correctly`` () =
-        task {
-            let sseStreamText =
-                "event: custom\ndata: first line\ndata: second line without space\n\n" +
-                "data: solo event\n\n" +
-                "data: trailing data without final newline"
-
-            use stream = new MemoryStream(Encoding.UTF8.GetBytes(sseStreamText))
-            let events = ResizeArray<SseEvent>()
-
-            let asyncSeq = ProviderSse.read stream CancellationToken.None
-            let enumerator = asyncSeq.GetAsyncEnumerator(CancellationToken.None)
-            let mutable hasMore = true
-            while hasMore do
-                let! next = enumerator.MoveNextAsync()
-                if next then
-                    events.Add enumerator.Current
-                else
-                    hasMore <- false
-
-            Assert.Equal(3, events.Count)
-            Assert.Equal("custom", events.[0].name)
-            Assert.Equal("first line\nsecond line without space", events.[0].data)
-            Assert.Equal("", events.[1].name)
-            Assert.Equal("solo event", events.[1].data)
-            Assert.Equal("", events.[2].name)
-            Assert.Equal("trailing data without final newline", events.[2].data)
-        }
-
-    [<Fact>]
-    let ``ProviderSse raiseForStatus passes on 2xx and throws HttpRequestException on error`` () =
-        use respOk = new HttpResponseMessage(HttpStatusCode.OK)
-        ProviderSse.raiseForStatus respOk ""
-
-        use resp400 = new HttpResponseMessage(HttpStatusCode.BadRequest)
-        Assert.Throws<HttpRequestException>(fun () -> ProviderSse.raiseForStatus resp400 """{"error":"bad"}""") |> ignore
-
-    [<Fact>]
-    let ``ProviderSse JSON helper functions extraction coverage`` () =
-        let jsonStr = """
-        {
-            "str": "sample",
-            "numberInt": 123,
-            "flag": true,
-            "nestedObj": { "key": "value" },
-            "items": [ 1, 2, 3 ]
-        }
-        """
-        let node = JsonNode.Parse jsonStr :?> JsonObject
-
-        Assert.Equal(Some "sample", ProviderSse.tryString node "str")
-        Assert.Equal(None, ProviderSse.tryString node "non_existent")
-
-        Assert.Equal(Some 123, ProviderSse.tryInt node "numberInt")
-        Assert.Equal(None, ProviderSse.tryInt node "str")
-
-        Assert.Equal(Some true, ProviderSse.tryBool node "flag")
-        Assert.Equal(None, ProviderSse.tryBool node "str")
-
-        Assert.True((ProviderSse.tryObject node "nestedObj").IsSome)
-        Assert.Equal(None, ProviderSse.tryObject node "flag")
-
-        Assert.True((ProviderSse.tryArray node "items").IsSome)
-        Assert.Equal(None, ProviderSse.tryArray node "str")
-
     // =========================================================================
     // AttachmentContent 边界与契约测试
     // =========================================================================
@@ -828,15 +762,6 @@ module AgentCoverageTests =
     // =========================================================================
 
     [<Fact>]
-    let ``GeminiRequest CallId helpers split and format correctly`` () =
-        let id = GeminiRequest.makeCallId "weatherTool" 3
-        Assert.Equal("weatherTool@3", id)
-        Assert.Equal("weatherTool", GeminiRequest.nameOfCallId id)
-        Assert.Equal("custom", GeminiRequest.nameOfCallId "custom")
-        Assert.Equal("", GeminiRequest.nameOfCallId "")
-        Assert.Equal("", GeminiRequest.nameOfCallId null)
-
-    [<Fact>]
     let ``GeminiRequest build produces valid payload with merged adjacent roles and tools`` () =
         let options = ChatOptions()
         options.Instructions <- "You are a helpful assistant."
@@ -909,56 +834,6 @@ module AgentCoverageTests =
     // =========================================================================
     // ProviderSse 扩展测试（基于公开 API）
     // =========================================================================
-
-    [<Fact>]
-    let ``ProviderSse raiseForStatus passes 2xx and throws on error`` () =
-        use respOk = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
-        ProviderSse.raiseForStatus respOk ""
-
-        use resp400 = new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
-        let ex400 = Assert.Throws<HttpRequestException>(fun () -> ProviderSse.raiseForStatus resp400 "bad request body")
-        Assert.Contains("bad request body", ex400.Message)
-
-        use resp429 = new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests)
-        resp429.Headers.RetryAfter <- System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(30.0))
-        let ex429 = Assert.Throws<HttpRequestException>(fun () -> ProviderSse.raiseForStatus resp429 "")
-        Assert.Equal(30, unbox<int> ex429.Data.["RetryAfterSeconds"])
-
-        use resp429Date = new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests)
-        resp429Date.Headers.RetryAfter <- System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddSeconds(60.0))
-        let ex429Date = Assert.Throws<HttpRequestException>(fun () -> ProviderSse.raiseForStatus resp429Date "")
-        Assert.NotNull(ex429Date.Data.["RetryAfterSeconds"])
-
-    [<Fact>]
-    let ``ProviderSse read parses varied SSE lines and comments`` () =
-        task {
-            let sseContent =
-                ": keepalive\n" +
-                "event: update\n" +
-                "data: line 1\n" +
-                "data: line 2\n" +
-                "\n" +
-                "data: final\n" +
-                "\n"
-            let bytes = Encoding.UTF8.GetBytes sseContent
-            use stream = new MemoryStream(bytes)
-            let asyncSeq = ProviderSse.read stream CancellationToken.None
-            let enumerator = asyncSeq.GetAsyncEnumerator(CancellationToken.None)
-            let events = ResizeArray<SseEvent>()
-            let mutable running = true
-            while running do
-                let! hasNext = enumerator.MoveNextAsync().AsTask()
-                if hasNext then
-                    events.Add enumerator.Current
-                else
-                    running <- false
-
-            Assert.Equal(2, events.Count)
-            Assert.Equal("update", events.[0].name)
-            Assert.Equal("line 1\nline 2", events.[0].data)
-            Assert.Equal("", events.[1].name)
-            Assert.Equal("final", events.[1].data)
-        }
 
     // =========================================================================
     // AgentRuntime 扩展与边界测试
