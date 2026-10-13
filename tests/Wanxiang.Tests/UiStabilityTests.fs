@@ -1616,7 +1616,7 @@ let ``long chat title never pushes header actions outside narrow viewport`` () =
     try
         Dispatcher.UIThread.RunJobs()
         let more = byAutomationName chat "对话操作"
-        let toggle = byAutomationName chat "切换侧边栏（Ctrl+B / ⌘B）"
+        let toggle = byAutomationName chat "切换侧边栏（Ctrl / ⌘ + B）"
         for control in [ more; toggle ] do
             let point = control.TranslatePoint(Point(0.0, 0.0), chat)
             Assert.True(point.HasValue)
@@ -1661,7 +1661,7 @@ let ``conversation menu and title geometry stay stable across generation without
         Dispatcher.UIThread.RunJobs()
         let status = byAutomationName chat "正在生成回答"
         let more = byAutomationName chat "对话操作"
-        let toggle = byAutomationName chat "切换侧边栏（Ctrl+B / ⌘B）"
+        let toggle = byAutomationName chat "切换侧边栏（Ctrl / ⌘ + B）"
         let titleText =
             descendants chat
             |> Seq.choose (function :? TextBlock as t when t.Text = "对话语义标题" -> Some t | _ -> None)
@@ -1768,7 +1768,7 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
         let window = show root width height
         try
             Dispatcher.UIThread.RunJobs()
-            for name in [ "切换侧边栏（Ctrl+B / ⌘B）"; "对话操作"; "发送"; "添加附件" ] do
+            for name in [ "切换侧边栏（Ctrl / ⌘ + B）"; "对话操作"; "发送"; "添加附件" ] do
                 let control = byAutomationName root name
                 if control.IsVisible then
                     match control.TranslatePoint(Point(0.0, 0.0), root) with
@@ -2348,7 +2348,7 @@ let ``sidebar empty state separates list loading from confirmed empty and embeds
         sidebar.SetConnection(true, "已连接")
         Assert.True(hasText "还没有对话")
         Assert.False(hasText "正在加载对话…")
-        let createButton = byName "新建对话（Ctrl+N）" |> Option.get
+        let createButton = byName "新建对话（Ctrl / ⌘ + N）" |> Option.get
         Assert.True(createButton.IsVisible)
         pressEnter createButton
         Assert.Equal(1, createCount)

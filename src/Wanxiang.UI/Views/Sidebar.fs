@@ -176,7 +176,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let compactBackButton = Ui.iconButton Icons.arrowLeft "返回对话"
     // 文字按钮自带唯一 Invoke/Enter/Space 路径，不可先绑 ignore 再追加第二条 onClick。
     let newConversationButton = Ui.button Ui.Secondary "新建对话" actions.newConversation
-    let settingsButton = Ui.iconButton Icons.gear "设置（Ctrl+,）"
+    let settingsButton = Ui.iconButton Icons.gear "设置（Ctrl / ⌘ + ,）"
     /// 决策 433：「新建对话」旁的预设下拉。只在主机上至少有一个预设时出现。
     let presetMenuButton = Ui.iconButton Icons.chevronDown "用预设新建"
     let mutable presetEntries: (string * string * (unit -> unit)) list = []
@@ -185,7 +185,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let importButton = Ui.iconButton Icons.upload "导入对话（JSON）"
     let mutable importHandler: unit -> unit = ignore
     /// 决策 374：命令面板在抽屉里的入口（手机没有 Ctrl+K）；桌面同样可见，作为快捷键的发现面。
-    let paletteButton = Ui.iconButton Icons.search "命令面板（Ctrl+K）"
+    let paletteButton = Ui.iconButton Icons.search "命令面板（Ctrl / ⌘ + K）"
     let mutable paletteHandler: (unit -> unit) option = None
     let searchDebounce = DispatcherTimer(Interval = MotionLedger.searchInputDebounce)
     let conversationList =
@@ -367,7 +367,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         paletteButton.IsVisible <- false
         paletteButton.Name <- "sidebar-palette"
         Avalonia.Automation.AutomationProperties.SetName(paletteButton, "命令面板")
-        Avalonia.Automation.AutomationProperties.SetHelpText(paletteButton, "搜索对话、操作与设置（Ctrl+K）")
+        Avalonia.Automation.AutomationProperties.SetHelpText(paletteButton, "搜索对话、操作与设置（Ctrl / ⌘ + K）")
         Ui.onClick paletteButton (fun () -> paletteHandler |> Option.iter (fun h -> h ()))
         Ui.onClick clearSearchButton (fun () -> this.ResetSearch true)
         // `Ui.textField` 创建时 TextBox 已挂在 shell 下。这里要把图标和清空按钮
@@ -1604,8 +1604,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let brandRow = Ui.hstack Spacing.spaceMd [ brand; wordmark :> Control ]
         let leading = Ui.hstack Spacing.spaceXs [ compactBackButton :> Control; brandRow :> Control ]
         newConversationButton.HorizontalAlignment <- HorizontalAlignment.Stretch
-        Avalonia.Automation.AutomationProperties.SetName(newConversationButton, "新建对话（Ctrl+N）")
-        ToolTip.SetTip(newConversationButton, "新建对话（Ctrl+N）")
+        Avalonia.Automation.AutomationProperties.SetName(newConversationButton, "新建对话（Ctrl / ⌘ + N）")
+        ToolTip.SetTip(newConversationButton, "新建对话（Ctrl / ⌘ + N）")
         brandHeader <-
             let brandLine = Border(Height = Tokens.barHeight, Child = leading)
             presetMenuButton.IsVisible <- not (List.isEmpty presetEntries)

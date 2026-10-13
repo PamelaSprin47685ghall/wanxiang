@@ -127,7 +127,7 @@ let ``down in the search box reaches the empty state action`` () =
                 | :? TextBox as tb when not (isNull tb.PlaceholderText) && tb.PlaceholderText = "搜索对话" -> Some tb
                 | _ -> None)
             |> Option.defaultWith (fun () -> failwith "侧栏缺少搜索框")
-        let actionButton = byNameOrFail root "新建对话（Ctrl+N）"
+        let actionButton = byNameOrFail root "新建对话（Ctrl / ⌘ + N）"
         searchBox.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
         let e = privateKey searchBox Key.Down

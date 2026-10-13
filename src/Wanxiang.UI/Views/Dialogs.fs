@@ -252,8 +252,8 @@ module Dialogs =
             onConfirm value
         let buttons, confirmButton =
             actionRow overlay confirmLabel Ui.Primary submit
-        AutomationProperties.SetHelpText(confirmButton, sprintf "确认“%s”(Ctrl+Enter)" confirmLabel)
-        ToolTip.SetTip(confirmButton, sprintf "确认“%s”(Ctrl+Enter)" confirmLabel)
+        AutomationProperties.SetHelpText(confirmButton, sprintf "确认“%s”（Ctrl / ⌘ + Enter）" confirmLabel)
+        ToolTip.SetTip(confirmButton, sprintf "确认“%s”（Ctrl / ⌘ + Enter）" confirmLabel)
         box.KeyDown.Add(fun e ->
             let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
             if e.Key = Key.Enter && ctrl then
@@ -758,8 +758,8 @@ module Dialogs =
         ToolTip.SetTip(cancelButton, "取消并关闭对话框 (Esc)")
         let saveButton = Ui.button Ui.Primary "保存" save
         AutomationProperties.SetName(saveButton, "保存")
-        AutomationProperties.SetHelpText(saveButton, "保存对话设置 (Ctrl+Enter)")
-        ToolTip.SetTip(saveButton, "保存对话设置 (Ctrl+Enter)")
+        AutomationProperties.SetHelpText(saveButton, "保存对话设置（Ctrl / ⌘ + Enter）")
+        ToolTip.SetTip(saveButton, "保存对话设置（Ctrl / ⌘ + Enter）")
         Ui.preparePendingButton saveButton
         setPending <- fun value ->
             pending <- value

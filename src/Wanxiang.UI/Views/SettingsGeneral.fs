@@ -284,8 +284,8 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         let saveButton = Ui.button Ui.Primary "保存默认值" (fun () -> this.SaveGeneration())
         // 键盘位与文案都在按钮上自描述：本地表单（模型服务、MCP、对话参数）
         // 一律「Ctrl/⌘+Enter 保存」，这里此前只响应鼠标点击。
-        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, "保存默认值 (Ctrl+Enter)")
-        ToolTip.SetTip(saveButton, "保存默认值 (Ctrl+Enter)")
+        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, "保存默认值（Ctrl / ⌘ + Enter）")
+        ToolTip.SetTip(saveButton, "保存默认值（Ctrl / ⌘ + Enter）")
         Ui.preparePendingButton saveButton
         saveButton.HorizontalAlignment <- HorizontalAlignment.Left
         let discardButton = Ui.button Ui.Ghost "放弃修改" (fun () -> this.DiscardGenerationChanges())
@@ -524,7 +524,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             Ui.settingsRowShell "消息字号" "影响对话正文与代码块。" controls :> Control
 
         let enterRow, _, setEnterSends =
-            Ui.switchRow "Enter 直接发送" "关闭后用 Ctrl+Enter 发送，Enter 换行。" prefs.enterSends (fun value ->
+            Ui.switchRow "Enter 直接发送" "关闭后用 Ctrl / ⌘ + Enter 发送，Enter 换行。" prefs.enterSends (fun value ->
                 prefs <- { prefs with enterSends = value }
                 onPrefsChanged prefs)
         let collapseRow, _, setCollapseReasoning =

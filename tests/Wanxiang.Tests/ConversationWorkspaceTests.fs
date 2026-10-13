@@ -239,7 +239,7 @@ let ``conversation first desktop composition keeps history secondary to the curr
         try
             surface.SetStarting true
             Dispatcher.UIThread.RunJobs()
-            Assert.True((named sidebar "新建对话（Ctrl+N）").IsEffectivelyVisible)
+            Assert.True((named sidebar "新建对话（Ctrl / ⌘ + N）").IsEffectivelyVisible)
             Assert.True((named composer "切换本对话使用的模型").IsEffectivelyVisible)
             capture window "full-conversation-desktop" lightTheme
         finally

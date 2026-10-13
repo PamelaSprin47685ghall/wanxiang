@@ -261,8 +261,8 @@ let ``generation save button advertises the ctrl enter shortcut`` () =
         descendants built
         |> Seq.find (fun c -> AutomationProperties.GetName c = "保存默认值")
         :?> Border
-    Assert.Equal<string>("保存默认值 (Ctrl+Enter)", AutomationProperties.GetHelpText saveButton)
-    Assert.Equal<string>("保存默认值 (Ctrl+Enter)", ToolTip.GetTip saveButton :?> string)
+    Assert.Equal<string>("保存默认值（Ctrl / ⌘ + Enter）", AutomationProperties.GetHelpText saveButton)
+    Assert.Equal<string>("保存默认值（Ctrl / ⌘ + Enter）", ToolTip.GetTip saveButton :?> string)
     )
 
 [<Trait("Category", "UI")>]

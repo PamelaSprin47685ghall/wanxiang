@@ -262,8 +262,8 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         saveButton.Margin <- Thickness 0.0
         saveButton.Focusable <- true
         Avalonia.Automation.AutomationProperties.SetName(saveButton, idleSaveText)
-        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, sprintf "确认%s MCP 服务设置 (Ctrl+Enter)" idleSaveText)
-        ToolTip.SetTip(saveButton, sprintf "确认%s (Ctrl+Enter)" idleSaveText)
+        Avalonia.Automation.AutomationProperties.SetHelpText(saveButton, sprintf "确认%s MCP 服务设置（Ctrl / ⌘ + Enter）" idleSaveText)
+        ToolTip.SetTip(saveButton, sprintf "确认%s（Ctrl / ⌘ + Enter）" idleSaveText)
         Ui.preparePendingButton saveButton
         setPending <- fun pending ->
             savePending <- pending

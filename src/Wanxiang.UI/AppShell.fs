@@ -1626,7 +1626,7 @@ type MainView() as this =
         let settingItems =
             [ "appearance", "主题", [ "theme" ]
               "appearance", "消息字号", [ "font"; "字体" ]
-              "appearance", "发送键（Enter / Ctrl+Enter）", [ "enter"; "send" ]
+              "appearance", "发送键（Enter / Ctrl / ⌘ + Enter）", [ "enter"; "send" ]
               "appearance", "减弱动态效果", [ "motion"; "动画" ]
               "appearance", "本机保存草稿", [ "draft" ]
               "appearance", "代码块折行", [ "wrap"; "code" ]
