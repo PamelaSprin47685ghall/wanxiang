@@ -20,8 +20,6 @@
     <Compile Include="ConfigMutation.fs" />
     <Compile Include="GenerationContext.fs" />
     <Compile Include="BuiltinTools.fs" />
-    <Compile Include="McpTransport.fs" />
-    <Compile Include="McpClient.fs" />
     <Compile Include="ToolRegistry.fs" />
     <Compile Include="ToolApproval.fs" />
     <Compile Include="TitleGenerator.fs" />
@@ -33,6 +31,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.McpClient" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatDomain" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
