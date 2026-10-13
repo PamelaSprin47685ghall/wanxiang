@@ -51,6 +51,8 @@ type MainView() as this =
     let mutable activeConvId: Guid option = None
     /// 决策 440：主机声明的功能表。None = 主机没声明（旧主机），照常显示、靠超时兜底。
     let mutable hostFeatures: Set<string> option = None
+    /// 决策 449：周期计时器是否已启动（测试观察点）。
+    let mutable timersStarted = false
     /// 决策 444：搜索与模型服务探测也是「请求→回应」，同样设等待上限。
     let mutable searchSentAt: DateTimeOffset option = None
     let pendingProbes = System.Collections.Generic.Dictionary<Guid, string * DateTimeOffset>()
@@ -2671,6 +2673,7 @@ type MainView() as this =
         let draftTimer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 800.0)
         draftTimer.Tick.Add(fun _ -> this.FlushDrafts())
         let startTimers () =
+            timersStarted <- true
             deliveryTimer.Start()
             draftTimer.Start()
             this.StartViewportWatcher()

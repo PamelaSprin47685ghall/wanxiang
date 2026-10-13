@@ -132,3 +132,18 @@ let ``old host that never answers a preset save releases the dialog after the ti
     Assert.Equal(Some false, completed)
     Assert.Equal(0, tracker.Count)
     window.Close())
+
+[<Trait("Category", "UI")>]
+[<Fact>]
+let ``timers start even when the view is attached before Build like the PWA does`` () =
+    Headless.run (fun () ->
+    MotionPolicy.setReduced true
+    let view = MainView()
+    let window = Window(Width = 900.0, Height = 600.0, Content = view)
+    window.Show()
+    Dispatcher.UIThread.RunJobs()
+    view.Build()
+    Dispatcher.UIThread.RunJobs()
+    let started = typeof<MainView>.GetField("timersStarted", flags).GetValue(view) :?> bool
+    Assert.True(started)
+    window.Close())
