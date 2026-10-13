@@ -540,3 +540,12 @@ W5 新增的用户可见字符串采用 UX 提案 4.6 的新术语：**主机**�
 **全局术语表补一行**：`设备` ＝ 连接到某台主机的一个已授权客户端（手机、浏览器、桌面应用）；内部词 client / `auth.clients`；UI 不再说“客户端令牌记录”。
 
 **已知取舍**：未知 `wanxiang.dev/*` 事件会让现有主机关闭连接（# 67），W2 不改，仅在界面侧缓解；提案里“最后在线不写 TOML”不成立，沿用决策 54（# 66）。
+
+# 470. 压力找竞态的基线
+`tools/stress.sh -n N -j 8 --hog 4` 在 -j 8 加 4 线程 CPU 占用下重复跑全套；另以 -j 12 复核。本轮共 14 轮完整运行（10 轮 -j 8+占用、4 轮 -j 12+占用），0 失败：PR #50 修掉的配置回写竞态与定位漂移之后，未再复现任何 flake。新失败必须先归类（产品竞态 / 测试时序），产品竞态要有确定性复现测试才算修完。
+
+# 471. 夜间压力任务
+`.github/workflows/stress.yml` 每晚定时（也可手动触发）跑 3 轮 `tools/stress.sh`，上传 flake 报告作为制品；不阻塞合并，不进 PR 必需检查。
+
+# 472. Actions 运行时
+所有工作流使用 Node 24 兼容的官方 action 大版本（checkout v7、setup-dotnet v6、cache v6、upload-artifact v7、download-artifact v8）。
