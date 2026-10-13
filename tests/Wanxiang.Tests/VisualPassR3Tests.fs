@@ -91,4 +91,9 @@ let ``PWA 安装引导推迟到首次成功对话后，且在顶部不压输入�
     Assert.DoesNotContain("bar.hidden = false;\n    });", js)
     let css = read "src/Wanxiang.Pwa/wwwroot/app.css"
     Assert.Contains(".shell-install { top:", css)
+    // 收敛走查：手机上浮条曾盖住顶栏。停靠高度变量必须定义在 :root（#out 读得到），且画布让位不限桌面。
+    Assert.Contains(":root { --wx-install-h:", css)
+    let dock = css.IndexOf "body:has(#shell-install:not([hidden])) #out"
+    let desktopOnly = css.IndexOf "@media (min-width: 900px) and (not (pointer: coarse))"
+    Assert.True(dock >= 0 && dock < desktopOnly, "画布让位规则应对手机同样生效")
     Assert.Contains("BrowserBridge.ConversationSucceeded", read "src/Wanxiang.UI/AppShell.fs")

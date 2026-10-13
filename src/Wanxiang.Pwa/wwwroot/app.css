@@ -361,23 +361,32 @@ html, body {
 }
 /* PWA 独立窗口：无浏览器地址栏，壳层不再需要额外让位 */
 @media (display-mode: standalone) { .shell-install { display: none !important; } }
-/* 决策 271：桌面（精确指针、宽屏）上安装提示不再浮在画布上压住对话标题栏，
-   而是停靠成顶部一条，画布整体让位下移；关闭后画布回到原位。手机仍是顶部浮条。 */
+/* 决策 271：安装提示不浮在画布上压住对话标题栏，而是停靠成顶部一条，画布整体让位下移；
+   关闭后画布回到原位。收敛期走查：手机上浮条曾盖住顶栏（抽屉按钮点不到），现在手机同样停靠，
+   并让出刘海安全区。 */
+.shell-install {
+    top: 0; left: 0; right: 0;
+    transform: none;
+    width: 100%;
+    max-width: none;
+    height: var(--wx-install-h);
+    box-sizing: border-box;
+    border-radius: 0 !important;
+    border-width: 0 0 1px 0;
+    box-shadow: none;
+    animation: none;
+    padding: env(safe-area-inset-top, 0px) 12px 0 16px;
+    gap: 8px;
+}
+:root { --wx-install-h: calc(52px + env(safe-area-inset-top, 0px)); } /* 变量放根上：#out 与提示条都要读 */
+.shell-install .shell-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shell-install .shell-btn { min-height: 44px; padding: 0 12px; } /* 触控目标 ≥44px */
+body:has(#shell-install:not([hidden])) #out {
+    top: calc(var(--wx-vvtop, 0px) + var(--wx-install-h));
+    height: calc(var(--wx-vvh, 100dvh) - var(--wx-install-h) - var(--wx-safe-bottom, env(safe-area-inset-bottom, 0px)));
+}
 @media (min-width: 900px) and (not (pointer: coarse)) {
-    .shell-install {
-        top: 0; left: 0; right: 0;
-        transform: none;
-        width: 100%;
-        height: 40px;
-        border-radius: 0 !important;
-        border-width: 0 0 1px 0;
-        box-shadow: none;
-        animation: none;
-        padding: 0 16px 0 24px;
-    }
+    :root { --wx-install-h: 40px; }
+    .shell-install { padding: 0 16px 0 24px; }
     .shell-install .shell-btn { min-height: 30px; }
-    body:has(#shell-install:not([hidden])) #out {
-        top: 40px;
-        height: calc(var(--wx-vvh, 100dvh) - 40px);
-    }
 }
