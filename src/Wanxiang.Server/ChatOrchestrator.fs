@@ -530,7 +530,7 @@ type ChatOrchestrator(
                                     let ev = finishedEvent convId generationId "cancelled" None g.startedAtUtc (Some g.accumulatedUsage)
                                     this.FinishGeneration(convId, generationId, ev, false) |> ignore
                                     running <- false
-                                | Failed err ->
+                                | AgentCallResult.Failed err ->
                                     logInfo(
                                         sprintf
                                             "generation %O failed [%s]: %s"
@@ -569,7 +569,7 @@ type ChatOrchestrator(
                                             partials.Save pe
                                             broadcastToConversation convId pe)
                                     running <- false
-                                | Completed usage ->
+                                | AgentCallResult.Completed usage ->
                                     g.accumulatedUsage <- addUsage g.accumulatedUsage (usageFromDetails usage g.startedAtUtc)
                                     // 响应消息已由 HistoryProvider 回调提交；检查工具调用
                                     // （OnAgentResponse 在 rt 锁内写 lastProviderMessages，读取必须同锁）

@@ -131,14 +131,20 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.AgentRuntime" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ProviderFailure" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.AgentContent" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.AgentHistory" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.AguiMessageMap" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MessageSerde" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MediaContent" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ProviderTransports" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.EventStore" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AguiWire" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatDomain" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
-    <ProjectReference Include="..\..\src\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Server\Wanxiang.Server.fsproj" />
-    <ProjectReference Include="..\..\src\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.UI\Wanxiang.UI.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Client\Wanxiang.Client.fsproj" />
   </ItemGroup>

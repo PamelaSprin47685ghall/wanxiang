@@ -194,7 +194,7 @@ let ``a 429 with rate limit headers is classified and its headers survive to the
     task {
         let! result, limit = runAgainst kind suffix
         match result with
-        | Failed err -> Assert.Equal(GenerationErrorKind.ProviderRateLimited, err.kind)
+        | AgentCallResult.Failed err -> Assert.Equal(GenerationErrorKind.ProviderRateLimited, err.kind)
         | other -> Assert.Fail(sprintf "expected failure, got %A" other)
         match limit with
         | Some l ->
