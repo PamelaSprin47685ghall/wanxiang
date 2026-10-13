@@ -310,6 +310,16 @@ module Tokens =
             startFrames ()
         Changed.Trigger next
 
+    /// 立即把进行中的补间收尾到目标色并停帧（决策 430）。测试用它代替
+    /// 「睡一段时间再泵 dispatcher」：高负载下墙钟帧可能迟到，睡眠不可靠。
+    /// 必须在 UI 线程调用。
+    let completeTransition () : unit =
+        stopFrames ()
+        frameGeneration <- frameGeneration + 1
+        transitionFrom.Clear()
+        for brush, pick in brushes do
+            brush.Color <- pick palette
+
     // ---- 阴影（跟随主题，需在重建时重新读取）----
     /// 中等抬升：下拉、气泡
     let shadowPopup () =

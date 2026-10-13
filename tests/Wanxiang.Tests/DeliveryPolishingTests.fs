@@ -407,9 +407,10 @@ let ``theme mode switching updates palette and dynamic brushes`` () =
     Headless.run (fun () ->
     // 切色从旧色补间到新色（MotionLedger.themeColorTransition）：mode/palette
     // 同步到位，画笔颜色逐帧收敛。泵到收敛后再断言最终状态。
+    // 决策 430：不再按墙钟睡眠等收敛（负载下帧会迟到），直接确定性收尾。
     let settle () =
-        Thread.Sleep 240
         Dispatcher.UIThread.RunJobs()
+        Tokens.completeTransition ()
 
     Tokens.apply Light
     Assert.False(Tokens.isDark())
