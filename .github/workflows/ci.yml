@@ -41,6 +41,16 @@ jobs:
       - name: Build (Release, warnings-as-errors)
         run: dotnet build wanxiang.slnx -c Release --no-restore --verbosity minimal
 
+      - name: Build output carries current avalonia.js patch (决策 403)
+        run: python3 tools/verify_avalonia_patch.py src/Wanxiang.Pwa/bin/Release/net10.0-browser/browser-wasm/AppBundle src/Wanxiang.App/bin/Release/net10.0/pwa
+
+      - name: Publish PWA + desktop App and assert patched avalonia.js (决策 403)
+        run: |
+          dotnet publish src/Wanxiang.Pwa/Wanxiang.Pwa.fsproj -c Release --verbosity minimal
+          python3 tools/verify_avalonia_patch.py src/Wanxiang.Pwa/bin/Release/net10.0-browser/browser-wasm/AppBundle
+          dotnet publish src/Wanxiang.App/Wanxiang.App.fsproj -c Release -o "$RUNNER_TEMP/wanxiang-publish" --verbosity minimal
+          python3 tools/verify_avalonia_patch.py "$RUNNER_TEMP/wanxiang-publish/pwa"
+
       - name: Format gate (dotnet format --verify-no-changes)
         run: dotnet format wanxiang.slnx --verify-no-changes --verbosity minimal
 

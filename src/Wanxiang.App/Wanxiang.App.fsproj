@@ -32,4 +32,19 @@
     <ProjectReference Include="..\Wanxiang.UI\Wanxiang.UI.fsproj" />
   </ItemGroup>
 
+  <!-- 决策 404：发布桌面 App 时一并发布 PWA，并把（已补丁的）AppBundle 放进发布目录的 pwa/——
+       主机从 AppContext.BaseDirectory/pwa 托管，原来发布目录里只有 wwwroot 静态壳、没有 _framework 运行时与补丁。
+       设 WanxiangSkipPwaPublish=true 可跳过（例如只要无 PWA 的桌面包）。 -->
+  <Target Name="PublishPwaBundle" AfterTargets="Publish" Condition="'$(WanxiangSkipPwaPublish)' != 'true'">
+    <MSBuild Projects="..\Wanxiang.Pwa\Wanxiang.Pwa.fsproj" Targets="Publish" Properties="Configuration=$(Configuration)" RemoveProperties="RuntimeIdentifier;SelfContained;PublishDir;PublishSingleFile;PublishTrimmed;PublishAot" />
+    <PropertyGroup>
+      <_WxPwaBundle>$(MSBuildThisFileDirectory)..\Wanxiang.Pwa\bin\$(Configuration)\net10.0-browser\browser-wasm\AppBundle\</_WxPwaBundle>
+    </PropertyGroup>
+    <ItemGroup>
+      <_WxPwaBundleFiles Include="$(_WxPwaBundle)**\*" Exclude="$(_WxPwaBundle)**\*.map" />
+    </ItemGroup>
+    <Error Condition="'@(_WxPwaBundleFiles)' == ''" Text="PWA AppBundle not found at $(_WxPwaBundle)" />
+    <Copy SourceFiles="@(_WxPwaBundleFiles)" DestinationFiles="@(_WxPwaBundleFiles->'$(PublishDir)pwa\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)../../tools/verify_avalonia_patch.py&quot; &quot;$(PublishDir)pwa&quot;" />
+  </Target>
 </Project>
