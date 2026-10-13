@@ -108,10 +108,36 @@ module Headless =
     ///     view.Build())
     /// ```
 
-    let run (body: unit -> unit) : unit =
+    /// 模块级 Avalonia 对象（`Tokens` 的主题画笔）在 Avalonia 12 里构造时就绑定
+    /// `Dispatcher.CurrentDispatcher`（构造它的线程），之后**永不换绑**。若首个碰到
+    /// `Tokens` 的是 xunit 工作线程上的纯逻辑断言（如 `Tokens.iconGlyph`），整套画笔就
+    /// 归那个线程所有，此后每个 UI 测试收尾的 `Tokens.apply` 都抛 VerifyAccess——
+    /// 一个测试的顺序毒化整个分组（决策 420–422）。
+    ///
+    /// 因此：会话一建立就先在 UI 线程上触发 `Tokens` 的静态初始化（由程序集夹具
+    /// `UiThreadWarmup` 在任何测试之前调用，`run` 首次调用时兜底再做一次）。
+    let private warmed =
+        lazy
+            (session.Value.Dispatch(
+                Action(fun () -> Wanxiang.UI.Tokens.canvas |> ignore),
+                CancellationToken.None
+            ).GetAwaiter().GetResult())
 
+    /// 在任何测试之前把 UI 静态状态绑定到会话线程（幂等）。
+    let warmUp () = warmed.Force()
+
+    /// 画笔所有权自检：不属于会话线程时给出**指名根因**的失败，而不是 117 个看似无关的 VerifyAccess。
+    let internal tokensOwnedByUiThread () = Wanxiang.UI.Tokens.canvas.CheckAccess()
+
+    let run (body: unit -> unit) : unit =
+        warmUp ()
         session.Value.Dispatch(
             Action(fun () ->
+                if not (tokensOwnedByUiThread ()) then
+                    failwithf
+                        "Tokens 主题画笔归线程 %d 所有，不是 headless UI 线程 %d：有代码在 UI 线程之外首次触发了 Tokens 的静态初始化（决策 421）"
+                        Wanxiang.UI.Tokens.canvas.Dispatcher.Thread.ManagedThreadId
+                        Environment.CurrentManagedThreadId
                 try
                     body ()
                 finally
@@ -125,3 +151,11 @@ module Headless =
         ).GetAwaiter().GetResult()
 
 
+
+/// 程序集夹具：xunit v3 在任何测试运行之前构造它，保证 `Tokens` 等模块级 UI 对象
+/// 在 headless UI 线程上初始化，不论随机化后的测试顺序如何（决策 420）。
+type UiThreadWarmup() =
+    do Headless.warmUp ()
+
+[<assembly: Xunit.AssemblyFixture(typeof<UiThreadWarmup>)>]
+do ()

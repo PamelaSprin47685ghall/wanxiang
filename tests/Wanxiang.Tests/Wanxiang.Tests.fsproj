@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <Compile Include="Headless.fs" />
+    <Compile Include="UiThreadOwnershipTests.fs" />
     <Compile Include="HeadlessTests.fs" />
     <Compile Include="Helpers.fs" />
     <Compile Include="CoreTests.fs" />
