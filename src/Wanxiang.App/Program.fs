@@ -340,7 +340,11 @@ module Program =
                                     let dev = Path.Combine(baseDir, "Wanxiang.Pwa", "wwwroot")
                                     if Directory.Exists dev then Some dev else None
                         else None
-                    let app = new Wanxiang.Server.ServerApp(dataDir, configPath, false, pwaDir, logInfo, ?startupStore = startupReplayOutcome)
+                    let app = new Wanxiang.Server.ServerApp(
+                            dataDir, configPath, false, pwaDir, logInfo,
+                            ?startupStore = startupReplayOutcome,
+                            // 产品版本取本程序集（Wanxiang.App）版本；旧实现取 Wanxiang.Server 程序集版本，产品构建时两者相同
+                            ?hostVersion = (match System.Reflection.Assembly.GetExecutingAssembly().GetName().Version with null -> None | v -> Some(v.ToString())))
                     app.Start(switches.pwa)
                     Some app
                 else

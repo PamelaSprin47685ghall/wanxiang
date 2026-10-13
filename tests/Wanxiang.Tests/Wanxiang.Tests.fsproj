@@ -10,30 +10,14 @@
     <Compile Include="UiThreadOwnershipTests.fs" />
     <Compile Include="HeadlessTests.fs" />
     <Compile Include="Helpers.fs" />
-    <Compile Include="ContractTests.fs" />
     <Compile Include="MessageMapTests.fs" />
-    <Compile Include="SupportBundleTests.fs" />
-    <Compile Include="DoctorTests.fs" />
     <Compile Include="ProjectionInvariantsTests.fs" />
     <Compile Include="CoordinatorTests.fs" />
-    <Compile Include="CatchUpSafetyTests.fs" />
-    <Compile Include="SessionAndForkTests.fs" />
     <Compile Include="ServerE2eTests.fs" />
-    <Compile Include="N1CompatTests.fs" />
-    <Compile Include="W3ToolPolicyTests.fs" />
     <Compile Include="SoakTests.fs" />
     <Compile Include="PerformanceBaselineTests.fs" />
-    <Compile Include="AcceptanceScenarioTests.fs" />
-    <Compile Include="McpTests.fs" />
-    <Compile Include="ServerAppTests.fs" />
-    <Compile Include="ProviderCatalogTests.fs" />
     <Compile Include="OnboardingConfigTests.fs" />
     <Compile Include="OnboardingUiTests.fs" />
-    <Compile Include="ServerStoreMutationTests.fs" />
-    <Compile Include="ServerConnectionsTests.fs" />
-    <Compile Include="AttachmentTests.fs" />
-    <Compile Include="BugfixTests.fs" />
-    <Compile Include="ProductizationTests.fs" />
     <Compile Include="PolishTests.fs" />
     <Compile Include="MathRenderTests.fs" />
     <Compile Include="NativeTransportTests.fs" />
@@ -96,7 +80,6 @@
     <Compile Include="PwaMobileTests.fs" />
     <Compile Include="VisualPassV4Tests.fs" />
     <Compile Include="JourneyR9Tests.fs" />
-    <Compile Include="DevicesTests.fs" />
     <Compile Include="WsOriginTests.fs" />
     <Compile Include="DevicesUiTests.fs" />
     <Compile Include="ModelChipRateLimitTests.fs" />
@@ -130,6 +113,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.ServerApp" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AgentRuntime" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProviderFailure" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AgentContent" Version="0.0.0-local" />
@@ -143,7 +127,6 @@
     <PackageReference Include="Wanxiang2.ChatDomain" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
-    <ProjectReference Include="..\..\src\Wanxiang.Server\Wanxiang.Server.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.UI\Wanxiang.UI.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Client\Wanxiang.Client.fsproj" />
   </ItemGroup>

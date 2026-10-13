@@ -7,7 +7,21 @@ open System.Net.WebSockets
 open System.Threading
 open Xunit
 open Wanxiang.Config
-open Wanxiang.Tests.DevicesTests
+open Wanxiang.Tests.Helpers
+
+/// 最小主机夹具：只需监听端口（原 DevicesTests.DeviceServer 随主机测试迁入 wanxiang2）。
+type private OriginHost(port: int) =
+    let dir = tempDir ()
+    let configPath = IO.Path.Combine(dir, "config.toml")
+    let app =
+        let id = Guid.CreateVersion7()
+        IO.File.WriteAllText(configPath, TomlCodec.serialize { AppConfig.defaults id with listen = sprintf "127.0.0.1:%d" port })
+        let a = new Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
+        a.Start(false)
+        a
+    member _.Dispose() =
+        (app :> IDisposable).Dispose()
+        cleanup dir
 
 [<Theory>]
 [<InlineData("", "127.0.0.1:8765", true)>]
@@ -51,7 +65,7 @@ let private tryConnect (port: int) (origin: string option) : bool =
 [<Fact>]
 let ``主机拒绝跨源网页握手、放行同源与原生客户端`` () =
     let port = Wanxiang.Tests.ServerE2eTests.pickPort ()
-    let s = new DeviceServer(port)
+    let s = new OriginHost(port)
     try
         Assert.True(tryConnect port None)
         Assert.True(tryConnect port (Some(sprintf "http://127.0.0.1:%d" port)))

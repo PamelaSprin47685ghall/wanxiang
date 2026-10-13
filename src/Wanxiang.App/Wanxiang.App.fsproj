@@ -23,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.ServerApp" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AgentRuntime" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProviderFailure" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AgentContent" Version="0.0.0-local" />
@@ -36,7 +37,6 @@
     <PackageReference Include="Wanxiang2.ChatDomain" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
-    <ProjectReference Include="..\Wanxiang.Server\Wanxiang.Server.fsproj" />
     <ProjectReference Include="..\Wanxiang.UI\Wanxiang.UI.fsproj" />
   </ItemGroup>
 
