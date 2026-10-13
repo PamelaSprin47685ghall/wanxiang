@@ -5,7 +5,7 @@
 每个实例既是主机也是客户端：主机跑模型、存对话、管密钥；客户端只是它的一个视图。
 两者之间只有一条 WebSocket，本机自己连自己也走同一条路径——没有第二套隐藏行为。线上走 [AG-UI](https://agentclientprotocol.com) 1.0 事件流。
 
-- **桌面端**（Linux x64）：完整节点，主机 + 界面
+- **桌面端**（Linux x64 / Windows x64 / macOS arm64·x64）：完整节点，主机 + 界面
 - **PWA**：纯前端客户端，由主机托管，通过配对码接入
 
 界面在桌面与浏览器之间共用同一套 F# 代码，所以两端长得一样、行为一样。
@@ -81,9 +81,11 @@ wanxiang --server=false --client=false --pwa=false --fix   # 检查并修复日�
 
 主机不接受匿名连接。首次接入走配对码：
 
-1. 客户端点「连接」，选择「改用配对码」
-2. 主机终端（stderr）打印一个 6 位码，5 分钟内有效
-3. 输入后客户端拿到长期令牌，之后自动重连
+1. 客户端点「连接主机」，默认就是配对码输入界面（访问令牌放在「更多」里）
+2. 主机终端（stderr）打印一个 6 位码，5 分钟内有效；也可以在桌面端 设置 → 设备 生成配对邀请（含二维码）
+3. 点「提交配对码」后客户端拿到长期令牌，之后自动重连
+
+出于安全考虑，从主机本机打开 PWA 也**不会**免配对（见 `docs/security/loopback-pwa-pairing.md`）。
 
 令牌即身份。桌面端存 `client.toml`，PWA 存 IndexedDB（按主机 `instanceId` 索引，
 URL 不是身份）。要吊销某个客户端，在配置里把对应 `[[auth.clients]]` 的 `revoked` 置为 `true`
@@ -269,8 +271,8 @@ defaultModel = "gemini-2.5-flash"
   空格不是「悄悄丢掉」：传输吃不下的类型会附一句说明，
   不会让你以为模型看过那份文件。单个二进制附件的内联上限是 16 MiB。
 
-每条消息都带时间；消息下方的操作条常驻淡显，鼠标悬停或键盘聚焦时变实，
-触屏上同样可点。
+每条消息都带时间；消息下方的操作条平时隐藏，鼠标悬停、键盘聚焦或触屏点一下消息时出现。
+右键菜单另有「复制消息链接」（`wanxiang://` 深链接）与「从此分叉」。
 
 长行默认横向滚动，代码块右上角可切换折行（设置里也有全局默认值）。
 代码块由 [highlight.js](https://highlightjs.org) 着色，覆盖 90 种语言，
@@ -327,20 +329,28 @@ Markdown 不打包附件文件、不包含尚未提交的生成与排队内容�
 
 ### 快捷键
 
+macOS 上 `Ctrl` 换成 `⌘`。完整列表按 `Ctrl` `/` 查看。
+
 | 按键 | 作用 |
 |---|---|
+| `Ctrl` `K` | 命令面板：搜对话、操作与设置（支持拼音首字母） |
+| `Ctrl` `Shift` `F` | 在侧栏搜索全部消息 |
 | `Ctrl` `N` | 新建对话 |
-| `Ctrl` `K` | 搜索对话 |
 | `Ctrl` `,` | 打开设置 |
 | `Ctrl` `M` | 切换模型 |
-| `Ctrl` `↑` / `↓` | 跳到上一条 / 下一条提问（顶栏同款按钮） |
+| `Ctrl` `B` | 展开 / 折叠侧栏 |
+| `Ctrl` `1`~`9` | 跳到侧栏第 n 个对话 |
+| `Ctrl` `↑` / `↓` | 跳到上一条 / 下一条提问 |
 | `Ctrl` `L` | 聚焦消息输入框 |
+| `Ctrl` `Shift` `C` / `G` | 复制最新回复 / 重新生成 |
+| `Ctrl` `Shift` `E` | 导出当前对话为 Markdown |
+| `Ctrl` `Shift` `S` | 切换主题 |
+| `Ctrl` `Z` | 撤销刚才的删除（提示条还在时） |
 | `Ctrl` `/` | 快捷键列表 |
-| `Ctrl` `Enter` | 设置表单保存（模型服务 / MCP / 对话参数 / 生成设置） |
-| `Enter` | 发送（可在设置里改为 `Ctrl` `Enter`） |
-| `Shift` `Enter` | 换行 |
+| `Ctrl` `Enter` | 设置表单保存；或按偏好发送 |
+| `Enter` / `Shift` `Enter` | 发送 / 换行（可在设置里互换为 `Ctrl` `Enter` 发送） |
 | `P` / `F2` / `Delete` | 置顶 / 重命名 / 删除当前对话（对话行聚焦时） |
-| `Esc` | 关闭弹层 / 取消编辑 |
+| `Esc` | 关闭弹层 / 取消编辑 / 停止生成 |
 
 ---
 
@@ -350,6 +360,23 @@ Markdown 不打包附件文件、不包含尚未提交的生成与排队内容�
 dotnet build src/Wanxiang.slnx -c Debug
 dotnet test tests/Wanxiang.Tests/Wanxiang.Tests.fsproj -c Debug
 ```
+
+### 测试
+
+```bash
+export DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH"
+./run-tests.sh -j 4                  # 界面分片 + 非界面全套
+./run-tests.sh -j 4 --large-history  # 另跑大历史档（10^5 提交冷启动等）
+tools/stress.sh -n 3 --hog 4         # 高负载下重复跑全套，输出 flake 报告
+```
+
+CI（`.github/workflows/ci.yml`）在每个 PR 上跑全部测试、核对各组测试数量不减少、
+冒烟运行打包产物（含 PWA 补丁检查）；`stress.yml` 每晚跑一次压力测试。
+
+### 发布
+
+推 `v*` 标签会触发 `.github/workflows/release.yml`：构建 Linux / Windows / macOS（Intel、Apple 芯片）
+四个自包含包（无需安装 .NET），挂到一个**草稿** Release，不会自动发布。步骤见 `docs/STATUS.md`。
 
 ### 项目结构
 
