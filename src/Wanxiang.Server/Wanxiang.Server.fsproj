@@ -10,10 +10,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="Stderr.fs" />
     <Compile Include="ServerModel.fs" />
-    <Compile Include="SearchService.fs" />
-    <Compile Include="AttachmentStore.fs" />
     <Compile Include="Doctor.fs" />
     <Compile Include="SupportBundle.fs" />
     <Compile Include="ProviderCatalog.fs" />
@@ -29,6 +26,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.Search" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.Attachments" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.HostLog" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolApproval" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PartialReplies" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AguiWire" Version="0.0.0-local" />

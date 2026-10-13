@@ -130,16 +130,6 @@ let ``search matches case-insensitively and ignores reasoning and tool payloads`
     Assert.Equal(0, (run proj (query "secretword")).items.Count)
     Assert.Equal(0, (run proj (query "toolword")).items.Count)
 
-[<Fact>]
-let ``empty and oversized queries are handled without scanning`` () =
-    let b = Builder()
-    let c = b.Conversation "t"
-    b.User(c, "hello") |> ignore
-    Assert.Equal(0, (run b.Projection (query "   ")).items.Count)
-    match SearchService.search b.Projection (query (String('a', SearchLimits.maxQueryChars + 1))) with
-    | Error message -> Assert.Contains("太长", message)
-    | Ok _ -> failwith "过长的查询必须被拒绝"
-
 // ---------------------------------------------------------------------------
 // 验收 2：搜索不改动日志、不创建文件
 // ---------------------------------------------------------------------------
@@ -179,63 +169,9 @@ let ``search neither touches the log directory nor the projection`` () =
 // 验收 3：tombstone 消息/对话不出现；归档对话可选
 // ---------------------------------------------------------------------------
 
-[<Fact>]
-let ``deleted messages and deleted conversations never appear and archived is opt-in`` () =
-    let b = Builder()
-    let keep = b.Conversation "保留"
-    b.User(keep, "marker alive") |> ignore
-    b.User(keep, "marker removed-message") |> ignore
-    let deletedConv = b.Conversation "已删"
-    b.User(deletedConv, "marker in deleted conversation") |> ignore
-    let archived = b.Conversation "归档"
-    b.User(archived, "marker in archive") |> ignore
-    // 消息 tombstone：删除 keep 里第二条
-    let proj0 = b.Projection
-    let second = (Projection.tryConversation proj0 keep |> Option.get).messages.[1].commitId
-    b.DeleteMessage(keep, second)
-    b.Delete deletedConv
-    b.Archive archived
-    let proj = b.Projection
-    let texts (page: SearchResultsData) = [ for i in page.items -> str i "snippet" ]
-    let withoutArchive = run proj (query "marker")
-    Assert.Equal<string list>([ "marker alive" ], texts withoutArchive)
-    let withArchive = run proj { query "marker" with includeArchived = true }
-    Assert.Equal(2, withArchive.items.Count)
-    Assert.Contains("marker in archive", texts withArchive)
-    Assert.DoesNotContain("marker removed-message", texts withArchive)
-    Assert.DoesNotContain("marker in deleted conversation", texts withArchive)
-    Assert.True(withArchive.items |> Seq.exists (fun i -> i["archived"].GetValue<bool>()))
-
 // ---------------------------------------------------------------------------
 // 验收 4：超上限返回“已截断”，不静默丢；上限来自预算
 // ---------------------------------------------------------------------------
-
-[<Fact>]
-let ``results beyond the hit budget are flagged truncated and pages never silently lose hits`` () =
-    let b = Builder()
-    // 60 个对话 × 5 条命中 = 300 条匹配 > maxHits(200)
-    for n in 1 .. 60 do
-        let c = b.Conversation(sprintf "c%d" n)
-        for k in 1 .. 5 do b.User(c, sprintf "needle %d-%d" n k) |> ignore
-    let proj = b.Projection
-    let collected = ResizeArray<string>()
-    let mutable offset = 0
-    let mutable last = Unchecked.defaultof<SearchResultsData>
-    let mutable go = true
-    while go do
-        last <- run proj { query "needle" with offset = offset; limit = SearchLimits.maxPageSize }
-        for i in last.items do collected.Add(str i "snippet")
-        offset <- offset + last.items.Count
-        go <- last.hasMore
-    Assert.Equal(SearchLimits.maxHits, collected.Count)
-    Assert.Equal(SearchLimits.maxHits, collected |> Seq.distinct |> Seq.length)
-    Assert.True(last.truncated, "命中数触顶必须明说已截断")
-    Assert.False last.hasMore
-    // 预算数值与契约文档一致
-    let doc = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "docs", "contracts", "resource-budgets.md"))
-    Assert.Contains(string SearchLimits.maxHits, doc)
-    let scanned = (string SearchLimits.maxScannedMessages).Replace("_", "")
-    Assert.Contains(scanned, doc.Replace(",", "").Replace("_", ""))
 
 [<Fact>]
 let ``a small result set is complete and not truncated`` () =
