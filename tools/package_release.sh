@@ -9,6 +9,7 @@ NAME="wanxiang-$VER-$RID"
 STAGE=$(mktemp -d /tmp/wanxiang-pkg-XXXX)
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/$NAME" "$OUT"
+OUT=$(cd "$OUT" && pwd)  # 绝对路径：后面会 cd 到暂存目录
 cp -a "$PUB/." "$STAGE/$NAME/"
 mkdir -p "$STAGE/$NAME/packaging"
 cp "$ROOT/packaging/README.md" "$STAGE/$NAME/packaging/"
@@ -23,7 +24,7 @@ sed -e "s|@VERSION@|$VER|g" -e "s|@RID@|$RID|g" -e "s|@EXE@|$EXE|g" "$ROOT/packa
 [ -f "$STAGE/$NAME/pwa/_framework/avalonia.js" ] || { echo "pwa bundle missing in $PUB" >&2; exit 1; }
 python3 "$ROOT/tools/verify_avalonia_patch.py" "$STAGE/$NAME/pwa"
 case "$RID" in
-  win-*) (cd "$STAGE" && python3 -c "import shutil,sys;shutil.make_archive(sys.argv[1],'zip','.',sys.argv[2])" "$(cd "$OUT" && pwd)/$NAME" "$NAME") ; ART="$OUT/$NAME.zip" ;;
+  win-*) (cd "$STAGE" && python3 -c "import shutil,sys;shutil.make_archive(sys.argv[1],'zip','.',sys.argv[2])" "$OUT/$NAME" "$NAME") ; ART="$OUT/$NAME.zip" ;;
   *)     chmod +x "$STAGE/$NAME/wanxiang"; tar -C "$STAGE" -czf "$OUT/$NAME.tar.gz" "$NAME"; ART="$OUT/$NAME.tar.gz" ;;
 esac
 (cd "$OUT" && sha256sum "$(basename "$ART")" > "$(basename "$ART").sha256")
