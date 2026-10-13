@@ -36,6 +36,10 @@
        主机从 AppContext.BaseDirectory/pwa 托管，原来发布目录里只有 wwwroot 静态壳、没有 _framework 运行时与补丁。
        设 WanxiangSkipPwaPublish=true 可跳过（例如只要无 PWA 的桌面包）。 -->
   <Target Name="PublishPwaBundle" AfterTargets="Publish" Condition="'$(WanxiangSkipPwaPublish)' != 'true'">
+    <!-- 决策 410：干净克隆直接 `dotnet publish src/Wanxiang.App` 曾失败：PWA 不在 App 的引用图里（未还原），
+         且 publish 设置的全局 _IsPublishing=true 会让 wasm 的 build 阶段跳过 AppBundle 生成、publish 阶段又依赖它。
+         先用独立进程（不继承 _IsPublishing）做一次 PWA 的 build（含 restore，增量），再走嵌套 Publish。 -->
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)../Wanxiang.Pwa/Wanxiang.Pwa.fsproj&quot; -c $(Configuration) --verbosity quiet -nologo" />
     <MSBuild Projects="..\Wanxiang.Pwa\Wanxiang.Pwa.fsproj" Targets="Publish" Properties="Configuration=$(Configuration)" RemoveProperties="RuntimeIdentifier;SelfContained;PublishDir;PublishSingleFile;PublishTrimmed;PublishAot" />
     <PropertyGroup>
       <_WxPwaBundle>$(MSBuildThisFileDirectory)..\Wanxiang.Pwa\bin\$(Configuration)\net10.0-browser\browser-wasm\AppBundle\</_WxPwaBundle>

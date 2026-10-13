@@ -903,3 +903,24 @@ Avalonia.Browser 只把「key 长度为 1 的 keydown」与 `compositionend` 变
 
 # 405. 打包审计结论
 `packaging/` 只有 `wanxiang://` 注册模板（Linux .desktop、Windows .reg、macOS Info.plist），仓库里没有安装器或 PWA 部署脚本；`start.sh` 走 Debug build，经 401 已补丁。以后新增安装器必须以 `dotnet publish src/Wanxiang.App` 产物为输入。
+
+# 410. 干净克隆可直接发布 App
+干净克隆上 `dotnet publish src/Wanxiang.App` 原来失败（`avalonia.js missing from AppBundle`）：PWA 不在 App 引用图里、未还原；且 publish 的全局 `_IsPublishing=true` 让 wasm build 阶段不生成 AppBundle，而 publish 阶段依赖它（CI 之所以绿，是因为前面先跑了整 sln 的 build）。`PublishPwaBundle` 先用独立进程 `dotnet build` PWA（含 restore、增量），再走嵌套 Publish。单独 `dotnet publish src/Wanxiang.Pwa` 在干净树上仍需先 build。
+
+# 411. 发布产物冒烟
+`tools/smoke_published.sh <publish 目录> [port]`：临时配置/数据目录、显式空闲端口（默认随机）、`--client=false --pwa` 起发布目录里的主机，`tools/smoke_published_pwa.js` 用 headless Chrome（1200×800、DPR 2）验证：画布出现且非纯色、画布像素 = CSS × 2、`Input.insertText` 两次各落一次、无未捕获异常；退出时一定杀主机。只用条件等待，不靠固定秒数判定。
+
+# 412. CI 跑发布冒烟
+pr-gate 在发布 App 之后跑 411（`npm ci` 装 puppeteer-core，用 runner 自带 google-chrome），截图作为 artifact 上传。注意：headless Chrome 本身不触发 400 所修的「设备像素尺寸报成 CSS 尺寸」环境，DPR 断言守的是「画布按像素比放大」这条整体结果，不是那个具体分支。
+
+# 413. 发行包格式
+`tools/package_release.sh <rid> <publish 目录> <out> <版本>`：`wanxiang-<版本>-<rid>`，linux/osx 为 tar.gz、win 为 zip，旁附 `.sha256`；包内含自包含发布、`pwa/`（打包前再校验补丁）、`packaging/` 下对应平台的 `wanxiang://` 模板与说明、由 `packaging/RELEASE-README.md` 生成的简短 README。
+
+# 414. Release workflow 只建草稿
+`.github/workflows/release.yml`：推 `v*` 标签触发，矩阵 linux-x64 / win-x64 / osx-arm64 / osx-x64 全部在 ubuntu 上交叉发布自包含包，linux-x64 额外跑 411；`draft-release` 用 `gh release create --draft --verify-tag`。已存在且已发布的 Release 拒绝改动；已存在的草稿只补传。永不自动发布，发布由人工在 Releases 页确认。
+
+# 415. 手动触发只产出 artifact
+`workflow_dispatch` 用于试跑打包：版本号只进包名，不建 Release、不打标签。
+
+# 416. macOS 包不签名
+osx 包未签名、未公证、非 `.app` 结构（`Info.plist` 只作模板随附）；README 写明 Gatekeeper 的放行方式。做 `.app`/签名/公证是后续工作。
