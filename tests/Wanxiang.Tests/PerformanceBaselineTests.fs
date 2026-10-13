@@ -25,7 +25,7 @@ module PerformanceBaseline =
 
     /// 生成 n 条提交（创建 1 对话 + n-1 条消息），落盘为 RFC 7464 日志。
     /// 返回 (dataDir, 日志字节数)。
-    let private seedLog (n: int) : string =
+    let seedLog (n: int) : string =
         let dir = tempDir ()
         DataPaths.ensureDataDirs dir
         let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
@@ -130,24 +130,6 @@ module PerformanceBaseline =
         finally
             cleanup dir
 
-    [<Fact>]
-    let ``内存采样：10^4 commits 启动后托管堆 < 256 MiB`` () =
-        let dir = seedLog 10000
-        try
-            let outcome = replayOutcome dir
-            // 强制 GC 后采样当前托管堆（仅记录 + 宽松上界）
-            GC.Collect()
-            GC.WaitForPendingFinalizers()
-            GC.Collect()
-            let heapBefore = GC.GetTotalMemory(true)
-            let _ = outcome.projection
-            let heapAfter = GC.GetTotalMemory(true)
-            // 10^4 条消息的投影应远小于 256 MiB（宽松上界防回归）
-            Assert.True(heapBefore < 256L * 1024L * 1024L, sprintf "heap before %d" heapBefore)
-            Assert.True(heapAfter < 256L * 1024L * 1024L, sprintf "heap after %d" heapAfter)
-        finally
-            cleanup dir
-
     // -------------------------------------------------------------------------
     // Large-history 分级（§24：定期运行，不进 PR gate）
     // -------------------------------------------------------------------------
@@ -172,5 +154,27 @@ module PerformanceBaseline =
         try
             let _, elapsed = timed (fun () -> Inspect.run dir)
             Assert.True(elapsed < TimeSpan.FromSeconds 300.0, sprintf "cold start took %A" elapsed)
+        finally
+            cleanup dir
+
+
+/// 内存基线单独成一个不并行的集合：托管堆是进程级的，和其他测试同时跑会量到别人的分配。
+[<CollectionDefinition("MemoryBaseline", DisableParallelization = true)>]
+type MemoryBaselineCollection() = class end
+
+[<Collection("MemoryBaseline")>]
+module MemoryBaseline =
+
+    [<Fact>]
+    let ``内存采样：10^4 commits 启动后托管堆 < 256 MiB`` () =
+        let dir = PerformanceBaseline.seedLog 10000
+        try
+            // 只量本测试自己留下的：重放前后的存活堆之差（强制完整 GC 后取）
+            let before = GC.GetTotalMemory(true)
+            let outcome = replayOutcome dir
+            let after = GC.GetTotalMemory(true)
+            GC.KeepAlive outcome.projection
+            let retained = after - before
+            Assert.True(retained < 256L * 1024L * 1024L, sprintf "projection retained %d bytes" retained)
         finally
             cleanup dir

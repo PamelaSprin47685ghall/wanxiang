@@ -8,7 +8,6 @@
   <!-- 领域胶水：组合归 Wanxiang2.LedgerStore，这里只有编解码、折叠、错误映射与路径选择。 -->
   <ItemGroup>
     <Compile Include="DataPaths.fs" />
-    <Compile Include="DataLock.fs" />
     <Compile Include="Store.fs" />
     <Compile Include="RecoveryBundle.fs" />
   </ItemGroup>

@@ -225,11 +225,11 @@ module Doctor =
         if live then
             d.checks <- d.checks @ [ { name = "data-lock"; ok = true; detail = "held by this host" } ]
         else
-            match DataLock.Acquire dataDir with
+            DataPaths.ensureDataDirs dataDir
+            match DirLock.DirLock.TryAcquire(DataPaths.eventsDir dataDir) with
             | Ok l ->
-                let pidDetail = match l.PidWarning with Some w -> sprintf "; %s" w | None -> ""
                 (l :> IDisposable).Dispose()
-                d.checks <- d.checks @ [ { name = "data-lock"; ok = true; detail = "free" + pidDetail } ]
+                d.checks <- d.checks @ [ { name = "data-lock"; ok = true; detail = "free" } ]
             | Error e ->
                 d.checks <- d.checks @ [ { name = "data-lock"; ok = false; detail = e } ]
         // 快照状态

@@ -197,6 +197,11 @@ module Inspect =
 
 module Repair =
 
+    /// 在已打开（已持锁）的存储上修复：截到损坏点。
+    let repairWith (s: EventStore) : Result<string list, string> =
+        try s.Repair() |> Result.map (fun _ -> [ DataPaths.logFile s.DataDir ])
+        with e -> Error(sprintf "repair failed: %s" e.Message)
+
     /// 显式修复（doctor --fix；调用方先建证据包）：截到损坏点。返回被改动的文件。
     let repair (dataDir: string) : Result<string list, string> =
         try

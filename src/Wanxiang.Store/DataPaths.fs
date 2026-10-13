@@ -8,14 +8,13 @@ open System.IO
 ///     ledger/snapshot              账本快照（LedgerStore 管理；缓存，可删）
 ///     attachments/                 附件内容寻址存储
 ///     recovery/                    修复前的证据包
-///     .lock                        实例独占锁（DirLock）
+///     ledger/.lock                 实例独占锁（LedgerStore 的 DirLock；也覆盖附件与证据包，它们只由持锁进程写）
 ///     events/                      旧版日志目录：新版不读不写，doctor 会提示
 module DataPaths =
 
     let eventsDir (dataDir: string) = Path.Combine(dataDir, "ledger")
     let logFile (dataDir: string) = Path.Combine(eventsDir dataDir, "log.jsonseq")
     let attachmentsDir (dataDir: string) = Path.Combine(dataDir, "attachments")
-    let lockFile (dataDir: string) = Path.Combine(dataDir, ".lock")
 
     /// 旧版（按日分文件）日志目录。格式不兼容，新版不读；只用于诊断提示。
     let legacyEventsDir (dataDir: string) = Path.Combine(dataDir, "events")

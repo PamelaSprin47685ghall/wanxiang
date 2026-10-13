@@ -21,6 +21,7 @@
     <Compile Include="ReplayTests.fs" />
     <Compile Include="SupportBundleTests.fs" />
     <Compile Include="DoctorTests.fs" />
+    <Compile Include="DoctorInspectTests.fs" />
     <Compile Include="ProjectionInvariantsTests.fs" />
     <Compile Include="CoordinatorTests.fs" />
     <Compile Include="CatchUpSafetyTests.fs" />

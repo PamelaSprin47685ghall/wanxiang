@@ -130,26 +130,25 @@ module Program =
                 if switches.fix then
                     logInfo "doctor --fix: repairing log"
                     // 决策 105/Q110：任何可能修改 NDJSON 的修复必须在持锁后进行（与运行期写入互斥）
-                    match DataLock.Acquire dataDir with
-                    | Error e ->
-                        eprintfn "data directory locked: %s" e
-                        exit 1
-                    | Ok lockHandle ->
-                        match lockHandle.PidWarning with
-                        | Some w -> logInfo(sprintf "warning: %s" w)
-                        | None -> ()
-                        // 修复前先只读检查（算法 R）；Healthy 无需修复。
-                        // 修复前建立证据包（算法 B）：复制受影响文件 + SHA-256 + manifest。
-                        // 只有证据包建立成功才允许执行修复（S-002 / R1）。
+                    let store =
+                        try new EventStore(dataDir, policy = LedgerStore.SnapshotPolicy.Manual)
+                        with
+                        | :? InvalidOperationException as e ->
+                            eprintfn "data directory locked: %s" e.Message
+                            exit 1
+                        | e ->
+                            eprintfn "event log not readable: %s" e.Message
+                            exit 1
+                    do
                         let result =
-                            match Inspect.run dataDir with
+                            match Inspect.ofStore store with
                             | Healthy _ -> Ok []
                             | RepairRequired (_, plan) ->
                                 match Wanxiang.Store.RecoveryBundle.create dataDir plan with
                                 | Error e -> Error e
                                 | Ok bundle ->
                                     logInfo(sprintf "recovery bundle created at %s" bundle)
-                                    match Repair.repair dataDir with
+                                    match Repair.repairWith store with
                                     | Ok truncatedFiles ->
                                         for f in truncatedFiles do
                                             logInfo(sprintf "truncated %s" f)
@@ -161,7 +160,7 @@ module Program =
                             | HostOwned _ -> Error "the event log is held by a running host; stop it first"
                             | UnsupportedFormat msg -> Error msg
                             | Unreadable msg -> Error msg
-                        (lockHandle :> IDisposable).Dispose()
+                        store.Shutdown()
                         match result with
                         | Ok _ -> ()
                         | Error e ->
@@ -190,16 +189,6 @@ module Program =
                 if not effectiveServer then
                     None
                 else
-                    let lockHandle =
-                        match DataLock.Acquire dataDir with
-                        | Ok l ->
-                            match l.PidWarning with
-                            | Some w -> logInfo(sprintf "warning: %s" w)
-                            | None -> ()
-                            Some l
-                        | Error e ->
-                            eprintfn "data directory locked: %s" e
-                            exit 1
                     // S-001 / STOP-1：正常启动**只读检查**（算法 R），不再自动截尾/删除。
                     // Healthy → 正常启动；RepairRequired → 以最长有效前缀启动**只读降级模式**，
                     // 禁止一切永久写入，提示运行 doctor --fix（修复会先建立证据包）。
@@ -209,7 +198,11 @@ module Program =
                     // 启动检查与打开合为一步：打开的存储直接交给 ServerApp（不再重放第二次）。
                     let store =
                         try new EventStore(dataDir)
-                        with e ->
+                        with
+                        | :? InvalidOperationException as e ->
+                            eprintfn "data directory locked: %s" e.Message
+                            exit 1
+                        | e ->
                             eprintfn "event log not readable: %s" e.Message
                             exit 1
                     let inspectStartup () =
@@ -244,9 +237,6 @@ module Program =
                         | Unreadable msg ->
                             eprintfn "event log not readable: %s" msg
                             exit 1
-                    match lockHandle with
-                    | Some l -> (l :> IDisposable).Dispose()
-                    | None -> ()
                     outcome
 
             // 自动配对（决策 64 + Q190）：server+client 同进程时，本机桌面 Client 自动获得永久令牌。

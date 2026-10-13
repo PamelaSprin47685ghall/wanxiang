@@ -62,30 +62,17 @@ module ServerAppTests =
     // =========================================================================
 
     [<Fact>]
-    let ``DataLock 两个实例无法同时锁定同一目录，释放后可重新获取`` () =
+    let ``数据目录锁：两个存储无法同时打开同一目录，释放后可重新打开`` () =
         let dir = createTestDir ()
         try
             // 首次获取必须成功
-            let lockResult1 = DataLock.Acquire dir
-            match lockResult1 with
-            | Error e -> failwithf "初次获取锁不应失败: %s" e
-            | Ok lock1 ->
-                // 第二次获取同一目录锁必须返回 Error，绝不静默运行
-                let lockResult2 = DataLock.Acquire dir
-                match lockResult2 with
-                | Ok _ -> failwith "同一目录不应被两个锁实例同时获取"
-                | Error err ->
-                    Assert.Contains("is locked", err)
-
-                // 释放第一个锁
-                (lock1 :> IDisposable).Dispose()
-
-                // 释放后再获取必须成功
-                let lockResult3 = DataLock.Acquire dir
-                match lockResult3 with
-                | Error e -> failwithf "锁释放后重新获取失败: %s" e
-                | Ok lock3 ->
-                    (lock3 :> IDisposable).Dispose()
+            // 数据目录唯一的锁是存储自己的（ledger/.lock）
+            let first = new EventStore(dir)
+            let ex = Assert.ThrowsAny<InvalidOperationException>(fun () -> new EventStore(dir) |> ignore)
+            Assert.Contains("is locked", ex.Message)
+            first.Shutdown()
+            let again = new EventStore(dir)
+            again.Shutdown()
         finally
             try Directory.Delete(dir, true) with _ -> ()
 

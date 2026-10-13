@@ -38,19 +38,6 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             // DEGRADED（§17.1）：instanceId 注册失败不阻塞启动，但必须留下证据
             Stderr.write "instance-id-register-failed" [ "message", e.Message ]
 
-    /// 运行期数据锁：获取失败即启动失败；Stop 时释放（严格单进程，决策 105）
-    /// 无论 startupOutcome 是否提供都必须检查 Acquire 结果（第二进程抢占时拒绝启动）。
-    let lockHandle: Result<DataLock, string> = DataLock.Acquire dataDir
-
-    do
-        // 锁获取失败（另一实例已持锁）→ 启动失败，绝不静默无锁运行（决策 105）
-        match lockHandle with
-        | Error e -> failwith e
-        | Ok l ->
-            // R6：PID 写失败是 DEGRADED（锁排他性不依赖 PID 内容），必须留下证据
-            match l.PidWarning with
-            | Some w -> Stderr.write "data-lock-pid-warning" [ "message", w ]
-            | None -> ()
 
     /// 只读检查结论。损坏（RepairRequired）时进入只读降级模式：投影可用，但拒绝一切永久写入。
     /// 正常启动**不再**自动截尾/删除（S-001 / STOP-1）；修复只能由 doctor --fix 显式执行。
@@ -59,9 +46,10 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         match startupStore with
         | Some s -> s
         | None ->
-            match lockHandle with
-            | Error e -> failwith e
-            | Ok _ -> new EventStore(dataDir)
+            // 数据目录唯一的独占锁就是存储的锁（ledger/.lock，决策 105）：抢不到即启动失败。
+            // 附件、证据包只由持有存储的进程写，所以这把锁同样覆盖它们。
+            try new EventStore(dataDir)
+            with :? InvalidOperationException as e -> failwith e.Message
 
     let inspectResult = Inspect.ofStore store
 
@@ -580,11 +568,6 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 | None -> ()
             with _ -> ()
             try toolRegistry.Dispose() with _ -> ()
-            try
-                match lockHandle with
-                | Ok l -> (l :> IDisposable).Dispose()
-                | Error _ -> ()
-            with _ -> ()
 
     interface IDisposable with
         member this.Dispose() = this.Stop()
