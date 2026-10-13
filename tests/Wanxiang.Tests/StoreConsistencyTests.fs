@@ -184,8 +184,8 @@ let ``replay 正确解码含中文的日志行`` () =
         cleanup dir
 
 /// 回归：JSON 字符串里的非法 UTF-8 字节必须当作损坏，而不是静默变成 U+FFFD 入库。
-/// 当前 wanxiang2 JsonSeq.Frame.split 用宽松解码（Encoding.UTF8），这条会失败；已提给库作者。
-[<Fact(Skip = "待 wanxiang2 JsonSeq 改为严格 UTF-8 解码（见 integrate(Ledger) 提交说明）")>]
+/// JsonSeq 严格解码后，非法字节记录带 InvalidUtf8 故障，账本前缀停在它之前。
+[<Fact>]
 let ``replay 遇非法 UTF-8 序列触发截尾`` () =
     let dir = tempDir ()
     try

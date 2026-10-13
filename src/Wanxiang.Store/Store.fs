@@ -1,27 +1,38 @@
 namespace Wanxiang.Store
 
 open System
+open System.Collections.Concurrent
 open System.IO
+open System.Threading.Tasks
 open System.Text.Json.Nodes
 open Wanxiang.Core
 
-// 本文件是组装层：把 wanxiang2 的 JsonSeq / Ledger / Snapshot 三个泛型库
-// 用 Wanxiang 的事件类型（EventData）与状态类型（Projection）装起来。
-// 机制都在库里；这里只有类型映射、路径约定和对上层保持不变的名字。
+// 组装层：在 wanxiang2 的对象之间路由消息。
+//   Ledger（actor）发 AppendRequested -> 这里写 JsonSeqFile -> 回 Appended / AppendFailed。
+//   读取：Ledger 回答位置（PositionsAfter / PositionOf），这里按位置读 JsonSeqFile。
+// 位置 'P = 一条记录在日志里的字节区间 [start, end)。
+// 本文件不持锁：串行化由账本的邮箱负责。
 
-/// 领域与账本之间的映射。
+/// 记录在日志里的字节区间。
+type Span = int64 * int64
+
+/// 领域类型与库类型之间的映射。
 module Assembly =
 
-    let codec: Ledger.Codec<EventData> =
-        { encode = fun e -> CommitCodec.eventDataToJson e :> JsonNode
-          decode =
-            fun n ->
+    /// 领域事件 -> 外壳里的 JSON。
+    let toJson (c: Ledger.Commit<EventData>) : Ledger.Commit<JsonNode> =
+        Ledger.Commit.map (fun e -> CommitCodec.eventDataToJson e :> JsonNode) c
+
+    /// 外壳里的 JSON -> 领域事件。
+    let ofJson (c: Ledger.Commit<JsonNode>) : Result<Ledger.Commit<EventData>, string> =
+        let decoded =
+            c.events
+            |> List.map (fun n ->
                 match n with
-                | :? JsonObject as o ->
-                    match CommitCodec.tryEventFromJson o with
-                    | Some e -> Ok e
-                    | None -> Error "unknown or malformed event"
-                | _ -> Error "event is not a JSON object" }
+                | :? JsonObject as o -> CommitCodec.tryEventFromJson o
+                | _ -> None)
+        if decoded |> List.forall Option.isSome then Ok { id = c.id; at = c.at; stamp = c.stamp; events = List.choose id decoded }
+        else Error "unknown or malformed event"
 
     /// 账本提交 -> 上层沿用的 Events.Commit。commandType/bootId/source 不再持久化。
     let toCommit (c: Ledger.Commit<EventData>) : Events.Commit =
@@ -29,6 +40,19 @@ module Assembly =
         match c.stamp with
         | Some s -> { b with commandId = Some s.commandId; commandHash = Some s.hash }
         | None -> b
+
+    let ofCommit (c: Events.Commit) : Ledger.Commit<EventData> =
+        let stamp =
+            match c.commandId, c.commandHash with
+            | Some cid, Some h -> Some(({ commandId = cid; hash = h }: Ledger.Stamp))
+            | _ -> None
+        { id = c.id; at = c.committedAtUtc; stamp = stamp; events = c.events }
+
+    /// 一条提交的外壳文本（不含分帧；测试造数据、诊断用）。
+    let envelope (c: Events.Commit) : string = ofCommit c |> toJson |> Ledger.Envelope.write
+
+    /// 一条提交在日志里的完整一帧。
+    let frame (c: Events.Commit) : byte[] = envelope c |> JsonSeq.Frame.encode
 
     /// 折叠。lastError 记下领域错误原样（账本只传字符串），供协调器还原 WanxiangError。
     let fold (lastError: WanxiangError option ref) (p: Projection) (c: Ledger.Commit<EventData>) : Result<Projection, string> =
@@ -38,68 +62,44 @@ module Assembly =
             lastError.Value <- Some e
             Error(WanxiangError.message e)
 
-    /// 一条提交在日志里的外壳文本（不含分帧；测试造数据、诊断用）。
-    let envelope (c: Events.Commit) : string =
-        let stamp =
-            match c.commandId, c.commandHash with
-            | Some cid, Some h -> Some(({ commandId = cid; hash = h }: Ledger.Stamp))
-            | _ -> None
-        ({ id = c.id; at = c.committedAtUtc; stamp = stamp; events = c.events }: Ledger.Commit<EventData>)
-        |> Ledger.Envelope.encode codec
-
-    /// 一条提交在日志里的完整一帧。
-    let frame (c: Events.Commit) : byte[] = envelope c |> JsonSeq.Frame.encode
-
-    let foldPure (p: Projection) (c: Ledger.Commit<EventData>) =
-        Projection.applyCommit p (toCommit c) |> Result.mapError WanxiangError.message
-
-    let toLogRecord (r: JsonSeq.Record) : Ledger.LogRecord =
-        { payload = r.payload; complete = r.complete; startOffset = r.startOffset; endOffset = r.endOffset }
-
-    /// 只读日志：不持写句柄，与运行中的主机共存（FileShare.ReadWrite）。
-    /// limit：只暴露该偏移之前的字节（只读降级模式用，损坏点之后的内容不可见）。
-    let readOnlyLog (path: string) (limit: int64 option) : Ledger.Log =
-        let readFrom (offset: int64) =
-            if not (File.Exists path) then []
+    /// 只读读取 [from, until)：不持写句柄，可与运行中的主机共存。until = None 读到末尾。
+    let read (path: string) (from: int64) (until: int64 option) : JsonSeq.Record list =
+        if not (File.Exists path) then []
+        else
+            use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
+            let stop = defaultArg until fs.Length |> min fs.Length
+            if from >= stop then []
             else
-                use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
-                let stop = match limit with Some l -> min l fs.Length | None -> fs.Length
-                if offset >= stop then []
-                else
-                    let buf = Array.zeroCreate<byte> (int (stop - offset))
-                    fs.Position <- offset
-                    fs.ReadExactly(buf, 0, buf.Length)
-                    JsonSeq.Frame.split offset (ReadOnlySpan buf)
-                    |> List.map toLogRecord
-        { readFrom = readFrom
-          append = fun _ -> raise (InvalidOperationException "event log is read-only")
-          truncate = ignore }
+                let buf = Array.zeroCreate<byte> (int (stop - from))
+                fs.Position <- from
+                fs.ReadExactly(buf, 0, buf.Length)
+                JsonSeq.Frame.split from (ReadOnlySpan buf)
 
-    /// 可写日志：JsonSeqFile 原样透传，外加测试用故障注入。
-    let writableLog (file: JsonSeq.JsonSeqFile) : Ledger.Log =
-        { readFrom =
-            fun o ->
-                file.ReadFrom o
-                |> List.map toLogRecord
-          append =
-            fun text ->
-                if FaultInjector.tryFail FaultInjector.BeforeAppend then raise (IOException "injected fault: BeforeAppend")
-                let after = file.Append text
-                if FaultInjector.tryFail FaultInjector.AfterAppend then raise (IOException "injected fault: AfterAppend")
-                after
-          truncate = file.Truncate }
+    /// 一条记录 -> 领域提交；失败给出原因。
+    let decode (r: JsonSeq.Record) : Result<Ledger.Commit<EventData>, Choice<string, int>> =
+        match r.fault with
+        | Some f -> Error(Choice1Of2 f)
+        | None ->
+            match Ledger.Envelope.read r.payload with
+            | Ledger.Envelope.Parsed cj -> ofJson cj |> Result.mapError Choice1Of2
+            | Ledger.Envelope.Invalid why -> Error(Choice1Of2("undecodable record: " + why))
+            | Ledger.Envelope.NewerVersion v -> Error(Choice2Of2 v)
+
+type Checkpoint = Ledger.Checkpoint<Projection, Span>
 
 /// 启动重放结果。checkpoint 交给协调器续播，也可直接存成快照。
 type ReplayOutcome =
     { projection: Projection
       lastCommitId: CommitId
-      checkpoint: Ledger.Checkpoint<Projection> }
+      checkpoint: Checkpoint }
 
 module ReplayOutcome =
-    let ofCheckpoint (cp: Ledger.Checkpoint<Projection>) : ReplayOutcome =
+    let ofCheckpoint (cp: Checkpoint) : ReplayOutcome =
         { projection = cp.state; lastCommitId = cp.throughId; checkpoint = cp }
 
-    let empty = ofCheckpoint (Ledger.Checkpoint.empty Projection.empty)
+    let emptyCheckpoint: Checkpoint = { state = Projection.empty; throughId = 0UL; stamps = Map.empty; positions = [] }
+
+    let empty = ofCheckpoint emptyCheckpoint
 
 /// 日志损坏点（只读检查产物）。
 type Damage = { file: string; byteOffset: int64; reason: string }
@@ -117,22 +117,37 @@ type InspectResult =
 
 module Replay =
 
-    /// 从基线续播（快照启动）。基线为空即完整重放。
-    let inspectFrom (dataDir: string) (from: Ledger.Checkpoint<Projection>) : InspectResult =
+    /// 记录 -> 账本的 Replay 消息；遇到第一个故障、解码失败或 ReplayRejected 即停，报告损坏点。
+    let internal run (path: string) (from: Checkpoint) : InspectResult =
+        let ledger = Ledger.Ledger<Projection, EventData, Span>(Assembly.fold (ref None), from)
+        let mutable rejected: string option = None
+        ledger.Outbox.Add(function Ledger.ReplayRejected(_, _, why) -> rejected <- Some why | _ -> ())
+        let start = match List.tryLast from.positions with Some(_, e) -> e | None -> 0L
+        let damaged (r: JsonSeq.Record) why =
+            RepairRequired(
+                ReplayOutcome.ofCheckpoint ledger.Checkpoint,
+                { damage = { file = path; byteOffset = r.startOffset; reason = why }; affectedFiles = [ path ] })
+        let rec go (records: JsonSeq.Record list) =
+            match records with
+            | [] -> Healthy(ReplayOutcome.ofCheckpoint ledger.Checkpoint)
+            | r :: rest ->
+                match Assembly.decode r with
+                | Error(Choice2Of2 v) -> UnsupportedFormat(sprintf "event log written by a newer version (envelope v%d)" v)
+                | Error(Choice1Of2 why) -> damaged r why
+                | Ok c ->
+                    ledger.Post(Ledger.Replay(c, (r.startOffset, r.endOffset)))
+                    match rejected with
+                    | Some why -> damaged r why
+                    | None -> go rest
+        go (Assembly.read path start None)
+
+    /// 从基线续播（快照启动）。
+    let inspectFrom (dataDir: string) (from: Checkpoint) : InspectResult =
         let path = DataPaths.logFile dataDir
-        try
-            match Ledger.Ledger.openLog (Assembly.readOnlyLog path None) Assembly.codec Assembly.foldPure from with
-            | Ledger.Ready l -> Healthy(ReplayOutcome.ofCheckpoint l.Checkpoint)
-            | Ledger.Damaged d ->
-                RepairRequired(
-                    ReplayOutcome.ofCheckpoint d.prefix,
-                    { damage = { file = path; byteOffset = d.validUntil; reason = d.reason }
-                      affectedFiles = [ path ] })
-            | Ledger.Unsupported v -> UnsupportedFormat(sprintf "event log written by a newer version (envelope v%d)" v)
+        try run path from
         with e -> Unreadable(sprintf "cannot read %s: %s" path e.Message)
 
-    let inspect (dataDir: string) : InspectResult =
-        inspectFrom dataDir (Ledger.Checkpoint.empty Projection.empty)
+    let inspect (dataDir: string) : InspectResult = inspectFrom dataDir ReplayOutcome.emptyCheckpoint
 
 module Repair =
 
@@ -151,7 +166,7 @@ type SnapshotInfo =
       createdAtUtc: DateTimeOffset
       path: string
       projection: Projection
-      checkpoint: Ledger.Checkpoint<Projection> }
+      checkpoint: Checkpoint }
 
 /// 快照启动结论（供诊断留证据）。
 type SnapshotStartup =
@@ -161,21 +176,19 @@ type SnapshotStartup =
     /// 快照超前于日志（日志被截断/替换）：回退完整重放
     | SnapshotStale of reason: string
 
-/// 账本基线快照：外壳（原子写、校验和、版本）由 wanxiang2 Snapshot 库负责，
-/// 这里只定正文形状 = 基线 Checkpoint<Projection> + 创建时间。
+/// 账本基线快照：外壳由 wanxiang2 SnapshotFile 负责，正文 = Checkpoint + 创建时间。
 module Snapshot =
 
-    let FormatVersion = Snapshot.Snapshot.Version
+    let FormatVersion = 1
 
     let snapshotsDir = DataPaths.snapshotsDir
 
     let private u64 (n: JsonNode) = UInt64.Parse(n.GetValue<string>(), Globalization.CultureInfo.InvariantCulture)
 
-    let private encode (createdAt: DateTimeOffset, cp: Ledger.Checkpoint<Projection>) : string =
+    let private encode (createdAt: DateTimeOffset) (cp: Checkpoint) : string =
         let o = JsonObject()
         o["createdAt"] <- createdAt.ToString("o")
         o["throughId"] <- string cp.throughId
-        o["offset"] <- cp.offset
         let stamps = JsonArray()
         for KeyValue(cid, (hash, id)) in cp.stamps do
             let s = JsonObject()
@@ -184,10 +197,14 @@ module Snapshot =
             s["commitId"] <- string id
             stamps.Add s
         o["stamps"] <- stamps
+        let pos = JsonArray()
+        for (a, b) in cp.positions do
+            pos.Add(JsonArray(JsonValue.Create a, JsonValue.Create b))
+        o["positions"] <- pos
         o["projection"] <- ProjectionCodec.toJson cp.state
         o.ToJsonString()
 
-    let private decode (text: string) : Result<DateTimeOffset * Ledger.Checkpoint<Projection>, string> =
+    let private decode (text: string) : Result<DateTimeOffset * Checkpoint, string> =
         try
             let o = JsonNode.Parse(text).AsObject()
             match ProjectionCodec.tryFromJson (o["projection"].AsObject()) with
@@ -197,38 +214,49 @@ module Snapshot =
                     o["stamps"].AsArray()
                     |> Seq.map (fun s -> s["commandId"].GetValue<string>(), (s["hash"].GetValue<string>(), u64 s["commitId"]))
                     |> Map.ofSeq
-                Ok(
-                    DateTimeOffset.Parse(o["createdAt"].GetValue<string>(), Globalization.CultureInfo.InvariantCulture),
-                    { state = p; throughId = u64 o["throughId"]; offset = o["offset"].GetValue<int64>(); stamps = stamps }
-                )
+                let positions =
+                    o["positions"].AsArray()
+                    |> Seq.map (fun n -> let a = n.AsArray() in a[0].GetValue<int64>(), a[1].GetValue<int64>())
+                    |> List.ofSeq
+                let throughId = u64 o["throughId"]
+                if uint64 positions.Length <> throughId then Error "positions do not match throughId"
+                else
+                    Ok(
+                        DateTimeOffset.Parse(o["createdAt"].GetValue<string>(), Globalization.CultureInfo.InvariantCulture),
+                        { state = p; throughId = throughId; stamps = stamps; positions = positions }
+                    )
         with e -> Error e.Message
 
     /// 写快照（原子替换）。
-    let write (dataDir: string) (cp: Ledger.Checkpoint<Projection>) : Result<string, string> =
+    let write (dataDir: string) (cp: Checkpoint) : Result<string, string> =
         try
-            let path = DataPaths.snapshotFile dataDir
-            Snapshot.Snapshot.save path encode (DateTimeOffset.UtcNow, cp)
-            Ok path
+            let file = Snapshot.SnapshotFile(DataPaths.snapshotFile dataDir)
+            file.Save(encode DateTimeOffset.UtcNow cp)
+            Ok file.Path
         with e -> Error e.Message
 
     /// 读取快照并判定能否用作启动基线。
     let findLatest (dataDir: string) : SnapshotStartup =
-        let path = DataPaths.snapshotFile dataDir
-        match Snapshot.Snapshot.load path decode with
+        let file = Snapshot.SnapshotFile(DataPaths.snapshotFile dataDir)
+        match file.Load() with
         | Snapshot.Missing -> NoSnapshot
         | Snapshot.Corrupt r -> SnapshotCorrupt [ r ]
-        | Snapshot.Loaded(createdAt, cp) ->
-            let logLen = try FileInfo(DataPaths.logFile dataDir).Length with _ -> 0L
-            let log = DataPaths.logFile dataDir
-            if cp.offset > (if File.Exists log then logLen else 0L) then
-                SnapshotStale(sprintf "snapshot covers %d bytes but log has %d" cp.offset logLen)
-            else
-                SnapshotUsed
-                    { throughCommitId = cp.throughId
-                      createdAtUtc = createdAt
-                      path = path
-                      projection = cp.state
-                      checkpoint = cp }
+        | Snapshot.Loaded text ->
+            match decode text with
+            | Error r -> SnapshotCorrupt [ r ]
+            | Ok(createdAt, cp) ->
+                let log = DataPaths.logFile dataDir
+                let logLen = if File.Exists log then FileInfo(log).Length else 0L
+                let covered = match List.tryLast cp.positions with Some(_, e) -> e | None -> 0L
+                if covered > logLen then
+                    SnapshotStale(sprintf "snapshot covers %d bytes but log has %d" covered logLen)
+                else
+                    SnapshotUsed
+                        { throughCommitId = cp.throughId
+                          createdAtUtc = createdAt
+                          path = file.Path
+                          projection = cp.state
+                          checkpoint = cp }
 
 /// 提交请求（由 Server 层规划后送入单写者）。
 type CommitSubmit =
@@ -250,91 +278,92 @@ type SubmitResult =
     /// 同一 commandId、不同载荷：拒绝，未写盘
     | CommandIdRejected of WanxiangError
 
-/// 单写者：wanxiang2 Ledger 之上的薄壳。
-/// 账本先折叠后写盘，所以不存在「已落盘但投影失败」的截尾路径。
-/// outcome 为损坏前缀（只读降级）时，协调器只读：所有提交返回 CommitFailed。
+/// 单写者组装：账本（actor）与日志文件之间的消息路由。
+/// outcome 之后若日志还有内容，先续播；续播遇到损坏则只读（不截断，交给 doctor --fix）。
 type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Events.Commit -> unit, onTruncated: Events.Commit * WanxiangError * int64 * string -> unit) =
 
     do DataPaths.ensureDataDirs dataDir
     let path = DataPaths.logFile dataDir
-    let gate = obj ()
-    let mutable nowOverride: DateTimeOffset option = None
-    let lastError = ref None
-    let now () = nowOverride |> Option.defaultWith (fun () -> DateTimeOffset.UtcNow)
-    let mutable stopped = false
+
+    let start, readOnly =
+        match Replay.run path outcome.checkpoint with
+        | Healthy o -> o.checkpoint, false
+        | RepairRequired(o, _) -> o.checkpoint, true
+        | UnsupportedFormat msg -> failwith msg
+        | Unreadable msg -> failwith msg
 
     let file = new JsonSeq.JsonSeqFile(path)
     do try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
 
-    let ledger, readOnly =
-        match Ledger.Ledger.load (Assembly.writableLog file) Assembly.codec (Assembly.fold lastError) outcome.checkpoint now with
-        | Ledger.Ready l -> l, false
-        | Ledger.Damaged d ->
-            match Ledger.Ledger.load (Assembly.readOnlyLog path (Some d.validUntil)) Assembly.codec Assembly.foldPure outcome.checkpoint now with
-            | Ledger.Ready l -> l, true
-            | _ -> failwithf "cannot open damaged event log read-only: %s" d.reason
-        | Ledger.Unsupported v -> failwithf "event log written by a newer version (envelope v%d)" v
+    let lastError = ref None
+    let ledger = Ledger.Ledger<Projection, EventData, Span>(Assembly.fold lastError, start)
+    let replies = ConcurrentDictionary<Guid, TaskCompletionSource<Choice<Ledger.Commit<EventData>, Ledger.Refusal<Span>>>>()
+    let mutable stopped = false
 
-    // [例外登记] 分页索引：Ledger.ReadAfter 没有 limit，每次都解码游标之后的全部记录，
-    // 慢客户端按 64 条一批追赶长历史就是 O(n²)。这里自己记每条提交的起止偏移，按页读。
-    // 使用方：CommitsAfter（WsConnection catch-up）。解除条件：Ledger.ReadAfter 支持 limit 后删除。
-    // 索引从日志头开始（快照不删日志，所以全量历史都在）：第 i 条记录即 id = i + 1。
-    let bounds = ResizeArray<int64 * int64>()
-    do
-        let replayed = (Assembly.readOnlyLog path (Some ledger.Checkpoint.offset)).readFrom 0L
-        for r in replayed do
-            bounds.Add(r.startOffset, r.endOffset)
+    let reply ticket r =
+        let mutable tcs = null
+        if replies.TryRemove(ticket, &tcs) then tcs.SetResult r
 
-    let readPage (cursor: CommitId) (limit: int) : Events.Commit list =
-        let i0 = int cursor
-        let n = min limit (bounds.Count - i0)
-        if n <= 0 then []
-        else
-            let start, _ = bounds[i0]
-            let _, stop = bounds[i0 + n - 1]
-            (Assembly.readOnlyLog path (Some stop)).readFrom start
-            |> List.choose (fun r ->
-                match Ledger.Envelope.decode Assembly.codec r.payload with
-                | Ledger.Envelope.Ok c when c.id > cursor -> Some(Assembly.toCommit c)
-                | _ -> None)
+    /// 写入。fault 注入点：BeforeAppend（未写即失败）、AfterAppend（写了再失败，必须截回）。
+    let append (c: Ledger.Commit<EventData>) : Ledger.LedgerIn<EventData, Span> =
+        let before = file.Length
+        try
+            if FaultInjector.tryFail FaultInjector.BeforeAppend then raise (IOException "injected fault: BeforeAppend")
+            let after = file.Append(Ledger.Envelope.write (Assembly.toJson c))
+            if FaultInjector.tryFail FaultInjector.AfterAppend then raise (IOException "injected fault: AfterAppend")
+            Ledger.Appended(c.id, (before, after))
+        with e ->
+            (try file.Truncate before with _ -> ())
+            onTruncated (Assembly.toCommit c, Poisoned(sprintf "append failed: %s" e.Message), before, path)
+            Ledger.AppendFailed(c.id, e.Message)
 
     do
-        ledger.Committed.Add(fun c ->
-            let before = match bounds.Count with 0 -> 0L | k -> snd bounds[k - 1]
-            bounds.Add(before, ledger.Checkpoint.offset)
-            try onCommitted (Assembly.toCommit c) with _ -> ())
+        ledger.Outbox.Add(fun o ->
+            match o with
+            | Ledger.AppendRequested(_, c) -> ledger.Post(append c)
+            | Ledger.Committed(Some t, c, _) ->
+                (try onCommitted (Assembly.toCommit c) with _ -> ())
+                reply t (Choice1Of2 c)
+            | Ledger.Refused(t, r) -> reply t (Choice2Of2 r)
+            | Ledger.Committed(None, _, _)
+            | Ledger.ReplayRejected _ -> ())
+
+    /// 按位置读出提交。
+    let readSpans (spans: Span list) : Events.Commit list =
+        match spans with
+        | [] -> []
+        | _ ->
+            let from = fst (List.head spans)
+            let until = snd (List.last spans)
+            Assembly.read path from (Some until)
+            |> List.choose (fun r -> match Assembly.decode r with Ok c -> Some(Assembly.toCommit c) | Error _ -> None)
 
     member _.IsReadOnly = readOnly
 
     member _.Submit(submit: CommitSubmit) : SubmitResult =
-        lock gate (fun () ->
-            if stopped then CommitFailed(Poisoned "coordinator stopped")
-            elif readOnly then CommitFailed(Poisoned "event log damaged; read-only")
-            else
-                let stamp =
-                    match submit.commandId, submit.commandHash with
-                    | Some cid, Some h -> Some(({ commandId = cid; hash = h }: Ledger.Stamp))
-                    | _ -> None
-                nowOverride <- submit.nowUtc
-                lastError.Value <- None
-                let r =
-                    match stamp with
-                    | Some s -> ledger.Submit(submit.events, s)
-                    | None -> ledger.Submit(submit.events)
-                nowOverride <- None
-                match r with
-                | Ledger.Committed c -> Committed(Assembly.toCommit c)
-                | Ledger.Duplicate id ->
-                    match ledger.ReadAfter(id - 1UL) with
-                    | c :: _ when c.id = id -> IdempotentReplay(Assembly.toCommit c)
-                    | _ -> CommandIdRejected(Poisoned(sprintf "idempotency stamp references unreadable commit %d" id))
-                | Ledger.StampConflict _ ->
-                    CommandIdRejected(CommandIdConflict(sprintf "commandId %s reused with different payload" (defaultArg submit.commandId "")))
-                | Ledger.Rejected msg -> CommitFailed(lastError.Value |> Option.defaultValue (ValidationError msg))
-                | Ledger.WriteFailed e ->
-                    let attempted = Events.Commit.create (ledger.LastId + 1UL) (now ()) submit.events
-                    onTruncated (attempted, Poisoned(sprintf "append failed: %s" e.Message), ledger.Checkpoint.offset, path)
-                    CommitFailed(Poisoned "append failed"))
+        if stopped then CommitFailed(Poisoned "coordinator stopped")
+        elif readOnly then CommitFailed(Poisoned "event log damaged; read-only")
+        else
+            let stamp =
+                match submit.commandId, submit.commandHash with
+                | Some cid, Some h -> Some(({ commandId = cid; hash = h }: Ledger.Stamp))
+                | _ -> None
+            let ticket = Guid.NewGuid()
+            let tcs = TaskCompletionSource<_>(TaskCreationOptions.RunContinuationsAsynchronously)
+            replies[ticket] <- tcs
+            lastError.Value <- None
+            let at = submit.nowUtc |> Option.defaultWith (fun () -> DateTimeOffset.UtcNow)
+            ledger.Post(Ledger.Submit(ticket, submit.events, at, stamp))
+            match tcs.Task.Result with
+            | Choice1Of2 c -> Committed(Assembly.toCommit c)
+            | Choice2Of2(Ledger.Duplicate(_, span)) ->
+                match readSpans [ span ] with
+                | [ c ] -> IdempotentReplay c
+                | _ -> CommandIdRejected(Poisoned "idempotency stamp references unreadable commit")
+            | Choice2Of2(Ledger.StampConflict _) ->
+                CommandIdRejected(CommandIdConflict(sprintf "commandId %s reused with different payload" (defaultArg submit.commandId "")))
+            | Choice2Of2(Ledger.Rejected msg) -> CommitFailed(lastError.Value |> Option.defaultValue (ValidationError msg))
+            | Choice2Of2(Ledger.WriteFailed _) -> CommitFailed(Poisoned "append failed")
 
     member this.SubmitEvents(events: EventData list) : SubmitResult =
         this.Submit { events = events; commandId = None; commandType = None; commandHash = None; nowUtc = None }
@@ -345,23 +374,20 @@ type CommitCoordinator(dataDir: string, outcome: ReplayOutcome, onCommitted: Eve
     member _.Stamps : Map<string, string * CommitId> = ledger.Checkpoint.stamps
 
     /// 当前基线（关闭时写快照用）。
-    member _.Checkpoint : Ledger.Checkpoint<Projection> = ledger.Checkpoint
+    member _.Checkpoint : Checkpoint = ledger.Checkpoint
 
     /// 游标之后的提交（catch-up）。limit = None 返回全部剩余。
     member _.CommitsAfter(cursor: CommitId, ?limit: int) : Events.Commit list =
-        lock gate (fun () ->
+        let positions =
             match limit with
-            | Some n -> readPage cursor (max 0 n)
-            | _ ->
-                let all = ledger.ReadAfter cursor
-                let taken = match limit with Some n -> List.truncate (max 0 n) all | None -> all
-                taken |> List.map Assembly.toCommit)
+            | Some n -> ledger.PositionsAfter(cursor, max 0 n)
+            | None -> ledger.PositionsAfter cursor
+        positions |> List.map snd |> readSpans
 
     member _.Shutdown() : unit =
-        lock gate (fun () ->
-            if not stopped then
-                stopped <- true
-                (file :> IDisposable).Dispose())
+        if not stopped then
+            stopped <- true
+            (file :> IDisposable).Dispose()
 
     interface IDisposable with
         member this.Dispose() = this.Shutdown()

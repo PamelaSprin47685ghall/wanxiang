@@ -141,7 +141,7 @@ module AcceptanceScenario =
             // 完整重放（对照）
             let full = match Replay.inspect dir with Healthy o -> o | other -> failwithf "inspect %A" other
             // 在 50 处建快照
-            match Snapshot.write dir ({ state = p50; throughId = p50.latestCommitId; offset = offset50; stamps = Map.empty }: Ledger.Checkpoint<Projection>) with
+            match Snapshot.write dir ({ state = p50; throughId = p50.latestCommitId; stamps = Map.empty; positions = Wanxiang.Store.Assembly.read (DataPaths.logFile dir) 0L (Some(offset50)) |> List.map (fun r -> r.startOffset, r.endOffset) }: Wanxiang.Store.Checkpoint) with
             | Error e -> failwithf "snap %s" e
             | Ok _ ->
                 match Snapshot.findLatest dir with
