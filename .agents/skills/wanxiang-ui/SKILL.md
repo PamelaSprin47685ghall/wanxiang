@@ -640,7 +640,7 @@ PWA 安装条在桌面浏览器上也写「安装到主屏幕」。现在按 `(p
 r9 #6：未连接时侧栏与正文各有一张品牌卡和一个「连接主机」按钮，文案还不同。现在正文是唯一主卡，标题统一为「先连接一台万象主机」，说明沿用 §260 的人话；宽屏侧栏只留一句「连接主机后，对话记录会显示在这里。」，按钮保持挂载但隐藏。窄屏抽屉遮住正文，侧栏按钮在 compact 下照常出现（`SetCompactMode` 同步）。
 
 # 271. 桌面上安装提示停靠，不压标题栏
-r9 #8：安装条是顶部浮层，在桌面上压住对话标题栏中部。`(min-width: 900px) and (not (pointer: coarse))` 下（与安装文案同一判据，§264）安装条改为顶部停靠条（56px、全宽、无圆角阴影），`body:has(#shell-install:not([hidden])) #out` 让画布整体下移让位；关闭即复位。手机维持 §210 的顶部浮条。
+r9 #8：安装条是顶部浮层，在桌面上压住对话标题栏中部。`(min-width: 900px) and (not (pointer: coarse))` 下（与安装文案同一判据，§264）安装条改为顶部停靠条（56px、全宽、无圆角阴影），`body:has(#shell-install:not([hidden])) #out` 让画布整体下移让位；关闭即复位。手机原维持 §210 的顶部浮条，§491 起手机同样停靠。
 
 # 272. 手写配置缺 instanceId 自动补齐
 r9 #9：最小手写 `config.toml` 缺 `instanceId` 时主机以 `instanceId: required UUID` 退出。`ConfigStore.Open` 读到语法正确、但没有顶层 instanceId 的文件时，在开头补一行注释和新 UUIDv7（`TomlCodec.ensureInstanceId`），原子写回后再解析；其余内容不动。热重载路径不补（运行中删掉 instanceId 仍按配置事故拒绝）。
@@ -1014,3 +1014,9 @@ PWA 先把 MainView 挂到 SingleView 再 `Build()`，AttachedToVisualTree 在�
 
 # 461. UI 定位测试等条件而非固定墙钟
 「定位后不被拉回底部」类测试泵到条件成立（上限 5 秒）再断言，不按固定 900ms 判定；被拉回底部仍会在上限后失败。
+
+# 490. 快捷键提示统一写法（收敛 · 2026-10-13）
+a11y-audit §6 遗留：tooltip、读屏帮助、输入框提示里同时有 `Ctrl+Enter`、`⌘Enter`、`Ctrl+B / ⌘B` 三种写法与半角括号。用户可见文本一律写「Ctrl / ⌘ + 键」，外加全角括号（与快捷键帮助一致）。例外：`MenuEntry.withHint` 与 `AutomationProperties.AcceleratorKey` 交给 Avalonia 解析为 `KeyGesture`，保持 `Ctrl+Shift+C` 机器写法。
+
+# 491. 手机上安装提示同样停靠（收敛 · 2026-10-13）
+收敛走查：手机上顶部浮条整块盖住对话顶栏，抽屉按钮点不到。安装条在所有宽度下都停靠在顶部、全宽，画布按 `--wx-install-h` 让位；变量定义在 `:root`（定义在提示条自身时 `#out` 读不到，画布高度失效成空白）。手机高 52px + 顶部安全区，按钮保持 44px 触控目标；桌面（§271 判据）40px。
