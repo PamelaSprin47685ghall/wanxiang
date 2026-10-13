@@ -1046,6 +1046,7 @@ type Composer(actions: ComposerActions) as this =
         shell.BoxShadow <- BoxShadows()
 
         input.GotFocus.Add(fun _ ->
+            ParityProbe.hit "focus.composer"
             wasActiveBeforeDisabled <- true
             updateShellVisual ())
         input.LostFocus.Add(fun _ ->
@@ -1087,6 +1088,7 @@ type Composer(actions: ComposerActions) as this =
                     isDraggingOver <- false
                     updateShellVisual ()
         let handleDrop (e: DragEventArgs) =
+            ParityProbe.hit "dragdrop.drop"
             if isDraggingOver then
                 isDraggingOver <- false
                 updateShellVisual ()

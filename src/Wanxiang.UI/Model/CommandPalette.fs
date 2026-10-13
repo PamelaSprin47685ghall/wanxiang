@@ -167,15 +167,15 @@ module CommandPalette =
     let loadRecent () : string list =
         try
             let path = recentFile ()
-            if IO.File.Exists path then
-                Text.Json.JsonSerializer.Deserialize<string[]>(IO.File.ReadAllText path)
+            match LocalText.read path with
+            | Some text ->
+                Text.Json.JsonSerializer.Deserialize<string[]>(text)
                 |> Option.ofObj |> Option.map (List.ofArray >> List.truncate maxRecent) |> Option.defaultValue []
-            else []
+            | None -> []
         with _ -> []
 
     let saveRecent (recent: string list) =
         try
             let path = recentFile ()
-            IO.Directory.CreateDirectory(IO.Path.GetDirectoryName path) |> ignore
-            IO.File.WriteAllText(path, Text.Json.JsonSerializer.Serialize(Array.ofList recent))
+            LocalText.write path (Text.Json.JsonSerializer.Serialize(Array.ofList recent)) |> ignore
         with _ -> ()

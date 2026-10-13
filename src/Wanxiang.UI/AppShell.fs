@@ -129,6 +129,7 @@ type MainView() as this =
     // 剪贴板写入可能因权限、焦点或宿主（PWA）被拒：必须等写入落地再报，成功与失败各自说话。
     // 签名保持 string -> unit，调用方（消息复制、Markdown 代码块复制）无感。
     let copyToClipboard (text: string) =
+        ParityProbe.hit "clipboard.copy"
         try
             match topLevel () with
             | null -> toast "无法访问剪贴板，复制失败。" Failure
@@ -254,6 +255,7 @@ type MainView() as this =
         if OperatingSystem.IsBrowser() then
             let timer = DispatcherTimer(Interval = MotionLedger.hostViewportPoll)
             timer.Tick.Add(fun _ ->
+                ParityProbe.hit "timer.viewport"
                 try
                     let css = BrowserBridge.ViewportWidth()
                     if css > 0.0 && hostViewportWidth <> Some css then
@@ -264,6 +266,7 @@ type MainView() as this =
                     let epoch = BrowserBridge.ResumeEpoch()
                     if epoch <> lastResumeEpoch then
                         lastResumeEpoch <- epoch
+                        ParityProbe.hit "reconnect.resume"
                         this.ResumeReconnectNow()
                 with _ -> ()
                 this.CheckPageLink())
@@ -484,6 +487,7 @@ type MainView() as this =
     /// 保存到本机。关闭保存、尚未读完磁盘、或内容没变时什么也不做。
     member this.FlushDrafts() =
         if draftsLoaded && prefs.persistDrafts then
+            ParityProbe.hit "drafts.flush"
             draftStore.Save(this.CurrentDraftSnapshot()) |> ignore
 
     /// 把本机保存的内容放回内存：只处理当前主机，且不覆盖用户这次已经输入的文字。
@@ -988,7 +992,10 @@ type MainView() as this =
                 let href = BrowserBridge.PageUrl()
                 if href <> lastPageLink then
                     lastPageLink <- href
-                    MessageLink.tryParse href |> Option.iter this.OpenMessageLink
+                    MessageLink.tryParse href
+                    |> Option.iter (fun link ->
+                        ParityProbe.hit "deeplink.open"
+                        this.OpenMessageLink link)
             with _ -> ()
 
     member private this.OpenConversation(id: Guid) =
@@ -1307,7 +1314,7 @@ type MainView() as this =
             async {
                 try
                     let! picked =
-                        top.StorageProvider.OpenFilePickerAsync(
+                        (ParityProbe.hit "file.open"; top.StorageProvider).OpenFilePickerAsync(
                             FilePickerOpenOptions(
                                 AllowMultiple = true,
                                 Title = "添加附件",
@@ -1370,6 +1377,7 @@ type MainView() as this =
             |> Async.Start
 
     member private this.HandleClipboardPaste() : bool =
+        ParityProbe.hit "clipboard.paste"
         match topLevel () with
         | null -> false
         | top ->
@@ -1489,7 +1497,7 @@ type MainView() as this =
             async {
                 try
                     let! file =
-                        top.StorageProvider.SaveFilePickerAsync(FilePickerSaveOptions(SuggestedFileName = fileName))
+                        (ParityProbe.hit "file.save"; top.StorageProvider).SaveFilePickerAsync(FilePickerSaveOptions(SuggestedFileName = fileName))
                         |> Async.AwaitTask
                     if not (isNull file) then
                         use! stream = file.OpenWriteAsync() |> Async.AwaitTask
@@ -1722,7 +1730,11 @@ type MainView() as this =
             UiPrefs.save prefs
 
     member this.HandleShortcut(e: KeyEventArgs) =
-        match ShortcutRouter.resolve e with
+        let shortcut = ShortcutRouter.resolve e
+        (match shortcut with
+         | NoShortcut -> ()
+         | _ -> ParityProbe.hit "shortcut.resolved")
+        match shortcut with
         | Escape ->
             if overlay.HandleEscape() then e.Handled <- true
             elif settingsHost.IsVisible then
@@ -2650,6 +2662,7 @@ type MainView() as this =
             match app.PlatformSettings with
             | null -> ()
             | settings ->
+                ParityProbe.hit "theme.systemSubscribed"
                 settings.ColorValuesChanged.Add(fun _ ->
                     if prefs.theme = FollowSystem then
                         Dispatcher.UIThread.Post(fun () -> this.ApplyTheme()))
@@ -2665,14 +2678,18 @@ type MainView() as this =
         this.WatchHostViewport()
         let deliveryTimer = DispatcherTimer(Interval = MotionLedger.outboxDeliveryCheckTick)
         deliveryTimer.Tick.Add(fun _ ->
+            ParityProbe.hit "timer.delivery"
             let now = DateTimeOffset.UtcNow
             // 决策 443：旧主机静默丢弃它不认识的请求——到点就让界面退出等待并说明原因。
             let commandsExpired = this.ExpireHostRequests now
             if outbox.Expire(now, TimeSpan.FromSeconds 30.0) || commandsExpired then this.Render())
         // 本地草稿自动保存：内容没变不写盘，所以高频 tick 的代价只是一次快照比较。
         let draftTimer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 800.0)
-        draftTimer.Tick.Add(fun _ -> this.FlushDrafts())
+        draftTimer.Tick.Add(fun _ ->
+            ParityProbe.hit "timer.draft"
+            this.FlushDrafts())
         let startTimers () =
+            if not timersStarted then ParityProbe.hit "lifecycle.shellAttached"
             timersStarted <- true
             deliveryTimer.Start()
             draftTimer.Start()
@@ -2681,6 +2698,11 @@ type MainView() as this =
         // 决策 449：PWA 先把视图挂上 SingleView 再 Build()，AttachedToVisualTree 早已触发过——
         // 只挂事件会让投递确认、请求超时、草稿自动保存在浏览器里从不运行。已挂上就立刻启动（Start 幂等）。
         if not (isNull (TopLevel.GetTopLevel this)) then startTimers ()
+        // 决策 451：PWA 没有关窗口事件——页面转入后台 / 卸载时同样立刻落草稿。
+        if OperatingSystem.IsBrowser() then
+            BrowserBridge.add_PageHidden(fun () ->
+                ParityProbe.hit "drafts.flushOnHide"
+                this.FlushDrafts())
         this.DetachedFromVisualTree.Add(fun _ ->
             this.FlushDrafts()
             deliveryTimer.Stop()
@@ -2693,6 +2715,7 @@ type MainView() as this =
     /// 读完之前不写盘，避免用空内存覆盖尚未读到的内容。
     member private this.LoadLocalDrafts() =
         let apply (snapshot: DraftSnapshot) =
+            ParityProbe.hit "drafts.loaded"
             storedDrafts <- snapshot
             draftsLoaded <- true
             this.RestoreLocalDrafts()
@@ -2708,6 +2731,7 @@ type MainView() as this =
 
     /// 已有凭据时自动连接：桌面读 client.toml，PWA 读 IndexedDB（决策 52/53、Q191）。
     member private this.AutoConnect() =
+        ParityProbe.hit "connect.auto"
         match CredentialStore.tryLoadClientToml () with
         | Some(url, token) ->
             hasSavedCredentials <- true
