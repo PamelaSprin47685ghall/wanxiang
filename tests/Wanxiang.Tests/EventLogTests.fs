@@ -164,26 +164,26 @@ module EventLogTests =
 
     [<Fact>]
     let ``key order does not affect the canonical form`` () =
-        Assert.Equal(Jcs.canonicalize """{"b":"2","a":"1"}""", Jcs.canonicalize """{"a":"1","b":"2"}""")
+        Assert.Equal(Canonical.Jcs.text """{"b":"2","a":"1"}""", Canonical.Jcs.text """{"a":"1","b":"2"}""")
 
     [<Fact>]
     let ``a large integer carried as a string survives canonicalization`` () =
         let json = """{"commitId":"18446744073709551615"}"""
-        Assert.Contains("18446744073709551615", Jcs.canonicalize json)
+        Assert.Contains("18446744073709551615", Canonical.Jcs.text json)
 
     [<Fact>]
     let ``a bare large integer is silently rewritten which is exactly why we avoid it`` () =
         // 这条不是「期望行为」，而是把 RFC 8785 附录 D 的陷阱钉成回归：
         // 一旦有人把 commitId 塞回裸数字，这里会立刻提醒他为什么不行。
-        let rewritten = Jcs.canonicalize """{"commitId":18446744073709551615}"""
+        let rewritten = Canonical.Jcs.text """{"commitId":18446744073709551615}"""
         Assert.DoesNotContain("18446744073709551615", rewritten)
 
     [<Fact>]
     let ``hashing is stable across key order`` () =
-        Assert.Equal(Jcs.sha256Hex """{"b":"2","a":"1"}""", Jcs.sha256Hex """{"a":"1","b":"2"}""")
+        Assert.Equal(Canonical.Jcs.sha256Hex """{"b":"2","a":"1"}""", Canonical.Jcs.sha256Hex """{"a":"1","b":"2"}""")
 
     [<Fact>]
     let ``hashing garbage throws (no silent None: canonicalization failure must not be swallowed)`` () =
         // O-004：trySha256Hex 已删除——校验失败必须显式抛异常，不允许静默返回 None
         //（R6：不允许无证据继续运行）。调用方要么处理异常，要么保证输入合法。
-        Assert.ThrowsAny<exn>(fun () -> Jcs.sha256Hex "not json" |> ignore)
+        Assert.ThrowsAny<exn>(fun () -> Canonical.Jcs.sha256Hex "not json" |> ignore)

@@ -26,8 +26,8 @@ let ``commit line survives a serialize roundtrip`` () =
 let ``wire event survives a serialize roundtrip`` () =
     let payload1 = """{"b":2,"a":{"c":1},"arr":[1,2]}"""
     let payload2 = """{ "arr" : [1,2], "a": { "c" : 1 }, "b" : 2 }"""
-    let n1 = Some(Wanxiang.Core.Ledger.Jcs.canonicalize payload1)
-    let n2 = Some(Wanxiang.Core.Ledger.Jcs.canonicalize payload2)
+    let n1 = Some(Canonical.Jcs.text payload1)
+    let n2 = Some(Canonical.Jcs.text payload2)
     Assert.Equal(n1, n2)
     let inv = Guid.NewGuid()
     let id1 = CommandId.compute inv "test.cmd" n1.Value
@@ -112,14 +112,14 @@ let ``unknown event type decodes to an error`` () =
 [<Fact>]
 let ``same invocationId + same payload => same commandId (idempotent retry)`` () =
     let inv = Guid.NewGuid()
-    let payload = Wanxiang.Core.Ledger.Jcs.canonicalize """{"b":2,"a":{"c":1}}"""
+    let payload = Canonical.Jcs.text """{"b":2,"a":{"c":1}}"""
     let id1 = CommandId.compute inv "chat.user-message.enqueue" payload
     let id2 = CommandId.compute inv "chat.user-message.enqueue" payload
     Assert.Equal(id1, id2)
 
 [<Fact>]
 let ``different invocationId => different commandId`` () =
-    let payload = Wanxiang.Core.Ledger.Jcs.canonicalize """{"b":2,"a":{"c":1}}"""
+    let payload = Canonical.Jcs.text """{"b":2,"a":{"c":1}}"""
     let id1 = CommandId.compute (Guid.NewGuid()) "chat.user-message.enqueue" payload
     let id2 = CommandId.compute (Guid.NewGuid()) "chat.user-message.enqueue" payload
     Assert.NotEqual<string>(id1, id2)
@@ -127,7 +127,7 @@ let ``different invocationId => different commandId`` () =
 [<Fact>]
 let ``different commandType => different commandId`` () =
     let inv = Guid.NewGuid()
-    let payload = Wanxiang.Core.Ledger.Jcs.canonicalize """{"b":2,"a":{"c":1}}"""
+    let payload = Canonical.Jcs.text """{"b":2,"a":{"c":1}}"""
     let id1 = CommandId.compute inv "chat.user-message.enqueue" payload
     let id2 = CommandId.compute inv "conversation.rename" payload
     Assert.NotEqual<string>(id1, id2)
@@ -155,7 +155,7 @@ let ``sha256Hex is lowercase hex and deterministic`` () =
 [<Fact>]
 let ``RFC 8785 canonical form golden vectors`` () =
     // RFC 8785：对象键按码点排序、数组保持顺序、空白不影响
-    Assert.Equal("""{"a":1,"b":2}""", Wanxiang.Core.Ledger.Jcs.canonicalize """{"b":2,"a":1}""")
-    Assert.Equal("""{"arr":[1,2,3],"obj":{"x":true}}""", Wanxiang.Core.Ledger.Jcs.canonicalize """{"obj":{"x":true},"arr":[1,2,3]}""")
-    Assert.Equal("""{"a":1}""", Wanxiang.Core.Ledger.Jcs.canonicalize """{ "a" : 1 }""")
-    Assert.Equal("""{"s":"a\nb"}""", Wanxiang.Core.Ledger.Jcs.canonicalize """{"s":"a\nb"}""")
+    Assert.Equal("""{"a":1,"b":2}""", Canonical.Jcs.text """{"b":2,"a":1}""")
+    Assert.Equal("""{"arr":[1,2,3],"obj":{"x":true}}""", Canonical.Jcs.text """{"obj":{"x":true},"arr":[1,2,3]}""")
+    Assert.Equal("""{"a":1}""", Canonical.Jcs.text """{ "a" : 1 }""")
+    Assert.Equal("""{"s":"a\nb"}""", Canonical.Jcs.text """{"s":"a\nb"}""")

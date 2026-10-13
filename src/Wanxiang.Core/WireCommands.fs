@@ -114,4 +114,4 @@ module ClientCommand =
             o["messages"] <- d.messages.DeepClone()
         // RFC 8785 JCS 规范化。载荷不含裸大整数（commitId 一律字符串承载）——
         // JCS 会把超出 double 精度的整数按 double 改写（附录 D），此约束由 CodecTests 钉住。
-        Wanxiang.Core.Ledger.Jcs.canonicalize (o.ToJsonString())
+        Canonical.Jcs.text (o.ToJsonString())

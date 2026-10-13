@@ -327,7 +327,7 @@ module Snapshot =
         for kv in o do
             if kv.Key <> "checksum" then
                 copy[kv.Key] <- kv.Value.DeepClone()
-        Jcs.sha256Hex (copy.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General)))
+        Canonical.Jcs.sha256Hex (copy.ToJsonString(JsonSerializerOptions(JsonSerializerDefaults.General)))
 
     // ---------- 算法 S：写快照 ----------
 

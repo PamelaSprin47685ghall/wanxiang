@@ -335,7 +335,7 @@ module Snapshot =
             let copy = System.Text.Json.Nodes.JsonObject()
             for kv in v2 do
                 if kv.Key <> "checksum" then copy[kv.Key] <- kv.Value.DeepClone()
-            v2["checksum"] <- Wanxiang.Core.Ledger.Jcs.sha256Hex (copy.ToJsonString(System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.General)))
+            v2["checksum"] <- Canonical.Jcs.sha256Hex (copy.ToJsonString(System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.General)))
             File.WriteAllText(snapPath, v2.ToJsonString(System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.General)))
             // v1 快照读取：成功且 commits = None
             match Snapshot.findLatest dir with
@@ -395,7 +395,7 @@ module Snapshot =
             let copy = System.Text.Json.Nodes.JsonObject()
             for kv in v2 do
                 if kv.Key <> "checksum" then copy[kv.Key] <- kv.Value.DeepClone()
-            v2["checksum"] <- Wanxiang.Core.Ledger.Jcs.sha256Hex (copy.ToJsonString(System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.General)))
+            v2["checksum"] <- Canonical.Jcs.sha256Hex (copy.ToJsonString(System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.General)))
             File.WriteAllText(snapPath, v2.ToJsonString(System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.General)))
             // tryLoad 必须拒绝（显式错误，非静默 None）
             match Wanxiang.Store.Snapshot.tryLoad snapPath with
