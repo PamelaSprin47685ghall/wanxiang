@@ -32,7 +32,7 @@ let ``单写者内部幂等：同 commandId 再次 Submit 返回原提交且不�
         let invId = Guid.NewGuid()
         let cmd = CreateConversation {| invocationId = invId; conversationId = convId; title = "A"; config = testConfig () |}
         // 直接构造 Submit（绕过 CommandEngine.plan，模拟 DrainQueue 路径）
-        let canonical = CanonicalPayload.ofCommand cmd
+        let canonical = CommandEngine.canonicalPayload cmd
         let commandId = CommandId.compute invId (ClientCommand.commandType cmd) canonical
         let hash = CommandId.sha256Hex canonical
         let submit =
@@ -66,7 +66,7 @@ let ``单写者内部幂等：同 commandId 不同载荷返回冲突`` () =
         let convId = newConversationId ()
         let invId = Guid.NewGuid()
         let cmd = CreateConversation {| invocationId = invId; conversationId = convId; title = "A"; config = testConfig () |}
-        let canonical = CanonicalPayload.ofCommand cmd
+        let canonical = CommandEngine.canonicalPayload cmd
         let commandId = CommandId.compute invId (ClientCommand.commandType cmd) canonical
         let hash = CommandId.sha256Hex canonical
         let submit =
@@ -99,7 +99,7 @@ let ``排队消息重试窗口：DrainQueue 清空后同 invocationId 不重复�
         let invId = Guid.NewGuid()
         let msgJson = userMessageJson "hello"
         let cmd = SendUserMessage {| invocationId = invId; conversationId = convId; messageJson = msgJson |}
-        let canonical = CanonicalPayload.ofCommand cmd
+        let canonical = CommandEngine.canonicalPayload cmd
         let commandId = CommandId.compute invId (ClientCommand.commandType cmd) canonical
         let hash = CommandId.sha256Hex canonical
         let submit =

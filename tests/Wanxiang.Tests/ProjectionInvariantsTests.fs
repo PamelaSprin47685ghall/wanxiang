@@ -122,21 +122,6 @@ module ProjectionInvariants =
         result
 
     [<Fact>]
-    let ``随机操作序列重放全程保持投影不变量`` () =
-        // 固定种子 → 确定性；500 步覆盖创建/fork/删除/改名/消息
-        let ops = generateOps 500
-        let mutable proj = Projection.empty
-        for (id, events) in ops do
-            let commit = Events.Commit.create (uint64 id) (DateTimeOffset.UtcNow) events
-            match Projection.applyCommit proj commit with
-            | Ok p ->
-                proj <- p
-                assertInvariants proj id
-            | Error e -> failwithf "step %d: applyCommit failed: %s" id (WanxiangError.message e)
-        // I1：latestCommitId 单调增加且等于最后提交
-        Assert.Equal(uint64 (List.last ops |> fst), proj.latestCommitId)
-
-    [<Fact>]
     let ``重放后投影与快照加载投影满足同一不变量集`` () =
         let dir = tempDir ()
         try

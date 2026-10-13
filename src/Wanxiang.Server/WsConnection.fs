@@ -551,10 +551,10 @@ type WsConnection(
                         this.TrySend(WireEvent.CommandAccepted {| invocationId = invId |}) |> ignore
                     | CommandCommitted commitId ->
                         this.TrySend(WireEvent.CommandAccepted {| invocationId = invId |}) |> ignore
-                        let commandId = CommandId.compute invId (ClientCommand.commandType cmd) (CanonicalPayload.ofCommand cmd)
+                        let commandId = CommandId.compute invId (ClientCommand.commandType cmd) (CommandEngine.canonicalPayload cmd)
                         this.TrySend(WireEvent.CommandCommitted {| invocationId = invId; commandId = commandId; commitId = commitId |}) |> ignore
                     | CommandIdempotent commitId ->
-                        let commandId = CommandId.compute invId (ClientCommand.commandType cmd) (CanonicalPayload.ofCommand cmd)
+                        let commandId = CommandId.compute invId (ClientCommand.commandType cmd) (CommandEngine.canonicalPayload cmd)
                         this.TrySend(WireEvent.CommandCommitted {| invocationId = invId; commandId = commandId; commitId = commitId |}) |> ignore
                     | CommandFailed err ->
                         // 决策 36：stale-projection 拒绝携带 requiredCommitId（客户端需追到的提交 id）

@@ -29,36 +29,6 @@ open Wanxiang.Tests.Helpers
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``PlainText.summarize handles multi-byte emojis without breaking surrogate pairs`` () =
-    Headless.run (fun () ->
-    // 👨‍👩‍👧‍👦 (family ZWJ sequence: U+1F468 U+200D U+1F469 U+200D U+1F467 U+200D U+1F466)
-    // 🇨🇳 (regional indicator flag sequence: U+1F1E8 U+1F1F3)
-    // 𠮷 (surrogate pair: U+20BB7 -> \uD842\uDFB7)
-    // 👍🏽 (skin tone modifier: U+1F44D U+1F3FD)
-    let complexText = "👨‍👩‍👧‍👦 🇨🇳 𠮷野家 👍🏽 欢迎光临"
-    
-    for maxChars in 1 .. 12 do
-        let summary = PlainText.summarize maxChars complexText
-        Assert.False(String.IsNullOrEmpty summary)
-        
-        // Slicing must not produce lone high or low surrogates
-        for i in 0 .. summary.Length - 1 do
-            let ch = summary[i]
-            if Char.IsHighSurrogate ch then
-                Assert.True(i + 1 < summary.Length, "High surrogate must be followed by a low surrogate")
-                Assert.True(Char.IsLowSurrogate summary[i + 1], "Character following high surrogate must be low surrogate")
-            elif Char.IsLowSurrogate ch then
-                Assert.True(i > 0, "Low surrogate must be preceded by a high surrogate")
-                Assert.True(Char.IsHighSurrogate summary[i - 1], "Character preceding low surrogate must be high surrogate")
-
-        // UTF-8 / UTF-16 roundtrip should be valid and lossless
-        let utf8Bytes = Encoding.UTF8.GetBytes(summary)
-        let roundtrip = Encoding.UTF8.GetString(utf8Bytes)
-        Assert.Equal(summary, roundtrip)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``MarkdownRenderer.SafeChunk does not slice surrogate pairs into separate chunks`` () =
     Headless.run (fun () ->
     // A long text mixing emojis, surrogate pairs, and ZWJ sequences

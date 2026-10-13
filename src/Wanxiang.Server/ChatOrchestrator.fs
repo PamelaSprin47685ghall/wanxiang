@@ -262,7 +262,7 @@ type ChatOrchestrator(
 
     /// 提交一条排队消息（插入点；带命令标识，幂等安全）。
     member private this.SubmitQueuedMessage(convId: Guid, cmd: ClientCommand, payloadJson: JsonNode) : SubmitResult =
-        let canonicalPayload = CanonicalPayload.ofCommand cmd
+        let canonicalPayload = CommandEngine.canonicalPayload cmd
         let commandId = CommandId.compute (ClientCommand.invocationId cmd) (ClientCommand.commandType cmd) canonicalPayload
         let canonicalHash = CommandId.sha256Hex canonicalPayload
         coordinator.Submit
@@ -305,7 +305,7 @@ type ChatOrchestrator(
         [ for (cmd, msgJson) in batch do
               let result = this.SubmitQueuedMessage(convId, cmd, msgJson)
               let invId = ClientCommand.invocationId cmd
-              let commandId = CommandId.compute invId (ClientCommand.commandType cmd) (CanonicalPayload.ofCommand cmd)
+              let commandId = CommandId.compute invId (ClientCommand.commandType cmd) (CommandEngine.canonicalPayload cmd)
               let accounted = SubmitOutcome.ofSubmitResult result
               // 与 SubmitMessage 同一记账口径：失败变成可见的 ServerError，不静默
               this.RecordSubmitOutcome(convId, accounted)
@@ -633,7 +633,7 @@ type ChatOrchestrator(
     member private _.SubmitRename(convId: Guid, title: string) : unit =
         let invocationId = Guid.CreateVersion7()
         let cmd = RenameConversation {| invocationId = invocationId; conversationId = convId; title = title |}
-        let canonicalPayload = CanonicalPayload.ofCommand cmd
+        let canonicalPayload = CommandEngine.canonicalPayload cmd
         let commandId = CommandId.compute invocationId (ClientCommand.commandType cmd) canonicalPayload
         match coordinator.Submit
             { events = [ ConversationRenamed { conversationId = convId; title = title } ]

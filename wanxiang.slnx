@@ -4,7 +4,6 @@
     <Project Path="src/Wanxiang.Agui/Wanxiang.Agui.fsproj" />
     <Project Path="src/Wanxiang.App/Wanxiang.App.fsproj" />
     <Project Path="src/Wanxiang.Client/Wanxiang.Client.fsproj" />
-    <Project Path="src/Wanxiang.Core/Wanxiang.Core.fsproj" />
     <Project Path="src/Wanxiang.Interop/Wanxiang.Interop.csproj" />
     <Project Path="src/Wanxiang.Protocol/Wanxiang.Protocol.fsproj" />
     <Project Path="src/Wanxiang.Pwa/Wanxiang.Pwa.fsproj" />

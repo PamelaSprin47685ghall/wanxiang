@@ -33,7 +33,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
+    <PackageReference Include="Wanxiang2.ChatDomain" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
     <ProjectReference Include="..\Wanxiang.Store\Wanxiang.Store.fsproj" />
     <ProjectReference Include="..\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
     <ProjectReference Include="..\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
