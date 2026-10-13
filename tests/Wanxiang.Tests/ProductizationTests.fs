@@ -430,7 +430,7 @@ let ``regenerate is rejected when the last message is the user's`` () =
         coordinator.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "只问不答" } ]
         |> ignore
         let command = RegenerateResponse {| invocationId = Guid.NewGuid(); conversationId = convId |}
-        match CommandEngine.plan coordinator.Projection coordinator.Projection.latestCommitId command with
+        match CommandEngine.planStamped coordinator.Stamps coordinator.Projection coordinator.Projection.latestCommitId command with
         | Rejected (ValidationError message) -> Assert.Contains("regenerate", message)
         | other -> failwithf "expected a validation rejection, got %A" other
     finally
@@ -520,7 +520,7 @@ let ``queued submit outcomes always resolve to committed or visible error`` () =
             [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
     let failure = ValidationError "boom"
     // committed 系列 → Ok（拿到 log id，可广播 CommandCommitted）
-    for result in [ Committed commit; IdempotentReplay commit; TruncatedAndReused (commit, failure) ] do
+    for result in [ Committed commit; IdempotentReplay commit ] do
         match SubmitOutcome.ofSubmitResult result with
         | Ok c -> Assert.Equal(7UL, c.id)
         | Error e -> failwithf "should resolve to committed, got %s" (WanxiangError.message e)

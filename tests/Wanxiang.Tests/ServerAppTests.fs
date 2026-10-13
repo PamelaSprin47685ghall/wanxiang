@@ -154,7 +154,7 @@ module ServerAppTests =
 
             // 预先写入正常的事件结构目录
             DataPaths.ensureDataDirs dir
-            let eventPath = DataPaths.eventFilePath dir DateTime.UtcNow
+            let eventPath = DataPaths.logFile dir
 
             // 写入一个半截损坏的非正常字节（模拟崩溃时的残余字节）
             let brokenBytes = Encoding.UTF8.GetBytes(""" {"streamId":"partial-json-not-closed""")
@@ -231,18 +231,18 @@ module ServerAppTests =
             try Directory.Delete(dir, true) with _ -> ()
 
     [<Fact>]
-    let ``ServerApp 优雅关闭把全部提交固化为 v2 快照`` () =
+    let ``ServerApp 优雅关闭写快照且能从快照续播`` () =
         let dir = createTestDir ()
         try
             // 预写 3 条日志（启动重放来源）
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
-            let path = DataPaths.eventFilePath dir day
+            let path = DataPaths.logFile dir
             Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
             for i in 1..3 do
                 let c =
                     Events.Commit.create (uint64 i) (DateTimeOffset(day.AddSeconds(float i)))
                         [ ConversationCreated { conversationId = Guid.NewGuid(); title = sprintf "srv-%d" i; config = SessionConfig.empty } ]
-                File.AppendAllText(path, CommitCodec.commitToJsonLine c |> Wanxiang.Core.Ledger.Frame.encode |> System.Text.Encoding.UTF8.GetString)
+                File.AppendAllText(path, Wanxiang.Store.Assembly.frame c |> System.Text.Encoding.UTF8.GetString)
             let port = Random.Shared.Next(45001, 55000)
             let configPath = writeConfigFile dir port "127.0.0.1"
             let app = new ServerApp(dir, configPath, false, None, ignore)
@@ -253,9 +253,9 @@ module ServerAppTests =
             match Wanxiang.Store.Snapshot.findLatest dir with
             | Wanxiang.Store.SnapshotStartup.SnapshotUsed info ->
                 Assert.Equal(3UL, info.throughCommitId)
-                Assert.True(info.commits.IsSome, "v2 快照应固化 commits")
-                let ids = info.commits.Value |> List.map (fun c -> c.id) |> List.sort
-                Assert.Equal<uint64 list>([ 1UL; 2UL; 3UL ], ids)
+                match Wanxiang.Store.Replay.inspectFrom dir info.checkpoint with
+                | Wanxiang.Store.Healthy o -> Assert.Equal(3UL, o.lastCommitId)
+                | other -> failwithf "resume from snapshot not healthy: %A" other
             | other -> failwithf "expected v2 snapshot after graceful stop, got %A" other
         finally
             try Directory.Delete(dir, true) with _ -> ()

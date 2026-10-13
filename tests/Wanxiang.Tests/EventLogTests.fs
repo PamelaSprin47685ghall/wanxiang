@@ -5,7 +5,6 @@ open System.IO
 open System.Text
 open Xunit
 open Wanxiang.Core
-open Wanxiang.Core.Ledger
 open Wanxiang.Store
 
 /// 事件日志内核（RFC 7464 分帧 + RFC 8785 规范化 + 生产 CommitCodec）的行为契约。
@@ -22,33 +21,6 @@ module EventLogTests =
     // ---------- RFC 7464 分帧 ----------
 
     [<Fact>]
-    let ``a framed record starts with RS and ends with LF`` () =
-        let bytes = Frame.encode """{"a":1}"""
-        Assert.Equal(byte Frame.RS, bytes.[0])
-        Assert.Equal(byte Frame.LF, bytes.[bytes.Length - 1])
-        let body = Encoding.UTF8.GetBytes """{"a":1}"""
-        Assert.Equal(body.Length + 2, bytes.Length)
-
-    [<Fact>]
-    let ``splitting a single well formed record yields one segment ending in LF`` () =
-        let segs = Frame.split (ReadOnlySpan<byte>(Frame.encode """{"a":1}"""))
-        match segs with
-        | [ payload, endsWithLf ] ->
-            Assert.True endsWithLf
-            Assert.Equal("""{"a":1}""", Encoding.UTF8.GetString payload)
-        | other -> failwithf "expected one segment, got %d" other.Length
-
-    [<Fact>]
-    let ``a trailing record without LF is reported as unterminated`` () =
-        let data = Array.append (Frame.encode """{"a":1}""") (Encoding.UTF8.GetBytes "\u001E{\"b\":2}")
-        let segs = Frame.split (ReadOnlySpan<byte> data)
-        Assert.Equal(2, segs.Length)
-        Assert.True(fst segs.[0] |> ignore |> fun () -> snd segs.[0])
-        Assert.False(snd segs.[1], "末段没有 LF，必须被判为未终止")
-
-    // ---------- 恢复（生产路径：Replay.inspect 只读重放） ----------
-
-    [<Fact>]
     let ``three intact commits round trip through CommitCodec`` () =
         let boot = Guid.NewGuid()
         let lines = [ 1UL; 2UL; 3UL ] |> List.map (fun i -> CommitCodec.commitToJsonLine (commit i boot))
@@ -62,13 +34,13 @@ module EventLogTests =
         let boot = Guid.NewGuid()
         let good =
             [ 1UL; 2UL ]
-            |> List.map (fun i -> Frame.encode (CommitCodec.commitToJsonLine (commit i boot)))
+            |> List.map (fun i -> Wanxiang.Store.Assembly.frame ((commit i boot)))
             |> Array.concat
         let half = Encoding.UTF8.GetBytes "\u001E{\"formatVersion\":1,\"id\":\"3\""
         let dir = Helpers.tempDir ()
         try
             DataPaths.ensureDataDirs dir
-            let path = DataPaths.eventFilePath dir DateTime.UtcNow.Date
+            let path = DataPaths.logFile dir
             File.WriteAllBytes(path, Array.append good half)
             match Replay.inspect dir with
             | Healthy outcome -> Assert.Equal(2UL, outcome.lastCommitId)
@@ -80,15 +52,15 @@ module EventLogTests =
     [<Fact>]
     let ``a corrupted middle segment triggers RepairRequired`` () =
         let boot = Guid.NewGuid()
-        let seg i = Frame.encode (CommitCodec.commitToJsonLine (commit i boot))
-        let data = Array.concat [ seg 1UL; Frame.encode "{not json"; seg 2UL ]
+        let seg i = Wanxiang.Store.Assembly.frame ((commit i boot))
+        let data = Array.concat [ seg 1UL; JsonSeq.Frame.encode "{not json"; seg 2UL ]
         let dir = Helpers.tempDir ()
         try
             DataPaths.ensureDataDirs dir
-            let path = DataPaths.eventFilePath dir DateTime.UtcNow.Date
+            let path = DataPaths.logFile dir
             File.WriteAllBytes(path, data)
             match Replay.inspect dir with
-            | RepairRequired (_, plan) -> Assert.True(plan.damage.reason.Contains "unparseable", plan.damage.reason)
+            | RepairRequired (_, plan) -> Assert.True(plan.damage.reason.Contains "undecodable", plan.damage.reason)
             | _ -> failwith "expected repair required"
         finally
             Helpers.cleanup dir
@@ -96,12 +68,12 @@ module EventLogTests =
     [<Fact>]
     let ``a commit id gap is detected by Replay.inspect`` () =
         let boot = Guid.NewGuid()
-        let data = Array.concat [ Frame.encode (CommitCodec.commitToJsonLine (commit 1UL boot))
-                                  Frame.encode (CommitCodec.commitToJsonLine (commit 5UL boot)) ]
+        let data = Array.concat [ Wanxiang.Store.Assembly.frame ((commit 1UL boot))
+                                  Wanxiang.Store.Assembly.frame ((commit 5UL boot)) ]
         let dir = Helpers.tempDir ()
         try
             DataPaths.ensureDataDirs dir
-            let path = DataPaths.eventFilePath dir DateTime.UtcNow.Date
+            let path = DataPaths.logFile dir
             File.WriteAllBytes(path, data)
             match Replay.inspect dir with
             | RepairRequired (outcome, _) -> Assert.Equal(1UL, outcome.lastCommitId)
@@ -116,10 +88,10 @@ module EventLogTests =
         try
             DataPaths.ensureDataDirs dir
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
-            let path = DataPaths.eventFilePath dir day
+            let path = DataPaths.logFile dir
             Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
-            let data = Array.concat [ Frame.encode (CommitCodec.commitToJsonLine (commit 9UL (Guid.NewGuid())))
-                                      Frame.encode (CommitCodec.commitToJsonLine (commit 1UL (Guid.NewGuid()))) ]
+            let data = Array.concat [ Wanxiang.Store.Assembly.frame ((commit 9UL (Guid.NewGuid())))
+                                      Wanxiang.Store.Assembly.frame ((commit 1UL (Guid.NewGuid()))) ]
             File.WriteAllBytes(path, data)
             match Replay.inspect dir with
             | RepairRequired (outcome, _) -> Assert.Equal(0UL, outcome.lastCommitId)

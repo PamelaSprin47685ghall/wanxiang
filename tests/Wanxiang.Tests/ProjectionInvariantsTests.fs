@@ -41,12 +41,7 @@ module ProjectionInvariants =
             |> Seq.collect (fun c -> c.messages |> Seq.map (fun m -> m.commitId))
             |> Seq.toList
         Assert.True(allMsgIds.Length = (allMsgIds |> Set.ofList |> Set.count), sprintf "step %d: duplicate message commitId" step)
-        // I3：commandId → canonicalHash 唯一
-        let idemPairs =
-            proj.idempotency.Values
-            |> Seq.map (fun r -> r.commandId, r.canonicalHash)
-            |> Seq.toList
-        Assert.True(idemPairs.Length = (idemPairs |> Set.ofList |> Set.count), sprintf "step %d: commandId maps to multiple canonicalHash" step)
+        // I3（commandId → canonicalHash 唯一）由账本的 stamps Map 结构保证，投影不再持有幂等索引
 
     /// 生成确定性操作序列：创建/改名/删除对话、记录消息、删除消息、fork。
     /// 返回 (commitId, events) 列表。
@@ -156,16 +151,16 @@ module ProjectionInvariants =
                 | Ok p -> proj <- p
                 | Error e -> failwithf "applyCommit failed: %s" (WanxiangError.message e)
                 // 落盘
-                let path = DataPaths.eventFilePath dir day
+                let path = DataPaths.logFile dir
                 Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
-                File.AppendAllBytes(path, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine commit))
+                File.AppendAllBytes(path, Wanxiang.Store.Assembly.frame (commit))
             // 从日志重放
             match Replay.inspect dir with
             | Healthy outcome ->
                 assertInvariants outcome.projection (List.length ops)
                 // I7：快照 throughCommitId <= 日志最大有效 commitId
-                let fileLen = FileInfo(DataPaths.eventFilePath dir day).Length
-                match Snapshot.write dir outcome.projection (Some(DataPaths.eventFileName day)) fileLen outcome.commits with
+                let fileLen = FileInfo(DataPaths.logFile dir).Length
+                match Snapshot.write dir outcome.checkpoint with
                 | Ok _ -> ()
                 | Error e -> failwithf "snapshot write failed: %s" e
                 match Snapshot.findLatest dir with

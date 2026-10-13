@@ -30,16 +30,16 @@ module PerformanceBaseline =
         DataPaths.ensureDataDirs dir
         let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
         let convId = newConversationId ()
-        let path = DataPaths.eventFilePath dir day
+        let path = DataPaths.logFile dir
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
         // 10 万级小写入：直接 FileStream.Write 是系统调用瓶颈，用 BufferedStream 聚合
         use fs = new BufferedStream(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None), 1 <<< 20)
         let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "perf"; config = testConfig () } ]
-        let b1 = Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1)
+        let b1 = Wanxiang.Store.Assembly.frame (c1)
         fs.Write(b1, 0, b1.Length)
         for i in 2 .. n do
             let c = Events.Commit.create (uint64 i) (DateTimeOffset(day)) [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson (sprintf "msg-%d" i) } ]
-            let b = Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c)
+            let b = Wanxiang.Store.Assembly.frame (c)
             fs.Write(b, 0, b.Length)
         fs.Flush()
         dir
@@ -77,21 +77,15 @@ module PerformanceBaseline =
         let dir = seedLog 10000
         try
             let outcome = replayOutcome dir
-            let fileLen = FileInfo(DataPaths.eventFilePath dir (DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc))).Length
-            match Snapshot.write dir outcome.projection (Some "2026-08-01.jsonseq") fileLen outcome.commits with
+            let fileLen = FileInfo(DataPaths.logFile dir).Length
+            match Snapshot.write dir outcome.checkpoint with
             | Error e -> failwith e
             | Ok _ ->
                 let _, coldElapsed = timed (fun () -> Replay.inspect dir)
                 let snapshotStart () =
                     match Snapshot.findLatest dir with
                     | SnapshotStartup.SnapshotUsed info ->
-                        Replay.inspectFrom
-                            dir
-                            { projection = info.projection
-                              throughCommitId = info.throughCommitId
-                              throughFile = info.throughFile
-                              throughOffset = info.throughOffset
-                              commits = info.commits }
+                        Replay.inspectFrom dir info.checkpoint
                     | other -> failwithf "expected SnapshotUsed, got %A" other
                 let _, snapElapsed = timed snapshotStart
                 // 续播只重放 throughCommitId 之后（此处 0 条），应明显快于完整重放
@@ -104,8 +98,8 @@ module PerformanceBaseline =
         let dir = seedLog 1000
         try
             let outcome = replayOutcome dir
-            let fileLen = FileInfo(DataPaths.eventFilePath dir (DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc))).Length
-            let _, elapsed = timed (fun () -> Snapshot.write dir outcome.projection (Some "2026-08-01.jsonseq") fileLen outcome.commits)
+            let fileLen = FileInfo(DataPaths.logFile dir).Length
+            let _, elapsed = timed (fun () -> Snapshot.write dir outcome.checkpoint)
             Assert.True(elapsed < TimeSpan.FromSeconds 5.0, sprintf "snapshot creation took %A" elapsed)
         finally
             cleanup dir

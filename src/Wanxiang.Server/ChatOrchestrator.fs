@@ -23,7 +23,6 @@ module SubmitOutcome =
         match result with
         | Committed c -> Ok c
         | IdempotentReplay c -> Ok c
-        | TruncatedAndReused (c, _) -> Ok c // 已截尾：调用方忽略
         | CommandIdRejected e -> Error e
         | CommitFailed e -> Error e
 

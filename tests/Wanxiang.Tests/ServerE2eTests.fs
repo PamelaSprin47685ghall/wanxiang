@@ -58,10 +58,10 @@ module internal E2e =
             | Some commits ->
                 DataPaths.ensureDataDirs dir
                 // 种子也按 RFC 7464 记录写（RS + JSON + LF），与运行期写入器一致。
-                let path = DataPaths.eventFilePath dir DateTime.UtcNow
+                let path = DataPaths.logFile dir
                 let bytes =
                     commits
-                    |> List.map (fun c -> CommitCodec.commitToJsonLine c |> Wanxiang.Core.Ledger.Frame.encode)
+                    |> List.map (fun c -> Wanxiang.Store.Assembly.frame c)
                     |> Array.concat
                 File.WriteAllBytes(path, bytes)
             | None -> ()
@@ -412,10 +412,11 @@ let ``e2e observe advance cursor then enqueue gets response and push`` () =
                         lastSeenUtc = None
                         revoked = false } ] }
         File.WriteAllText(configPath, TomlCodec.serialize cfg)
-        let eventsFile = DataPaths.eventFilePath dir DateTime.UtcNow
+        let eventsFile = DataPaths.logFile dir
         let commits =
             [ Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = convId; title = "A"; config = Helpers.testConfig () } ] ]
-        File.WriteAllLines(eventsFile, commits |> List.map CommitCodec.commitToJsonLine)
+        Directory.CreateDirectory(Path.GetDirectoryName eventsFile) |> ignore
+        File.WriteAllBytes(eventsFile, commits |> List.map Wanxiang.Store.Assembly.frame |> Array.concat)
         let app = new Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
         app.Start(false)
         try
@@ -554,7 +555,7 @@ let ``e2e history paging slices by commit id`` () =
                         lastSeenUtc = None
                         revoked = false } ] }
         File.WriteAllText(configPath, TomlCodec.serialize cfg)
-        let eventsFile = DataPaths.eventFilePath dir DateTime.UtcNow
+        let eventsFile = DataPaths.logFile dir
         let commits =
             [ Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = convId; title = "分页"; config = Helpers.testConfig () } ]
               Events.Commit.create 2UL DateTimeOffset.UtcNow [ AgentMessageRecorded { conversationId = convId; payloadJson = Helpers.userMessageJson "m1" } ]
@@ -562,7 +563,8 @@ let ``e2e history paging slices by commit id`` () =
               Events.Commit.create 4UL DateTimeOffset.UtcNow [ AgentMessageRecorded { conversationId = convId; payloadJson = Helpers.userMessageJson "m3" } ]
               Events.Commit.create 5UL DateTimeOffset.UtcNow [ AgentMessageRecorded { conversationId = convId; payloadJson = Helpers.assistantMessageJson "m4" } ]
               Events.Commit.create 6UL DateTimeOffset.UtcNow [ AgentMessageRecorded { conversationId = convId; payloadJson = Helpers.userMessageJson "m5" } ] ]
-        File.WriteAllLines(eventsFile, commits |> List.map CommitCodec.commitToJsonLine)
+        Directory.CreateDirectory(Path.GetDirectoryName eventsFile) |> ignore
+        File.WriteAllBytes(eventsFile, commits |> List.map Wanxiang.Store.Assembly.frame |> Array.concat)
         let app = new Wanxiang.Server.ServerApp(dir, configPath, false, None, ignore)
         app.Start(false)
         try
@@ -1010,9 +1012,9 @@ let ``e2e damaged log starts read-only degraded and rejects writes without touch
         File.WriteAllText(configPath, TomlCodec.serialize cfg)
         // 预写：一条有效提交 + 尾部半条损坏记录（模拟崩溃残余）
         DataPaths.ensureDataDirs dir
-        let path = DataPaths.eventFilePath dir DateTime.UtcNow
+        let path = DataPaths.logFile dir
         let c1 = Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ]
-        let frame = Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1)
+        let frame = Wanxiang.Store.Assembly.frame (c1)
         File.WriteAllBytes(path, Array.append frame (Text.Encoding.UTF8.GetBytes "\u001E{\"formatVersion\":2,\"commitId\":\"2\",\"broken"))
         let bytesBefore = File.ReadAllBytes path
 

@@ -79,10 +79,10 @@ module SupportBundle =
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
             let convId = newConversationId ()
             let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ]
-            let p = DataPaths.eventFilePath dir day
+            let p = DataPaths.logFile dir
             Directory.CreateDirectory(Path.GetDirectoryName p) |> ignore
-            File.WriteAllBytes(p, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1))
-            File.AppendAllText(p, "garbage-no-lf")
+            File.WriteAllBytes(p, Wanxiang.Store.Assembly.frame (c1))
+            File.AppendAllText(p, "\u001e" + "garbage-no-lf")
             let outPath = Path.Combine(dir, "bundle")
             match SupportBundle.create dir configPath outPath with
             | Error e -> failwith e
@@ -90,7 +90,7 @@ module SupportBundle =
                 let diag = File.ReadAllText(Path.Combine(outPath, "diagnosis.json"))
                 Assert.Contains("repair-required", diag)
                 Assert.Contains("\"lastCommitId\":1", diag)
-                Assert.Contains("unparseable", diag) // reason 含损坏描述（元数据，非业务内容）
+                Assert.Contains("torn", diag) // reason 含损坏描述（元数据，非业务内容）
         finally
             cleanup dir
 
@@ -125,15 +125,15 @@ module SupportBundle =
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
             let convId = newConversationId ()
             let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "机密对话"; config = testConfig () } ]
-            let p = DataPaths.eventFilePath dir day
+            let p = DataPaths.logFile dir
             Directory.CreateDirectory(Path.GetDirectoryName p) |> ignore
-            File.WriteAllBytes(p, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1))
+            File.WriteAllBytes(p, Wanxiang.Store.Assembly.frame (c1))
             let outPath = Path.Combine(dir, "bundle")
             match SupportBundle.create dir configPath outPath with
             | Error e -> failwith e
             | Ok _ ->
                 let layout = File.ReadAllText(Path.Combine(outPath, "storage-layout.json"))
-                Assert.Contains("2026-08-01.jsonseq", layout)
+                Assert.Contains("log.jsonseq", layout)
                 // 不包含业务内容（消息正文/对话标题）
                 Assert.DoesNotContain("机密对话", layout)
         finally

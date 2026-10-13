@@ -35,19 +35,9 @@ type Conversation = {
     lastCommitId: CommitId option
 }
 
-/// 幂等记录。
-type IdemRecord = {
-    commandId: string
-    invocationId: Guid
-    commandType: string
-    canonicalHash: string
-    commitId: CommitId
-}
-
 /// 内存投影：NDJSON 折叠后的唯一日常查询来源。
 type Projection = {
     conversations: Map<Guid, Conversation>
-    idempotency: Map<string, IdemRecord>
     latestCommitId: CommitId
 }
 
@@ -55,7 +45,6 @@ module Projection =
 
     let empty : Projection =
         { conversations = Map.empty
-          idempotency = Map.empty
           latestCommitId = 0UL }
 
     let tryConversation (proj: Projection) (id: Guid) : Conversation option =
@@ -227,18 +216,6 @@ module Projection =
             match failed with
             | Some err -> Error err
             | None ->
-                // 幂等索引
-                let idem =
-                    match commit.commandId, commit.commandType, commit.commandHash with
-                    | Some cid, Some ctype, Some hash ->
-                        match commit.events with
-                        | _ :: _ ->
-                            proj.idempotency.Add(cid, { commandId = cid; invocationId = Guid.Empty; commandType = ctype; canonicalHash = hash; commitId = commit.id })
-                        | [] -> proj.idempotency
-                    | _ -> proj.idempotency
                 Ok { conversations = conversations
-                     idempotency = idem
                      latestCommitId = commit.id }
 
-    let tryIdem (proj: Projection) (commandId: string) : IdemRecord option =
-        proj.idempotency.TryFind commandId

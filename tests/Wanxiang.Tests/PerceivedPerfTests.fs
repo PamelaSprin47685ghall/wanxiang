@@ -191,12 +191,12 @@ module HostBench =
         let dir = tempDir ()
         DataPaths.ensureDataDirs dir
         let day = DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc)
-        let path = DataPaths.eventFilePath dir day
+        let path = DataPaths.logFile dir
         use fs = new BufferedStream(new FileStream(path, FileMode.Create), 1 <<< 20)
         let mutable id = 0UL
         let write evs =
             id <- id + 1UL
-            let b = Ledger.Frame.encode (CommitCodec.commitToJsonLine (Events.Commit.create id (DateTimeOffset(day)) evs))
+            let b = Wanxiang.Store.Assembly.frame ((Events.Commit.create id (DateTimeOffset(day)) evs))
             fs.Write(b, 0, b.Length)
         for n in 1 .. conversations do
             let c = newConversationId ()

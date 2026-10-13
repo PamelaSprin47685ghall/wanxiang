@@ -13,7 +13,6 @@
     <Compile Include="CoreTests.fs" />
     <Compile Include="EventLogTests.fs" />
     <Compile Include="ContractTests.fs" />
-    <Compile Include="LedgerFixtureTests.fs" />
     <Compile Include="AguiMappingTests.fs" />
     <Compile Include="AguiTests.fs" />
     <Compile Include="MessageMapTests.fs" />

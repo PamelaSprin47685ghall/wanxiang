@@ -70,14 +70,6 @@ module CommandEngine =
         let ctype = ClientCommand.commandType cmd
         let commandId = CommandId.compute (ClientCommand.invocationId cmd) ctype canonicalPayload
 
-        match Projection.tryIdem proj commandId with
-        | Some idemRec ->
-            // 幂等：同一 commandId 必须对应同一规范化载荷
-            if idemRec.canonicalHash = canonicalHash then
-                IdempotentReplay idemRec.commitId
-            else
-                Rejected(CommandIdConflict(sprintf "commandId %s reused with different payload" commandId))
-        | None ->
 
         let plannedWith (p: CommandPlan) (events: EventData list) : PlanResult = Planned { p with events = events }
         let conversationWatermark (conv: Conversation) : CommitId =
@@ -303,3 +295,15 @@ module CommandEngine =
                             [ for commitId in trailing ->
                                   MessageDeleted { conversationId = d.conversationId; messageCommitId = commitId } ]
                     | r -> r
+
+    /// 带幂等检查的规划。stamps：commandId -> (规范化载荷哈希, 提交 id)，
+    /// 由账本维护（wanxiang2 Ledger 的 Checkpoint.stamps），投影不再持有幂等索引。
+    /// 幂等检查必须先于领域校验：重发一条已成功的「新建对话」应得到原提交，而不是「对话已存在」。
+    let planStamped (stamps: Map<string, string * CommitId>) (proj: Projection) (clientCursor: CommitId) (cmd: ClientCommand) : PlanResult =
+        let canonicalPayload = ClientCommand.canonicalPayload cmd
+        let canonicalHash = CommandId.sha256Hex canonicalPayload
+        let commandId = CommandId.compute (ClientCommand.invocationId cmd) (ClientCommand.commandType cmd) canonicalPayload
+        match stamps.TryFind commandId with
+        | Some(hash, commitId) when hash = canonicalHash -> IdempotentReplay commitId
+        | Some _ -> Rejected(CommandIdConflict(sprintf "commandId %s reused with different payload" commandId))
+        | None -> plan proj clientCursor cmd

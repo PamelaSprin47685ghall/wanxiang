@@ -176,10 +176,10 @@ module Doctor =
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
             let convId = newConversationId ()
             let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ]
-            let p = DataPaths.eventFilePath dir day
+            let p = DataPaths.logFile dir
             Directory.CreateDirectory(Path.GetDirectoryName p) |> ignore
-            File.WriteAllBytes(p, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1))
-            File.AppendAllText(p, "garbage-no-lf")
+            File.WriteAllBytes(p, Wanxiang.Store.Assembly.frame (c1))
+            File.AppendAllText(p, "\u001e" + "garbage-no-lf")
             let d = Wanxiang.Server.Doctor.run (configPath, dir)
             let c = check d "log-replay"
             Assert.False(c.ok)
@@ -196,10 +196,10 @@ module Doctor =
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
             let convId = newConversationId ()
             let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ]
-            let p = DataPaths.eventFilePath dir day
+            let p = DataPaths.logFile dir
             Directory.CreateDirectory(Path.GetDirectoryName p) |> ignore
-            File.WriteAllBytes(p, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1))
-            File.AppendAllText(p, "garbage-no-lf")
+            File.WriteAllBytes(p, Wanxiang.Store.Assembly.frame (c1))
+            File.AppendAllText(p, "\u001e" + "garbage-no-lf")
             // 排除 lock 文件（DataLock.Acquire 会写入 PID，属运行时工件，非 doctor 修改）
             let snapshotFiles () =
                 Directory.GetFiles(dir, "*", SearchOption.AllDirectories)

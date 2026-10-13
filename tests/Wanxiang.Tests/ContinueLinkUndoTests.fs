@@ -74,7 +74,7 @@ let ``230 继续生成只接受有正文的助手消息`` () =
         coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ] |> ignore
         coordinator.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "问" } ] |> ignore
         let plan json =
-            CommandEngine.plan coordinator.Projection coordinator.Projection.latestCommitId
+            CommandEngine.planStamped coordinator.Stamps coordinator.Projection coordinator.Projection.latestCommitId
                 (ContinueResponse {| invocationId = Guid.NewGuid(); conversationId = convId; messageJson = json |})
         match plan (userMessageJson "冒充") with
         | Rejected(ValidationError _) -> ()

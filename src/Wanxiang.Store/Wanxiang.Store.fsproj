@@ -5,20 +5,21 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
 
+  <!-- 组装层：机制来自 vendor/wanxiang2 的独立库，这里只做类型映射与路径约定。 -->
   <ItemGroup>
     <Compile Include="DataPaths.fs" />
     <Compile Include="DataLock.fs" />
     <Compile Include="FaultInjector.fs" />
-    <Compile Include="JsonSeqWriter.fs" />
-    <Compile Include="Replay.fs" />
+    <Compile Include="Store.fs" />
     <Compile Include="RecoveryBundle.fs" />
-    <Compile Include="Snapshot.fs" />
-    <Compile Include="CommitCoordinator.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Wanxiang.Core\Wanxiang.Core.fsproj" />
     <ProjectReference Include="..\..\vendor\wanxiang2\libs\DirLock\DirLock.fsproj" />
+    <ProjectReference Include="..\..\vendor\wanxiang2\libs\JsonSeq\JsonSeq.fsproj" />
+    <ProjectReference Include="..\..\vendor\wanxiang2\libs\Ledger\Ledger.fsproj" />
+    <ProjectReference Include="..\..\vendor\wanxiang2\libs\Snapshot\Snapshot.fsproj" />
   </ItemGroup>
 
 </Project>

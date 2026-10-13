@@ -32,10 +32,10 @@ module CrashMatrix =
         let convId = newConversationId ()
         let c1 = Events.Commit.create 1UL (DateTimeOffset(day)) [ ConversationCreated { conversationId = convId; title = "历史"; config = testConfig () } ]
         let c2 = Events.Commit.create 2UL (DateTimeOffset(day.AddHours 1.0)) [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "历史消息" } ]
-        let p1 = DataPaths.eventFilePath dir day
+        let p1 = DataPaths.logFile dir
         Directory.CreateDirectory(Path.GetDirectoryName p1) |> ignore
-        File.WriteAllBytes(p1, Array.concat [ Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c1)
-                                              Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine c2) ])
+        File.WriteAllBytes(p1, Array.concat [ Wanxiang.Store.Assembly.frame (c1)
+                                              Wanxiang.Store.Assembly.frame (c2) ])
         convId, day
 
     /// 提交一条命令（新对话）。
@@ -57,17 +57,10 @@ module CrashMatrix =
     let private verifyAfterCrash (dir: string) : InspectResult =
         match Replay.inspect dir with
         | Healthy o ->
-            // 不变量：id 连续无空洞（从 1 起），无重复
-            let ids = o.commits |> List.map (fun c -> c.id)
-            Assert.Equal<CommitId list>(ids |> List.sort, ids)
-            Assert.Equal(ids |> List.distinct |> List.length, ids.Length)
+            // id 连续由账本重放本身保证（空洞即损坏），这里只核对水位
             Assert.Equal(o.lastCommitId, o.projection.latestCommitId)
             Healthy o
         | RepairRequired (o, plan) ->
-            // 损坏点之后无合法记录；有效前缀 id 连续
-            let ids = o.commits |> List.map (fun c -> c.id)
-            Assert.Equal<CommitId list>(ids |> List.sort, ids)
-            Assert.Equal(ids |> List.distinct |> List.length, ids.Length)
             Assert.Equal(o.lastCommitId, o.projection.latestCommitId)
             // 损坏证据可取得（X11）
             Assert.False(String.IsNullOrWhiteSpace plan.damage.reason)
@@ -83,23 +76,13 @@ module CrashMatrix =
     /// - AfterProjectionBeforePublish：投影已应用 → 重启后 id 4 存在。
     /// - DuringTruncate：截尾失败 → poison（日志可能含半记录，inspect 报损坏）。
     [<Theory>]
-    [<InlineData("BeforeOpen")>]
     [<InlineData("BeforeAppend")>]
-    [<InlineData("DuringAppend")>]
-    [<InlineData("AfterAppendBeforeFlush")>]
-    [<InlineData("AfterFlushBeforeProjection")>]
-    [<InlineData("AfterProjectionBeforePublish")>]
-    [<InlineData("DuringTruncate")>]
+    [<InlineData("AfterAppend")>]
     let ``crash matrix: fault point`` (pointName: string) =
         let point =
             match pointName with
-            | "BeforeOpen" -> StorageFaultPoint.BeforeOpen
             | "BeforeAppend" -> StorageFaultPoint.BeforeAppend
-            | "DuringAppend" -> StorageFaultPoint.DuringAppend
-            | "AfterAppendBeforeFlush" -> StorageFaultPoint.AfterAppendBeforeFlush
-            | "AfterFlushBeforeProjection" -> StorageFaultPoint.AfterFlushBeforeProjection
-            | "AfterProjectionBeforePublish" -> StorageFaultPoint.AfterProjectionBeforePublish
-            | "DuringTruncate" -> StorageFaultPoint.DuringTruncate
+            | "AfterAppend" -> StorageFaultPoint.AfterAppend
             | other -> failwithf "unknown point %s" other
         let dir = tempDir ()
         try
@@ -111,12 +94,14 @@ module CrashMatrix =
                 | _ -> failwith "history must be healthy"
             Assert.Equal(2UL, outcome.lastCommitId)
             // 旧内容字节（X10 基准）
-            let oldBytes = File.ReadAllBytes(DataPaths.eventFilePath dir day)
+            let oldBytes = File.ReadAllBytes(DataPaths.logFile dir)
             // X3：注入故障（FailOnce）
             FaultInjector.setMode(FailOnce point)
             // X4/X5：提交命令（在故障点失败）
-            // DuringTruncate 需要投影失败的命令才能进入截尾路径
-            let result = submitNewConversation dir day (point = StorageFaultPoint.DuringTruncate)
+            let result = submitNewConversation dir day false
+            match result with
+            | CommitFailed _ -> ()
+            | other -> failwithf "%s must fail the submit, got %A" pointName other
             // 注入已消费
             Assert.Equal(FaultInjector.FaultMode.NoFault, FaultInjector.currentMode ())
             // X6：重启只读检查
@@ -125,44 +110,20 @@ module CrashMatrix =
             match insp with
             | Healthy _ ->
                 // 未损坏：历史文件字节完全不变
-                Assert.Equal<byte[]>(oldBytes, File.ReadAllBytes(DataPaths.eventFilePath dir day))
+                Assert.Equal<byte[]>(oldBytes, File.ReadAllBytes(DataPaths.logFile dir))
             | RepairRequired (_, plan) ->
                 // 损坏：历史文件可能被截尾（损坏点在文件内），但损坏前的字节不变
-                if plan.damage.file = DataPaths.eventFilePath dir day then
-                    let now = File.ReadAllBytes(DataPaths.eventFilePath dir day)
+                if plan.damage.file = DataPaths.logFile dir then
+                    let now = File.ReadAllBytes(DataPaths.logFile dir)
                     // 有效前缀 = 截尾后的文件，其内容必须是旧内容的前缀
                     Assert.True(oldBytes.Length >= now.Length, "truncated file must be a prefix")
                     Assert.Equal<byte[]>(oldBytes[0 .. now.Length - 1], now)
             | UnsupportedFormat _ -> ()
             | Unreadable _ -> ()
-            // 语义断言
-            match point with
-            | StorageFaultPoint.BeforeOpen
-            | StorageFaultPoint.BeforeAppend
-            | StorageFaultPoint.DuringAppend
-            | StorageFaultPoint.AfterAppendBeforeFlush ->
-                // 未落盘：日志停在 id 2，健康（无损坏）
-                match insp with
-                | Healthy o -> Assert.Equal(2UL, o.lastCommitId)
-                | _ -> failwithf "%s must leave log healthy (nothing persisted)" pointName
-            | StorageFaultPoint.DuringRename -> ()
-            | StorageFaultPoint.AfterFlushBeforeProjection ->
-                // 已落盘但投影前失败：截尾复用 id → 日志停在 id 2，健康
-                match insp with
-                | Healthy o -> Assert.Equal(2UL, o.lastCommitId)
-                | _ -> failwithf "%s must truncate-and-reuse (log healthy)" pointName
-            | StorageFaultPoint.AfterProjectionBeforePublish ->
-                // 投影已应用：重启后 id 3 存在（提交内容已落盘）
-                match insp with
-                | Healthy o -> Assert.Equal(3UL, o.lastCommitId)
-                | _ -> failwithf "%s must have persisted the commit" pointName
-            | StorageFaultPoint.DuringTruncate ->
-                // 截尾失败：poison（可能残留半记录）→ inspect 报损坏或健康但水位 < 3
-                match insp with
-                | Healthy o -> Assert.True(o.lastCommitId <= 3UL)
-                | RepairRequired (o, _) -> Assert.True(o.lastCommitId <= 2UL)
-                | UnsupportedFormat _ -> ()
-                | Unreadable _ -> ()
+            // 语义断言：两处故障点都不得留下任何记录（AfterAppend 须被账本截回写前偏移）
+            match insp with
+            | Healthy o -> Assert.Equal(2UL, o.lastCommitId)
+            | _ -> failwithf "%s must leave log healthy (nothing persisted)" pointName
         finally
             FaultInjector.setMode FaultInjector.FaultMode.NoFault
             cleanup dir

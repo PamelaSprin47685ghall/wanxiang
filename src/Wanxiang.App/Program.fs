@@ -214,13 +214,7 @@ module Program =
                                     info.throughCommitId
                                     (info.createdAtUtc.UtcDateTime.ToString("o"))
                                     (info.throughCommitId + 1UL))
-                            Replay.inspectFrom
-                                dataDir
-                                { projection = info.projection
-                                  throughCommitId = info.throughCommitId
-                                  throughFile = info.throughFile
-                                  throughOffset = info.throughOffset
-                                  commits = info.commits }
+                            Replay.inspectFrom dataDir info.checkpoint
                         | Wanxiang.Store.SnapshotStartup.SnapshotCorrupt reasons ->
                             logInfo(sprintf "snapshot corrupt (%s); falling back to full replay" (String.concat "; " reasons))
                             Replay.inspect dataDir

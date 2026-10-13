@@ -206,7 +206,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 | UpdateConversationConfig d -> UpdateConversationConfig {| d with config = fill d.config |}
                 // ForkConversation：配置由父对话投影继承（决策 81），无需填充
                 | other -> other
-            match CommandEngine.plan (coord.Projection) clientCursor cmd with
+            match CommandEngine.planStamped coord.Stamps coord.Projection clientCursor cmd with
             | Rejected e ->
                 // Q145：commandId 冲突（同 commandId 不同载荷）视为严重错误，写 stderr
                 match e with
@@ -278,9 +278,6 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                               "conversationId", ClientCommand.conversationId cmd
                               "message", WanxiangError.message e ]
                         CommandExecutionResult.CommandFailed e
-                    | SubmitResult.TruncatedAndReused (_, err) ->
-                        // 仅剩运行时投影失败截尾路径；stderr 已由协调器 onTruncated 忠实记录（决策 40）
-                        CommandExecutionResult.CommandFailed err
                     | SubmitResult.CommitFailed e -> CommandExecutionResult.CommandFailed e
         with e ->
             // O-005：未知执行异常必须带关联 ID（§18），否则无法从日志定位到具体命令
@@ -560,13 +557,10 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                     // 快照**不删除任何事件日志**（第一版只优化启动）。
                     if not readOnlyDegraded then
                         try
-                            // 先取锚点（writer 仍打开），再 Shutdown 释放流，最后写快照
-                            let fileName, fileLen = c.CurrentFileAnchor()
-                            let proj = c.Projection
-                            // 全量提交外壳必须在 Shutdown 前取（Shutdown 后 mailbox 停止）
-                            let allCommits = c.AllCommits
+                            // 先取基线，再关闭日志，最后写快照
+                            let cp = c.Checkpoint
                             c.Shutdown()
-                            match Wanxiang.Store.Snapshot.write dataDir proj (Some fileName) fileLen allCommits with
+                            match Wanxiang.Store.Snapshot.write dataDir cp with
                             | Ok path -> logInfo(sprintf "snapshot written to %s" path)
                             | Error e -> Stderr.write "snapshot-write-failed" [ "message", e ]
                         with e ->

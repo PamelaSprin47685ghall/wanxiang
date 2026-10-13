@@ -1,2 +1,0 @@
-{"formatVersion":1,"id":"3","bootId":"00000000-0000-0000-0000-000000000000","source":"wanxiang","committedAtUtc":"2026-08-02T09:00:00.000Z","events":[{"type":"conversation.created","version":1,"data":{"conversationId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","title":"\u6B21\u65E5\u4F1A\u8BDD","config":{"provider":"openai","model":"test-model"}}}]}
-{"formatVersion":1,"id":"4","committedAtUtc":"2026-08-02T09:01:00Z","events":[{"type":"agent-message-recorded","version":1,"data":{"conversationId":"11111111-2222-3333-4444-555555555555","payload":{"role":"user","conten

@@ -82,14 +82,14 @@ let ``fork plan requires fork point to be a message commit id`` () =
         let forkId = newConversationId ()
         // 合法：forkAfterId = 消息 commitId (2)
         let okPlan =
-            CommandEngine.plan coord.Projection 2UL
+            CommandEngine.planStamped coord.Stamps coord.Projection 2UL
                 (ForkConversation {| invocationId = Guid.NewGuid(); conversationId = forkId; parentConversationId = convId; forkAfterId = Some 2UL; config = testConfig (); editedMessageJson = userMessageJson "编辑后" |})
         match okPlan with
         | Planned p -> Assert.Equal(2, p.events.Length) // forked + message
         | r -> failwithf "valid fork should plan, got %A" r
         // 非法：forkAfterId = 对话 lastCommitId（2 之后无消息提交，用 999 模拟非消息 id）
         let badPlan =
-            CommandEngine.plan coord.Projection 2UL
+            CommandEngine.planStamped coord.Stamps coord.Projection 2UL
                 (ForkConversation {| invocationId = Guid.NewGuid(); conversationId = Guid.NewGuid(); parentConversationId = convId; forkAfterId = Some 999UL; config = testConfig (); editedMessageJson = userMessageJson "x" |})
         match badPlan with
         | Rejected (ForkPointInvalid _) -> ()
@@ -112,18 +112,18 @@ let ``command id idempotency and conversation id collision`` () =
         let invId = Guid.NewGuid()
         // 提交第一次
         let cmd1 = CreateConversation {| invocationId = invId; conversationId = convId; title = "A"; config = testConfig () |}
-        match CommandEngine.plan coord.Projection 0UL cmd1 with
+        match CommandEngine.planStamped coord.Stamps coord.Projection 0UL cmd1 with
         | Planned p ->
             coord.Submit { events = p.events; commandId = Some p.commandId; commandType = Some p.commandType; commandHash = Some p.canonicalHash; nowUtc = None } |> ignore
         | r -> failwithf "plan failed: %A" r
         // 同 invocationId + 同载荷 → 幂等命中（网络重试，决策 13/37）
         let cmd3 = CreateConversation {| invocationId = invId; conversationId = convId; title = "A"; config = testConfig () |}
-        match CommandEngine.plan coord.Projection 1UL cmd3 with
+        match CommandEngine.planStamped coord.Stamps coord.Projection 1UL cmd3 with
         | PlanResult.IdempotentReplay cid -> Assert.Equal(1UL, cid)
         | r -> failwithf "expected idempotent replay, got %A" r
         // 不同 invocationId + 同 conversationId → 正常拒绝（id 已占用）
         let cmd2 = CreateConversation {| invocationId = Guid.NewGuid(); conversationId = convId; title = "B"; config = testConfig () |}
-        match CommandEngine.plan coord.Projection 1UL cmd2 with
+        match CommandEngine.planStamped coord.Stamps coord.Projection 1UL cmd2 with
         | Rejected (ConversationIdTaken _) -> ()
         | r -> failwithf "expected conversation id taken, got %A" r
         coord.Shutdown()
@@ -149,7 +149,7 @@ let ``fork with empty config succeeds and is idempotent`` () =
         // 空 config 的 fork 应能 plan（不再被 isValid 拒绝）
         let forkCmd =
             ForkConversation {| invocationId = invId; conversationId = forkId; parentConversationId = convId; forkAfterId = Some 2UL; config = emptyCfg; editedMessageJson = userMessageJson "编辑" |}
-        match CommandEngine.plan coord.Projection 2UL forkCmd with
+        match CommandEngine.planStamped coord.Stamps coord.Projection 2UL forkCmd with
         | Planned p ->
             let submit = { events = p.events; commandId = Some p.commandId; commandType = Some p.commandType; commandHash = Some p.canonicalHash; nowUtc = None }
             match coord.Submit submit with
@@ -157,13 +157,13 @@ let ``fork with empty config succeeds and is idempotent`` () =
             | r -> failwithf "fork with empty config should commit, got %A" r
         | r -> failwithf "fork with empty config should plan, got %A" r
         // 重试（同 invocationId + 同内容，config 空）→ 幂等
-        match CommandEngine.plan coord.Projection 3UL forkCmd with
+        match CommandEngine.planStamped coord.Stamps coord.Projection 3UL forkCmd with
         | PlanResult.IdempotentReplay _ -> ()
         | r -> failwithf "fork retry should be idempotent, got %A" r
         // config 不参与 fork 的 commandId：同 invocationId 但 config 不同 → 仍幂等（非冲突）
         let forkCmdDiffCfg =
             ForkConversation {| invocationId = invId; conversationId = forkId; parentConversationId = convId; forkAfterId = Some 2UL; config = { emptyCfg with provider = "other" }; editedMessageJson = userMessageJson "编辑" |}
-        match CommandEngine.plan coord.Projection 3UL forkCmdDiffCfg with
+        match CommandEngine.planStamped coord.Stamps coord.Projection 3UL forkCmdDiffCfg with
         | PlanResult.IdempotentReplay _ -> ()
         | r -> failwithf "fork retry with different config should still be idempotent, got %A" r
         // fork 投影继承了父对话 config（testConfig：provider=openai, model=test-model）

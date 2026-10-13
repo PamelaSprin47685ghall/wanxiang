@@ -6,7 +6,6 @@ open Xunit
 open Wanxiang.Agui
 open Wanxiang.Config
 open Wanxiang.Core
-open Wanxiang.Core.Ledger
 open Wanxiang.Store
 
 /// P-001：版本权威表钉死测试。
@@ -85,51 +84,22 @@ module VersionAuthority =
         try
             Wanxiang.Store.DataPaths.ensureDataDirs dir
             let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
-            let path = Wanxiang.Store.DataPaths.eventFilePath dir day
+            let path = Wanxiang.Store.DataPaths.logFile dir
             Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
             // 未来版本外壳（formatVersion=99），结构完整
             // 注意：三引号字符串是 raw（\u 不转义）；用普通字符串 + 显式 RS/LF 字节
             let future =
                 "\u001e"
-                + """{"formatVersion":99,"id":"1","bootId":"00000000-0000-0000-0000-000000000000","source":"x","committedAtUtc":"2026-08-01T00:00:00.000Z","events":[]}"""
+                + """{"v":99,"id":"1","at":"2026-08-01T00:00:00.0000000+00:00","events":[]}"""
                 + "\u000a"
             File.WriteAllText(path, future)
             let bytesBefore = File.ReadAllBytes path
             match Wanxiang.Store.Replay.inspect dir with
             | Wanxiang.Store.UnsupportedFormat msg ->
                 Assert.Contains("99", msg)
-                Assert.Contains("not supported", msg)
+                Assert.Contains("newer version", msg)
             | other -> failwithf "expected UnsupportedFormat, got %A" other
             // 文件未被修改（R2 / 场景 F：不修改任何文件）
             Assert.Equal<byte[]>(bytesBefore, File.ReadAllBytes path)
-        finally
-            Wanxiang.Tests.Helpers.cleanup dir
-
-    /// 场景 F 变体：未来版本出现在后续文件，同样 UnsupportedFormat 且不级联。
-    [<Fact>]
-    let ``未来 formatVersion 在后续文件同样拒绝且保留全部数据`` () =
-        let dir = Wanxiang.Tests.Helpers.tempDir ()
-        try
-            Wanxiang.Store.DataPaths.ensureDataDirs dir
-            let day1 = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
-            let day2 = DateTime(2026, 8, 2, 0, 0, 0, DateTimeKind.Utc)
-            // 正常 v1 记录
-            let commit =
-                Events.Commit.create 1UL (DateTimeOffset(day1))
-                    [ ConversationCreated { conversationId = Guid.NewGuid(); title = "v"; config = SessionConfig.empty } ]
-            let p1 = Wanxiang.Store.DataPaths.eventFilePath dir day1
-            let p2 = Wanxiang.Store.DataPaths.eventFilePath dir day2
-            Directory.CreateDirectory(Path.GetDirectoryName p1) |> ignore
-            File.WriteAllBytes(p1, Wanxiang.Core.Ledger.Frame.encode (CommitCodec.commitToJsonLine commit))
-            // 次日文件是未来版本
-            File.WriteAllText(p2, "\u001e" + """{"formatVersion":99,"id":"2","events":[]}""" + "\u000a")
-            let bytes1 = File.ReadAllBytes p1
-            let bytes2 = File.ReadAllBytes p2
-            match Wanxiang.Store.Replay.inspect dir with
-            | Wanxiang.Store.UnsupportedFormat _ -> ()
-            | other -> failwithf "expected UnsupportedFormat, got %A" other
-            // 两个文件都未被修改（不级联删除）
-            Assert.Equal<byte[]>(bytes1, File.ReadAllBytes p1)
-            Assert.Equal<byte[]>(bytes2, File.ReadAllBytes p2)
         finally
             Wanxiang.Tests.Helpers.cleanup dir

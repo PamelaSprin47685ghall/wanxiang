@@ -235,16 +235,17 @@ module Doctor =
         let snap = checkSnapshot dataDir
         d.snapshotStatus <- snap.detail
         d.checks <- d.checks @ [ snap; checkRecoveryBundle dataDir ]
-        // 事件日志只认 RFC 7464 .jsonseq；发现其它格式（如 .ndjson）即明确报错，
-        // 绝不静默忽略——用户需要自己归档或移除。
+        // 事件账本只认 ledger/log.jsonseq。旧版 events/ 目录下的按日日志（.jsonseq/.ndjson）
+        // 格式不兼容、新版不读：明确报错，绝不静默忽略——用户需要自己归档或移除。
         let unrecognizedLogs =
             try
-                Directory.GetFiles(DataPaths.eventsDir dataDir, "*.ndjson")
+                Directory.GetFiles(DataPaths.legacyEventsDir dataDir)
+                |> Array.filter (fun f -> f.EndsWith ".jsonseq" || f.EndsWith ".ndjson")
             with _ -> [||]
         if unrecognizedLogs.Length > 0 then
             d.replayError <-
                 sprintf
-                    "found %d unrecognized .ndjson log(s). The event log format is RFC 7464 .jsonseq. Archive or remove: %s"
+                    "found %d legacy event log(s) in events/ that this version does not read (the ledger is ledger/log.jsonseq). Archive or remove: %s"
                     unrecognizedLogs.Length
                     (String.Join(", ", unrecognizedLogs |> Array.map Path.GetFileName))
             d.checks <- d.checks @ [ { name = "log-replay"; ok = false; detail = d.replayError } ]

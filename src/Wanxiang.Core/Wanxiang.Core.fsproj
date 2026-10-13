@@ -8,7 +8,6 @@
   <ItemGroup>
     <Compile Include="Types.fs" />
     <Compile Include="RateLimit.fs" />
-    <Compile Include="Ledger\Frame.fs" />
     <Compile Include="PlainText.fs" />
     <Compile Include="CommandId.fs" />
     <Compile Include="SessionConfig.fs" />
@@ -16,6 +15,7 @@
     <Compile Include="Events.fs" />
     <Compile Include="CommitCodec.fs" />
     <Compile Include="Projection.fs" />
+    <Compile Include="ProjectionCodec.fs" />
     <Compile Include="WireCommands.fs" />
     <Compile Include="CommandEngine.fs" />
   </ItemGroup>

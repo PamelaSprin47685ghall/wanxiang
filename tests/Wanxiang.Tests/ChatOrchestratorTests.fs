@@ -27,11 +27,6 @@ module ChatOrchestratorTests =
         | Ok c -> Assert.Equal(10UL, c.id)
         | Error e -> Assert.Fail(sprintf "Expected Ok, got %A" e)
 
-        // 3. TruncatedAndReused
-        match SubmitOutcome.ofSubmitResult (TruncatedAndReused (dummyCommit, Poisoned "truncated")) with
-        | Ok c -> Assert.Equal(10UL, c.id)
-        | Error e -> Assert.Fail(sprintf "Expected Ok, got %A" e)
-
         // 4. CommandIdRejected
         match SubmitOutcome.ofSubmitResult (CommandIdRejected (CommandIdConflict "conflict")) with
         | Error (CommandIdConflict msg) -> Assert.Contains("conflict", msg)

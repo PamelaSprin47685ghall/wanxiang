@@ -478,24 +478,17 @@ module CoreTests =
         let ctype = ClientCommand.commandType cmd
         let commandId = CommandId.compute invId ctype canonicalPayload
 
-        let idemRec: IdemRecord =
-            { commandId = commandId
-              invocationId = invId
-              commandType = ctype
-              canonicalHash = canonicalHash
-              commitId = 100UL }
-
-        let projWithIdem = { Projection.empty with idempotency = Map.ofList [ (commandId, idemRec) ] }
+        // 幂等索引由账本持有（commandId -> 载荷哈希, 提交 id），planStamped 消费它
+        let stamps = Map.ofList [ commandId, (canonicalHash, 100UL) ]
 
         // 1. 相同载荷幂等重放
-        match CommandEngine.plan projWithIdem 100UL cmd with
+        match CommandEngine.planStamped stamps Projection.empty 100UL cmd with
         | IdempotentReplay commitId -> Assert.Equal(100UL, commitId)
         | r -> Assert.Fail(sprintf "Expected IdempotentReplay, got %A" r)
 
         // 2. 相同 commandId 不同载荷报错
-        let tamperedRec = { idemRec with canonicalHash = "different-hash" }
-        let projTampered = { Projection.empty with idempotency = Map.ofList [ (commandId, tamperedRec) ] }
-        match CommandEngine.plan projTampered 100UL cmd with
+        let tampered = Map.ofList [ commandId, ("different-hash", 100UL) ]
+        match CommandEngine.planStamped tampered Projection.empty 100UL cmd with
         | Rejected (CommandIdConflict msg) -> Assert.Contains("reused with different payload", msg)
         | r -> Assert.Fail(sprintf "Expected CommandIdConflict, got %A" r)
 

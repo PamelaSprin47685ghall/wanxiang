@@ -43,7 +43,6 @@ module Soak =
                 coord.Submit { events = p.events; commandId = Some p.commandId; commandType = Some p.commandType; commandHash = Some p.canonicalHash; nowUtc = None }
             match result with
             | SubmitResult.Committed _ -> true
-            | SubmitResult.TruncatedAndReused _ -> true
             | SubmitResult.IdempotentReplay _ -> false
             | SubmitResult.CommandIdRejected _ -> false
             | SubmitResult.CommitFailed _ -> false

@@ -159,11 +159,11 @@ let ``search neither touches the log directory nor the projection`` () =
         b.User(c, "needle in a haystack") |> ignore
         // 与真实数据目录同形的日志夹具：搜索前后逐字节一致
         Wanxiang.Store.DataPaths.ensureDataDirs dir
-        let path = Wanxiang.Store.DataPaths.eventFilePath dir DateTime.UtcNow
+        let path = Wanxiang.Store.DataPaths.logFile dir
         File.WriteAllBytes(
             path,
             b.Commits
-            |> List.map (fun c -> CommitCodec.commitToJsonLine c |> Wanxiang.Core.Ledger.Frame.encode)
+            |> List.map (fun c -> Wanxiang.Store.Assembly.frame c)
             |> Array.concat)
         let proj = b.Projection
         let before = directorySnapshot dir
