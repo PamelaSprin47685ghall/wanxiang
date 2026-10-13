@@ -885,3 +885,21 @@ Avalonia.Browser 只把「key 长度为 1 的 keydown」与 `compositionend` 变
 
 # 392. 测试不卡墙钟
 「外部非法编辑被告知」用例原先断言 2 秒（后放宽到 5 秒）内收到 `config.rejected`，满载 CI 偶发失败。主机没有轮询，该事件只能由文件监视推出，改为只等事件（30 秒总超时兜底「根本没告知」），用例更名为 `an invalid external edit is announced by the file watcher and clears once fixed`。同类审计：`sleep 固定时长后断言「某事已发生」` 的改为按条件/事件等待——ConfigTests 两处 reload 拒绝（等拒绝回调）、AsyncHighlight 合并通知（按调用计数轮询）、WsClient 五处（接收计数 / closed 回调轮询）。「固定时长内没有发生」这类反向断言与 `Stopwatch` 性能预算（有宽裕余量）保留不动。
+
+# 400. avalonia.js 补丁按内容版本化
+`tools/patch_avalonia_js.py` 的版本 = 脚本自身 sha256 前 16 位，输出首行写 `/*wx-patch-version:<ver>*/`。同版本：空操作、不改时间戳；版本不同或带旧 `/*wx-*/` 标记：从 NuGet 包原始文件（`$(PkgAvalonia_Browser)/staticwebassets/avalonia.js`，第二个参数）重打；没给原始文件又遇旧补丁：报错，绝不叠补丁。`--version` 打印当前版本。
+
+# 401. 补丁挂在 AppBundle 生成之后
+原 target 挂 `WasmBuildApp` 且 `Exists` 条件静默跳过：`dotnet publish` 的嵌套 publish 实例里它在 `_WasmGenerateAppBundle` 之前就跑完了（同一实例 target 只跑一次），随后重新生成的包里 avalonia.js 是原版——发布产物丢 DPR 修复（213）与非组合上屏桥（390）。现挂 `_WasmGenerateAppBundle`，另有 `PatchAvaloniaJsAfterPublish`（`WasmTriggerPublishApp;Publish` 之后）兜底；缺文件是构建错误。Debug/Release build 与 publish 均已验证。PWA 不用 AOT/裁剪，若以后开，同样经过 `_WasmGenerateAppBundle`。
+
+# 402. CopyPwaToApp 只拷补丁后的包
+`CopyPwaToApp` 改为在两个补丁 target 之后执行，不再在 `WasmTriggerPublishApp` 之后、补丁之前拷。
+
+# 403. CI 与校验脚本
+`tools/verify_avalonia_patch.py <文件|AppBundle|pwa 目录>` 断言首行版本 = 当前脚本版本且含 `wx-dpr-guard`、`wx-insert-bridge`、`failIfMajorPerformanceCaveat:!1`。CI build job：校验 build 产物，再 `dotnet publish` PWA 与 App 并校验发布目录。单元测试覆盖旧版本重打、无原始文件拒绝、校验通过/失败与工程挂钩。
+
+# 404. 桌面 App 发布带上 PWA
+主机从 `AppContext.BaseDirectory/pwa` 托管 PWA，但 `dotnet publish src/Wanxiang.App` 原来只带 `wwwroot` 静态壳（无 `_framework` 运行时、无补丁），`--pwa` 打开即白屏。App 的 `PublishPwaBundle`（Publish 之后）发布 PWA、拷 AppBundle（不含 .map）到 `$(PublishDir)pwa/` 并跑校验；`WanxiangSkipPwaPublish=true` 跳过。主机按原样静态托管该目录，不经二次处理，补丁文件即所服务文件（无 gzip/br 预压缩副本、无 integrity 哈希引用 avalonia.js）。
+
+# 405. 打包审计结论
+`packaging/` 只有 `wanxiang://` 注册模板（Linux .desktop、Windows .reg、macOS Info.plist），仓库里没有安装器或 PWA 部署脚本；`start.sh` 走 Debug build，经 401 已补丁。以后新增安装器必须以 `dotnet publish src/Wanxiang.App` 产物为输入。

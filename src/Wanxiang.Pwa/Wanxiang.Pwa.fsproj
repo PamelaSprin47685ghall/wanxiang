@@ -27,7 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia.Browser" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Browser" Version="12.1.2" GeneratePathProperty="true" />
   </ItemGroup>
 
   <ItemGroup>
@@ -36,14 +36,35 @@
 
   <!-- AMD/ANGLE Chrome：Avalonia 默认 failIfMajorPerformanceCaveat=true 会得到“能创建但不呈现 Skia 帧”的 WebGL 上下文，表现为启动画面后白屏。
        构建后补丁 avalonia.js（禁止软渲染回退；见 tools/patch_avalonia_js.py）。 -->
-  <Target Name="PatchAvaloniaJsWebGl" AfterTargets="WasmBuildApp">
-    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)../../tools/patch_avalonia_js.py&quot; &quot;$(OutputPath)AppBundle/_framework/avalonia.js&quot;"
-          Condition="Exists('$(OutputPath)AppBundle/_framework/avalonia.js')" />
+  <!-- 决策 401：挂在 _WasmGenerateAppBundle 之后——build 与 publish（含 Release、嵌套 publish、裁剪/AOT）都会生成 AppBundle，
+       都经过这一步。原始文件取自 NuGet 包（PkgAvalonia_Browser），补丁版本变了就从原始文件重打，不会留下旧补丁。
+       AppBundle 里缺 avalonia.js 视为构建错误，不再静默跳过。 -->
+  <PropertyGroup>
+    <_WxAvaloniaPristine>$(PkgAvalonia_Browser)/staticwebassets/avalonia.js</_WxAvaloniaPristine>
+  </PropertyGroup>
+  <!-- 每次生成 AppBundle 之后打补丁（build 与嵌套 publish 都走这里；只挂 _WasmGenerateAppBundle，
+       不挂更早的 WasmBuildApp——同一工程实例里 target 只跑一次，过早触发会让后面重新生成的包漏补丁）。 -->
+  <Target Name="PatchAvaloniaJsWebGl" AfterTargets="_WasmGenerateAppBundle">
+    <PropertyGroup>
+      <_WxAvaloniaJs>$([MSBuild]::EnsureTrailingSlash('$(WasmAppDir)'))_framework/avalonia.js</_WxAvaloniaJs>
+      <_WxAvaloniaJs Condition="'$(WasmAppDir)' == ''">$(OutputPath)AppBundle/_framework/avalonia.js</_WxAvaloniaJs>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_WxAvaloniaJs)')" Text="avalonia.js missing from AppBundle: $(_WxAvaloniaJs)" />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)../../tools/patch_avalonia_js.py&quot; &quot;$(_WxAvaloniaJs)&quot; &quot;$(_WxAvaloniaPristine)&quot;" />
+  </Target>
+  <!-- 兜底：publish 结束时再核对一次（同一版本时是空操作），任何后续步骤覆盖了文件也会被重打。 -->
+  <Target Name="PatchAvaloniaJsAfterPublish" AfterTargets="WasmTriggerPublishApp;Publish">
+    <PropertyGroup>
+      <_WxAvaloniaJsPub>$([MSBuild]::EnsureTrailingSlash('$(WasmAppDir)'))_framework/avalonia.js</_WxAvaloniaJsPub>
+      <_WxAvaloniaJsPub Condition="'$(WasmAppDir)' == ''">$(OutputPath)AppBundle/_framework/avalonia.js</_WxAvaloniaJsPub>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_WxAvaloniaJsPub)')" Text="avalonia.js missing from AppBundle after publish: $(_WxAvaloniaJsPub)" />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)../../tools/patch_avalonia_js.py&quot; &quot;$(_WxAvaloniaJsPub)&quot; &quot;$(_WxAvaloniaPristine)&quot;" />
   </Target>
 
   <!-- PWA 发布产物（AppBundle：index.html + _framework 运行时）同步到桌面 App 输出目录的 pwa/（ServerApp 托管目录），使 pwa 开关开箱即用。
        必须在 PatchAvaloniaJsWebGl / WasmTriggerPublishApp 之后执行，避免拷到未补丁或上一轮旧包。 -->
-  <Target Name="CopyPwaToApp" AfterTargets="PatchAvaloniaJsWebGl;WasmTriggerPublishApp">
+  <Target Name="CopyPwaToApp" AfterTargets="PatchAvaloniaJsWebGl;PatchAvaloniaJsAfterPublish">
     <ItemGroup>
       <_PwaFiles Include="$(OutputPath)AppBundle/**/*" />
     </ItemGroup>
