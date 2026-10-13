@@ -353,6 +353,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 搜索命中跳转（W4）：目标消息已定位后，“贴底自动滚到末尾”的延迟重试不得把它拽走。
     /// 用户滚轮、回到最新、换对话时解除。
     let mutable revealPinned = false
+    /// 决策 460：定位钉住的目标卡。钉住期间布局再变（分页前置、卡片晚量高、重绘）都按它的当前位置重新对齐，
+    /// 而不是只在发起时量一次 Bounds——满载 CI 上量早了就会停在旧底部。
+    let mutable revealTarget: Control option = None
     /// 平滑滚动动画最近一次写入的偏移。ScrollChanged 据此区分「动画自己往上走」和「用户往上滚」：
     /// 向上的动画（定位到更早的消息、回到顶部）每一帧都是负增量，若当成用户手势就会在第一帧把自己打断（v4 走查）。
     let mutable lastAnimatedOffset = nan
@@ -413,7 +416,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         let stopSmoothScroll () =
             smoothScrollTimer |> Option.iter (fun t -> t.Stop())
             smoothScrollTimer <- None
-        let target = max 0.0 (child.Bounds.Y - Spacing.space3xl)
+        let targetOf () = max 0.0 (child.Bounds.Y - Spacing.space3xl)
+        let target = targetOf ()
         if abs (scroller.Offset.Y - target) < 5.0 then
             scroller.Offset <- Vector(scroller.Offset.X, target)
         elif MotionPolicy.isReduced () then
@@ -426,8 +430,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let timer = new DispatcherTimer(Interval = MotionLedger.smoothScrollFrame)
             timer.Tick.Add(fun _ ->
                 let elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds
+                // 每帧按卡片当前位置取目标：动画途中布局变了也落在卡片上（决策 460）。
+                let target = targetOf ()
                 if elapsed >= durationMs then
                     stopSmoothScroll ()
+                    lastAnimatedOffset <- target
                     scroller.Offset <- Vector(scroller.Offset.X, target)
                 else
                     let progress = min 1.0 (elapsed / durationMs)
@@ -823,7 +830,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Dispatcher.UIThread.Post(
                 (fun () ->
                     match indexOf () with
-                    | Some index when index < messagePanel.Children.Count -> smoothScrollToCard messagePanel.Children.[index]
+                    | Some index when index < messagePanel.Children.Count ->
+                        let child = messagePanel.Children.[index]
+                        if revealPinned then revealTarget <- Some child
+                        smoothScrollToCard child
                     | _ -> ()),
                 DispatcherPriority.Background)
             true
@@ -992,6 +1002,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.ResetScrollState() =
         mountWindow <- ChatView.InitialMountWindow
         revealPinned <- false
+        revealTarget <- None
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
         atBottom <- true
@@ -1535,6 +1546,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 平滑滚动到底部
     member this.SmoothScrollToEnd() =
         revealPinned <- false
+        revealTarget <- None
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
         returningToLatest <- true
@@ -1745,6 +1757,17 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         this.PropertyChanged.Add(fun args ->
             if args.Property = Visual.BoundsProperty then this.ApplyHorizontalInsets())
         scroller.ScrollChanged.Add(fun e ->
+            // 决策 460：钉住期间内容高度变了（不是用户在滚）→ 把目标卡重新对齐到顶部。
+            // 动画进行中由动画每帧自己对齐，这里只管动画结束之后的布局漂移。
+            match revealTarget with
+            | Some child when revealPinned && smoothScrollTimer.IsNone && abs e.ExtentDelta.Y > 0.1 ->
+                if isNull child.Parent then revealTarget <- None
+                else
+                    let target = max 0.0 (child.Bounds.Y - Spacing.space3xl)
+                    if abs (scroller.Offset.Y - target) > 1.0 then
+                        lastAnimatedOffset <- target
+                        scroller.Offset <- Vector(scroller.Offset.X, target)
+            | _ -> ()
             let extent = scroller.Extent.Height
             let viewport = scroller.Viewport.Height
             let offset = scroller.Offset.Y
@@ -1780,6 +1803,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         scroller.PointerWheelChanged.Add(fun e ->
             if abs e.Delta.Y > 0.0 then
                 revealPinned <- false
+                revealTarget <- None
                 returningToLatest <- false
                 smoothScrollTimer |> Option.iter (fun t -> t.Stop())
                 smoothScrollTimer <- None)
