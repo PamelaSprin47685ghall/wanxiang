@@ -10,14 +10,10 @@
     <Compile Include="UiThreadOwnershipTests.fs" />
     <Compile Include="HeadlessTests.fs" />
     <Compile Include="Helpers.fs" />
-    <Compile Include="EventLogTests.fs" />
     <Compile Include="ContractTests.fs" />
     <Compile Include="MessageMapTests.fs" />
-    <Compile Include="StoreConsistencyTests.fs" />
-    <Compile Include="ReplayTests.fs" />
     <Compile Include="SupportBundleTests.fs" />
     <Compile Include="DoctorTests.fs" />
-    <Compile Include="DoctorInspectTests.fs" />
     <Compile Include="ProjectionInvariantsTests.fs" />
     <Compile Include="CoordinatorTests.fs" />
     <Compile Include="CatchUpSafetyTests.fs" />
@@ -135,12 +131,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.EventStore" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AguiWire" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatDomain" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
     <ProjectReference Include="..\..\src\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
-    <ProjectReference Include="..\..\src\Wanxiang.Store\Wanxiang.Store.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Server\Wanxiang.Server.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
     <ProjectReference Include="..\..\src\Wanxiang.UI\Wanxiang.UI.fsproj" />

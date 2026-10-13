@@ -6,7 +6,6 @@
     <Project Path="src/Wanxiang.Interop/Wanxiang.Interop.csproj" />
     <Project Path="src/Wanxiang.Pwa/Wanxiang.Pwa.fsproj" />
     <Project Path="src/Wanxiang.Server/Wanxiang.Server.fsproj" />
-    <Project Path="src/Wanxiang.Store/Wanxiang.Store.fsproj" />
     <Project Path="src/Wanxiang.UI/Wanxiang.UI.fsproj" />
   </Folder>
   <Folder Name="/tests/">

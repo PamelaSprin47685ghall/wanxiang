@@ -176,33 +176,7 @@ module ServerModel =
                          items = JsonArray(List.toArray selected); hasMore = not (List.isEmpty rest) }
     /// 从消息 payload 提取附件引用（客户端写入消息 contents 的 `{"type":"attachment",...}` 项）。
     /// 用于 doctor 可达性检查（Q179）、客户端展示与附件回收。
-    let attachmentRefsOf (payload: JsonNode) : (string * string * string * int64) list =
-        let results = System.Collections.Generic.List<string * string * string * int64>()
-        let rec walk (node: JsonNode) =
-            match node with
-            | null -> ()
-            | :? JsonArray as a ->
-                for item in a do walk item
-            | :? JsonObject as o ->
-                let mutable t: JsonNode = null
-                if o.TryGetPropertyValue("type", &t) && t <> null && t.GetValueKind() = System.Text.Json.JsonValueKind.String && t.GetValue<string>() = "attachment" then
-                    let getStr k =
-                        let mutable n: JsonNode = null
-                        if o.TryGetPropertyValue(k, &n) && n <> null && n.GetValueKind() = System.Text.Json.JsonValueKind.String then n.GetValue<string>() else ""
-                    let size =
-                        let mutable n: JsonNode = null
-                        if o.TryGetPropertyValue("size", &n) && n <> null && n.GetValueKind() = System.Text.Json.JsonValueKind.Number then
-                            match n with
-                            | :? JsonValue as v ->
-                                match v.TryGetValue<int64>() with true, val64 -> val64 | _ -> 0L
-                            | _ -> 0L
-                        else 0L
-                    results.Add(getStr "sha256", getStr "mediaType", getStr "fileName", size)
-                else
-                    for kv in o do walk kv.Value
-            | _ -> ()
-        walk payload
-        List.ofSeq results
+    let attachmentRefsOf (payload: JsonNode) : (string * string * string * int64) list = AttachmentRefs.ofPayload payload
 
     /// 仍需保留附件的对话集合。
     ///
