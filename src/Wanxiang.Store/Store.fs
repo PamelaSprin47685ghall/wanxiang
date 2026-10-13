@@ -75,8 +75,11 @@ type EventStore(dataDir: string, ?onCommitted: Events.Commit -> unit, ?policy: S
     // 默认：每 1000 条存快照；关闭时由调用方决定（只读降级时不存，免得固化损坏前的投影）。
     let store = Assembly.openStore dataDir (defaultArg policy { everyCommits = Some 1000; onClose = false })
     let mutable stopped = false
+    let mutable onCommitted = defaultArg onCommitted ignore
 
     member _.DataDir = dataDir
+    /// 先打开（启动检查即用这次打开的结论），稍后再接上广播。
+    member _.SetOnCommitted(f: Events.Commit -> unit) = onCommitted <- f
     member _.Health = store.Health
     member _.Startup = store.Startup
     member _.LastSnapshotError = store.LastSnapshotError
@@ -97,14 +100,14 @@ type EventStore(dataDir: string, ?onCommitted: Events.Commit -> unit, ?policy: S
             match answer with
             | Submitted.Committed c ->
                 let c = Assembly.toCommit c
-                onCommitted |> Option.iter (fun f -> try f c with _ -> ())
+                (try onCommitted c with _ -> ())
                 Committed c
             | Submitted.Duplicate c -> IdempotentReplay(Assembly.toCommit c)
             | Submitted.Conflict _ ->
                 CommandIdRejected(CommandIdConflict(sprintf "commandId %s reused with different payload" (defaultArg submit.commandId "")))
             | Submitted.Rejected e -> CommitFailed e
             | Submitted.NotWritten why -> CommitFailed(Poisoned("append failed: " + why))
-            | Submitted.Unknown why -> CommitFailed(Poisoned("append outcome unknown; read-only: " + why))
+            | Submitted.Unknown(id, why) -> CommitFailed(Poisoned(sprintf "outcome of commit %d unknown; read-only: %s" id why))
             | Submitted.ReadOnly why -> CommitFailed(Poisoned("event log read-only: " + why))
 
     member this.SubmitEvents(events: EventData list) : SubmitResult =
@@ -147,6 +150,10 @@ type InspectResult =
     | Healthy of ReplayOutcome
     /// 发现损坏：outcome 是最长有效前缀；存储只读，等 doctor --fix。
     | RepairRequired of ReplayOutcome * RepairPlan
+    /// 某次写入结果未知：commit id 那条可能在盘上也可能不在；存储只读，重开时从日志查明。
+    | OutcomeUnknown of ReplayOutcome * commitId: CommitId * reason: string
+    /// 目录由运行中的宿主持有：只有不持锁检查的结论（没有投影）。
+    | HostOwned of Inspection
     | UnsupportedFormat of string
     | Unreadable of string
 
@@ -156,12 +163,16 @@ module Inspect =
         let o = { projection = s.Projection; lastCommitId = s.LastCommitId; checkpoint = s.Checkpoint; startup = s.Startup; stamps = s.Stamps }
         match s.Health with
         | Health.Healthy -> Healthy o
-        | Damaged(at, why) when why.StartsWith "written by a newer version" ->
+        | Health.Damaged(at, why) when why.StartsWith "written by a newer version" ->
             UnsupportedFormat(sprintf "event log %s at byte %d" why at)
-        | Damaged(at, why) ->
+        | Health.Damaged(at, why) ->
             let f = DataPaths.logFile s.DataDir
             RepairRequired(o, { damage = { file = f; byteOffset = at; reason = why }; affectedFiles = [ f ] })
-        | OutcomeUnknown why -> RepairRequired(o, { damage = { file = DataPaths.logFile s.DataDir; byteOffset = -1L; reason = why }; affectedFiles = [] })
+        | Health.OutcomeUnknown(id, why) -> OutcomeUnknown(o, id, why)
+
+    /// 不持锁、不写字节地看一眼（宿主正在运行时给外部 doctor / 支持包用）。
+    let peek (dataDir: string) : Inspection =
+        LedgerStore<Projection, EventData, WanxiangError>.Inspect(DataPaths.eventsDir dataDir, Assembly.codec, Assembly.fold, Projection.empty)
 
     /// 打开、读结论、关闭（不存快照）。
     let run (dataDir: string) : InspectResult =
@@ -169,6 +180,20 @@ module Inspect =
             use s = new EventStore(dataDir, policy = SnapshotPolicy.Manual)
             ofStore s
         with e -> Unreadable e.Message
+
+    /// 命令行 doctor / 支持包：能独占就完整打开；宿主持锁时改为不持锁检查。
+    let runOrPeek (dataDir: string) : InspectResult =
+        let opened =
+            try Ok(new EventStore(dataDir, policy = SnapshotPolicy.Manual))
+            with
+            | :? InvalidOperationException as e -> Error(Choice1Of2 e.Message)
+            | e -> Error(Choice2Of2 e.Message)
+        match opened with
+        | Ok s ->
+            use s = s
+            ofStore s
+        | Error(Choice1Of2 _) -> (try HostOwned(peek dataDir) with e -> Unreadable e.Message)
+        | Error(Choice2Of2 m) -> Unreadable m
 
 module Repair =
 

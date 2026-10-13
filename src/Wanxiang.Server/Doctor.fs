@@ -100,7 +100,8 @@ module Doctor =
     let private checkSnapshot (inspect: unit -> InspectResult) : CheckResult =
         let startup =
             match inspect () with
-            | Healthy o | RepairRequired(o, _) -> Ok o.startup
+            | Healthy o | RepairRequired(o, _) | OutcomeUnknown(o, _, _) -> Ok o.startup
+            | HostOwned i -> Ok i.startup
             | UnsupportedFormat m | Unreadable m -> Error m
         match startup with
         | Ok { snapshot = LedgerStore.Absent } ->
@@ -198,7 +199,7 @@ module Doctor =
     /// 避免把写入者正在追加的半条记录误报为损坏。其余检查与命令行 doctor 完全一致，仍严格只读。
     /// 运行中的主机自己持有存储（LedgerStore 独占目录），live 时由主机给出它的检查结论。
     let private runWith (live: (unit -> InspectResult) option) (configPath: string, dataDir: string) : Diagnosis =
-        let inspect () = match live with Some f -> f () | None -> Inspect.run dataDir
+        let inspect () = match live with Some f -> f () | None -> Inspect.runOrPeek dataDir
         let live = live.IsSome
         let d =
             { checks = []
@@ -267,6 +268,27 @@ module Doctor =
                         plan.damage.reason
                         outcome.lastCommitId
                 d.checks <- d.checks @ [ { name = "log-replay"; ok = false; detail = d.replayError }; { name = "missing-attachments"; ok = true; detail = "skipped (log damaged)" }; { name = "orphan-attachments"; ok = true; detail = "skipped (log damaged)" } ]
+            | OutcomeUnknown (outcome, commitId, reason) ->
+                d.replayError <-
+                    sprintf
+                        "the outcome of writing commit %d is unknown (%s); the store is read-only to avoid writing it twice. Restart the host: reopening reads the log and settles whether commit %d is there (valid through commit %d now)."
+                        commitId reason commitId outcome.lastCommitId
+                d.checks <- d.checks @ [ { name = "log-replay"; ok = false; detail = d.replayError } ]
+            | HostOwned i ->
+                let skipped = [ { name = "missing-attachments"; ok = true; detail = "skipped (host running)" }; { name = "orphan-attachments"; ok = true; detail = "skipped (host running)" } ]
+                let log =
+                    match i.health with
+                    | LedgerStore.Healthy ->
+                        { name = "log-replay"; ok = true; detail = sprintf "healthy through commit %d (host running; checked without the lock)" i.lastId }
+                    | LedgerStore.Damaged _ when i.tailMayBeInFlight ->
+                        { name = "log-replay"; ok = true; detail = sprintf "healthy through commit %d; the last record may still be being written by the running host (use the host's own check for its health)" i.lastId }
+                    | LedgerStore.Damaged(offset, reason) ->
+                        d.replayError <- sprintf "damaged log at byte %d (%s); valid prefix through commit %d. Stop the host, then run `wanxiang doctor --fix`." offset reason i.lastId
+                        { name = "log-replay"; ok = false; detail = d.replayError }
+                    | LedgerStore.OutcomeUnknown(commitId, reason) ->
+                        d.replayError <- sprintf "the outcome of writing commit %d is unknown (%s); restart the host to settle it." commitId reason
+                        { name = "log-replay"; ok = false; detail = d.replayError }
+                d.checks <- d.checks @ (log :: skipped)
             | UnsupportedFormat msg ->
                 d.replayError <- msg
                 d.checks <- d.checks @ [ { name = "log-replay"; ok = false; detail = msg } ]

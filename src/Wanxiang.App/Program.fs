@@ -155,6 +155,10 @@ module Program =
                                             logInfo(sprintf "truncated %s" f)
                                         Ok truncatedFiles
                                     | Error e -> Error e
+                            | OutcomeUnknown (_, commitId, reason) ->
+                                logInfo(sprintf "outcome of commit %d unknown (%s); reopening settled it, nothing to truncate" commitId reason)
+                                Ok []
+                            | HostOwned _ -> Error "the event log is held by a running host; stop it first"
                             | UnsupportedFormat msg -> Error msg
                             | Unreadable msg -> Error msg
                         (lockHandle :> IDisposable).Dispose()
@@ -202,8 +206,14 @@ module Program =
                     // 只有 UnsupportedFormat / Unreadable 这类阻断性问题才拒绝启动。
                     // S-003 / STOP-2（算法 L）：优先从快照启动——最新有效快照作为投影基线，
                     // 只重放 throughCommitId 之后的日志；快照损坏/超前则回退完整重放（L8/L9）。
+                    // 启动检查与打开合为一步：打开的存储直接交给 ServerApp（不再重放第二次）。
+                    let store =
+                        try new EventStore(dataDir)
+                        with e ->
+                            eprintfn "event log not readable: %s" e.Message
+                            exit 1
                     let inspectStartup () =
-                        let r = Inspect.run dataDir
+                        let r = Inspect.ofStore store
                         match r with
                         | Healthy o | RepairRequired(o, _) ->
                             match o.startup.snapshot with
@@ -215,7 +225,11 @@ module Program =
 
                     let outcome =
                         match inspectStartup () with
-                        | Healthy o -> Some o
+                        | Healthy _ -> Some store
+                        | OutcomeUnknown (o, commitId, reason) ->
+                            logInfo(sprintf "outcome of commit %d unknown (%s); starting read-only (valid through commit %d)" commitId reason o.lastCommitId)
+                            Some store
+                        | HostOwned _ -> Some store
                         | RepairRequired (o, plan) ->
                             logInfo(
                                 sprintf
@@ -223,7 +237,7 @@ module Program =
                                     plan.damage.file
                                     plan.damage.reason
                                     o.lastCommitId)
-                            Some o
+                            Some store
                         | UnsupportedFormat msg ->
                             eprintfn "unsupported event log format: %s" msg
                             exit 1
@@ -336,7 +350,7 @@ module Program =
                                     let dev = Path.Combine(baseDir, "Wanxiang.Pwa", "wwwroot")
                                     if Directory.Exists dev then Some dev else None
                         else None
-                    let app = new Wanxiang.Server.ServerApp(dataDir, configPath, false, pwaDir, logInfo, ?startupOutcome = startupReplayOutcome)
+                    let app = new Wanxiang.Server.ServerApp(dataDir, configPath, false, pwaDir, logInfo, ?startupStore = startupReplayOutcome)
                     app.Start(switches.pwa)
                     Some app
                 else

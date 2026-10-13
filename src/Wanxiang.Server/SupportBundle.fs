@@ -61,16 +61,21 @@ module SupportBundle =
     /// 快照状态（算法 L 的当前结论）。
     let private snapshotStatusJson (dataDir: string) : JsonObject =
         let o = JsonObject()
-        match Inspect.run dataDir with
-        | Healthy r | RepairRequired(r, _) ->
-            match r.startup.snapshot with
+        let startup =
+            match Inspect.runOrPeek dataDir with
+            | Healthy r | RepairRequired(r, _) | OutcomeUnknown(r, _, _) -> Ok r.startup
+            | HostOwned i -> Ok i.startup
+            | UnsupportedFormat m | Unreadable m -> Error m
+        match startup with
+        | Ok st ->
+            match st.snapshot with
             | LedgerStore.Absent -> o["status"] <- "no-snapshot"
             | LedgerStore.Used through ->
                 o["status"] <- "valid"
                 o["throughCommitId"] <- through
-                o["replayedCommits"] <- r.startup.replayedCommits
+                o["replayedCommits"] <- st.replayedCommits
             | LedgerStore.Discarded reason -> o["status"] <- "discarded"; o["reason"] <- reason
-        | UnsupportedFormat m | Unreadable m -> o["status"] <- "unchecked"; o["reason"] <- m
+        | Error m -> o["status"] <- "unchecked"; o["reason"] <- m
         o
 
     /// 脱敏配置：apiKey/token 值替换为 ***（与 Stderr.redact 同一规则）。
@@ -115,8 +120,30 @@ module SupportBundle =
             diag["configOk"] <- diagnosis.checks |> List.exists (fun c -> c.name = "config" && c.ok)
             diag["configErrors"] <- JsonArray([| for e in diagnosis.configErrors -> JsonNode.op_Implicit e |])
             let logStatus =
-                match Inspect.run dataDir with
+                match Inspect.runOrPeek dataDir with
                 | Healthy _ -> "healthy"
+                | OutcomeUnknown (o, commitId, reason) ->
+                    diag["lastCommitId"] <- o.lastCommitId
+                    diag["unknownCommitId"] <- commitId
+                    diag["reason"] <- reason
+                    "outcome-unknown"
+                | HostOwned i ->
+                    diag["hostRunning"] <- true
+                    diag["lastCommitId"] <- i.lastId
+                    match i.health with
+                    | LedgerStore.Healthy -> "healthy"
+                    | LedgerStore.Damaged _ when i.tailMayBeInFlight ->
+                        diag["tailMayBeInFlight"] <- true
+                        "healthy"
+                    | LedgerStore.Damaged(offset, reason) ->
+                        diag["damageFile"] <- DataPaths.logFile dataDir
+                        diag["damageOffset"] <- offset
+                        diag["reason"] <- reason
+                        "repair-required"
+                    | LedgerStore.OutcomeUnknown(commitId, reason) ->
+                        diag["unknownCommitId"] <- commitId
+                        diag["reason"] <- reason
+                        "outcome-unknown"
                 | RepairRequired (o, plan) ->
                     diag["lastCommitId"] <- o.lastCommitId
                     diag["damageFile"] <- plan.damage.file

@@ -24,7 +24,7 @@ open Wanxiang.Store
 /// 数据锁（决策 105/Q110）：运行期全程持有到 Stop，确保同一数据目录只有一个 S 进程。
 /// startupOutcome：调用方（Program）在持锁状态下完成的一次性 replay/fix 结果，避免二次 replay；
 /// 锁仍由本构造器独立获取并持有。
-type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string option, logInfo: string -> unit, ?startupOutcome: ReplayOutcome) =
+type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string option, logInfo: string -> unit, ?startupStore: EventStore) =
 
     do
         // §18 关联 ID：注册稳定 instanceId（决策 182），所有 stderr 事件自动携带。
@@ -54,13 +54,16 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
 
     /// 只读检查结论。损坏（RepairRequired）时进入只读降级模式：投影可用，但拒绝一切永久写入。
     /// 正常启动**不再**自动截尾/删除（S-001 / STOP-1）；修复只能由 doctor --fix 显式执行。
-    let inspectResult =
-        match startupOutcome with
-        | Some outcome -> Healthy outcome
+    /// 打开一次存储：启动检查的结论就来自这次打开（Program 已打开时直接接过来）。
+    let store =
+        match startupStore with
+        | Some s -> s
         | None ->
             match lockHandle with
             | Error e -> failwith e
-            | Ok _ -> Inspect.run dataDir
+            | Ok _ -> new EventStore(dataDir)
+
+    let inspectResult = Inspect.ofStore store
 
     let replayOutcome =
         match inspectResult with
@@ -68,14 +71,16 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         | RepairRequired (outcome, _) ->
             // 只读降级模式：以最长有效前缀启动，禁止写入（STOP-1）。
             outcome
-        | UnsupportedFormat msg -> failwith msg
-        | Unreadable msg -> failwith msg
+        | OutcomeUnknown (outcome, _, _) -> outcome
+        | HostOwned _ -> store.Shutdown(); failwith "event log held by another host"
+        | UnsupportedFormat msg -> store.Shutdown(); failwith msg
+        | Unreadable msg -> store.Shutdown(); failwith msg
 
     /// 只读降级标记：日志损坏但以有效前缀启动时，拒绝一切永久写入（S-001）。
     /// 客户端仍可 observe/读取历史；写命令返回明确错误。
     let readOnlyDegraded =
         match inspectResult with
-        | RepairRequired _ -> true
+        | RepairRequired _ | OutcomeUnknown _ -> true
         | _ -> false
 
     do
@@ -325,7 +330,8 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 | None -> ()
             with _ -> ()
             // 决策 73：首版不做附件 GC——删对话不断触发任何 blob 清扫，孤儿留待未来压缩处理。
-        coordinator <- Some(new EventStore(dataDir, broadcastCommit))
+        store.SetOnCommitted broadcastCommit
+        coordinator <- Some store
         registry <- Some(ConnectionRegistry())
         let broadcastToConversation (convId: Guid) (ev: WireEvent) =
             match registry with
@@ -566,7 +572,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                             Stderr.write "snapshot-write-failed" [ "message", e.Message ]
                     else
                         c.Shutdown()
-                | None -> ()
+                | None -> store.Shutdown()
             with _ -> ()
             try
                 match configStore with
