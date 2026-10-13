@@ -49,6 +49,8 @@ type MainView() as this =
     let mutable instanceId = ""
 
     let mutable activeConvId: Guid option = None
+    /// 决策 440：主机声明的功能表。None = 主机没声明（旧主机），照常显示、靠超时兜底。
+    let mutable hostFeatures: Set<string> option = None
     let runs = ConversationRuns()
     let mutable summaries: ConversationSummary list = []
     let mutable paletteRecent: string list = CommandPalette.loadRecent ()
@@ -861,7 +863,15 @@ type MainView() as this =
             note |> Option.iter (fun n -> toast n Warning)
 
     /// 「存为预设…」：取当前对话的完整会话配置，名字默认是对话标题。
+    /// 决策 442：主机明确声明不支持时，发请求前就说清楚，而不是等它石沉大海。
+    member private _.RequireFeature(feature: string) : bool =
+        if HostFeatures.supports hostFeatures feature then true
+        else
+            toast (HostFeatures.unsupportedMessage feature) Warning
+            false
+
     member private this.SaveConversationAsPreset() =
+        if not (this.RequireFeature HostFeatures.Presets) then () else
         match activeConversation () with
         | Some view when authenticated ->
             let title = activeSummary () |> Option.map (fun s -> s.title) |> Option.defaultValue ""
@@ -874,19 +884,21 @@ type MainView() as this =
         | _ -> toast "打开一段对话后才能存为预设。" Warning
 
     member private this.RenamePreset(preset: PresetInfo) =
-        Dialogs.prompt overlay "重命名预设" "预设名称" preset.name "保存" (fun name onCompleted ->
-            sendConfigWithFeedback
-                "预设已重命名"
-                (fun requestId ->
-                    ConfigUpsertPreset {| requestId = requestId; preset = Presets.payloadOf (Some preset.id) name (Presets.ofPreset preset) |})
-                onCompleted)
+        if this.RequireFeature HostFeatures.Presets then
+            Dialogs.prompt overlay "重命名预设" "预设名称" preset.name "保存" (fun name onCompleted ->
+                sendConfigWithFeedback
+                    "预设已重命名"
+                    (fun requestId ->
+                        ConfigUpsertPreset {| requestId = requestId; preset = Presets.payloadOf (Some preset.id) name (Presets.ofPreset preset) |})
+                    onCompleted)
 
     member private this.DeletePreset(preset: PresetInfo) =
-        Dialogs.confirm overlay "删除预设" (sprintf "「%s」将从这台主机上移除。已经用它建好的对话不受影响。" preset.name) "删除" (fun () ->
-            sendConfigWithFeedback
-                "预设已删除"
-                (fun requestId -> ConfigDeletePreset {| requestId = requestId; presetId = preset.id |})
-                ignore)
+        if this.RequireFeature HostFeatures.Presets then
+            Dialogs.confirm overlay "删除预设" (sprintf "「%s」将从这台主机上移除。已经用它建好的对话不受影响。" preset.name) "删除" (fun () ->
+                sendConfigWithFeedback
+                    "预设已删除"
+                    (fun requestId -> ConfigDeletePreset {| requestId = requestId; presetId = preset.id |})
+                    ignore)
 
     /// 预设入口随目录同步：侧栏下拉、空态芯片、顶栏菜单。没有预设时前两处都不出现。
     member private this.SyncPresetSurfaces() =
@@ -897,7 +909,10 @@ type MainView() as this =
             Menu.show overlay anchor false
                 [ for (name, _, run) in items -> MenuEntry.create name run ])
         chat.SetPresetStarters(entries)
-        chat.SetSavePresetAction(Some(fun () -> this.SaveConversationAsPreset()))
+        chat.SetSavePresetAction(
+            if HostFeatures.supports hostFeatures HostFeatures.Presets then
+                Some(fun () -> this.SaveConversationAsPreset())
+            else None)
 
     /// 点击一条搜索命中：打开那段对话，并滚动到命中的消息（目标在更早历史里则先加载）。
     member private this.OpenSearchHit(hit: SearchHit) =
@@ -976,13 +991,15 @@ type MainView() as this =
     /// 决策 230：把半截回复落盘并从它接着生成。与「重试」相反，已写出的部分保留。
     member private this.ContinueGeneration(convId: Guid, partial: MessageView) =
         if not authenticated then toast "连接已断开，重新连接后可继续生成。" Warning
+        elif not (this.RequireFeature HostFeatures.ContinueResponse) then ()
         else
             runs.ClearError convId
-            sendCommand (
-                ContinueResponse
+            sendCommandWithCompletion
+                (ContinueResponse
                     {| invocationId = newInvocation ()
                        conversationId = convId
                        messageJson = ConversationRuns.PartialMessageJson partial |})
+                None ignore ignore
             this.Render()
             composer.Focus()
 
@@ -1454,6 +1471,7 @@ type MainView() as this =
     /// 决策 313：导入对话。未连接时不打开（导入要写到主机上）。
     member private this.ImportConversation() =
         if not authenticated then toast "连接主机后才能导入对话。" Warning
+        elif not (this.RequireFeature HostFeatures.ConversationImport) then ()
         elif importDialog |> Option.exists (fun d -> d.IsOpen) then ()
         else
             let ownerInstance = instanceId
@@ -1490,6 +1508,7 @@ type MainView() as this =
 
     member private this.ExportConversation(summary: ConversationSummary) =
         if not authenticated then toast "连接主机后才能读取完整历史。" Warning
+        elif not (this.RequireFeature HostFeatures.ConversationExport) then ()
         elif exportDialog |> Option.exists (fun dialog -> dialog.IsOpen) then ()
         else
             let ownerInstance = instanceId
@@ -1545,9 +1564,10 @@ type MainView() as this =
               for p in catalog.presets do
                   { id = "preset:" + p.id; kind = PaletteAction; title = "用预设新建：" + p.name
                     subtitle = Presets.describe catalog p; keywords = [ "preset"; "yushe"; "ys"; p.name ]; shortcut = None }
-              if hasConv then
+              if hasConv && HostFeatures.supports hostFeatures HostFeatures.Presets then
                   act "save-preset" "存为预设" "记下本对话的模型、指令、参数和工具" [ "preset"; "save"; "yushe" ] None
-              act "import" "导入对话" "从导出的 JSON 文件" [ "import"; "upload" ] None
+              if HostFeatures.supports hostFeatures HostFeatures.ConversationImport then
+                act "import" "导入对话" "从导出的 JSON 文件" [ "import"; "upload" ] None
               act "theme" "切换主题" (sprintf "当前：%s" (ThemePreference.label prefs.theme)) [ "theme"; "dark"; "light"; "深色"; "浅色" ] (Some "Ctrl / ⌘ + Shift + S")
               act "sidebar" "显示 / 隐藏侧栏" "" [ "sidebar" ] (Some "Ctrl / ⌘ + B")
               act "shortcuts" "键盘快捷键" "" [ "shortcuts"; "keyboard"; "help"; "帮助" ] (Some "F1")
@@ -1769,6 +1789,8 @@ type MainView() as this =
                 sidebar.SetConversations []
                 composer.SetText((drafts.Get(d.instanceId, None)).text)
             authenticated <- true
+            // 新连接：能力表等主机重新声明；旧主机不会声明，保持「未知」。
+            hostFeatures <- None
             // 声明本客户端能处理工具审批；旧客户端不发这条，主机据此对需要审批的调用直接拒绝
             send (ToolApprovalCapability {| supported = true |})
             hasSavedCredentials <- true
@@ -1999,6 +2021,9 @@ type MainView() as this =
                     toast (GenerationError.display err) Failure
                 | _ -> ()
                 if activeConvId = Some d.conversationId then this.Render()
+        | HostCapabilities d ->
+            hostFeatures <- Some(Set.ofList d.features)
+            this.SyncPresetSurfaces()
         | GenerationPartial d ->
             if runs.RestorePartial(d.conversationId, d.generationId, MessageView.ofJson d.message, d.error)
                && activeConvId = Some d.conversationId then
@@ -2604,7 +2629,15 @@ type MainView() as this =
         this.WatchHostViewport()
         let deliveryTimer = DispatcherTimer(Interval = MotionLedger.outboxDeliveryCheckTick)
         deliveryTimer.Tick.Add(fun _ ->
-            if outbox.Expire(DateTimeOffset.UtcNow, TimeSpan.FromSeconds 30.0) then this.Render())
+            let now = DateTimeOffset.UtcNow
+            // 决策 443：旧主机静默丢弃它不认识的请求——到点就让界面退出等待并说明原因。
+            let expiredConfig = configFeedback.Expire(now, MotionLedger.hostRequestTimeout)
+            let expiredCommands = commandFeedback.Expire(now, MotionLedger.hostRequestTimeout)
+            for f in expiredConfig do f.onCompleted false
+            for f in expiredCommands do f.onCompleted false
+            if not (List.isEmpty expiredConfig && List.isEmpty expiredCommands) then
+                toast (HostFeatures.noResponseMessage hostFeatures) Warning
+            if outbox.Expire(now, TimeSpan.FromSeconds 30.0) || not (List.isEmpty expiredCommands) then this.Render())
         // 本地草稿自动保存：内容没变不写盘，所以高频 tick 的代价只是一次快照比较。
         let draftTimer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 800.0)
         draftTimer.Tick.Add(fun _ -> this.FlushDrafts())

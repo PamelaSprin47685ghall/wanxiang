@@ -84,6 +84,8 @@ module MotionLedger =
     let exportExpiryCheckTick = TimeSpan.FromMilliseconds 1000.0
     /// 决策 310：更早一页历史的等待上限。过了就判失败、给行内重试，绝不无限挂起。
     let olderPageTimeout = TimeSpan.FromMilliseconds 10000.0
+    /// 决策 443：配置写入/命令等主机确认的上限。旧主机会静默丢弃不认识的请求。
+    let hostRequestTimeout = TimeSpan.FromMilliseconds 12000.0
     /// 更早一页历史的超时检查 tick。
     let olderPageCheckTick = TimeSpan.FromMilliseconds 500.0
     /// 决策 313：导入命令的等待上限（旧主机不认识命令时会静默忽略）。

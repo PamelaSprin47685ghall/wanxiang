@@ -14,6 +14,8 @@ open Wanxiang.Protocol
 open Wanxiang.Store
 
 /// 命令执行结果（由 ServerApp 注入的 executeCommand 产生）。
+type internal HostFeaturesMarker = class end
+
 type CommandExecutionResult =
     /// SendUserMessage：已入队（等待插入点提交）
     | CommandQueued
@@ -92,6 +94,15 @@ type WsConnection(
     member val HostStatus: HostStatus option = None with get, set
 
     /// 认证完成后补发主机当前的可见状态：断线期间发生的配置拒绝，重连后也要看得到。
+    /// 决策 440：认证后紧随 AuthAccepted 声明主机版本与功能表。
+    member private this.AnnounceCapabilities() : unit =
+        let version =
+            let asm = typeof<HostFeaturesMarker>.Assembly
+            match asm.GetName().Version with
+            | null -> ""
+            | v -> v.ToString()
+        this.TrySend(HostCapabilities {| hostVersion = version; features = HostFeatures.all |}) |> ignore
+
     member private this.AnnounceHostStatus() : unit =
         match this.HostStatus |> Option.bind _.Current with
         | Some ev -> this.TrySend ev |> ignore
@@ -422,6 +433,7 @@ type WsConnection(
                             tokenHash <- Some(Auth.hashToken d.token))
                         let cfg = getConfig ()
                         this.TrySend(AuthAccepted {| instanceId = cfg.instanceId.ToString("D") |}) |> ignore
+                        this.AnnounceCapabilities()
                         this.AnnounceHostStatus()
                         // 决策 54：最近连接时间挂在该哈希记录下；认证成功后更新（节流：1 分钟内不重复写盘）
                         let now = DateTimeOffset.UtcNow
@@ -490,6 +502,7 @@ type WsConnection(
                                     this.TrySend(PairingSucceeded {| token = token |}) |> ignore
                                     let serverCfg = getConfig ()
                                     this.TrySend(AuthAccepted {| instanceId = serverCfg.instanceId.ToString("D") |}) |> ignore
+                                    this.AnnounceCapabilities()
                                     this.AnnounceHostStatus()
                                 | Error e ->
                                     this.TrySend(PairingFailed {| reason = e; frozen = false; freezeMinutes = 0 |}) |> ignore
