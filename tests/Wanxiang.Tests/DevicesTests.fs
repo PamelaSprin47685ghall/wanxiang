@@ -207,7 +207,7 @@ let ``issuing an invite does not touch the event log`` () =
 
 // ---------- 验收 3：未认证 / 非桌面 ----------
 
-[<Fact(Skip = "缺口：PairingDesk 没有对外的失败计数入口，未认证邀请不再计入配对限流（待 wanxiang2 补 RecordFailure 或等价消息）")>]
+[<Fact>]
 let ``unauthenticated invite is rejected closes the connection and counts toward the rate limit`` () =
     let s = new DeviceServer(pickPort ())
     try

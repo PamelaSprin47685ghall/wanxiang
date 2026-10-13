@@ -366,9 +366,9 @@ let ``selecting an unloaded conversation does not display the previous conversat
     handle view (start a generation)
     handle view (
         GenerationDelta
-            {| conversationId = a
+            {  conversationId = a
                generationId = generation
-               payload = JsonNode.Parse("""{"role":"assistant","contents":[{"text":"只属于对话 A 的正文"}]}""") |})
+               payload = JsonNode.Parse("""{"role":"assistant","contents":[{"text":"只属于对话 A 的正文"}]}""") })
     invoke view "SelectConversation" [| box (Some b) |] |> ignore
     let chat = (field view "chat").GetValue view :?> ChatView
     let visibleText =

@@ -21,9 +21,7 @@
     <Compile Include="GenerationContext.fs" />
     <Compile Include="BuiltinTools.fs" />
     <Compile Include="ToolRegistry.fs" />
-    <Compile Include="ToolApproval.fs" />
     <Compile Include="TitleGenerator.fs" />
-    <Compile Include="PartialReplyStore.fs" />
     <Compile Include="ChatOrchestrator.fs" />
     <Compile Include="HostStatus.fs" />
     <Compile Include="WsConnection.fs" />
@@ -31,12 +29,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.ToolApproval" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PartialReplies" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.AguiWire" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.McpClient" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatDomain" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
     <ProjectReference Include="..\Wanxiang.Store\Wanxiang.Store.fsproj" />
-    <ProjectReference Include="..\Wanxiang.Protocol\Wanxiang.Protocol.fsproj" />
     <ProjectReference Include="..\Wanxiang.Agent\Wanxiang.Agent.fsproj" />
   </ItemGroup>
 

@@ -352,9 +352,9 @@ module AppShellTests =
             payload["text"] <- "Hello delta"
             let deltaEv =
                 GenerationDelta
-                    {| conversationId = convId
+                    {  conversationId = convId
                        generationId = genId
-                       payload = payload |}
+                       payload = payload }
             dispatchEvent view deltaEv
 
             Assert.Equal("Hello delta", runs.Get(Some convId).message.Value.text)

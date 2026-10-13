@@ -777,7 +777,8 @@ type WsConnection(
                     | Error _ ->
                         this.TrySend(PairingInviteRejected {| reason = "not-desktop" |}) |> ignore
                 | NotStarted ->
-                    // 未认证连接发邀请：告知拒绝后关闭。（PairingDesk 不对外记失败，旧版计入限流这一点见缺口）
+                    // 未认证连接发邀请：计入配对限流，告知拒绝后关闭。
+                    desk.RecordFailure(DateTimeOffset.UtcNow, remoteAddress) |> ignore
                     do! this.SendAndClose(PairingInviteRejected {| reason = "not-authenticated" |}, "not authenticated")
             | DevicesRequest ->
                 match handshakeState with

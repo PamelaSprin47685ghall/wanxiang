@@ -515,9 +515,9 @@ type ChatOrchestrator(
                                     let payload = MessageSerde.toJsonNode deltaMsg
                                     let deltaEv =
                                         GenerationDelta
-                                            {| conversationId = convId
+                                            {  conversationId = convId
                                                generationId = generationId
-                                               payload = payload |}
+                                               payload = payload }
                                     lock rt (fun () ->
                                         if not g.cancelled && (rt.generation |> Option.map _.generationId) = Some generationId then
                                             g.lastDelta <- Some payload

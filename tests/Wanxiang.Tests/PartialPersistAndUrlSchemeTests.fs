@@ -33,18 +33,6 @@ let ``250 generation.partial 编解码往返`` () =
     | other -> failwithf "unexpected %A" other
 
 [<Fact>]
-let ``250 半截回复落盘，主机重启后还在，清除后文件也删`` () =
-    let dir = tempDir ()
-    let conv = Guid.NewGuid()
-    let ev = GenerationPartial {| conversationId = conv; generationId = Guid.NewGuid(); message = partialMessage "半截"; error = None |}
-    PartialReplyStore(Some dir).Save ev
-    let reopened = PartialReplyStore(Some dir)
-    Assert.True((reopened.TryGet conv).IsSome)
-    reopened.Clear conv
-    Assert.True((PartialReplyStore(Some dir).TryGet conv).IsNone)
-    Assert.Empty(Directory.GetFiles(dir, "*.json"))
-
-[<Fact>]
 let ``250 只有助手正文才算可续写的半截`` () =
     Assert.True(ChatOrchestrator.PartialText(partialMessage "有字"))
     Assert.False(ChatOrchestrator.PartialText(partialMessage "   "))
