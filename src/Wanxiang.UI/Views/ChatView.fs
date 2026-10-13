@@ -1844,6 +1844,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         this.Child <- layout
 
         this.AttachedToVisualTree.Add(fun _ ->
+            ParityProbe.hit "lifecycle.chatAttached"
             attached <- true
             motionSubscription |> Option.iter (fun s -> s.Dispose())
             motionSubscription <- Some(MotionPolicy.Changed.Publish.Subscribe(fun _ -> this.RefreshSkeletonMotion()))

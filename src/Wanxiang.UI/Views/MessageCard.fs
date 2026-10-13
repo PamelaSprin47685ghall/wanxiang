@@ -1412,7 +1412,9 @@ module MessageCard =
             refresh () |> ignore
             let timer = DispatcherTimer(Interval = TimeSpan.FromSeconds 1.0)
             timer.Tick.Add(fun _ -> if refresh () <= 0 then timer.Stop())
-            countdown.AttachedToVisualTree.Add(fun _ -> if refresh () > 0 then timer.Start())
+            countdown.AttachedToVisualTree.Add(fun _ ->
+                ParityProbe.hit "timer.rateLimitCountdown"
+                if refresh () > 0 then timer.Start())
             countdown.DetachedFromVisualTree.Add(fun _ -> timer.Stop())
             column.Children.Add countdown
         | _ -> ()
@@ -1875,6 +1877,7 @@ module MessageCard =
         (actions: MessageActions)
         : ContextMenu =
         let menu = ContextMenu()
+        menu.Opening.Add(fun _ -> ParityProbe.hit "contextmenu.message")
         let entries = messageMenuEntries message ctx actions
         if List.isEmpty entries then
             // 没有任何可用动作：挂空集合。宿主对空菜单不显示，客户端无需再判一次。

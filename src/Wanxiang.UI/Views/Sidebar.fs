@@ -1668,6 +1668,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 else
                     this.FocusActiveConversation())
         searchDebounce.Tick.Add(fun _ ->
+            ParityProbe.hit "timer.searchDebounce"
             searchDebounce.Stop()
             // 词没变（已为它发过查询，结果已到或在途）就不重发：迟到的防抖 Tick
             // 否则会清空刚到的命中（CI 上 LibraryTests 偶发失败的根因）。

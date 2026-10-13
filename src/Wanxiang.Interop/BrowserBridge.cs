@@ -70,4 +70,27 @@ public static partial class BrowserBridge
     [return: JSMarshalAs<JSType.Promise<JSType.String>>]
     public static partial Task<string> ImageShrink(
         [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bytes, string mediaType, int maxDimension, double maxBytes);
+
+    /// <summary>决策 450：一致性探针是否打开（页面地址带 wxprobe=1）。默认关闭。</summary>
+    [JSImport("wxProbeEnabled", "wanxiang")]
+    public static partial bool ProbeEnabled();
+
+    /// <summary>决策 450：记录一次探点命中（写入 globalThis.__wxProbe）。</summary>
+    [JSImport("wxProbe", "wanxiang")]
+    public static partial void Probe(string name);
+
+    /// <summary>决策 452：localStorage 读取（无则 null）。PWA 的界面偏好等小型本机文本。</summary>
+    [JSImport("wxLocalGet", "wanxiang")]
+    public static partial string? LocalGet(string key);
+
+    /// <summary>决策 452：localStorage 写入。</summary>
+    [JSImport("wxLocalSet", "wanxiang")]
+    public static partial void LocalSet(string key, string value);
+
+    /// <summary>决策 451：页面转入后台 / 即将卸载时由 main.js 调用（桌面的 Window.Closing 对应物）。</summary>
+    public static event Action? PageHidden;
+
+    [JSExport]
+    [System.Runtime.Versioning.SupportedOSPlatform("browser")]
+    public static void NotifyPageHidden() => PageHidden?.Invoke();
 }

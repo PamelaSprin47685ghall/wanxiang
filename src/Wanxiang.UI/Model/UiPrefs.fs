@@ -93,12 +93,12 @@ module UiPrefs =
     let private readObject () =
         try
             let path = filePath ()
-            if File.Exists path then
-                match JsonNode.Parse(File.ReadAllText path) with
+            match LocalText.read path with
+            | Some text ->
+                match JsonNode.Parse text with
                 | null -> JsonObject()
                 | node -> node.AsObject()
-            else
-                JsonObject()
+            | None -> JsonObject()
         with _ ->
             JsonObject()
 
@@ -157,7 +157,6 @@ module UiPrefs =
     let save (prefs: UiPrefs) =
         try
             let path = filePath ()
-            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
             let o = readObject ()
             o["theme"] <- ThemePreference.toText prefs.theme
             o["fontScale"] <- prefs.fontScale
@@ -174,9 +173,10 @@ module UiPrefs =
             o["windowX"] <- prefs.windowX
             o["windowY"] <- prefs.windowY
             o["hasWindowPosition"] <- prefs.hasWindowPosition
-            File.WriteAllText(path, o.ToJsonString(JsonSerializerOptions(WriteIndented = true)))
-            // Q118：本机偏好文件按最小用户权限落盘（与 TOML/日志/附件一致）
-            try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
+            if LocalText.write path (o.ToJsonString(JsonSerializerOptions(WriteIndented = true)))
+               && not (OperatingSystem.IsBrowser()) then
+                // Q118：本机偏好文件按最小用户权限落盘（与 TOML/日志/附件一致）
+                try File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite) with _ -> ()
         with _ ->
             ()
 

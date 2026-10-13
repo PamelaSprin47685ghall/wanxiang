@@ -359,6 +359,16 @@ async function imageShrink(bytes, mediaType, maxDimension, maxBytes) {
     }
 }
 
+// ---- 决策 450：桌面/PWA 一致性探针（默认关闭；地址带 wxprobe=1 才记录）----
+const probeOn = (() => { try { return new URLSearchParams(location.search).get("wxprobe") === "1"; } catch (_) { return false; } })();
+if (probeOn) globalThis.__wxProbe = {};
+export function wxProbeEnabled() { return probeOn; }
+export function wxProbe(name) { if (probeOn) globalThis.__wxProbe[name] = (globalThis.__wxProbe[name] || 0) + 1; }
+
+// ---- 决策 452：小型本机文本（界面偏好等）----
+export function wxLocalGet(key) { try { return localStorage.getItem(key); } catch (_) { return null; } }
+export function wxLocalSet(key, value) { try { localStorage.setItem(key, value); } catch (_) { } }
+
 // ---- 运行时引导 ----
 const dotnetRuntime = await dotnet
     .withDiagnosticTracing(false)
@@ -366,11 +376,22 @@ const dotnetRuntime = await dotnet
     .create();
 
 dotnetRuntime.setModuleImports("wanxiang", {
-    credList, credPut, credDelete, draftGet, draftPut, draftDelete, pageUrl, wxViewportWidth, wxResumeEpoch, wxConversationSucceeded,
+    credList, credPut, credDelete, draftGet, draftPut, draftDelete, pageUrl, wxViewportWidth, wxResumeEpoch, wxConversationSucceeded, wxProbeEnabled, wxProbe, wxLocalGet, wxLocalSet,
     richLoad, richHighlight, richMath, imageShrink,
 });
 
 const config = dotnetRuntime.getConfig();
+
+// 决策 451：页面转入后台 / 卸载 = 桌面的关窗口：立刻落草稿（800 ms 定时器在后台标签页会被节流甚至冻结）。
+async function wirePageHidden() {
+    try {
+        const exports = await dotnetRuntime.getAssemblyExports("Wanxiang.Interop.dll");
+        const notify = () => { try { exports.Wanxiang.Interop.BrowserBridge.NotifyPageHidden(); } catch (_) { } };
+        document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") notify(); });
+        addEventListener("pagehide", notify);
+    } catch (e) { console.warn("wanxiang: page-hidden hook unavailable", e); }
+}
+wirePageHidden();
 
 function dismissSplash() {
     const splash = document.querySelector(".splash");
