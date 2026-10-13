@@ -2670,10 +2670,14 @@ type MainView() as this =
         // 本地草稿自动保存：内容没变不写盘，所以高频 tick 的代价只是一次快照比较。
         let draftTimer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 800.0)
         draftTimer.Tick.Add(fun _ -> this.FlushDrafts())
-        this.AttachedToVisualTree.Add(fun _ ->
+        let startTimers () =
             deliveryTimer.Start()
             draftTimer.Start()
-            this.StartViewportWatcher())
+            this.StartViewportWatcher()
+        this.AttachedToVisualTree.Add(fun _ -> startTimers ())
+        // 决策 449：PWA 先把视图挂上 SingleView 再 Build()，AttachedToVisualTree 早已触发过——
+        // 只挂事件会让投递确认、请求超时、草稿自动保存在浏览器里从不运行。已挂上就立刻启动（Start 幂等）。
+        if not (isNull (TopLevel.GetTopLevel this)) then startTimers ()
         this.DetachedFromVisualTree.Add(fun _ ->
             this.FlushDrafts()
             deliveryTimer.Stop()

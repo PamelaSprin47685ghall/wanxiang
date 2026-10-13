@@ -13,6 +13,7 @@ const puppeteer = require('puppeteer-core');
 const { createHash, randomUUID } = require('node:crypto');
 const { existsSync, mkdirSync, readFileSync } = require('node:fs');
 const { join } = require('node:path');
+const { forceTheme } = require('./qa_theme');
 
 const argv = process.argv.slice(2);
 const arg = (k, d) => {
@@ -231,6 +232,10 @@ async function main() {
         return { x: r.x, y: r.y, w: r.width, h: r.height };
     });
 
+    // 决策 446：媒体特性仿真不保证生效，按快捷键把应用主题真正切到目标。
+    await page.mouse.click(geo.x + geo.w - 30, geo.y + geo.h * 0.5);
+    await forceTheme(page, geo, THEME);
+    await sleep(4000); // 等「已切换为…主题」提示淡出
     const hashFile = (p) => createHash('md5').update(readFileSync(p)).digest('hex');
     async function shot(name) {
         const path = join(OUT, `${TAG}-${name}.png`);
