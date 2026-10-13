@@ -14,8 +14,6 @@
     <Compile Include="ProviderCatalog.fs" />
     <Compile Include="ConfigMutation.fs" />
     <Compile Include="GenerationContext.fs" />
-    <Compile Include="BuiltinTools.fs" />
-    <Compile Include="ToolRegistry.fs" />
     <Compile Include="TitleGenerator.fs" />
     <Compile Include="ChatOrchestrator.fs" />
     <Compile Include="HostStatus.fs" />
@@ -24,6 +22,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.BuiltinTools" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ToolRegistry" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.Doctor" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.EventStore" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.Search" Version="0.0.0-local" />

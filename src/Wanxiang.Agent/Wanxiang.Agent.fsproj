@@ -6,9 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="MessageSerde.fs" />
     <Compile Include="MessageMap.fs" />
-    <Compile Include="AttachmentContent.fs" />
     <Compile Include="HistoryProvider.fs" />
     <Compile Include="AgentRuntime.fs" />
   </ItemGroup>
@@ -21,6 +19,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.MessageSerde" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MediaContent" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.AgentContent" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProviderTransports" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatDomain" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />

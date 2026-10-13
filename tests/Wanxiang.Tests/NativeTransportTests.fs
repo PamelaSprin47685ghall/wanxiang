@@ -254,38 +254,6 @@ let ``每个预设的传输类型都是配置层认得的`` () =
             TomlCodec.supportedProviderKinds.Contains preset.kind,
             $"预设 {preset.key} 的 kind={preset.kind} 不被配置层接受")
 
-[<Fact>]
-let ``工具调用 id 能穿过序列化往返`` () =
-    // Gemini 的调用 id 是自己造的 `name@序号`，函数名要从 id 里拆回来。
-    // 消息要落 NDJSON 再重放，id 在这一路上被改写或丢掉，工具结果就配不回调用了。
-    let original =
-        ChatMessage(
-            ChatRole.Assistant,
-            [| FunctionCallContent("echo@0", "echo", dict [ "text", box "hi" ]) :> AIContent |])
-    let json = MessageSerde.serialize original
-    match MessageSerde.deserialize json with
-    | None -> failwith $"重放失败：{json}"
-    | Some restored ->
-        match restored.Contents |> Seq.choose (function :? FunctionCallContent as c -> Some c | _ -> None) |> List.ofSeq with
-        | [ call ] ->
-            Assert.Equal("echo@0", call.CallId)
-            Assert.Equal("echo", call.Name)
-            Assert.Equal("echo", GeminiRequest.nameOfCallId call.CallId)
-        | other -> failwith $"重放后应当仍有一次工具调用，实际 {other.Length} 次"
-
-[<Fact>]
-let ``工具结果的调用 id 同样能穿过序列化往返`` () =
-    let call = FunctionCallContent("echo@3", "echo", dict [ "text", box "x" ])
-    let message = MessageSerde.toolResultMessage call "{\"ok\":true}"
-    match MessageSerde.deserialize (MessageSerde.serialize message) with
-    | None -> failwith "工具结果消息重放失败"
-    | Some restored ->
-        let ids =
-            restored.Contents
-            |> Seq.choose (function :? FunctionResultContent as r -> Some r.CallId | _ -> None)
-            |> List.ofSeq
-        Assert.Equal<string list>([ "echo@3" ], ids)
-
 // ---------------------------------------------------------------- 思维链 / 缓存 / 附件
 
 let private reasoningOf (response: ChatResponse) =
