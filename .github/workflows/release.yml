@@ -1,0 +1,88 @@
+name: wanxiang-release
+
+# 决策 414–416：推 v* 标签 → 构建各平台自包含发行包 → 挂到「草稿」GitHub Release。
+# 只建草稿，绝不自动发布；发布由人工在 Releases 页面确认。也可手动触发（只产出 artifact，不建 Release）。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（只用于包名，例如 v0.0.0-test）"
+        required: true
+        default: "v0.0.0-dev"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x64, win-x64, osx-arm64, osx-x64]
+    env:
+      VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ matrix.rid }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '**/Directory.*.props', '**/Directory.*.targets', 'NuGet.config', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Install wasm-tools workload (PWA 随包发布)
+        run: dotnet workload install wasm-tools --skip-manifest-update || dotnet workload install wasm-tools
+
+      - name: Publish self-contained ${{ matrix.rid }}
+        run: dotnet publish src/Wanxiang.App/Wanxiang.App.fsproj -c Release -r ${{ matrix.rid }} --self-contained true -o "$RUNNER_TEMP/pub" --verbosity minimal
+
+      - name: Smoke-test published PWA (linux-x64 only; 决策 411)
+        if: matrix.rid == 'linux-x64'
+        run: |
+          npm ci --no-audit --no-fund
+          tools/smoke_published.sh "$RUNNER_TEMP/pub"
+
+      - name: Package
+        run: tools/package_release.sh ${{ matrix.rid }} "$RUNNER_TEMP/pub" dist "$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wanxiang-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+
+  draft-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create or update DRAFT release (never published automatically)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -la dist
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # 已存在：只在它仍是草稿时补传；已发布的 Release 不动。
+            if [ "$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)" != "true" ]; then
+              echo "release $TAG already published; refusing to modify"; exit 1
+            fi
+            gh release upload "$TAG" dist/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/* --draft --verify-tag --generate-notes --title "万象 $TAG" -R "$GITHUB_REPOSITORY"
+          fi

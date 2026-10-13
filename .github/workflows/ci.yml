@@ -51,6 +51,21 @@ jobs:
           dotnet publish src/Wanxiang.App/Wanxiang.App.fsproj -c Release -o "$RUNNER_TEMP/wanxiang-publish" --verbosity minimal
           python3 tools/verify_avalonia_patch.py "$RUNNER_TEMP/wanxiang-publish/pwa"
 
+      # 决策 411：对发布产物（不是 bin/ 开发构建）起主机 --pwa（随机空闲端口），headless Chrome DPR 2
+      # 验证渲染、画布像素比与文本上屏桥。
+      - name: Smoke-test published App + PWA (headless Chrome)
+        run: |
+          npm ci --no-audit --no-fund
+          SMOKE_OUT="$RUNNER_TEMP/smoke" tools/smoke_published.sh "$RUNNER_TEMP/wanxiang-publish"
+
+      - name: Upload smoke screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshots
+          path: ${{ runner.temp }}/smoke
+          if-no-files-found: ignore
+
       - name: Format gate (dotnet format --verify-no-changes)
         run: dotnet format wanxiang.slnx --verify-no-changes --verbosity minimal
 
