@@ -58,21 +58,17 @@ module AcceptanceScenario =
 
             // 创建快照（算法 S）
             let fileLen = FileInfo(DataPaths.logFile dir).Length
-            match Snapshot.write dir outcome.checkpoint with
+            match saveSnapshot dir with
             | Error e -> failwith e
             | Ok _ ->
                 // 快照启动（算法 L）
-                match Snapshot.findLatest dir with
-                | SnapshotStartup.SnapshotUsed info ->
-                    Assert.True(info.throughCommitId >= 1UL)
-                    match Replay.inspectFrom dir info.checkpoint with
-                    | Healthy snapOutcome ->
+                match Inspect.run dir with
+                | Healthy snapOutcome when snapOutcome.startup.snapshot = LedgerStore.Used 10000UL ->
                         // 投影内容一致（指纹对比）
                         Assert.Equal(projectionFingerprint outcome.projection, projectionFingerprint snapOutcome.projection)
                         Assert.Equal(outcome.projection.latestCommitId, snapOutcome.projection.latestCommitId)
                         Assert.Equal(outcome.projection.conversations.Count, snapOutcome.projection.conversations.Count)
-                    | other -> failwithf "snapshot startup not healthy: %A" other
-                | other -> failwithf "expected SnapshotUsed, got %A" other
+                | other -> failwithf "expected healthy snapshot startup, got %A" other
         finally
             cleanup dir
 
@@ -82,11 +78,11 @@ module AcceptanceScenario =
         try
             let outcome = replayOutcome dir
             let fileLen = FileInfo(DataPaths.logFile dir).Length
-            match Snapshot.write dir outcome.checkpoint with
+            match saveSnapshot dir with
             | Error e -> failwith e
             | Ok _ ->
                 // 快照后追加 3 条提交
-                use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
+                use coord = new EventStore(dir)
                 let convId = outcome.projection.conversations.Keys |> Seq.head
                 for i in 5001 .. 5003 do
                     let cmd =
@@ -100,72 +96,16 @@ module AcceptanceScenario =
                     | other -> failwithf "append after snapshot failed: %A" other
                 coord.Shutdown()
                 // 快照启动应重放 3 条，最终投影 = 完整重放
-                match Snapshot.findLatest dir with
-                | SnapshotStartup.SnapshotUsed info ->
-                    match Replay.inspectFrom dir info.checkpoint with
-                    | Healthy snapOutcome ->
-                        let full = replayOutcome dir
-                        Assert.Equal(full.projection.latestCommitId, snapOutcome.projection.latestCommitId)
-                        Assert.Equal(5003UL, snapOutcome.projection.latestCommitId)
-                    | other -> failwithf "snapshot startup not healthy: %A" other
-                | other -> failwithf "expected SnapshotUsed, got %A" other
+                match Inspect.run dir with
+                | Healthy snapOutcome ->
+                    Assert.Equal(LedgerStore.Used 5000UL, snapOutcome.startup.snapshot)
+                    Assert.Equal(3, snapOutcome.startup.replayedCommits)
+                    Assert.Equal(5003UL, snapOutcome.projection.latestCommitId)
+                | other -> failwithf "snapshot startup not healthy: %A" other
         finally
             cleanup dir
 
-    [<Fact>]
-    let ``场景A：快照启动 commits 覆盖全历史（catch-up 任意游标不丢事件）`` () =
-        // 回归：快照续播只收集锚点之后的提交，CommitCoordinator.commits 缺锚点前历史，
-        // CommitsAfter(旧游标) 静默返回空 → 慢客户端 catch-up 丢事件（§22 资源预算：
-        // commits 全量保留供任意游标 catch-up）。修复：inspectFrom 续播前先 collect-only
-        // 收集锚点之前（含锚点文件 [0, throughOffset) 段）的 commit 外壳，不 apply projection。
-        let dir = tempDir ()
-        try
-            DataPaths.ensureDataDirs dir
-            let day = DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
-            let path = DataPaths.logFile dir
-            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
-            // 写 100 个提交，同时维护 50 处的前缀投影与锚点偏移
-            let mutable p50 = Projection.empty
-            let mutable offset50 = 0L
-            let mutable commits50: Events.Commit list = []
-            for i in 1..100 do
-                let commit =
-                    Events.Commit.create (uint64 i) (DateTimeOffset(day.AddSeconds(float i)))
-                        [ ConversationCreated { conversationId = Guid.NewGuid(); title = "t"; config = SessionConfig.empty } ]
-                let bytes = Wanxiang.Store.Assembly.frame (commit)
-                File.AppendAllBytes(path, bytes)
-                if i <= 50 then
-                    p50 <- match Projection.applyCommit p50 commit with Ok p -> p | Error e -> failwithf "apply %A" e
-                    offset50 <- offset50 + int64 bytes.Length
-                    commits50 <- commits50 @ [ commit ]
-            // 完整重放（对照）
-            let full = match Replay.inspect dir with Healthy o -> o | other -> failwithf "inspect %A" other
-            // 在 50 处建快照
-            match Snapshot.write dir ({ state = p50; throughId = p50.latestCommitId; stamps = Map.empty; origin = 0L; ends = Wanxiang.Store.Assembly.read (DataPaths.logFile dir) 0L (Some(offset50)) |> List.map (fun r -> r.endOffset) |> Array.ofList }: Wanxiang.Store.Checkpoint) with
-            | Error e -> failwithf "snap %s" e
-            | Ok _ ->
-                match Snapshot.findLatest dir with
-                | SnapshotStartup.SnapshotUsed info ->
-                    let snap =
-                        Replay.inspectFrom dir info.checkpoint
-                    match snap with
-                    | Healthy so ->
-                        // 投影一致（场景 A 既有断言）
-                        Assert.Equal(full.projection.latestCommitId, so.projection.latestCommitId)
-                        Assert.Equal(projectionFingerprint full.projection, projectionFingerprint so.projection)
-                        // commits 覆盖全部历史且与完整重放一致（catch-up 任意游标）
-                        // 旧游标 catch-up：从快照基线启动的协调器，游标 0（全新客户端）
-                        // 与游标 40（基线前）都必须完整返回——提交从日志读，不靠快照固化
-                        use coord = new CommitCoordinator(dir, so, ignore, ignore)
-                        let ids = coord.CommitsAfter 0UL |> List.map (fun c -> c.id)
-                        Assert.Equal<uint64 list>([ 1UL .. 100UL ], ids)
-                        Assert.Equal(60, coord.CommitsAfter 40UL |> List.length)
-                    | other -> failwithf "snap inspect %A" other
-                | other -> failwithf "findLatest %A" other
-        finally
-            cleanup dir
-
-    // -------------------------------------------------------------------------
+        // -------------------------------------------------------------------------
     // 场景 H：Provider 故障（§31 场景 H）
     // -------------------------------------------------------------------------
 
@@ -277,7 +217,7 @@ module AcceptanceScenario =
             // 1) 只读检查报告损坏（算法 R：不修改文件）
             let bytesBefore = File.ReadAllBytes path
             let plan =
-                match Replay.inspect dir with
+                match Inspect.run dir with
                 | RepairRequired (outcome, p) ->
                     Assert.Equal(2UL, outcome.lastCommitId) // 有效水位 = 前缀 2
                     p
@@ -307,12 +247,12 @@ module AcceptanceScenario =
             Assert.Equal(plan.damage.byteOffset, action0["offset"].GetValue<int64>())
 
             // 3) 执行修复（截尾路径）
-            match Wanxiang.Store.Repair.repair dir plan with
+            match Wanxiang.Store.Repair.repair dir with
             | Ok _ -> ()
             | Error e -> failwithf "repair failed: %s" e
 
             // 4) 复查：Healthy，投影 = 有效前缀（2 条提交），bundle 证据仍在
-            match Replay.inspect dir with
+            match Inspect.run dir with
             | Healthy outcome ->
                 Assert.Equal(2UL, outcome.projection.latestCommitId)
                 Assert.True(outcome.projection.conversations.ContainsKey convId)

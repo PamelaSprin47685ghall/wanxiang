@@ -145,7 +145,7 @@ type WsConnection(
     /// 发送队列积压时切换为只读追赶（catch-up）模式：暂停实时权威增量推送，
     /// 改为按批发送已提交事件（每批有限），客户端确认游标后再发下一批。
     /// 注意：本方法可能在 coordinator mailbox 线程内被调用（PushAuthority <- BroadcastCommit <- onCommitted），
-    /// 因此 catch-up 必须调度到独立 Task，绝不能在此线程同步执行（否则 getCommitsAfter 的 PostAndReply 会自锁）。
+    /// 因此 catch-up 必须调度到独立 Task，绝不能在此线程同步执行（getCommitsAfter 走 LedgerStore.CommitsAfter，持存储锁读盘）。
     member private this.EnterSnapshotMode() =
         let shouldStart =
             lock cursorLock (fun () ->

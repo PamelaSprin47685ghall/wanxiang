@@ -14,7 +14,7 @@ module VersionAuthority =
 
     [<Fact>]
     let ``提交外壳版本常量与生产编解码一致`` () =
-        // 生产路径（Replay/JsonSeqWriter/CommitCoordinator）只认 CommitCodec + Constants.FormatVersion
+        // 生产路径（Replay/JsonSeqWriter/EventStore）只认 CommitCodec + Constants.FormatVersion
         Assert.Equal(1, Constants.FormatVersion)
         // 编码入口产出外壳版本 = 常量
         let commit = Events.Commit.create 1UL DateTimeOffset.UtcNow [ ConversationCreated { conversationId = Guid.NewGuid(); title = "v"; config = SessionConfig.empty } ]
@@ -94,7 +94,7 @@ module VersionAuthority =
                 + "\u000a"
             File.WriteAllText(path, future)
             let bytesBefore = File.ReadAllBytes path
-            match Wanxiang.Store.Replay.inspect dir with
+            match Wanxiang.Store.Inspect.run dir with
             | Wanxiang.Store.UnsupportedFormat msg ->
                 Assert.Contains("99", msg)
                 Assert.Contains("newer version", msg)

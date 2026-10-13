@@ -30,7 +30,7 @@ module EventLogTests =
             | None -> failwith "round trip failed"
 
     [<Fact>]
-    let ``a truncated tail is detected by Replay.inspect as RepairRequired`` () =
+    let ``a truncated tail is detected by Inspect.run as RepairRequired`` () =
         let boot = Guid.NewGuid()
         let good =
             [ 1UL; 2UL ]
@@ -42,7 +42,7 @@ module EventLogTests =
             DataPaths.ensureDataDirs dir
             let path = DataPaths.logFile dir
             File.WriteAllBytes(path, Array.append good half)
-            match Replay.inspect dir with
+            match Inspect.run dir with
             | Healthy outcome -> Assert.Equal(2UL, outcome.lastCommitId)
             | RepairRequired (outcome, _) -> Assert.Equal(2UL, outcome.lastCommitId)
             | _ -> failwith "unexpected"
@@ -59,14 +59,16 @@ module EventLogTests =
             DataPaths.ensureDataDirs dir
             let path = DataPaths.logFile dir
             File.WriteAllBytes(path, data)
-            match Replay.inspect dir with
-            | RepairRequired (_, plan) -> Assert.True(plan.damage.reason.Contains "undecodable", plan.damage.reason)
+            match Inspect.run dir with
+            | RepairRequired (o, plan) ->
+                Assert.Equal(1UL, o.lastCommitId)
+                Assert.Equal(int64 (seg 1UL).Length, plan.damage.byteOffset)
             | _ -> failwith "expected repair required"
         finally
             Helpers.cleanup dir
 
     [<Fact>]
-    let ``a commit id gap is detected by Replay.inspect`` () =
+    let ``a commit id gap is detected by Inspect.run`` () =
         let boot = Guid.NewGuid()
         let data = Array.concat [ Wanxiang.Store.Assembly.frame ((commit 1UL boot))
                                   Wanxiang.Store.Assembly.frame ((commit 5UL boot)) ]
@@ -75,7 +77,7 @@ module EventLogTests =
             DataPaths.ensureDataDirs dir
             let path = DataPaths.logFile dir
             File.WriteAllBytes(path, data)
-            match Replay.inspect dir with
+            match Inspect.run dir with
             | RepairRequired (outcome, _) -> Assert.Equal(1UL, outcome.lastCommitId)
             | _ -> failwith "expected repair required"
         finally
@@ -93,7 +95,7 @@ module EventLogTests =
             let data = Array.concat [ Wanxiang.Store.Assembly.frame ((commit 9UL (Guid.NewGuid())))
                                       Wanxiang.Store.Assembly.frame ((commit 1UL (Guid.NewGuid()))) ]
             File.WriteAllBytes(path, data)
-            match Replay.inspect dir with
+            match Inspect.run dir with
             | RepairRequired (outcome, _) -> Assert.Equal(0UL, outcome.lastCommitId)
             | _ -> failwith "expected repair required"
         finally

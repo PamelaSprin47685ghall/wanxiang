@@ -28,6 +28,8 @@
 #   ./run-tests.sh --no-build   # 跳过构建
 #   ./run-tests.sh --large-history  # 额外跑 LargeHistory 分级（默认排除；§24 定期分级）
 set -uo pipefail
+# wanxiang2 只经交付包消费：本地包源缺失时先产出（见 tools/wanxiang2-feed.sh）
+[[ -f "$(dirname "$0")/vendor/wanxiang2/artifacts/feed/Wanxiang2.LedgerStore.0.0.0-local.nupkg" ]] || "$(dirname "$0")/tools/wanxiang2-feed.sh"
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 PROJ="$ROOT/tests/Wanxiang.Tests/Wanxiang.Tests.fsproj"

@@ -13,7 +13,7 @@ let ``test_cursor_catch_up_commits_replayed`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         let result = coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "同步"; config = testConfig () } ]
         match result with
@@ -31,7 +31,7 @@ let ``test_cursor_catch_up_commits_replayed`` () =
         let outcome = replayOutcome dir
         let committed = ResizeArray<Events.Commit>()
         let truncated = ResizeArray<Events.Commit * WanxiangError>()
-        use coord = new CommitCoordinator(dir, outcome, committed.Add, (fun (c, e, _, _) -> truncated.Add(c, e)))
+        use coord = new EventStore(dir, committed.Add)
         let convId = newConversationId ()
         let r1 =
             coord.Submit
@@ -61,7 +61,7 @@ let ``test_rejected_commit_writes_nothing_and_keeps_id`` () =
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
         let truncated = ResizeArray<Events.Commit * WanxiangError>()
-        use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun (c, e, _, _) -> truncated.Add(c, e)))
+        use coord = new EventStore(dir)
         // 事件引用不存在的对话 → 折叠被拒 → 什么都不写（新账本先折叠后写盘，不再有截尾路径）
         let bad =
             coord.Submit
@@ -93,7 +93,7 @@ let ``test_command_idempotency`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         let invId = Guid.NewGuid()
         let cmd =
@@ -132,7 +132,7 @@ let ``test_stale_client_rejected`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         let r =
             CommandEngine.planStamped coord.Stamps coord.Projection 0UL
@@ -151,46 +151,12 @@ let ``test_stale_client_rejected`` () =
         cleanup dir
 
 [<Fact>]
-let ``test_coordinator_append_commit_failure_triggers_onTruncated_and_CommitFailed`` () =
-    let dir = tempDir ()
-    try
-        DataPaths.ensureDataDirs dir
-        let outcome = replayOutcome dir
-        let truncated = ResizeArray<Events.Commit * WanxiangError * int64 * string>()
-        let coord = new CommitCoordinator(dir, outcome, ignore, (fun t -> truncated.Add(t)))
-        
-        // 写盘失败：用故障注入让追加抛异常（单文件日志不再有「换日打开新文件」这条失败路径）
-        FaultInjector.setMode (FaultInjector.FailOnce FaultInjector.BeforeAppend)
-        let convId = newConversationId ()
-        let submit =
-            { events = [ ConversationCreated { conversationId = convId; title = "Tomorrow"; config = testConfig () } ]
-              commandId = None
-              commandType = None
-              commandHash = None
-              nowUtc = None }
-        
-        // 命中 CommitCoordinator.fs 95-100 行异常处理
-        match coord.Submit submit with
-        | CommitFailed (Poisoned msg) ->
-            Assert.Contains("append failed", msg)
-            Assert.True(truncated.Count = 1)
-            let (commit, err, off, path) = truncated.[0]
-            Assert.Equal(1UL, commit.id)
-            Assert.Equal(0L, off) // 写前偏移：空日志
-            Assert.True(WanxiangError.message err |> fun m -> m.Contains("append failed"))
-        | r -> failwithf "expected CommitFailed, got %A" r
-        
-        coord.Shutdown()
-    finally
-        cleanup dir
-
-[<Fact>]
 let ``test_coordinator_repeated_shutdown_and_idisposable`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        let coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        let coord = new EventStore(dir)
         // 覆盖 168-175 行：重复 Shutdown 及 IDisposable.Dispose
         coord.Shutdown()
         coord.Shutdown() // 重复调用走 else 分支

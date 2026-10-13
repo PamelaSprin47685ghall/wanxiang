@@ -172,7 +172,7 @@ let ``a live fork keeps attachments owned by its deleted parent`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coordinator = new EventStore(dir)
         let parent = newConversationId ()
         let sha = String('a', 64)
         coordinator.SubmitEvents [ ConversationCreated { conversationId = parent; title = "P"; config = testConfig () } ]
@@ -203,7 +203,7 @@ let ``attachments of a fully deleted conversation become unreferenced`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coordinator = new EventStore(dir)
         let convId = newConversationId ()
         let sha = String('b', 64)
         coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
@@ -222,7 +222,7 @@ let ``a tombstoned message still protects its attachment`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coordinator = new EventStore(dir)
         let convId = newConversationId ()
         let sha = String('c', 64)
         coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
@@ -246,7 +246,7 @@ let ``messages carry their commit timestamp through the projection`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coordinator = new EventStore(dir)
         let convId = newConversationId ()
         let before = DateTimeOffset.UtcNow.AddSeconds -5.0
         coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
@@ -266,7 +266,7 @@ let ``snapshot items expose committedAt so the client can show a time`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coordinator = new EventStore(dir)
         let convId = newConversationId ()
         coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
         |> ignore
@@ -291,7 +291,7 @@ let ``committed timestamps survive a restart replay`` () =
         let convId = newConversationId ()
         let recorded =
             let outcome = replayOutcome dir
-            use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
+            use coordinator = new EventStore(dir)
             coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
             |> ignore
             coordinator.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "hi" } ]
@@ -299,7 +299,7 @@ let ``committed timestamps survive a restart replay`` () =
             let conv = Projection.tryConversation coordinator.Projection convId |> Option.get
             (Projection.effectiveMessages coordinator.Projection conv |> List.exactlyOne).committedAtUtc
         let replayed = replayOutcome dir
-        use reopened = new CommitCoordinator(dir, replayed, ignore, ignore)
+        use reopened = new EventStore(dir)
         let conv = Projection.tryConversation reopened.Projection convId |> Option.get
         let restored = (Projection.effectiveMessages reopened.Projection conv |> List.exactlyOne).committedAtUtc
         // NDJSON 只保留到毫秒，比较时按毫秒对齐

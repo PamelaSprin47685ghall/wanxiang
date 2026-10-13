@@ -97,22 +97,19 @@ module Doctor =
             { name = "disk-free-space"; ok = false; detail = "unavailable" }
 
     /// 快照状态检查（findLatest：最新有效快照 / 无 / 损坏 / 超前）。
-    let private checkSnapshot (dataDir: string) : CheckResult =
-        match Snapshot.findLatest dataDir with
-        | SnapshotStartup.NoSnapshot ->
-            { name = "snapshot"
-              ok = true
-              detail = "no snapshot (full replay on next start)" }
-        | SnapshotStartup.SnapshotUsed info ->
-            { name = "snapshot"
-              ok = true
-              detail = sprintf "valid through commit %d (created %s)" info.throughCommitId (info.createdAtUtc.UtcDateTime.ToString("o")) }
-        | SnapshotStartup.SnapshotCorrupt reasons ->
-            { name = "snapshot"
-              ok = false
-              detail = sprintf "corrupt: %s (falls back to full replay)" (String.concat "; " reasons) }
-        | SnapshotStartup.SnapshotStale reason ->
-            { name = "snapshot"; ok = true; detail = sprintf "stale: %s (falls back to full replay)" reason }
+    let private checkSnapshot (inspect: unit -> InspectResult) : CheckResult =
+        let startup =
+            match inspect () with
+            | Healthy o | RepairRequired(o, _) -> Ok o.startup
+            | UnsupportedFormat m | Unreadable m -> Error m
+        match startup with
+        | Ok { snapshot = LedgerStore.Absent } ->
+            { name = "snapshot"; ok = true; detail = "no snapshot (full replay on next start)" }
+        | Ok { snapshot = LedgerStore.Used through; replayedCommits = n } ->
+            { name = "snapshot"; ok = true; detail = sprintf "valid through commit %d (%d commits replayed after it)" through n }
+        | Ok { snapshot = LedgerStore.Discarded reason } ->
+            { name = "snapshot"; ok = true; detail = sprintf "discarded: %s (falls back to full replay)" reason }
+        | Error m -> { name = "snapshot"; ok = true; detail = sprintf "not checked: %s" m }
 
     /// recovery 证据包检查：存在 recovery 目录且至少一个 manifest.json。
     let private checkRecoveryBundle (dataDir: string) : CheckResult =
@@ -199,7 +196,10 @@ module Doctor =
     /// 只读诊断。`live = true` 表示诊断运行在**正在服务的主机进程内**（W5「检查主机」，决策 83）：
     /// 监听端口与数据锁都是本进程自己持有的，不能当故障报；日志回放在发现损坏时复核一次，
     /// 避免把写入者正在追加的半条记录误报为损坏。其余检查与命令行 doctor 完全一致，仍严格只读。
-    let private runWith (live: bool) (configPath: string, dataDir: string) : Diagnosis =
+    /// 运行中的主机自己持有存储（LedgerStore 独占目录），live 时由主机给出它的检查结论。
+    let private runWith (live: (unit -> InspectResult) option) (configPath: string, dataDir: string) : Diagnosis =
+        let inspect () = match live with Some f -> f () | None -> Inspect.run dataDir
+        let live = live.IsSome
         let d =
             { checks = []
               configErrors = []
@@ -232,7 +232,7 @@ module Doctor =
             | Error e ->
                 d.checks <- d.checks @ [ { name = "data-lock"; ok = false; detail = e } ]
         // 快照状态
-        let snap = checkSnapshot dataDir
+        let snap = checkSnapshot inspect
         d.snapshotStatus <- snap.detail
         d.checks <- d.checks @ [ snap; checkRecoveryBundle dataDir ]
         // 事件账本只认 ledger/log.jsonseq。旧版 events/ 目录下的按日日志（.jsonseq/.ndjson）
@@ -252,11 +252,7 @@ module Doctor =
         // 只读检查（算法 R）；有无法识别的日志时跳过（上面已给出明确报错）
         if unrecognizedLogs.Length = 0 then
             let inspected =
-                match Replay.inspect dataDir with
-                | RepairRequired _ when live ->
-                    System.Threading.Thread.Sleep 200
-                    Replay.inspect dataDir
-                | other -> other
+                inspect ()
             match inspected with
             | Healthy outcome ->
                 let missingCheck, orphanCheck = checkAttachments dataDir outcome
@@ -285,10 +281,10 @@ module Doctor =
         d
 
     /// 命令行 doctor：独占数据目录前提下的完整诊断。
-    let run (configPath: string, dataDir: string) : Diagnosis = runWith false (configPath, dataDir)
+    let run (configPath: string, dataDir: string) : Diagnosis = runWith None (configPath, dataDir)
 
     /// 主机进程内的只读诊断（「检查主机」）。
-    let runLive (configPath: string, dataDir: string) : Diagnosis = runWith true (configPath, dataDir)
+    let runLive (configPath: string, dataDir: string, inspect: unit -> InspectResult) : Diagnosis = runWith (Some inspect) (configPath, dataDir)
 
     let isHealthy (d: Diagnosis) : bool = d.checks |> List.forall _.ok
 

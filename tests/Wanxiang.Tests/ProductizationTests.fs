@@ -423,7 +423,7 @@ let ``regenerate is rejected when the last message is the user's`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coordinator = new EventStore(dir)
         let convId = newConversationId ()
         coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
         |> ignore
@@ -443,7 +443,7 @@ let ``pin and archive flags are projected and survive replay`` () =
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
         let convId = newConversationId ()
-        (using (new CommitCoordinator(dir, outcome, ignore, ignore)) (fun coordinator ->
+        (using (new EventStore(dir)) (fun coordinator ->
             coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ]
             |> ignore
             coordinator.SubmitEvents
@@ -453,7 +453,7 @@ let ``pin and archive flags are projected and survive replay`` () =
             Assert.True conv.pinned
             Assert.False conv.archived))
         let replayed = replayOutcome dir
-        use reopened = new CommitCoordinator(dir, replayed, ignore, ignore)
+        use reopened = new EventStore(dir)
         let conv = Projection.tryConversation reopened.Projection convId |> Option.get
         Assert.True conv.pinned
     finally
@@ -465,7 +465,7 @@ let ``pinned conversations sort ahead of more recent ones`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coordinator = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coordinator = new EventStore(dir)
         let older = newConversationId ()
         let newer = newConversationId ()
         coordinator.SubmitEvents [ ConversationCreated { conversationId = older; title = "旧"; config = testConfig () } ]

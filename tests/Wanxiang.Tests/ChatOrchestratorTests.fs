@@ -252,7 +252,7 @@ module ChatOrchestratorTests =
         try
             DataPaths.ensureDataDirs dir
             let outcome = replayOutcome dir
-            use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+            use coord = new EventStore(dir)
             let instanceId = Guid.NewGuid()
             let appCfg = AppConfig.defaults instanceId
             let registry = new ToolRegistry((fun () -> appCfg), ignore)

@@ -48,7 +48,7 @@ type DeviceServer(port: int) =
     member _.LogBytes =
         let eventsDir = DataPaths.eventsDir dir
         if Directory.Exists eventsDir then
-            Directory.GetFiles(eventsDir) |> Array.sort |> Array.map (fun f -> f, File.ReadAllBytes f |> Convert.ToBase64String) |> Array.toList
+            Directory.GetFiles(eventsDir) |> Array.filter (fun f -> Path.GetFileName f <> ".lock") |> Array.sort |> Array.map (fun f -> f, File.ReadAllBytes f |> Convert.ToBase64String) |> Array.toList
         else []
     member _.Dispose() =
         match server with

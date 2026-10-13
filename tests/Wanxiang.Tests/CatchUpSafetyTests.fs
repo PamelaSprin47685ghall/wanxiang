@@ -20,7 +20,7 @@ let ``coordinator survives broadcast work in onCommitted callback`` () =
         // onCommitted：模拟 BroadcastCommit 的非阻塞广播工作（真实路径：ConnectionRegistry.BroadcastCommit
         // 只做 TrySend，不读取投影/不 PostAndReply；catch-up 已由 WsConnection 调度到独立 Task）
         let committed = ResizeArray<Events.Commit>()
-        use coord = new CommitCoordinator(dir, outcome, committed.Add, ignore)
+        use coord = new EventStore(dir, committed.Add)
         // 多次提交（含消息事件），验证回调不被阻塞、id 严格连续
         let convId = newConversationId ()
         let r1 =
@@ -48,7 +48,7 @@ let ``CommitsAfter paging returns at most limit commits and advances cursor`` ()
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
         for i in 1..9 do
@@ -88,7 +88,7 @@ let ``concurrent submits keep ids strictly contiguous`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         // 先建对话（并发提交会以对话不存在失败——先建立）
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
@@ -118,7 +118,7 @@ let ``CommitsAfter returns commits after cursor in ascending order`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
         for i in 1..5 do

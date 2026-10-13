@@ -54,7 +54,7 @@ module PerformanceBaseline =
     let ``10^3 commits：冷启动重放 < 5s`` () =
         let dir = seedLog 1000
         try
-            let _, elapsed = timed (fun () -> Replay.inspect dir)
+            let _, elapsed = timed (fun () -> Inspect.run dir)
             Assert.True(elapsed < TimeSpan.FromSeconds 5.0, sprintf "cold start took %A" elapsed)
         finally
             cleanup dir
@@ -63,7 +63,7 @@ module PerformanceBaseline =
     let ``10^4 commits：冷启动重放 < 10s`` () =
         let dir = seedLog 10000
         try
-            let _, elapsed = timed (fun () -> Replay.inspect dir)
+            let _, elapsed = timed (fun () -> Inspect.run dir)
             Assert.True(elapsed < TimeSpan.FromSeconds 10.0, sprintf "cold start took %A" elapsed)
         finally
             cleanup dir
@@ -78,15 +78,18 @@ module PerformanceBaseline =
         try
             let outcome = replayOutcome dir
             let fileLen = FileInfo(DataPaths.logFile dir).Length
-            match Snapshot.write dir outcome.checkpoint with
+            let snapPath = Path.Combine(DataPaths.eventsDir dir, "snapshot")
+            match saveSnapshot dir with
             | Error e -> failwith e
             | Ok _ ->
-                let _, coldElapsed = timed (fun () -> Replay.inspect dir)
+                let saved = File.ReadAllBytes snapPath
+                File.Delete snapPath
+                let _, coldElapsed = timed (fun () -> Inspect.run dir)
+                File.WriteAllBytes(snapPath, saved)
                 let snapshotStart () =
-                    match Snapshot.findLatest dir with
-                    | SnapshotStartup.SnapshotUsed info ->
-                        Replay.inspectFrom dir info.checkpoint
-                    | other -> failwithf "expected SnapshotUsed, got %A" other
+                    match Inspect.run dir with
+                    | Healthy o when o.startup.snapshot = LedgerStore.Used 10000UL -> ()
+                    | other -> failwithf "expected snapshot startup, got %A" other
                 let _, snapElapsed = timed snapshotStart
                 // 续播只重放 throughCommitId 之后（此处 0 条），应明显快于完整重放
                 Assert.True(snapElapsed < coldElapsed, sprintf "snapshot start %A >= cold start %A" snapElapsed coldElapsed)
@@ -99,7 +102,7 @@ module PerformanceBaseline =
         try
             let outcome = replayOutcome dir
             let fileLen = FileInfo(DataPaths.logFile dir).Length
-            let _, elapsed = timed (fun () -> Snapshot.write dir outcome.checkpoint)
+            let _, elapsed = timed (fun () -> saveSnapshot dir)
             Assert.True(elapsed < TimeSpan.FromSeconds 5.0, sprintf "snapshot creation took %A" elapsed)
         finally
             cleanup dir
@@ -109,7 +112,7 @@ module PerformanceBaseline =
         let dir = seedLog 10000
         try
             let outcome = replayOutcome dir
-            use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
+            use coord = new EventStore(dir)
             // S-005：catch-up 已分页（§13/§22 单批 64 条）。真实路径每批
             // CommitsAfter(cursor, 64)，不再全量拷贝剩余。此处测分页单批延迟。
             let _, elapsed = timed (fun () -> coord.CommitsAfter(5000UL, 64) |> ignore)
@@ -157,7 +160,7 @@ module PerformanceBaseline =
     let ``10^5 commits：冷启动重放 < 150s`` () =
         let dir = seedLog 100000
         try
-            let _, elapsed = timed (fun () -> Replay.inspect dir)
+            let _, elapsed = timed (fun () -> Inspect.run dir)
             Assert.True(elapsed < TimeSpan.FromSeconds 150.0, sprintf "cold start took %A" elapsed)
         finally
             cleanup dir
@@ -167,7 +170,7 @@ module PerformanceBaseline =
     let ``10^6 commits：冷启动重放 < 300s（手动基准）`` () =
         let dir = seedLog 1000000
         try
-            let _, elapsed = timed (fun () -> Replay.inspect dir)
+            let _, elapsed = timed (fun () -> Inspect.run dir)
             Assert.True(elapsed < TimeSpan.FromSeconds 300.0, sprintf "cold start took %A" elapsed)
         finally
             cleanup dir

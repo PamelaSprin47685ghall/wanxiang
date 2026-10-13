@@ -1052,7 +1052,7 @@ let ``e2e damaged log starts read-only degraded and rejects writes without touch
         // 启动 + 运行全程未触碰损坏文件：字节不变（STOP-1：无证据的破坏性修复被禁止）
         Assert.Equal<byte[]>(bytesBefore, File.ReadAllBytes path)
         // 只读检查仍报告 RepairRequired（修复未执行）
-        match Replay.inspect dir with
+        match Inspect.run dir with
         | RepairRequired _ -> ()
         | _ -> failwith "expected repair required after degraded startup"
     finally

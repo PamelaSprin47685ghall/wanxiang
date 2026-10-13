@@ -250,13 +250,11 @@ module ServerAppTests =
             app.Stop()
             (app :> IDisposable).Dispose()
             // 优雅关闭必须写出 v2 快照（batch 6：AllCommits 在 Shutdown 前取）
-            match Wanxiang.Store.Snapshot.findLatest dir with
-            | Wanxiang.Store.SnapshotStartup.SnapshotUsed info ->
-                Assert.Equal(3UL, info.throughCommitId)
-                match Wanxiang.Store.Replay.inspectFrom dir info.checkpoint with
-                | Wanxiang.Store.Healthy o -> Assert.Equal(3UL, o.lastCommitId)
-                | other -> failwithf "resume from snapshot not healthy: %A" other
-            | other -> failwithf "expected v2 snapshot after graceful stop, got %A" other
+            match Wanxiang.Store.Inspect.run dir with
+            | Wanxiang.Store.Healthy o ->
+                Assert.Equal(LedgerStore.Used 3UL, o.startup.snapshot)
+                Assert.Equal(3UL, o.lastCommitId)
+            | other -> failwithf "expected snapshot after graceful stop, got %A" other
         finally
             try Directory.Delete(dir, true) with _ -> ()
 

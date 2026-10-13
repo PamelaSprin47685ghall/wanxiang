@@ -60,7 +60,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         | None ->
             match lockHandle with
             | Error e -> failwith e
-            | Ok _ -> Replay.inspect dataDir
+            | Ok _ -> Inspect.run dataDir
 
     let replayOutcome =
         match inspectResult with
@@ -96,7 +96,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
         CommandExecutionResult.CommandFailed(Poisoned err)
 
     let mutable configStore: ConfigStore option = None
-    let mutable coordinator: CommitCoordinator option = None
+    let mutable coordinator: EventStore option = None
     let mutable orchestrator: ChatOrchestrator option = None
     let mutable registry: ConnectionRegistry option = None
     let mutable host: IHost option = None
@@ -303,7 +303,10 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
 
     /// 启动主机（server 开关）。
     member this.Start(servePwa: bool) : unit =
-        hostStatus.DoctorRunner <- Some(fun () -> Doctor.runLive (configPath, dataDir))
+        hostStatus.DoctorRunner <- Some(fun () -> Doctor.runLive (configPath, dataDir, fun () ->
+            match coordinator with
+            | Some c -> Inspect.ofStore c
+            | None -> Unreadable "store not open"))
         match ConfigStore.Open(configPath, onConfigReloaded, onConfigRejected) with
         | Error e -> failwith e
         | Ok cs ->
@@ -322,9 +325,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 | None -> ()
             with _ -> ()
             // 决策 73：首版不做附件 GC——删对话不断触发任何 blob 清扫，孤儿留待未来压缩处理。
-        let onTruncated (commit: Events.Commit, err: WanxiangError, byteOffset: int64, file: string) =
-            Stderr.truncated commit file byteOffset err
-        coordinator <- Some(new CommitCoordinator(dataDir, replayOutcome, broadcastCommit, onTruncated))
+        coordinator <- Some(new EventStore(dataDir, broadcastCommit))
         registry <- Some(ConnectionRegistry())
         let broadcastToConversation (convId: Guid) (ev: WireEvent) =
             match registry with
@@ -557,12 +558,10 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                     // 快照**不删除任何事件日志**（第一版只优化启动）。
                     if not readOnlyDegraded then
                         try
-                            // 先取基线，再关闭日志，最后写快照
-                            let cp = c.Checkpoint
-                            c.Shutdown()
-                            match Wanxiang.Store.Snapshot.write dataDir cp with
-                            | Ok path -> logInfo(sprintf "snapshot written to %s" path)
+                            match c.SaveSnapshot() with
+                            | Ok() -> logInfo "snapshot written"
                             | Error e -> Stderr.write "snapshot-write-failed" [ "message", e ]
+                            c.Shutdown()
                         with e ->
                             Stderr.write "snapshot-write-failed" [ "message", e.Message ]
                     else

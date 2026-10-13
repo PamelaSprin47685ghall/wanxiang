@@ -9,7 +9,7 @@ open Wanxiang.Tests.Helpers
 
 /// 断言 inspect 返回 RepairRequired 并取出 (outcome, plan)。
 let private repairRequired (dir: string) : ReplayOutcome * RepairPlan =
-    match Replay.inspect dir with
+    match Inspect.run dir with
     | Healthy _ -> failwith "expected repair required"
     | RepairRequired (o, p) -> o, p
     | UnsupportedFormat msg -> failwith msg
@@ -27,7 +27,7 @@ let ``单写者内部幂等：同 commandId 再次 Submit 返回原提交且不�
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         let invId = Guid.NewGuid()
         let cmd = CreateConversation {| invocationId = invId; conversationId = convId; title = "A"; config = testConfig () |}
@@ -62,7 +62,7 @@ let ``单写者内部幂等：同 commandId 不同载荷返回冲突`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         let invId = Guid.NewGuid()
         let cmd = CreateConversation {| invocationId = invId; conversationId = convId; title = "A"; config = testConfig () |}
@@ -92,7 +92,7 @@ let ``排队消息重试窗口：DrainQueue 清空后同 invocationId 不重复�
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
         let committed = ResizeArray<Events.Commit>()
-        use coord = new CommitCoordinator(dir, outcome, committed.Add, (fun _ -> ()))
+        use coord = new EventStore(dir, committed.Add)
         let convId = newConversationId ()
         // 创建对话
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
@@ -134,7 +134,7 @@ let ``CRLF 行截尾偏移精确：损坏行前完整行不被截坏`` () =
         let outcome, plan = repairRequired dir
         Assert.Equal(1UL, outcome.lastCommitId)
         Assert.Contains(path, plan.damage.file)
-        match Repair.repair dir plan with
+        match Repair.repair dir with
         | Error e -> failwith e
         | Ok truncated -> Assert.Contains(path, truncated)
         // 修复后重新检查：第一条仍是完整有效行
@@ -205,12 +205,12 @@ let ``replay 遇非法 UTF-8 序列触发截尾`` () =
         cleanup dir
 
 [<Fact>]
-let ``CommitCoordinator CommitsAfter 二分查找覆盖边界条件`` () =
+let ``EventStore CommitsAfter 二分查找覆盖边界条件`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "A"; config = testConfig () } ] |> ignore
         coord.SubmitEvents [ ConversationRenamed { conversationId = convId; title = "B" } ] |> ignore
@@ -235,13 +235,13 @@ let ``CommitCoordinator CommitsAfter 二分查找覆盖边界条件`` () =
         cleanup dir
 
 [<Fact>]
-let ``CommitCoordinator 提交非法事件触发 ApplyFailed 截尾并复用 commitId`` () =
+let ``EventStore 提交非法事件触发 ApplyFailed 截尾并复用 commitId`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
         let truncated = ResizeArray<Events.Commit * WanxiangError * int64 * string>()
-        use coord = new CommitCoordinator(dir, outcome, ignore, (fun t -> truncated.Add(t)))
+        use coord = new EventStore(dir)
         let badSubmit =
             { events = [ EventData.ConversationDeleted { conversationId = Guid.NewGuid() } ] // 不存在的对话，apply 失败
               commandId = None
@@ -267,12 +267,12 @@ let ``CommitCoordinator 提交非法事件触发 ApplyFailed 截尾并复用 com
         cleanup dir
 
 [<Fact>]
-let ``CommitCoordinator 正常 Dispose 释放 writer 且不抛出`` () =
+let ``EventStore 正常 Dispose 释放 writer 且不抛出`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        let coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        let coord = new EventStore(dir)
         let convId = newConversationId ()
         coord.SubmitEvents [ ConversationCreated { conversationId = convId; title = "Test"; config = testConfig () } ] |> ignore
         coord.Shutdown()

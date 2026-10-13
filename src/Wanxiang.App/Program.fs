@@ -142,14 +142,14 @@ module Program =
                         // 修复前建立证据包（算法 B）：复制受影响文件 + SHA-256 + manifest。
                         // 只有证据包建立成功才允许执行修复（S-002 / R1）。
                         let result =
-                            match Replay.inspect dataDir with
+                            match Inspect.run dataDir with
                             | Healthy _ -> Ok []
                             | RepairRequired (_, plan) ->
                                 match Wanxiang.Store.RecoveryBundle.create dataDir plan with
                                 | Error e -> Error e
                                 | Ok bundle ->
                                     logInfo(sprintf "recovery bundle created at %s" bundle)
-                                    match Repair.repair dataDir plan with
+                                    match Repair.repair dataDir with
                                     | Ok truncatedFiles ->
                                         for f in truncatedFiles do
                                             logInfo(sprintf "truncated %s" f)
@@ -203,24 +203,15 @@ module Program =
                     // S-003 / STOP-2（算法 L）：优先从快照启动——最新有效快照作为投影基线，
                     // 只重放 throughCommitId 之后的日志；快照损坏/超前则回退完整重放（L8/L9）。
                     let inspectStartup () =
-                        match Wanxiang.Store.Snapshot.findLatest dataDir with
-                        | Wanxiang.Store.SnapshotStartup.NoSnapshot ->
-                            logInfo "no snapshot; full replay"
-                            Replay.inspect dataDir
-                        | Wanxiang.Store.SnapshotStartup.SnapshotUsed info ->
-                            logInfo(
-                                sprintf
-                                    "snapshot %d loaded (created %s); replaying from commit %d"
-                                    info.throughCommitId
-                                    (info.createdAtUtc.UtcDateTime.ToString("o"))
-                                    (info.throughCommitId + 1UL))
-                            Replay.inspectFrom dataDir info.checkpoint
-                        | Wanxiang.Store.SnapshotStartup.SnapshotCorrupt reasons ->
-                            logInfo(sprintf "snapshot corrupt (%s); falling back to full replay" (String.concat "; " reasons))
-                            Replay.inspect dataDir
-                        | Wanxiang.Store.SnapshotStartup.SnapshotStale reason ->
-                            logInfo(sprintf "snapshot stale (%s); falling back to full replay" reason)
-                            Replay.inspect dataDir
+                        let r = Inspect.run dataDir
+                        match r with
+                        | Healthy o | RepairRequired(o, _) ->
+                            match o.startup.snapshot with
+                            | LedgerStore.Used through -> logInfo(sprintf "snapshot %d loaded; replayed %d commits after it" through o.startup.replayedCommits)
+                            | LedgerStore.Absent -> logInfo "no snapshot; full replay"
+                            | LedgerStore.Discarded why -> logInfo(sprintf "snapshot discarded (%s); full replay" why)
+                        | _ -> ()
+                        r
 
                     let outcome =
                         match inspectStartup () with

@@ -85,7 +85,7 @@ type private ToolOutcome =
 /// - 工具并行执行，全部完成后统一返回 Provider（保持原顺序）；
 /// - 取消为合作式取消；迟到的 Provider 输出不记账，实际完成的 Tool Result 仍记账。
 type ChatOrchestrator(
-    coordinator: CommitCoordinator,
+    coordinator: EventStore,
     getProjection: unit -> Projection,
     broadcastToConversation: Guid -> WireEvent -> unit,
     toolRegistry: ToolRegistry,

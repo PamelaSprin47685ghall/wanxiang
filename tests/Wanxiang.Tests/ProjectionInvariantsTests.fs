@@ -155,19 +155,21 @@ module ProjectionInvariants =
                 Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
                 File.AppendAllBytes(path, Wanxiang.Store.Assembly.frame (commit))
             // 从日志重放
-            match Replay.inspect dir with
+            match Inspect.run dir with
             | Healthy outcome ->
                 assertInvariants outcome.projection (List.length ops)
                 // I7：快照 throughCommitId <= 日志最大有效 commitId
                 let fileLen = FileInfo(DataPaths.logFile dir).Length
-                match Snapshot.write dir outcome.checkpoint with
+                match saveSnapshot dir with
                 | Ok _ -> ()
                 | Error e -> failwithf "snapshot write failed: %s" e
-                match Snapshot.findLatest dir with
-                | SnapshotStartup.SnapshotUsed info ->
-                    Assert.True(info.throughCommitId <= outcome.lastCommitId, "snapshot throughCommitId > log lastCommitId")
-                    assertInvariants info.projection (List.length ops)
-                | other -> failwithf "expected SnapshotUsed, got %A" other
+                match Inspect.run dir with
+                | Healthy o ->
+                    match o.startup.snapshot with
+                    | LedgerStore.Used through -> Assert.True(through <= outcome.lastCommitId, "snapshot throughCommitId > log lastCommitId")
+                    | other -> failwithf "expected snapshot used, got %A" other
+                    assertInvariants o.projection (List.length ops)
+                | other -> failwithf "expected healthy, got %A" other
             | RepairRequired (_, plan) -> failwithf "unexpected repair required: %s" plan.damage.reason
             | UnsupportedFormat msg -> failwith msg
             | Unreadable msg -> failwith msg

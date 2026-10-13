@@ -15,7 +15,7 @@ open Wanxiang.Tests.Helpers
 /// 验证重启后投影与重启前一致（只靠 NDJSON 恢复全部永久状态）。
 ///
 /// 命令路径与生产一致：`CommandEngine.plan`（规划事件 + 幂等 + 陈旧水位）→
-/// `CommitCoordinator.Submit`（单写者 append + flush + 投影 + 发布）。
+/// `EventStore.Submit`（单写者 append + flush + 投影 + 发布）。
 module Soak =
 
     /// 断言投影不变量（复用 §26 的机器断言）。
@@ -36,7 +36,7 @@ module Soak =
         Assert.True(allMsgIds.Length = (allMsgIds |> Set.ofList |> Set.count), sprintf "step %d: duplicate message commitId" step)
 
     /// 通过生产命令路径提交一条命令；返回是否实际提交（非幂等/非拒绝）。
-    let private submit (coord: CommitCoordinator) (proj: Projection) (cmd: ClientCommand) : bool =
+    let private submit (coord: EventStore) (proj: Projection) (cmd: ClientCommand) : bool =
         match CommandEngine.plan proj (proj.latestCommitId) cmd with
         | PlanResult.Planned p ->
             let result: SubmitResult =
@@ -53,12 +53,12 @@ module Soak =
     /// 返回 (最终投影, 提交数)。
     let private runRound (dir: string) (ops: int) (checkEvery: int) : Projection * int =
         let outcome =
-            match Replay.inspect dir with
+            match Inspect.run dir with
             | Healthy o -> o
             | RepairRequired (_, p) -> failwithf "unexpected repair required: %s" p.damage.reason
             | UnsupportedFormat m -> failwith m
             | Unreadable m -> failwith m
-        use coord = new CommitCoordinator(dir, outcome, (fun _ -> ()), (fun _ -> ()))
+        use coord = new EventStore(dir)
         let mutable convs = System.Collections.Generic.List<Guid>()
         let mutable msgIds = System.Collections.Generic.Dictionary<Guid, System.Collections.Generic.List<uint64>>()
         let rng = Random(7)
@@ -117,7 +117,16 @@ module Soak =
                 // 周期检查：Inspect + 不变量 + 内存采样
                 let proj = coord.Projection
                 assertInvariants proj i
-                match Replay.inspect dir with
+                // 存储独占目录：复制日志到旁路目录再重放（只靠磁盘字节恢复）
+                let side = tempDir ()
+                Directory.CreateDirectory(DataPaths.eventsDir side) |> ignore
+                use src = new FileStream(DataPaths.logFile dir, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
+                use dst = File.Create(DataPaths.logFile side)
+                src.CopyTo dst
+                dst.Dispose()
+                let inspected = Inspect.run side
+                cleanup side
+                match inspected with
                 | Healthy o ->
                     // 运行期投影 == 磁盘重放投影（只靠 NDJSON 恢复）
                     Assert.Equal(proj.latestCommitId, o.projection.latestCommitId)
@@ -142,7 +151,7 @@ module Soak =
                 let proj, _ = runRound dir 300 50
                 // 重启：inspect 重新加载（协调器已 Dispose）——此时磁盘 = 上一轮结束状态
                 let outcome =
-                    match Replay.inspect dir with
+                    match Inspect.run dir with
                     | Healthy o -> o
                     | other -> failwithf "round %d restart inspect failed: %A" round other
                 assertInvariants outcome.projection (round * 300)

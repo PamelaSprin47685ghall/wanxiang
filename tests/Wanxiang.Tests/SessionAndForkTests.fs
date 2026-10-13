@@ -65,7 +65,7 @@ let ``fork plan requires fork point to be a message commit id`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         // 创建对话 + 一条消息
         let c1 =
@@ -107,7 +107,7 @@ let ``command id idempotency and conversation id collision`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         let invId = Guid.NewGuid()
         // 提交第一次
@@ -138,7 +138,7 @@ let ``fork with empty config succeeds and is idempotent`` () =
     try
         DataPaths.ensureDataDirs dir
         let outcome = replayOutcome dir
-        use coord = new CommitCoordinator(dir, outcome, ignore, ignore)
+        use coord = new EventStore(dir)
         let convId = newConversationId ()
         let emptyCfg = { provider = ""; model = ""; instructions = None; tools = []; temperature = None; topP = None; maxTokens = None; thinkingBudget = None; extraJson = None }
         // 父对话 + 一条消息

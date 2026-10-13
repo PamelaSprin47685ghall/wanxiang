@@ -9,7 +9,7 @@ open Wanxiang.Tests.Helpers
 
 /// 断言 inspect 返回 Healthy 并取出 outcome。
 let private healthy (dir: string) : ReplayOutcome =
-    match Replay.inspect dir with
+    match Inspect.run dir with
     | Healthy o -> o
     | RepairRequired _ -> failwith "expected healthy"
     | UnsupportedFormat msg -> failwith msg
@@ -17,7 +17,7 @@ let private healthy (dir: string) : ReplayOutcome =
 
 /// 断言 inspect 返回 RepairRequired 并取出 (outcome, plan)。
 let private repairRequired (dir: string) : ReplayOutcome * RepairPlan =
-    match Replay.inspect dir with
+    match Inspect.run dir with
     | Healthy _ -> failwith "expected repair required"
     | RepairRequired (o, p) -> o, p
     | UnsupportedFormat msg -> failwith msg
@@ -65,7 +65,7 @@ let ``test_replay_id_gap`` () =
         // 只读检查绝不修改文件：原文件字节不变
         Assert.Contains("broken", File.ReadAllText path)
         // 显式修复：截尾到有效前缀
-        match Repair.repair dir plan with
+        match Repair.repair dir with
         | Error e -> failwith e
         | Ok truncated ->
             Assert.Contains(path, truncated)
@@ -177,7 +177,7 @@ let ``test_replay_projection_apply_error_fix_true_truncates_at_commit`` () =
         let outcome, plan = repairRequired dir
         Assert.Equal(1UL, outcome.lastCommitId)
         Assert.Contains(path, plan.damage.file)
-        match Repair.repair dir plan with
+        match Repair.repair dir with
         | Error e -> failwith e
         | Ok truncated ->
             Assert.Contains(path, truncated)
@@ -221,7 +221,7 @@ let ``test_replay_commit_id_gap_fix_true_truncates_at_gap`` () =
 
         let outcome, plan = repairRequired dir
         Assert.Equal(1UL, outcome.lastCommitId)
-        match Repair.repair dir plan with
+        match Repair.repair dir with
         | Error e -> failwith e
         | Ok _ -> ()
         Assert.Equal(int64 frame1.Length, FileInfo(path).Length)
@@ -322,7 +322,7 @@ let ``test_replay_record_without_lf_followed_immediately_by_new_rs_triggers_trun
         File.WriteAllBytes(p, ms.ToArray())
         let outcome, plan = repairRequired dir
         Assert.Equal(1UL, outcome.lastCommitId)
-        match Repair.repair dir plan with
+        match Repair.repair dir with
         | Error e -> failwith e
         | Ok truncated ->
             Assert.Contains(p, truncated)
@@ -345,8 +345,7 @@ let ``test_replay_truncation_failure_returns_error`` () =
         // 必因缺少写权限抛出 UnauthorizedAccessException，走 truncateFile 的 with e -> false 分支！
         try File.SetUnixFileMode(p, UnixFileMode.UserRead) with _ -> ()
         try
-            let _, plan = repairRequired dir
-            match Repair.repair dir plan with
+            match Repair.repair dir with
             | Ok _ -> failwith "expected error because file truncation should fail"
             | Error e ->
                 // O-004：截尾失败必须带文件路径 + 偏移 + 原因（不再吞异常）
@@ -410,7 +409,7 @@ let ``recovery bundle 建立后修复才执行（算法 B）`` () =
             for f in plan.affectedFiles do
                 Assert.True(File.Exists(Path.Combine(bundleDir, "original", Path.GetFileName f)), sprintf "missing backup of %s" f)
         // 修复
-        match Repair.repair dir plan with
+        match Repair.repair dir with
         | Error e -> failwith e
         | Ok truncated -> Assert.NotEmpty truncated
         // 修复后健康

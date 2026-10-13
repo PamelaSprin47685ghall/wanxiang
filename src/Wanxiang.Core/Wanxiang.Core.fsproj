@@ -22,7 +22,7 @@
 
   <ItemGroup>
     <!-- RFC 8785 JCS 规范化与内容哈希：来自 wanxiang2 的 Canonical 库。 -->
-    <ProjectReference Include="..\..\vendor\wanxiang2\libs\Canonical\Canonical.fsproj" />
+    <PackageReference Include="Wanxiang2.Canonical" Version="0.0.0-local" />
   </ItemGroup>
 
 </Project>

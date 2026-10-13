@@ -69,7 +69,7 @@ let ``230 继续生成只接受有正文的助手消息`` () =
     let dir = tempDir ()
     try
         DataPaths.ensureDataDirs dir
-        use coordinator = new CommitCoordinator(dir, replayOutcome dir, ignore, ignore)
+        use coordinator = new EventStore(dir)
         let convId = newConversationId ()
         coordinator.SubmitEvents [ ConversationCreated { conversationId = convId; title = "T"; config = testConfig () } ] |> ignore
         coordinator.SubmitEvents [ AgentMessageRecorded { conversationId = convId; payloadJson = userMessageJson "问" } ] |> ignore

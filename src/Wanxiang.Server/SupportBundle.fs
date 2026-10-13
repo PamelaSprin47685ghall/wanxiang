@@ -37,7 +37,6 @@ module SupportBundle =
         // McpJson 定义在本文件之后编译（McpTransport.fs）；此处用字面量，
         // ContractTests 已钉住 McpJson.ProtocolVersion = "2025-06-18"（P-002 单一权威）。
         o["mcpProtocolVersion"] <- "2025-06-18"
-        o["snapshotFormatVersion"] <- Wanxiang.Store.Snapshot.FormatVersion
         o
 
     /// 存储布局：events/attachments/snapshots/recovery 的文件清单（名称 + 大小，不含内容）。
@@ -46,7 +45,6 @@ module SupportBundle =
         let dirs =
             [ "events", DataPaths.eventsDir dataDir
               "attachments", DataPaths.attachmentsDir dataDir
-              "snapshots", Wanxiang.Store.Snapshot.snapshotsDir dataDir
               "recovery", Path.Combine(dataDir, "recovery") ]
         let filesArr = JsonArray()
         for (label, dir) in dirs do
@@ -63,17 +61,16 @@ module SupportBundle =
     /// 快照状态（算法 L 的当前结论）。
     let private snapshotStatusJson (dataDir: string) : JsonObject =
         let o = JsonObject()
-        match Wanxiang.Store.Snapshot.findLatest dataDir with
-        | Wanxiang.Store.SnapshotStartup.NoSnapshot -> o["status"] <- "no-snapshot"
-        | Wanxiang.Store.SnapshotStartup.SnapshotUsed info ->
-            o["status"] <- "valid"
-            o["throughCommitId"] <- info.throughCommitId
-            o["createdAt"] <- info.createdAtUtc.UtcDateTime.ToString("o")
-            o["file"] <- Path.GetFileName info.path
-        | Wanxiang.Store.SnapshotStartup.SnapshotCorrupt reasons ->
-            o["status"] <- "corrupt"
-            o["reasons"] <- JsonArray([| for r in reasons -> JsonNode.op_Implicit r |])
-        | Wanxiang.Store.SnapshotStartup.SnapshotStale reason -> o["status"] <- "stale"; o["reason"] <- reason
+        match Inspect.run dataDir with
+        | Healthy r | RepairRequired(r, _) ->
+            match r.startup.snapshot with
+            | LedgerStore.Absent -> o["status"] <- "no-snapshot"
+            | LedgerStore.Used through ->
+                o["status"] <- "valid"
+                o["throughCommitId"] <- through
+                o["replayedCommits"] <- r.startup.replayedCommits
+            | LedgerStore.Discarded reason -> o["status"] <- "discarded"; o["reason"] <- reason
+        | UnsupportedFormat m | Unreadable m -> o["status"] <- "unchecked"; o["reason"] <- m
         o
 
     /// 脱敏配置：apiKey/token 值替换为 ***（与 Stderr.redact 同一规则）。
@@ -118,7 +115,7 @@ module SupportBundle =
             diag["configOk"] <- diagnosis.checks |> List.exists (fun c -> c.name = "config" && c.ok)
             diag["configErrors"] <- JsonArray([| for e in diagnosis.configErrors -> JsonNode.op_Implicit e |])
             let logStatus =
-                match Replay.inspect dataDir with
+                match Inspect.run dataDir with
                 | Healthy _ -> "healthy"
                 | RepairRequired (o, plan) ->
                     diag["lastCommitId"] <- o.lastCommitId
