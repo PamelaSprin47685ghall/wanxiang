@@ -17,16 +17,16 @@ jobs:
   pr-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
 
       # 不用 setup-dotnet 的 cache（它要求 packages.lock.json）；按项目文件哈希缓存 NuGet 包。
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '**/Directory.*.props', '**/Directory.*.targets', 'NuGet.config', 'global.json') }}
@@ -60,7 +60,7 @@ jobs:
 
       - name: Upload smoke screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: smoke-screenshots
           path: ${{ runner.temp }}/smoke
@@ -86,16 +86,16 @@ jobs:
     needs: pr-gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
 
       # 不用 setup-dotnet 的 cache（它要求 packages.lock.json）；按项目文件哈希缓存 NuGet 包。
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '**/Directory.*.props', '**/Directory.*.targets', 'NuGet.config', 'global.json') }}
@@ -118,7 +118,7 @@ jobs:
     outputs:
       touched: ${{ steps.diff.outputs.touched }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: diff
@@ -141,16 +141,16 @@ jobs:
        (github.event_name == 'pull_request' && needs.history-changes.outputs.touched == 'true'))
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
 
       # 不用 setup-dotnet 的 cache（它要求 packages.lock.json）；按项目文件哈希缓存 NuGet 包。
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '**/Directory.*.props', '**/Directory.*.targets', 'NuGet.config', 'global.json') }}

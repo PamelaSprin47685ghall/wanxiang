@@ -26,15 +26,15 @@ jobs:
     env:
       WX_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
 
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ matrix.rid }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '**/Directory.*.props', '**/Directory.*.targets', 'NuGet.config', 'global.json') }}
@@ -55,7 +55,7 @@ jobs:
       - name: Package
         run: tools/package_release.sh ${{ matrix.rid }} "$RUNNER_TEMP/pub" dist "$WX_VERSION"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wanxiang-${{ matrix.rid }}
           path: dist/*
@@ -68,7 +68,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
