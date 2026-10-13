@@ -764,6 +764,9 @@ type WsConnection(
                 do! this.ApplyConfigWith(d.requestId, fun cfg -> ConfigMutation.deleteProvider cfg d.providerId)
             | ConfigDeleteMcp d ->
                 do! this.ApplyConfigWith(d.requestId, fun cfg -> ConfigMutation.deleteMcp cfg d.serverId)
+            | ConfigUpsertPreset d -> do! this.ApplyConfig(d.requestId, ConfigMutation.upsertPreset, d.preset)
+            | ConfigDeletePreset d ->
+                do! this.ApplyConfigWith(d.requestId, fun cfg -> ConfigMutation.deletePreset cfg d.presetId)
             | PairingInvite ->
                 match handshakeState with
                 | Authenticated ->

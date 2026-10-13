@@ -296,6 +296,22 @@ module ProviderCatalog =
         t["approvalTimeoutSeconds"] <- cfg.tools.approvalTimeoutSeconds
         t["exposeDebug"] <- cfg.tools.exposeDebug
         o["tools"] <- t
+        // 决策 432：预设随目录快照下发（按名称排序），客户端无需单独请求。
+        let presets = JsonArray()
+        for p in cfg.presets |> Map.toList |> List.map snd |> List.sortBy (fun p -> p.name) do
+            let po = JsonObject()
+            po["id"] <- p.id
+            po["name"] <- p.name
+            po["provider"] <- p.provider
+            po["model"] <- p.model
+            match p.instructions with Some i -> po["instructions"] <- i | None -> ()
+            po["tools"] <- JsonArray([| for x in p.tools -> JsonNode.op_Implicit x |])
+            match p.temperature with Some x -> po["temperature"] <- x | None -> ()
+            match p.topP with Some x -> po["topP"] <- x | None -> ()
+            match p.maxTokens with Some x -> po["maxTokens"] <- x | None -> ()
+            match p.thinkingBudget with Some x -> po["thinkingBudget"] <- x | None -> ()
+            presets.Add po
+        o["presets"] <- presets
         o
 
     let private stringField (name: string) (item: JsonNode) =

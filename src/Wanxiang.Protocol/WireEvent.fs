@@ -143,6 +143,10 @@ type WireEvent =
     | ConfigUpsertMcp of {| requestId: Guid; server: JsonObject |}
     | ConfigDeleteMcp of {| requestId: Guid; serverId: string |}
     | ConfigUpdateGeneration of {| requestId: Guid; generation: JsonObject |}
+    // ---- 对话预设（决策 432，仅追加；旧端忽略这两个 wanxiang.dev/* 事件）----
+    /// 新建或覆盖一个预设；`preset.id` 缺省时由主机生成。回执走 config.applied。
+    | ConfigUpsertPreset of {| requestId: Guid; preset: JsonObject |}
+    | ConfigDeletePreset of {| requestId: Guid; presetId: string |}
     | ConfigApplied of {| requestId: Guid; ok: bool; errors: string list |}
     | ConfigUpdateTools of {| requestId: Guid; tools: JsonObject |}
     // ---- 工具审批（加法事件，第 71 节；只存内存，永不入日志）----
@@ -241,6 +245,8 @@ module WireEvent =
         | ConfigUpsertMcp _ -> "config.mcp-upsert"
         | ConfigDeleteMcp _ -> "config.mcp-delete"
         | ConfigUpdateGeneration _ -> "config.generation-update"
+        | ConfigUpsertPreset _ -> "config.preset-upsert"
+        | ConfigDeletePreset _ -> "config.preset-delete"
         | ConfigApplied _ -> "config.applied"
         | ConfigUpdateTools _ -> "config.tools-update"
         | ToolApprovalCapability _ -> "tool.approval-capability"

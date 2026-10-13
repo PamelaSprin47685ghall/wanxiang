@@ -786,7 +786,15 @@ type MainView() as this =
         // compact 下收起导航会带走焦点（掉到页顶）：交还给输入区；阅读位置由 ChatView 的锚点语义保留。
         if navBefore.compactMode && navBefore.compactNavigationOpen then composer.Focus()
 
-    member private _.MakeConversationCommand(conversationId: Guid) =
+    member private this.MakeConversationCommand(conversationId: Guid) =
+        this.MakeConversationCommandWith(conversationId, None)
+
+    member private _.MakeConversationCommandWith(conversationId: Guid, preset: SessionConfig option) =
+      match preset with
+      | Some config ->
+        CreateConversation
+            {| invocationId = newInvocation (); conversationId = conversationId; title = "新对话"; config = config |}
+      | None ->
         let provider, model =
             // 草稿里显式挑过的模型优先：没有对话时的选择不该被「默认」抹掉。
             draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog) |> Option.defaultValue ("", "")
@@ -800,7 +808,9 @@ type MainView() as this =
         CreateConversation
             {| invocationId = newInvocation (); conversationId = conversationId; title = "新对话"; config = config |}
 
-    member private this.CreateConversation() : Guid option =
+    member private this.CreateConversation() : Guid option = this.CreateConversationWith None
+
+    member private this.CreateConversationWith(preset: SessionConfig option) : Guid option =
         if not authenticated then
             toast "连接主机后才能新建对话；草稿会保留。" Warning
             None
@@ -815,7 +825,7 @@ type MainView() as this =
             draftModelSelection <- None
             this.SelectConversation(Some conversationId)
             sendCommandWithCompletion
-                (this.MakeConversationCommand conversationId)
+                (this.MakeConversationCommandWith(conversationId, preset))
                 None
                 (fun () -> send (ObserveConversation {| conversationId = conversationId |}))
                 (fun ok ->
@@ -823,6 +833,71 @@ type MainView() as this =
             // 新对话落定：焦点有家，直接进输入区（D3/D4）。
             composer.Focus()
             Some conversationId
+
+    // ---- 对话预设（决策 431–436）----
+
+    /// 套用预设：当前对话还是空的就直接改它的配置（不留下一段空对话），否则新建一段。
+    member private this.ApplyPreset(preset: PresetInfo) =
+        if not authenticated then toast "连接主机后才能使用预设。" Warning
+        else
+            let config, note = Presets.toSessionConfig catalog preset
+            let emptyActive =
+                match activeConvId, activeConversation () with
+                | Some convId, Some view when List.isEmpty (messagesOf view) && not (runs.Get(Some convId)).running ->
+                    Some(convId, view)
+                | _ -> None
+            match emptyActive with
+            | Some(convId, view) ->
+                let command =
+                    UpdateConversationConfig {| invocationId = newInvocation (); conversationId = convId; config = config |}
+                sendCommandWithFeedback command (Some(sprintf "已套用预设「%s」" preset.name)) (fun () ->
+                    view.config <- config
+                    this.Render())
+                composer.Focus()
+            | None ->
+                match this.CreateConversationWith(Some config) with
+                | Some _ -> toast (sprintf "已用预设「%s」新建对话" preset.name) Success
+                | None -> ()
+            note |> Option.iter (fun n -> toast n Warning)
+
+    /// 「存为预设…」：取当前对话的完整会话配置，名字默认是对话标题。
+    member private this.SaveConversationAsPreset() =
+        match activeConversation () with
+        | Some view when authenticated ->
+            let title = activeSummary () |> Option.map (fun s -> s.title) |> Option.defaultValue ""
+            let config = view.config
+            Dialogs.prompt overlay "存为预设" "预设名称" (Presets.suggestName catalog.presets title) "保存" (fun name onCompleted ->
+                sendConfigWithFeedback
+                    (sprintf "已存为预设「%s」，新建对话时可以套用" (name.Trim()))
+                    (fun requestId -> ConfigUpsertPreset {| requestId = requestId; preset = Presets.payloadOf None name config |})
+                    onCompleted)
+        | _ -> toast "打开一段对话后才能存为预设。" Warning
+
+    member private this.RenamePreset(preset: PresetInfo) =
+        Dialogs.prompt overlay "重命名预设" "预设名称" preset.name "保存" (fun name onCompleted ->
+            sendConfigWithFeedback
+                "预设已重命名"
+                (fun requestId ->
+                    ConfigUpsertPreset {| requestId = requestId; preset = Presets.payloadOf (Some preset.id) name (Presets.ofPreset preset) |})
+                onCompleted)
+
+    member private this.DeletePreset(preset: PresetInfo) =
+        Dialogs.confirm overlay "删除预设" (sprintf "「%s」将从这台主机上移除。已经用它建好的对话不受影响。" preset.name) "删除" (fun () ->
+            sendConfigWithFeedback
+                "预设已删除"
+                (fun requestId -> ConfigDeletePreset {| requestId = requestId; presetId = preset.id |})
+                ignore)
+
+    /// 预设入口随目录同步：侧栏下拉、空态芯片、顶栏菜单。没有预设时前两处都不出现。
+    member private this.SyncPresetSurfaces() =
+        let entries =
+            catalog.presets
+            |> List.map (fun p -> p.name, Presets.describe catalog p, (fun () -> this.ApplyPreset p))
+        sidebar.SetPresets(entries, fun anchor items ->
+            Menu.show overlay anchor false
+                [ for (name, _, run) in items -> MenuEntry.create name run ])
+        chat.SetPresetStarters(entries)
+        chat.SetSavePresetAction(Some(fun () -> this.SaveConversationAsPreset()))
 
     /// 点击一条搜索命中：打开那段对话，并滚动到命中的消息（目标在更早历史里则先加载）。
     member private this.OpenSearchHit(hit: SearchHit) =
@@ -1467,6 +1542,11 @@ type MainView() as this =
                   act "fork" "从最新提问分叉" "编辑后另开一个分叉" [ "fork"; "branch"; "分支" ] None
                   act "copy-reply" "复制最新回复" "" [ "copy" ] (Some "Ctrl / ⌘ + Shift + C")
                   act "regenerate" "重新生成最新回复" "" [ "regenerate"; "retry"; "重试" ] (Some "Ctrl / ⌘ + Shift + G")
+              for p in catalog.presets do
+                  { id = "preset:" + p.id; kind = PaletteAction; title = "用预设新建：" + p.name
+                    subtitle = Presets.describe catalog p; keywords = [ "preset"; "yushe"; "ys"; p.name ]; shortcut = None }
+              if hasConv then
+                  act "save-preset" "存为预设" "记下本对话的模型、指令、参数和工具" [ "preset"; "save"; "yushe" ] None
               act "import" "导入对话" "从导出的 JSON 文件" [ "import"; "upload" ] None
               act "theme" "切换主题" (sprintf "当前：%s" (ThemePreference.label prefs.theme)) [ "theme"; "dark"; "light"; "深色"; "浅色" ] (Some "Ctrl / ⌘ + Shift + S")
               act "sidebar" "显示 / 隐藏侧栏" "" [ "sidebar" ] (Some "Ctrl / ⌘ + B")
@@ -1535,6 +1615,11 @@ type MainView() as this =
             this.ShowSettings()
             sectionOf key |> Option.iter settings.ShowSection
         | "act:new" -> closeDrawer (); this.CreateConversation() |> ignore
+        | id when id.StartsWith "preset:" ->
+            match catalog.presets |> List.tryFind (fun p -> "preset:" + p.id = id) with
+            | Some p -> closeDrawer (); this.ApplyPreset p
+            | None -> toast "这个预设已经不存在。" Warning
+        | "act:save-preset" -> this.SaveConversationAsPreset()
         | "act:model" ->
             closeDrawer ()
             this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
@@ -1740,6 +1825,7 @@ type MainView() as this =
         | CatalogSnapshot d ->
             catalog <- Catalog.parse d.providers d.tools d.generation
             settings.SetCatalog catalog
+            this.SyncPresetSurfaces()
             if enteredSettingsForFirstProvider && Catalog.isReady catalog then
                 enteredSettingsForFirstProvider <- false
                 this.CloseSettings()
@@ -2405,6 +2491,7 @@ type MainView() as this =
         settings.ConfigureImport(fun () ->
             this.CloseSettings()
             this.ImportConversation())
+        settings.ConfigurePresets((fun p -> this.RenamePreset p), (fun p -> this.DeletePreset p))
         this.BuildOnboarding()
 
         chatColumn <- ConversationWorkspace(chat, composer)

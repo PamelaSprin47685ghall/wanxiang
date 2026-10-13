@@ -101,8 +101,39 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
     /// 内容分隔线同一档；窗口 / 导航这类 chrome 分隔才用更轻的 Tokens.hairline。
     let groupDivider () : Border = Ui.hairline ()
 
+    /// 决策 435：对话预设的管理列表（重命名 / 删除）。目录更新时重建。
+    let presetsPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd, Name = "settings-presets")
+    let mutable presetRename: PresetInfo -> unit = ignore
+    let mutable presetDelete: PresetInfo -> unit = ignore
+    let renderPresets () =
+        presetsPanel.Children.Clear()
+        presetsPanel.Children.Add(Ui.label "对话预设")
+        if List.isEmpty catalog.presets then
+            presetsPanel.Children.Add(
+                Ui.caption "预设记下一段对话的模型、系统指令、生成参数和工具。在对话顶部的「⋯」里选「存为预设」，以后新建对话时一键套用。")
+        else
+            presetsPanel.Children.Add(Ui.caption "保存在当前主机上，所有设备都能用。改动预设不会影响已经建好的对话。")
+            for preset in catalog.presets do
+                let name =
+                    TextBlock(Text = preset.name, FontSize = Tokens.fontBody, Foreground = Tokens.text, TextTrimming = TextTrimming.CharacterEllipsis)
+                let detail = Ui.caption (Presets.describe catalog preset)
+                detail.TextTrimming <- TextTrimming.CharacterEllipsis
+                detail.TextWrapping <- TextWrapping.NoWrap
+                let text = Ui.vstack 2.0 [ name :> Control; detail :> Control ]
+                let rename = Ui.button Ui.Ghost "重命名" (fun () -> presetRename preset)
+                let delete = Ui.button Ui.Ghost "删除" (fun () -> presetDelete preset)
+                Avalonia.Automation.AutomationProperties.SetName(rename, sprintf "重命名预设 %s" preset.name)
+                Avalonia.Automation.AutomationProperties.SetName(delete, sprintf "删除预设 %s" preset.name)
+                let buttons = Ui.hstack Spacing.spaceXs [ rename :> Control; delete :> Control ]
+                let row = DockPanel(LastChildFill = true, Name = "preset-row")
+                DockPanel.SetDock(buttons, Dock.Right)
+                row.Children.Add buttons
+                row.Children.Add text
+                presetsPanel.Children.Add row
+
     member this.SetCatalog(next: Catalog) =
         catalog <- next
+        renderPresets ()
         // 目录更新也会由其它设置操作触发；不能用它覆盖尚未提交的表单。
         if not generationDirty && not generationSaving then
             generationSyncing <- true
@@ -134,6 +165,10 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                     else "主机已切换。旧草稿仍在，但不能保存到另一台主机。请返回原主机，或放弃修改。"
 
     member _.SetImportHandler(handler: unit -> unit) = importHandler <- Some handler
+    member _.SetPresetHandlers(rename: PresetInfo -> unit, delete: PresetInfo -> unit) =
+        presetRename <- rename
+        presetDelete <- delete
+    member _.PresetsPanel = presetsPanel
     member _.HasUnsavedGeneration = generationDirty
 
     member this.DiscardGenerationChanges() =
@@ -295,6 +330,11 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                   Ui.hairline () :> Control
                   generationStatus :> Control
                   Ui.hstack Spacing.spaceMd [ saveButton :> Control; discardButton :> Control ] :> Control
+                  (renderPresets ()
+                   (match presetsPanel.Parent with
+                    | :? Panel as old -> old.Children.Remove presetsPanel |> ignore
+                    | _ -> ())
+                   Ui.vstack Spacing.spaceMd [ Ui.hairline () :> Control; presetsPanel :> Control ] :> Control)
                   // 决策 363：「导入对话」从侧栏页脚移到这里——同属「主机上的对话」，低频、不占常驻位置。
                   (match importHandler with
                    | Some handler ->
