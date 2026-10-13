@@ -22,8 +22,9 @@ jobs:
       fail-fast: false
       matrix:
         rid: [linux-x64, win-x64, osx-arm64, osx-x64]
+    # 不能叫 VERSION：MSBuild 把环境变量当属性读，$(Version)=v1.2.3 不是合法 NuGet 版本，restore 会静默失败（决策 417）。
     env:
-      VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      WX_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,7 +53,7 @@ jobs:
           tools/smoke_published.sh "$RUNNER_TEMP/pub"
 
       - name: Package
-        run: tools/package_release.sh ${{ matrix.rid }} "$RUNNER_TEMP/pub" dist "$VERSION"
+        run: tools/package_release.sh ${{ matrix.rid }} "$RUNNER_TEMP/pub" dist "$WX_VERSION"
 
       - uses: actions/upload-artifact@v4
         with:

@@ -924,3 +924,6 @@ pr-gate 在发布 App 之后跑 411（`npm ci` 装 puppeteer-core，用 runner �
 
 # 416. macOS 包不签名
 osx 包未签名、未公证、非 `.app` 结构（`Info.plist` 只作模板随附）；README 写明 Gatekeeper 的放行方式。做 `.app`/签名/公证是后续工作。
+
+# 417. 工作流里不用 VERSION 环境变量
+MSBuild 把环境变量当属性读：`VERSION=v0.0.0-x` 会成为 `$(Version)`，不是合法 NuGet 版本，`dotnet restore` 报 “RestoreTask returned false but did not log an error” 静默失败。release.yml 用 `WX_VERSION`；其他 CI 环境变量同样避开 MSBuild 常用属性名（Version、Configuration、Platform、OutputPath 等）。
