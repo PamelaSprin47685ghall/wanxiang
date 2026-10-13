@@ -13,15 +13,13 @@
     <Compile Include="ServerModel.fs" />
     <Compile Include="ProviderCatalog.fs" />
     <Compile Include="ConfigMutation.fs" />
-    <Compile Include="GenerationContext.fs" />
-    <Compile Include="TitleGenerator.fs" />
-    <Compile Include="ChatOrchestrator.fs" />
     <Compile Include="HostStatus.fs" />
     <Compile Include="WsConnection.fs" />
     <Compile Include="ServerApp.fs" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.ChatOrchestrator" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AgentRuntime" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProviderFailure" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AgentContent" Version="0.0.0-local" />

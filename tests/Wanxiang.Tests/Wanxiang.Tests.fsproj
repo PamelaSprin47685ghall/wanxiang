@@ -30,7 +30,6 @@
     <Compile Include="OnboardingConfigTests.fs" />
     <Compile Include="OnboardingUiTests.fs" />
     <Compile Include="ServerStoreMutationTests.fs" />
-    <Compile Include="ChatOrchestratorTests.fs" />
     <Compile Include="ServerConnectionsTests.fs" />
     <Compile Include="AttachmentTests.fs" />
     <Compile Include="BugfixTests.fs" />

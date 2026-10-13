@@ -33,12 +33,6 @@ let ``250 generation.partial 编解码往返`` () =
     | other -> failwithf "unexpected %A" other
 
 [<Fact>]
-let ``250 只有助手正文才算可续写的半截`` () =
-    Assert.True(ChatOrchestrator.PartialText(partialMessage "有字"))
-    Assert.False(ChatOrchestrator.PartialText(partialMessage "   "))
-    Assert.False(ChatOrchestrator.PartialText(JsonNode.Parse """{"role":"user","contents":[{"text":"x"}]}"""))
-
-[<Fact>]
 let ``250 刷新后客户端从主机恢复半截与错误卡；正在生成时不覆盖`` () =
     let runs = ConversationRuns()
     let conv, gen = Guid.NewGuid(), Guid.NewGuid()
