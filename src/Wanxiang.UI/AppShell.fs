@@ -51,6 +51,9 @@ type MainView() as this =
     let mutable activeConvId: Guid option = None
     /// 决策 440：主机声明的功能表。None = 主机没声明（旧主机），照常显示、靠超时兜底。
     let mutable hostFeatures: Set<string> option = None
+    /// 决策 444：搜索与模型服务探测也是「请求→回应」，同样设等待上限。
+    let mutable searchSentAt: DateTimeOffset option = None
+    let pendingProbes = System.Collections.Generic.Dictionary<Guid, string * DateTimeOffset>()
     let runs = ConversationRuns()
     let mutable summaries: ConversationSummary list = []
     let mutable paletteRecent: string list = CommandPalette.loadRecent ()
@@ -864,6 +867,33 @@ type MainView() as this =
 
     /// 「存为预设…」：取当前对话的完整会话配置，名字默认是对话标题。
     /// 决策 442：主机明确声明不支持时，发请求前就说清楚，而不是等它石沉大海。
+    member private _.ProbeProvider(providerId: string) =
+        let requestId = newInvocation ()
+        pendingProbes[requestId] <- (providerId, DateTimeOffset.UtcNow)
+        send (ProviderProbeRequest {| requestId = requestId; providerId = providerId |})
+
+    /// 决策 443/444：到点仍没回应的请求统一收尾。
+    member private this.ExpireHostRequests(now: DateTimeOffset) : bool =
+        let timeout = MotionLedger.hostRequestTimeout
+        let message = HostFeatures.noResponseMessage hostFeatures
+        let expiredConfig = configFeedback.Expire(now, timeout)
+        let expiredCommands = commandFeedback.Expire(now, timeout)
+        for f in expiredConfig do f.onCompleted false
+        for f in expiredCommands do f.onCompleted false
+        if not (List.isEmpty expiredConfig && List.isEmpty expiredCommands) then toast message Warning
+        match searchSentAt with
+        | Some at when now - at >= timeout ->
+            searchSentAt <- None
+            latestSearchQueryId <- None
+            sidebar.ApplySearchFailure(sidebar.SearchQueryText, message)
+        | _ -> ()
+        let dueProbes = [ for KeyValue(id, (pid, at)) in pendingProbes do if now - at >= timeout then id, pid ]
+        for (id, pid) in dueProbes do
+            pendingProbes.Remove id |> ignore
+            let err = Some message
+            if not (this.Onboarding.ApplyProbe(pid, false, [], err)) then settings.ApplyProbe(pid, false, [], err)
+        not (List.isEmpty expiredCommands)
+
     member private _.RequireFeature(feature: string) : bool =
         if HostFeatures.supports hostFeatures feature then true
         else
@@ -1891,6 +1921,7 @@ type MainView() as this =
             if d.alreadyHandled then toast (ToolApprovalCard.alreadyHandledText d.status) Info
         | ToolApprovalCapability _ | ToolApprovalDecision _ | ConfigUpdateTools _ -> ()
         | ProviderProbeResult d ->
+            pendingProbes.Remove d.requestId |> ignore
             let models =
                 [ for item in d.models do
                       if not (isNull item) && item.GetValueKind() = JsonValueKind.String then item.GetValue<string>() ]
@@ -1973,6 +2004,7 @@ type MainView() as this =
         | SearchResults d ->
             // 只认最近一次发出的查询：更早的结果（用户又改了词）迟到就丢掉。
             if latestSearchQueryId = Some d.queryId then
+                searchSentAt <- None
                 sidebar.ApplySearchResults(
                     { queryId = d.queryId
                       query = d.query
@@ -1982,6 +2014,7 @@ type MainView() as this =
                     d.offset)
         | SearchFailed d ->
             if latestSearchQueryId = Some d.queryId then
+                searchSentAt <- None
                 sidebar.ApplySearchFailure(sidebar.SearchQueryText, d.message)
         | ConversationExportPage page -> exportDialog |> Option.iter (fun dialog -> dialog.Handle page)
         | ConversationExportFailed d -> exportDialog |> Option.iter (fun dialog -> dialog.Fail(d.exportId, d.message))
@@ -2203,6 +2236,7 @@ type MainView() as this =
               | None ->
                 let queryId = Guid.CreateVersion7()
                 latestSearchQueryId <- Some queryId
+                searchSentAt <- Some DateTimeOffset.UtcNow
                 send (
                     SearchQuery
                         { queryId = queryId
@@ -2393,7 +2427,7 @@ type MainView() as this =
                             "模型服务已删除"
                             (fun requestId -> ConfigDeleteProvider {| requestId = requestId; providerId = id |})
                             ignore)
-              probeProvider = fun id -> send (ProviderProbeRequest {| requestId = newInvocation (); providerId = id |})
+              probeProvider = fun id -> this.ProbeProvider id
               upsertMcp =
                 fun payload onCompleted ->
                     sendConfigWithFeedback
@@ -2483,7 +2517,7 @@ type MainView() as this =
                         ""
                         (fun requestId -> ConfigDeleteProvider {| requestId = requestId; providerId = id |})
                         ignore
-              probeProvider = fun id -> send (ProviderProbeRequest {| requestId = newInvocation (); providerId = id |})
+              probeProvider = fun id -> this.ProbeProvider id
               takenIds = fun () -> catalog.providers |> List.map (fun p -> p.id)
               discoverLocal =
                 fun () ->
@@ -2631,13 +2665,8 @@ type MainView() as this =
         deliveryTimer.Tick.Add(fun _ ->
             let now = DateTimeOffset.UtcNow
             // 决策 443：旧主机静默丢弃它不认识的请求——到点就让界面退出等待并说明原因。
-            let expiredConfig = configFeedback.Expire(now, MotionLedger.hostRequestTimeout)
-            let expiredCommands = commandFeedback.Expire(now, MotionLedger.hostRequestTimeout)
-            for f in expiredConfig do f.onCompleted false
-            for f in expiredCommands do f.onCompleted false
-            if not (List.isEmpty expiredConfig && List.isEmpty expiredCommands) then
-                toast (HostFeatures.noResponseMessage hostFeatures) Warning
-            if outbox.Expire(now, TimeSpan.FromSeconds 30.0) || not (List.isEmpty expiredCommands) then this.Render())
+            let commandsExpired = this.ExpireHostRequests now
+            if outbox.Expire(now, TimeSpan.FromSeconds 30.0) || commandsExpired then this.Render())
         // 本地草稿自动保存：内容没变不写盘，所以高频 tick 的代价只是一次快照比较。
         let draftTimer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 800.0)
         draftTimer.Tick.Add(fun _ -> this.FlushDrafts())
