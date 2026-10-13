@@ -1,0 +1,42 @@
+name: wanxiang-stress
+
+# 决策 471：夜间压力找竞态。定时 + 手动触发，不挂在 PR 上、不阻塞合并。
+# 全套跑 3 遍（-j 4 + 2 线程 CPU 占用），上传 flake 报告；有失败只出 warning，不让 job 变红。
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "重复轮数"
+        default: "3"
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.fsproj', '**/*.csproj', '**/Directory.*.props', '**/Directory.*.targets', 'NuGet.config', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools --skip-manifest-update || dotnet workload install wasm-tools
+      - name: Stress (suite x N under load)
+        run: tools/stress.sh -n "${{ github.event.inputs.runs || '3' }}" -j 4 --hog 2 -o "$RUNNER_TEMP/stress"
+      - name: Summarize
+        if: always()
+        run: |
+          cat "$RUNNER_TEMP/stress/flake-report.md" >> "$GITHUB_STEP_SUMMARY" || true
+          if [ -s "$RUNNER_TEMP/stress/failures.txt" ]; then echo "::warning::压力运行出现失败，见 flake-report"; fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: flake-report
+          path: ${{ runner.temp }}/stress
+          if-no-files-found: ignore
