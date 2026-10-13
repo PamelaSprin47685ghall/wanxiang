@@ -927,3 +927,15 @@ osx 包未签名、未公证、非 `.app` 结构（`Info.plist` 只作模板随�
 
 # 417. 工作流里不用 VERSION 环境变量
 MSBuild 把环境变量当属性读：`VERSION=v0.0.0-x` 会成为 `$(Version)`，不是合法 NuGet 版本，`dotnet restore` 报 “RestoreTask returned false but did not log an error” 静默失败。release.yml 用 `WX_VERSION`；其他 CI 环境变量同样避开 MSBuild 常用属性名（Version、Configuration、Platform、OutputPath 等）。
+
+# 420. UI 静态对象必须在 headless UI 线程上初始化
+Avalonia 12 的 `AvaloniaObject.Dispatcher` 在构造时取 `Dispatcher.CurrentDispatcher`（构造它的线程），之后不换绑。`Tokens` 的主题画笔是模块级静态对象：若首个触发 `Tokens` 静态初始化的是 xunit 工作线程上的纯逻辑断言（如 `Tokens.iconGlyph`），画笔就归那个线程，此后每个 `Headless.run` 收尾的 `Tokens.apply` 都抛 `VerifyAccess`。xunit v3 随机化测试顺序，所以表现为“偶发、整组连带失败”（main 上 run 38332993546 前两次尝试：一个 UI 分组 136 个用例里 117 个失败，恰好是该组全部 `Headless.run` 用例）。测试程序集用 xunit v3 `AssemblyFixture`（`UiThreadWarmup`）在任何测试之前于会话线程上触发 `Tokens` 初始化；`Headless.run` 首次调用时幂等兜底。
+
+# 421. 画笔归属自检给出指名根因
+`Headless.run` 在进入测试体前检查 `Tokens.canvas.CheckAccess()`；不成立时直接失败并写明“画笔归线程 X 所有、不是 UI 线程 Y、有代码在 UI 线程之外首次触发了 Tokens 初始化”，而不是让上百个用例报看似无关的 VerifyAccess。
+
+# 422. 回归守护
+`UiThreadOwnershipTests`：先在一条新线程上碰 `Tokens`，再跑 `Headless.run` 调 `Tokens.apply`，必须通过；并断言画笔归 headless UI 线程所有。新增模块级 Avalonia 对象（画笔、几何、图像）时同样纳入 `UiThreadWarmup`。
+
+# 423. 发布试跑
+`workflow_dispatch` 试跑（415）作为合并发布相关改动后的例行检查：四个 artifact 齐全、linux-x64 包下载后能解包、起主机并通过 411 冒烟；`draft-release` 必须显示为 skipped，不产生 Release 和标签。
