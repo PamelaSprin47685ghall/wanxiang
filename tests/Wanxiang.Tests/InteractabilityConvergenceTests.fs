@@ -177,8 +177,8 @@ module InteractabilityConvergenceTests =
                 items
                 |> List.find (fun i -> (string i.Header).Contains needle)
                 |> fun i -> if isNull i.InputGesture then "" else i.InputGesture.ToString()
-            Assert.Equal("Ctrl / ⌘ + Shift + C", gestureOf "复制")
-            Assert.Equal("Ctrl / ⌘ + Shift + G", gestureOf "重新生成")
+            Assert.Equal("Ctrl+Shift+C", gestureOf "复制")
+            Assert.Equal("Ctrl+Shift+G", gestureOf "重新生成")
         finally
             window.Close()
         )
