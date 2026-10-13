@@ -981,3 +981,15 @@ Avalonia 12 的 `AvaloniaObject.Dispatcher` 在构造时取 `Dispatcher.CurrentD
 
 # 445. 第 7–26 轮新增命令的旧主机审计结论
 逐项核对：continue-response、conversation.import、config.preset-upsert/delete、置顶归档、模型切换（对话配置更新）原先在旧主机上都会永久等待，已由 443 覆盖；导出、历史分页、自检、设备原本就有上限；`generation.partial`、限流通知是主机→客户端，旧客户端忽略即可。附件上传/下载（早于第 7 轮）尚无整体上限，留作后续。
+
+# 446. QA 截图强制主题
+`tools/qa_theme.js`：仿真 prefers-color-scheme 之外，按 Ctrl+Shift+S 轮转主题直到画面背景亮度与 `--theme` 一致，再等提示淡出才截图。`qa_shot.js`、`qa_r27.js` 都走它。
+
+# 447. 预设回落提示点名缺失工具
+套用预设时缺失工具 ≤3 个就点名（去掉 `builtin:`/`mcp:` 前缀），更多时只给数量。
+
+# 448. 旧主机模拟
+`tools/old_host_proxy.js` 转发 HTTP 与 /ws，丢掉主机的 `host.capabilities` 和客户端发出的新请求（预设、继续生成、导入），用来在真实 PWA 里验证 443 的超时与文案。
+
+# 449. 周期计时器在 PWA 里必须启动
+PWA 先把 MainView 挂到 SingleView 再 `Build()`，AttachedToVisualTree 在挂事件之前就触发了：投递确认（30 秒）、请求超时（443）、草稿自动保存、视口监视在浏览器里从未运行。Build 结束时若已在可视树上就立即启动（Start 幂等）。回归测试：先挂窗口再 Build，计时器必须已启动。
