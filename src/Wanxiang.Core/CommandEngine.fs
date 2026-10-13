@@ -65,7 +65,7 @@ module CommandEngine =
     /// 校验客户端游标并规划命令。纯函数，不执行副作用。
     /// clientCursor：该连接已确认应用的全局提交 id。
     let plan (proj: Projection) (clientCursor: CommitId) (cmd: ClientCommand) : PlanResult =
-        let canonicalPayload = ClientCommand.canonicalPayload cmd
+        let canonicalPayload = CanonicalPayload.ofCommand cmd
         let canonicalHash = CommandId.sha256Hex canonicalPayload
         let ctype = ClientCommand.commandType cmd
         let commandId = CommandId.compute (ClientCommand.invocationId cmd) ctype canonicalPayload
@@ -300,7 +300,7 @@ module CommandEngine =
     /// 由账本维护（wanxiang2 Ledger 的 Checkpoint.stamps），投影不再持有幂等索引。
     /// 幂等检查必须先于领域校验：重发一条已成功的「新建对话」应得到原提交，而不是「对话已存在」。
     let planStamped (stamps: Map<string, string * CommitId>) (proj: Projection) (clientCursor: CommitId) (cmd: ClientCommand) : PlanResult =
-        let canonicalPayload = ClientCommand.canonicalPayload cmd
+        let canonicalPayload = CanonicalPayload.ofCommand cmd
         let canonicalHash = CommandId.sha256Hex canonicalPayload
         let commandId = CommandId.compute (ClientCommand.invocationId cmd) (ClientCommand.commandType cmd) canonicalPayload
         match stamps.TryFind commandId with

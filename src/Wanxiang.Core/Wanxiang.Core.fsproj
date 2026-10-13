@@ -7,22 +7,21 @@
 
   <ItemGroup>
     <Compile Include="Types.fs" />
-    <Compile Include="RateLimit.fs" />
     <Compile Include="PlainText.fs" />
     <Compile Include="CommandId.fs" />
-    <Compile Include="SessionConfig.fs" />
     <Compile Include="ToolSummary.fs" />
     <Compile Include="Events.fs" />
     <Compile Include="CommitCodec.fs" />
     <Compile Include="Projection.fs" />
     <Compile Include="ProjectionCodec.fs" />
-    <Compile Include="WireCommands.fs" />
+    <Compile Include="CanonicalPayload.fs" />
     <Compile Include="CommandEngine.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- RFC 8785 JCS 规范化与内容哈希：来自 wanxiang2 的 Canonical 库。 -->
     <PackageReference Include="Wanxiang2.Canonical" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.Wire" Version="0.0.0-local" />
   </ItemGroup>
 
 </Project>

@@ -473,7 +473,7 @@ module CoreTests =
                    title = "Title"
                    config = dummyConfig |}
 
-        let canonicalPayload = ClientCommand.canonicalPayload cmd
+        let canonicalPayload = CanonicalPayload.ofCommand cmd
         let canonicalHash = CommandId.sha256Hex canonicalPayload
         let ctype = ClientCommand.commandType cmd
         let commandId = CommandId.compute invId ctype canonicalPayload

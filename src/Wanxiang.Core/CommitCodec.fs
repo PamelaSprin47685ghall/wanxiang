@@ -41,53 +41,10 @@ module CommitCodec =
             | _ -> None
         | _ -> None
 
-    let configToJson (cfg: SessionConfig) : JsonObject =
-        let o = JsonObject()
-        o["provider"] <- cfg.provider
-        o["model"] <- cfg.model
-        match cfg.instructions with Some s -> o["instructions"] <- s | None -> ()
-        if not (List.isEmpty cfg.tools) then
-            o["tools"] <- JsonArray([| for t in cfg.tools -> JsonNode.op_Implicit t |])
-        match cfg.temperature with Some t -> o["temperature"] <- t | None -> ()
-        match cfg.topP with Some p -> o["topP"] <- p | None -> ()
-        match cfg.maxTokens with Some m -> o["maxTokens"] <- m | None -> ()
-        match cfg.thinkingBudget with Some b -> o["thinkingBudget"] <- b | None -> ()
-        match cfg.extraJson with Some n -> o["extra"] <- n.DeepClone() | None -> ()
-        o
+    /// SessionConfig 的 JSON 形状只有一份（线与日志共用），在 Wire 包里。
+    let configToJson (cfg: SessionConfig) : JsonObject = SessionConfig.toJson cfg
 
-    let configFromJson (o: JsonObject) : SessionConfig =
-        let getStr (k: string) =
-            match tryGet o k with
-            | Some v when v.GetValueKind() = JsonValueKind.String -> Some(v.GetValue<string>())
-            | _ -> None
-        let getFloat (k: string) =
-            match tryGet o k with
-            | Some v -> tryGetDouble v
-            | None -> None
-        let getInt (k: string) =
-            match tryGet o k with
-            | Some v -> tryGetInt v
-            | None -> None
-        let getTools () =
-            match tryGet o "tools" with
-            | Some v when v.GetValueKind() = JsonValueKind.Array ->
-                [ for item in v.AsArray() do
-                      if item <> null && item.GetValueKind() = JsonValueKind.String then
-                          item.GetValue<string>() ]
-            | _ -> []
-        let extra =
-            match tryGet o "extra" with
-            | Some v -> Some(v.DeepClone())
-            | _ -> None
-        { provider = getStr "provider" |> Option.defaultValue ""
-          model = getStr "model" |> Option.defaultValue ""
-          instructions = getStr "instructions"
-          tools = getTools ()
-          temperature = getFloat "temperature"
-          topP = getFloat "topP"
-          maxTokens = getInt "maxTokens"
-          thinkingBudget = getInt "thinkingBudget"
-          extraJson = extra }
+    let configFromJson (o: JsonObject) : SessionConfig = SessionConfig.fromJson o
 
     let eventDataToJson (ev: EventData) : JsonObject =
         let o = JsonObject()

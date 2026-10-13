@@ -6,8 +6,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="WireEvent.fs" />
-    <Compile Include="WireCodec.fs" />
     <Compile Include="WireAgui.fs" />
   </ItemGroup>
 

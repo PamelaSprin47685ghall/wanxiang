@@ -44,8 +44,6 @@
     <Compile Include="AttachmentTests.fs" />
     <Compile Include="BugfixTests.fs" />
     <Compile Include="CodecTests.fs" />
-    <Compile Include="WireCodecTests.fs" />
-    <Compile Include="SessionConfigTests.fs" />
     <Compile Include="ProductizationTests.fs" />
     <Compile Include="PolishTests.fs" />
     <Compile Include="MathRenderTests.fs" />
