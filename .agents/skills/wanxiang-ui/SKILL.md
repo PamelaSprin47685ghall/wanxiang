@@ -993,3 +993,18 @@ Avalonia 12 的 `AvaloniaObject.Dispatcher` 在构造时取 `Dispatcher.CurrentD
 
 # 449. 周期计时器在 PWA 里必须启动
 PWA 先把 MainView 挂到 SingleView 再 `Build()`，AttachedToVisualTree 在挂事件之前就触发了：投递确认（30 秒）、请求超时（443）、草稿自动保存、视口监视在浏览器里从未运行。Build 结束时若已在可视树上就立即启动（Start 幂等）。回归测试：先挂窗口再 Build，计时器必须已启动。
+
+# 450. 桌面 / PWA 一致性探针
+`ParityProbe.hit "<路径>"` 标记生命周期路径真的跑到了（计时器 tick、挂载、自动连接、草稿读写、快捷键、剪贴板、文件选择、拖放、右键菜单、深链、恢复重连）。默认关闭：桌面要 `WANXIANG_PARITY_PROBE=1`（stderr 每个探点首次一行 `parity.<名字>`），PWA 要地址带 `wxprobe=1`（计数写 `globalThis.__wxProbe`）。只记路径名，不带用户内容。新增依赖生命周期的行为必须带探点。
+
+# 451. PWA 页面转入后台即落草稿
+桌面在 Window.Closing 落草稿，PWA 没有对应物，800 ms 定时器在后台标签页会被节流或冻结。main.js 在 `visibilitychange→hidden` 与 `pagehide` 调 `BrowserBridge.NotifyPageHidden`（JSExport），MainView 收到即 FlushDrafts。
+
+# 452. PWA 的小型本机文本存 localStorage
+浏览器里的 System.IO 是内存文件系统，刷新即丢：界面偏好（主题、字号、侧栏、回车发送、保存草稿开关……）与命令面板最近使用在 PWA 里从未持久化。`LocalText.read/write`：桌面照旧写文件，PWA 写 `localStorage["wanxiang.local:<文件名>"]`。
+
+# 453. PWA 运行时一致性冒烟
+`tools/parity_pwa.js` 接在 `smoke_published.sh` 之后（每个 PR）：先确认不带参数时探针关闭，再用 `?wxprobe=1` 断言启动路径、三个周期计时器、online→立即重连、Ctrl+K、偏好写入并在刷新后保留、pagehide→落草稿、`#open` 深链。需要已连接会话的路径（右键菜单、剪贴板、文件选择、拖放、限流倒计时）暂由桌面 UI 测试与历轮 PWA 走查覆盖。
+
+# 454. PWA 首屏键盘可达
+首屏焦点在 body，点画布空白处也不移焦，按键进不了 Avalonia——所有快捷键在 PWA 里要先点一次输入框才生效。main.js 画好后把焦点给 `#out`，之后指针按下而焦点在外时拉回（不碰输入桥，免得手机弹键盘）；MainView 另在 TopLevel 上挂一个入口，只处理来源不在本视图内的按键。

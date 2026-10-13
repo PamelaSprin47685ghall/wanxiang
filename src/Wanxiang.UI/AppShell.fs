@@ -53,6 +53,7 @@ type MainView() as this =
     let mutable hostFeatures: Set<string> option = None
     /// 决策 449：周期计时器是否已启动（测试观察点）。
     let mutable timersStarted = false
+    let mutable topLevelKeysHooked: TopLevel option = None
     /// 决策 444：搜索与模型服务探测也是「请求→回应」，同样设等待上限。
     let mutable searchSentAt: DateTimeOffset option = None
     let pendingProbes = System.Collections.Generic.Dictionary<Guid, string * DateTimeOffset>()
@@ -2691,6 +2692,20 @@ type MainView() as this =
         let startTimers () =
             if not timersStarted then ParityProbe.hit "lifecycle.shellAttached"
             timersStarted <- true
+            // 决策 454：焦点不在本视图里时（PWA 首屏、点了画布空白处），按键只落到 TopLevel，
+            // 不会冒泡经过本视图——快捷键在浏览器里因此失灵。TopLevel 上补一个入口，
+            // 只处理来源不在本视图内的按键，避免与 this.KeyDown 重复。
+            match TopLevel.GetTopLevel this with
+            | null -> ()
+            | top when topLevelKeysHooked = Some top -> ()
+            | top ->
+                topLevelKeysHooked <- Some top
+                top.KeyDown.Add(fun e ->
+                    let inside =
+                        match e.Source with
+                        | :? Visual as v -> obj.ReferenceEquals(v, this) || Avalonia.VisualTree.VisualExtensions.IsVisualAncestorOf(this, v)
+                        | _ -> false
+                    if not e.Handled && not inside then this.HandleShortcut e)
             deliveryTimer.Start()
             draftTimer.Start()
             this.StartViewportWatcher()

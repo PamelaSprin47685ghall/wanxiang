@@ -32,5 +32,7 @@ curl -fsS -o /dev/null "http://127.0.0.1:$PORT/_framework/avalonia.js" || { echo
 echo "host up on $PORT (pid $HOST)"
 rc=0
 node "$ROOT/tools/smoke_published_pwa.js" --base "http://127.0.0.1:$PORT" --out "${SMOKE_OUT:-$WORK/shots}" || rc=$?
+# 决策 453：PWA 运行时一致性（探针 ?wxprobe=1，默认关闭）
+node "$ROOT/tools/parity_pwa.js" --base "http://127.0.0.1:$PORT" --out "${SMOKE_OUT:-$WORK/shots}" || rc=$?
 [ $rc -eq 0 ] || { echo "--- host.log (tail)"; tail -40 "$WORK/host.log"; }
 exit $rc

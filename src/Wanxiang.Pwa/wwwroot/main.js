@@ -425,9 +425,21 @@ async function dismissSplashWhenPainted() {
     dismissSplash();
 }
 
+// 决策 454：键盘事件只有在焦点落在 #out（或其输入桥）里时才进得了 Avalonia。首屏焦点在 body，
+// 点画布空白处也不会移焦——桌面上随时可用的快捷键在 PWA 里因此全部失灵。
+// 画好后把焦点给 #out；之后点到画布而焦点在外面时也拉回来（不碰输入桥，免得手机弹键盘）。
+function focusAppContainer() {
+    const out = document.getElementById("out");
+    if (!out) return;
+    const a = document.activeElement;
+    if (!a || a === document.body || a === document.documentElement) out.focus({ preventScroll: true });
+}
+document.getElementById("out").addEventListener("pointerdown", () => setTimeout(focusAppContainer, 0), true);
+
 new MutationObserver((_, obs) => {
     if (document.querySelector("#out canvas")) {
         obs.disconnect();
+        setTimeout(focusAppContainer, 0);
         dismissSplashWhenPainted();
     }
 }).observe(document.getElementById("out"), { childList: true });
