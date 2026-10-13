@@ -128,7 +128,7 @@ let ``applying a preset falls back when its model or tools are gone`` () =
     Assert.Equal(("anthropic", "claude"), (config2.provider, config2.model))
     Assert.Empty(config2.tools)
     Assert.Contains("已不可用", note2.Value)
-    Assert.Contains("1 个工具", note2.Value)
+    Assert.Contains("工具 time 在主机上已没有", note2.Value)
 
 [<Fact>]
 let ``preset names are suggested from the title without collisions`` () =
