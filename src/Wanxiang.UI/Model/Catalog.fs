@@ -347,7 +347,15 @@ module Presets =
         let available = catalog.tools |> List.map (fun t -> t.id) |> Set.ofList
         let tools = preset.tools |> List.filter available.Contains
         let dropped = List.length preset.tools - List.length tools
-        let toolNote = if dropped > 0 then Some(sprintf "有 %d 个工具主机上已没有，已跳过。" dropped) else None
+        // 决策 447：点名被跳过的工具（去掉命名空间前缀），用户才知道少了什么。
+        let missing =
+            preset.tools
+            |> List.filter (fun t -> not (available.Contains t))
+            |> List.map (fun t -> match t.LastIndexOf ':' with -1 -> t | i -> t.Substring(i + 1))
+        let toolNote =
+            if dropped = 0 then None
+            elif dropped <= 3 then Some(sprintf "工具 %s 在主机上已没有，已跳过。" (String.Join("、", missing)))
+            else Some(sprintf "有 %d 个工具主机上已没有，已跳过。" dropped)
         let note =
             match [ modelNote; toolNote ] |> List.choose id with
             | [] -> None
