@@ -517,3 +517,27 @@ let ``unknown custom event type is not decoded as an error on either side`` () =
     | other -> failwithf "expected Error, got %A" other
     Assert.True(WireCodec.isUnknownType WireCodec.notACommandError (WireCodec.unknownEventTypePrefix + "x"))
     Assert.False(WireCodec.isUnknownType "device.rename: missing requestId" "x")
+
+// ---------- lastSeen 迁出用户配置：认证不写配置 ----------
+
+[<Fact>]
+let ``auth produces zero config writes`` () =
+    let s = new DeviceServer(pickPort ())
+    try
+        use cts = timeout ()
+        let ct = cts.Token
+        let configPath = Path.Combine(s.Dir, "config.toml")
+        let contentBefore = File.ReadAllBytes configPath
+        let mtimeBefore = File.GetLastWriteTimeUtc configPath
+        // 三次认证：两个不同设备（各自首次记账必落盘）+ 同一设备再来一次
+        for token in [ s.DesktopToken; s.PhoneToken; s.DesktopToken ] do
+            use ws = E2e.conn (s.Port) token ct
+            waitType ws ct "auth.accepted" |> ignore
+        Assert.Equal<byte[]>(contentBefore, File.ReadAllBytes configPath)
+        Assert.Equal(mtimeBefore, File.GetLastWriteTimeUtc configPath)
+        Assert.Empty(Directory.GetFiles(s.Dir, "*.tmp", SearchOption.AllDirectories))
+        let sightingsPath = Path.Combine(s.Dir, "device-sightings.json")
+        Assert.True(File.Exists sightingsPath)
+        let root = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText sightingsPath)
+        Assert.Equal(2, root["lastSeen"].AsObject().Count)
+    finally s.Dispose()

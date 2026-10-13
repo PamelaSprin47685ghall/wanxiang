@@ -289,6 +289,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
             executePlanned clientCursor cmd
 
     // P3-2：MCP 子进程 stderr 转发前对已知密钥值做精确替换（Q164）。
+    let sightings = DeviceSightings(Path.Combine(dataDir, "device-sightings.json"))
     let mcpLog (msg: string) = logInfo msg // Stderr.info 内部统一 redact（Q164）
 
     let toolRegistry = ToolRegistry(currentConfig, mcpLog)
@@ -310,6 +311,10 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                 |> Seq.filter (fun k -> not (String.IsNullOrWhiteSpace k)))
             // Q188：配对限流参数以 TOML 为权威——启动时即按 TOML 重建，而非等首次热重载
             rebuildFailureTracker cs.Current
+            // lastSeen 迁出用户配置：旧配置里的时间只补种一次（DeviceSightings 只补缺、取较新者）
+            match sightings.Seed(cs.Current.authClients |> List.choose (fun c -> c.lastSeenUtc |> Option.map (fun t -> c.tokenHash, t))) with
+            | Ok () -> ()
+            | Error e -> Stderr.write "last-seen-seed-failed" [ "message", e ]
         let broadcastCommit (commit: Events.Commit) =
             try
                 match registry with
@@ -435,6 +440,7 @@ type ServerApp(dataDir: string, configPath: string, fix: bool, pwaDir: string op
                                                   | Some h -> yield h
                                                   | None -> () ]
                                     | None -> []),
+                                sightings,
                                 logInfo)
                         conn.HostStatus <- Some hostStatus
                         match registry with

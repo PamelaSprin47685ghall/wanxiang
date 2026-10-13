@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Wanxiang2.DeviceSightings" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatOrchestrator" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AgentRuntime" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProviderFailure" Version="0.0.0-local" />

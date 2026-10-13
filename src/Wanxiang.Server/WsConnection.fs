@@ -61,6 +61,8 @@ type WsConnection(
     logPairingCode: string -> unit,
     /// 当前已认证连接的令牌哈希（设备列表的“在线”状态；运行时状态，不落盘）。
     onlineTokenHashes: unit -> string list,
+    /// 主机自有的设备记账（最近认证时间）；不写用户配置。
+    sightings: DeviceSightings,
     logInfo: string -> unit) =
 
     let channelOptions = BoundedChannelOptions(2048, FullMode = BoundedChannelFullMode.Wait)
@@ -401,17 +403,6 @@ type WsConnection(
         cfg.authClients
         |> List.tryFind (fun c -> (not c.revoked) && ClientToken.ClientToken.matches token c.tokenHash)
 
-    /// 原子写回配置（lastSeen 更新等，锁内读-改-写防并发覆盖）；失败仅记 stderr，不阻断认证（lastSeen 是诊断信息）。
-    member private _.UpdateLastSeen(hash: string) : unit =
-        let now = DateTimeOffset.UtcNow
-        match updateConfig (fun cfg ->
-            { cfg with
-                authClients =
-                    cfg.authClients
-                    |> List.map (fun c -> if c.tokenHash = hash then { c with lastSeenUtc = Some now } else c) }) with
-        | Ok () -> ()
-        | Error e -> Stderr.write "last-seen-update-failed" [ "message", e ]
-
     member private this.HandleEvent(ev: WireEvent) : Task =
         task {
             match ev with
@@ -433,14 +424,10 @@ type WsConnection(
                         this.TrySend(AuthAccepted {| instanceId = cfg.instanceId.ToString("D") |}) |> ignore
                         this.AnnounceCapabilities()
                         this.AnnounceHostStatus()
-                        // 决策 54：最近连接时间挂在该哈希记录下；认证成功后更新（节流：1 分钟内不重复写盘）
-                        let now = DateTimeOffset.UtcNow
-                        let stale =
-                            match client.lastSeenUtc with
-                            | Some t -> (now - t).TotalMinutes >= 1.0
-                            | None -> true
-                        if stale then
-                            this.UpdateLastSeen client.tokenHash
+                        // 决策 54：最近连接时间记在主机自有的 device-sightings.json（节流在 DeviceSightings 内）
+                        match sightings.Seen(client.tokenHash, DateTimeOffset.UtcNow) with
+                        | Ok () -> ()
+                        | Error e -> Stderr.write "last-seen-update-failed" [ "message", e ]
                     | None ->
                         do! this.SendAndClose(AuthRejected {| reason = "invalid token" |}, "authentication failed")
                 | Authenticated -> () // 已认证重复 auth.present：忽略
@@ -812,7 +799,7 @@ type WsConnection(
             o["id"] <- ClientToken.ClientToken.deviceId c.tokenHash
             o["name"] <- c.name
             o["createdAt"] <- c.createdAtUtc.UtcDateTime.ToString("o", Globalization.CultureInfo.InvariantCulture)
-            match c.lastSeenUtc with
+            match sightings.LastSeen c.tokenHash with
             | Some t -> o["lastSeen"] <- t.UtcDateTime.ToString("o", Globalization.CultureInfo.InvariantCulture)
             | None -> ()
             o["revoked"] <- c.revoked
