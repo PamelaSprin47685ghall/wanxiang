@@ -44,7 +44,9 @@ module VersionAuthority =
         Assert.Equal(2, AppConfig.CurrentVersion)
         // v1/v2/v3 显式识别（3 = 2 + 全局默认模型，见 wanxiang-config 决策 60）；未知版本必须拒绝（不猜格式）
         Assert.Equal(3, AppConfig.GlobalDefaultVersion)
-        match TomlCodec.tryParse "configVersion = 4\n" with
+        // 4 = 3 + 对话预设（决策 431）
+        Assert.Equal(4, AppConfig.PresetsVersion)
+        match TomlCodec.tryParse "configVersion = 5\n" with
         | Ok _ -> failwith "unknown config version must be rejected"
         | Error errs -> Assert.Contains("not supported", String.concat "; " errs)
 
