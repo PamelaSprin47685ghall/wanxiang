@@ -562,11 +562,19 @@ type CommandFeedback = {
 /// request → commit/reject 的轻量状态机，避免 MainView 散落维护 invocation dictionary。
 type CommandFeedbackTracker() =
     let pending = Dictionary<Guid, CommandFeedback>()
+    /// 决策 443：记录发出时刻，供「主机迟迟不回应」超时判定。
+    let sentAt = Dictionary<Guid, DateTimeOffset * bool>()
+    /// 消息投递类命令由 outbox 自己的 30 秒确认超时负责，这里不重复判定。
+    let expirable (cmd: ClientCommand) =
+        match cmd with
+        | SendUserMessage _ | CreateConversation _ | ForkConversation _ -> false
+        | _ -> true
 
     member _.Count = pending.Count
 
     member _.Track(cmd: ClientCommand, successMessage: string option, onCommitted: unit -> unit) =
         let invocationId = ClientCommand.invocationId cmd
+        sentAt[invocationId] <- (DateTimeOffset.UtcNow, expirable cmd)
         pending[invocationId] <-
             { successMessage = successMessage
               onCommitted = onCommitted
@@ -578,6 +586,7 @@ type CommandFeedbackTracker() =
         onCommitted: unit -> unit,
         onCompleted: bool -> unit
     ) =
+        sentAt[ClientCommand.invocationId cmd] <- (DateTimeOffset.UtcNow, expirable cmd)
         pending[ClientCommand.invocationId cmd] <-
             { successMessage = successMessage
               onCommitted = onCommitted
@@ -587,6 +596,7 @@ type CommandFeedbackTracker() =
         match pending.TryGetValue invocationId with
         | true, feedback ->
             pending.Remove invocationId |> ignore
+            sentAt.Remove invocationId |> ignore
             Some feedback
         | _ -> None
 
@@ -594,15 +604,32 @@ type CommandFeedbackTracker() =
         match pending.TryGetValue invocationId with
         | true, feedback ->
             pending.Remove invocationId |> ignore
+            sentAt.Remove invocationId |> ignore
             Some feedback
         | _ -> None
 
     member _.RejectAll() =
         let callbacks = pending.Values |> Seq.map _.onCompleted |> Array.ofSeq
         pending.Clear()
+        sentAt.Clear()
         callbacks |> Array.iter (fun callback -> callback false)
 
-    member _.Clear() = pending.Clear()
+    member _.Clear() =
+        pending.Clear()
+        sentAt.Clear()
+
+    /// 取出超过 timeout 仍未得到 committed/rejected 的命令（决策 443）。
+    member _.Expire(now: DateTimeOffset, timeout: TimeSpan) : CommandFeedback list =
+        let due =
+            [ for KeyValue(id, (at, canExpire)) in sentAt do
+                  if canExpire && now - at >= timeout then id ]
+        [ for id in due do
+              sentAt.Remove id |> ignore
+              match pending.TryGetValue id with
+              | true, feedback ->
+                  pending.Remove id |> ignore
+                  feedback
+              | _ -> () ]
 
 /// 配置写入同样遵循 request → ConfigApplied 的权威确认。
 type ConfigFeedback = {
@@ -612,10 +639,12 @@ type ConfigFeedback = {
 
 type ConfigFeedbackTracker() =
     let pending = Dictionary<Guid, ConfigFeedback>()
+    let sentAt = Dictionary<Guid, DateTimeOffset>()
 
     member _.Count = pending.Count
 
     member _.Track(requestId: Guid, successMessage: string, onCompleted: bool -> unit) =
+        sentAt[requestId] <- DateTimeOffset.UtcNow
         pending[requestId] <-
             { successMessage = successMessage
               onCompleted = onCompleted }
@@ -624,12 +653,25 @@ type ConfigFeedbackTracker() =
         match pending.TryGetValue requestId with
         | true, feedback ->
             pending.Remove requestId |> ignore
+            sentAt.Remove requestId |> ignore
             Some feedback
         | _ -> None
+
+    /// 决策 443：旧主机会静默丢弃不认识的配置请求；超时后让调用方退出 pending。
+    member _.Expire(now: DateTimeOffset, timeout: TimeSpan) : ConfigFeedback list =
+        let due = [ for KeyValue(id, at) in sentAt do if now - at >= timeout then id ]
+        [ for id in due do
+              sentAt.Remove id |> ignore
+              match pending.TryGetValue id with
+              | true, feedback ->
+                  pending.Remove id |> ignore
+                  feedback
+              | _ -> () ]
 
     /// 连接断开时让所有等待中的编辑器退出 pending，避免永久灰掉。
     member _.RejectAll() =
         let callbacks = pending.Values |> Seq.map _.onCompleted |> Array.ofSeq
+        sentAt.Clear()
         pending.Clear()
         callbacks |> Array.iter (fun callback -> callback false)
 

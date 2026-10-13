@@ -186,6 +186,9 @@ type WireEvent =
     /// 主机 → 观察该对话的客户端：中途失败留下的半截助手回复与失败原因。主机落盘保存，
     /// 失败时与（重新）观察对话时下发，刷新页面或换设备后仍可「继续生成」；下次生成开始即作废。
     | GenerationPartial of {| conversationId: Guid; generationId: Guid; message: JsonNode; error: GenerationError option |}
+    /// 决策 440：认证成功后主机声明自身版本与可用功能。旧客户端按 55.8 R1 忽略；
+    /// 收不到这条的客户端把主机视为「能力未知」（旧主机），靠请求超时兜底。
+    | HostCapabilities of {| hostVersion: string; features: string list |}
 
 module WireEvent =
 
@@ -269,3 +272,65 @@ module WireEvent =
         | DeviceRevoke _ -> "device.revoke"
         | ProviderRateLimitNotice _ -> "provider.rate-limit"
         | GenerationPartial _ -> "generation.partial"
+        | HostCapabilities _ -> "host.capabilities"
+
+/// 决策 440–442：主机在 `host.capabilities` 里声明的功能名。只增不改；
+/// 客户端只对「主机明确声明了能力表、但表里没有某项」的功能做隐藏/拦截，
+/// 能力未知（旧主机不发这条）时照常显示，由请求超时（决策 443）兜底。
+[<RequireQualifiedAccess>]
+module HostFeatures =
+    [<Literal>]
+    let Presets = "presets"
+    [<Literal>]
+    let ContinueResponse = "continue-response"
+    [<Literal>]
+    let ConversationImport = "conversation-import"
+    [<Literal>]
+    let ConversationExport = "conversation-export"
+    [<Literal>]
+    let ConversationFlags = "conversation-flags"
+    [<Literal>]
+    let HistoryPaging = "history-paging"
+    [<Literal>]
+    let Search = "search"
+    [<Literal>]
+    let Devices = "devices"
+    [<Literal>]
+    let Doctor = "doctor"
+    [<Literal>]
+    let ToolsConfig = "tools-config"
+
+    /// 本版主机支持的全部功能。
+    let all: string list =
+        [ Presets; ContinueResponse; ConversationImport; ConversationExport; ConversationFlags
+          HistoryPaging; Search; Devices; Doctor; ToolsConfig ]
+
+    /// 功能对用户的叫法，用于「主机版本较旧，不支持……」提示。
+    let label (feature: string) =
+        match feature with
+        | Presets -> "对话预设"
+        | ContinueResponse -> "继续生成"
+        | ConversationImport -> "导入对话"
+        | ConversationExport -> "导出对话"
+        | ConversationFlags -> "置顶和归档"
+        | HistoryPaging -> "加载更早的消息"
+        | Search -> "全文搜索"
+        | Devices -> "设备管理"
+        | Doctor -> "主机自检"
+        | ToolsConfig -> "工具设置"
+        | other -> other
+
+    /// 能力未知（None）一律视为可用；已知时按表判断。
+    let supports (known: Set<string> option) (feature: string) =
+        match known with
+        | None -> true
+        | Some set -> set.Contains feature
+
+    let unsupportedMessage (feature: string) =
+        sprintf "主机版本较旧，不支持%s。请更新主机后再试。" (label feature)
+
+    /// 能力未知时请求石沉大海的提示（决策 443）。
+    let noResponseMessage (known: Set<string> option) =
+        match known with
+        | None -> "主机没有回应。主机版本可能较旧，不支持此功能；请更新主机后再试。"
+        | Some _ -> "主机没有回应，请稍后重试。"

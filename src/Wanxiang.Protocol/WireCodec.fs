@@ -376,6 +376,9 @@ module WireCodec =
             p["expiresAt"] <- d.expiresAtUtc.UtcDateTime.ToString("o", CultureInfo.InvariantCulture)
             p["expiresInSeconds"] <- d.expiresInSeconds
         | PairingInviteRejected d -> p["reason"] <- d.reason
+        | HostCapabilities d ->
+            p["hostVersion"] <- d.hostVersion
+            p["features"] <- JsonArray([| for f in d.features -> JsonNode.op_Implicit f |])
         | DevicesRequest -> ()
         | DevicesSnapshot d ->
             p["items"] <- d.items.DeepClone()
@@ -923,6 +926,8 @@ module WireCodec =
                         {| code = tryString p "code" |> Option.defaultValue ""
                            expiresAtUtc = tryTimestamp p "expiresAt"
                            expiresInSeconds = tryInt p "expiresInSeconds" |> Option.defaultValue 300 |})
+                | Some "host.capabilities" ->
+                    Ok(HostCapabilities {| hostVersion = tryString p "hostVersion" |> Option.defaultValue ""; features = tryStringList p "features" |})
                 | Some "pairing.invite-rejected" -> Ok(PairingInviteRejected {| reason = tryString p "reason" |> Option.defaultValue "" |})
                 | Some "devices.request" -> Ok DevicesRequest
                 | Some "devices.snapshot" ->
