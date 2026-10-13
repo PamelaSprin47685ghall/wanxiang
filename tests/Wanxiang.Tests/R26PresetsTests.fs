@@ -188,3 +188,108 @@ let ``empty state shows preset chips only when presets exist`` () =
     Assert.Empty(presetChips window)
     window.Close()
     )
+
+// ---------- 截图（仅在设置 WANXIANG_UX_ARTIFACT_DIR 时落盘） ----------
+
+open System.Reflection
+open Avalonia.Threading
+open Avalonia.Input
+open Avalonia.Headless
+
+let private flags = BindingFlags.Instance ||| BindingFlags.Public ||| BindingFlags.NonPublic
+
+let private capture (window: Window) (name: string) =
+    match Environment.GetEnvironmentVariable "WANXIANG_UX_ARTIFACT_DIR" with
+    | null | "" -> ()
+    | directory ->
+        IO.Directory.CreateDirectory directory |> ignore
+        Avalonia.Headless.AvaloniaHeadlessPlatform.ForceRenderTimerTick()
+        Dispatcher.UIThread.RunJobs()
+        use frame = window.CaptureRenderedFrame()
+        frame.Save(IO.Path.Combine(directory, name + ".png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default)
+
+let private hostConfig (withPresets: bool) =
+    let p : ProviderConfig =
+        { id = "openai"; kind = "openai"; label = "OpenAI"; baseUrl = "https://api.openai.com/v1"; apiKey = Some "k"
+          models = [ "gpt-4o"; "gpt-4o-mini" ]; defaultModel = "gpt-4o"; timeoutSeconds = 60; maxRetries = 0
+          enabled = true; promptCaching = false; headers = Map.empty; extraJson = None; visionOverrides = Map.empty }
+    let review = { samplePreset with id = "review"; name = "代码审查"; model = "gpt-4o-mini"; instructions = Some "逐行审查代码，先列风险再给修改建议。"; tools = []; temperature = Some 0.2 }
+    let translate = { samplePreset with id = "translate"; name = "中英翻译"; instructions = Some "把输入翻译成地道的英文，保留术语。"; tools = []; maxTokens = None }
+    { AppConfig.defaults instance with
+        providers = Map.ofList [ "openai", p ]
+        presets = if withPresets then Map.ofList [ "writer", samplePreset; "review", review; "translate", translate ] else Map.empty }
+
+let private shellWith (cfg: AppConfig) (dark: bool) =
+    MotionPolicy.setReduced true
+    Tokens.apply (if dark then ThemeMode.Dark else ThemeMode.Light)
+    Tokens.completeTransition ()
+    let view = MainView()
+    view.Build()
+    let window = Window(Width = 1180.0, Height = 760.0, Content = view)
+    window.RequestedThemeVariant <- (if dark then Avalonia.Styling.ThemeVariant.Dark else Avalonia.Styling.ThemeVariant.Light)
+    window.Show()
+    typeof<MainView>.GetField("authenticated", flags).SetValue(view, true)
+    typeof<MainView>.GetMethod("HandleEvent", flags).Invoke(
+        view,
+        [| box (CatalogSnapshot {| providers = ProviderCatalog.providers cfg; tools = JsonArray(); generation = ProviderCatalog.generation cfg |}) |])
+    |> ignore
+    typeof<MainView>.GetMethod("Render", flags, null, Type.EmptyTypes, null).Invoke(view, [||]) |> ignore
+    Dispatcher.UIThread.RunJobs()
+    view, window
+
+let private pressEnter (c: Control) =
+    c.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = c))
+    Dispatcher.UIThread.RunJobs()
+
+[<Trait("Category", "UI")>]
+[<Fact>]
+let ``r26 截图：预设入口、另存、设置管理`` () =
+    Headless.run (fun () ->
+    // 1 空态：从预设开始
+    let view, w1 = shellWith (hostConfig true) false
+    Assert.Equal(3, (typeof<MainView>.GetField("chat", flags).GetValue(view) :?> ChatView).PresetStarterCount)
+    capture w1 "01-empty-state-preset-chips"
+    // 2 侧栏 ▾：用预设新建
+    let sidebar = typeof<MainView>.GetField("sidebar", flags).GetValue(view) :?> Sidebar
+    Assert.True(sidebar.PresetMenuButton.IsVisible)
+    pressEnter sidebar.PresetMenuButton
+    capture w1 "02-sidebar-new-from-preset-menu"
+    let overlay = typeof<MainView>.GetField("overlay", flags).GetValue(view) :?> OverlayHost
+    overlay.CloseDialog()
+    overlay.HandleEscape() |> ignore
+    Dispatcher.UIThread.RunJobs()
+    // 3 命令面板：输入「预设」
+    view.ShowCommandPalette()
+    Dispatcher.UIThread.RunJobs()
+    let paletteBox =
+        descendants w1 |> Seq.choose (function :? TextBox as t when t.IsEffectivelyVisible && t.IsFocused -> Some t | _ -> None) |> Seq.tryHead
+    paletteBox |> Option.iter (fun t -> t.Text <- "预设")
+    Dispatcher.UIThread.RunJobs()
+    capture w1 "03-command-palette-presets"
+    overlay.HandleEscape() |> ignore
+    Dispatcher.UIThread.RunJobs()
+    // 4 存为预设（名称默认取对话标题）
+    Dialogs.prompt overlay "存为预设" "预设名称" "周报润色" "保存" (fun _ _ -> ())
+    Dispatcher.UIThread.RunJobs()
+    capture w1 "04-save-as-preset-dialog"
+    overlay.CloseDialog()
+    // 5 设置 › 对话默认值：预设列表
+    typeof<MainView>.GetMethod("ShowSettings", flags).Invoke(view, [||]) |> ignore
+    let settings = typeof<MainView>.GetField("settings", flags).GetValue(view) :?> SettingsView
+    settings.ShowSection SettingsSection.Generation
+    Dispatcher.UIThread.RunJobs()
+    settings.PresetsPanel.BringIntoView()
+    Dispatcher.UIThread.RunJobs()
+    Assert.Equal(3, descendants settings.PresetsPanel |> Seq.filter (function :? Control as c -> c.Name = "preset-row" | _ -> false) |> Seq.length)
+    capture w1 "05-settings-presets-list"
+    w1.Close()
+    // 6 首次使用：没有预设时空态与侧栏不多任何东西
+    let view2, w2 = shellWith (hostConfig false) true
+    let sidebar2 = typeof<MainView>.GetField("sidebar", flags).GetValue(view2) :?> Sidebar
+    Assert.False(sidebar2.PresetMenuButton.IsVisible)
+    Assert.Equal(0, (typeof<MainView>.GetField("chat", flags).GetValue(view2) :?> ChatView).PresetStarterCount)
+    capture w2 "06-first-run-no-presets"
+    w2.Close()
+    Tokens.apply ThemeMode.Light
+    Tokens.completeTransition ()
+    )
