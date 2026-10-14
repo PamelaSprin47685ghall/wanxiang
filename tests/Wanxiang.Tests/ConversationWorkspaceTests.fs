@@ -1,5 +1,6 @@
 module Wanxiang.Tests.ConversationWorkspaceTests
 
+open Wanxiang2.SidebarDesk
 open Wanxiang2.SettingsScreen
 open System
 open System.IO
@@ -156,7 +157,7 @@ let ``conversation first desktop composition keeps history secondary to the curr
         root.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength 280.0))
         root.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength ControlMetrics.sidebarDividerWidth))
         root.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
-        let actions: SidebarActions =
+        let actions: Wanxiang2.SidebarDesk.SidebarDeskActions =
             { newConversation = ignore
               openConversation = ignore
               renameConversation = ignore
@@ -173,8 +174,7 @@ let ``conversation first desktop composition keeps history secondary to the curr
               reconnect = ignore
               toggleArchivedVisibility = ignore
               closeNavigation = ignore }
-        let sidebar = Sidebar(OverlayHost(Grid()), actions, SharedTheme.logo)
-        sidebar.Build()
+        let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, OverlayHost(Grid()).Desk, actions, SharedTheme.logo)
         let now = DateTimeOffset.Now
         let summary title preview pinned : ConversationSummary =
             { id = Guid.NewGuid(); title = title; preview = preview
@@ -193,9 +193,9 @@ let ``conversation first desktop composition keeps history secondary to the curr
         chat.ShowEmpty(NoConversation, None)
         let composer = composer ()
         let surface = Wanxiang2.ShellLayout.WorkspaceStack(chat, composer, Wanxiang2.ShellDesk.ShellLook.layoutOf SharedTheme.manager)
-        Grid.SetColumn(sidebar, 0)
+        Grid.SetColumn(sidebar.View, 0)
         Grid.SetColumn(surface, 2)
-        root.Children.Add sidebar
+        root.Children.Add sidebar.View
         root.Children.Add surface
         let window = Window(Width = 1120.0, Height = 780.0, Content = root)
         applyTheme window lightTheme
@@ -203,7 +203,7 @@ let ``conversation first desktop composition keeps history secondary to the curr
         try
             surface.SetStarting true
             Dispatcher.UIThread.RunJobs()
-            Assert.True((named sidebar "新建对话（Ctrl / ⌘ + N）").IsEffectivelyVisible)
+            Assert.True((named sidebar.View "新建对话（Ctrl / ⌘ + N）").IsEffectivelyVisible)
             Assert.True((named composer "切换本对话使用的模型").IsEffectivelyVisible)
             capture window "full-conversation-desktop" lightTheme
         finally

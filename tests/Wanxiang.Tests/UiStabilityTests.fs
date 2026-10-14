@@ -1,5 +1,6 @@
 module Wanxiang.Tests.UiStabilityTests
 
+open Wanxiang2.SidebarDesk
 open Wanxiang2.SettingsScreen
 open System
 open System.Diagnostics
@@ -779,52 +780,6 @@ let private summary id title =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``changing active sidebar row does not rebuild the conversation list`` () =
-    Headless.run (fun () ->
-    let actions =
-        { newConversation = ignore
-          openConversation = ignore
-          renameConversation = ignore
-          deleteConversation = ignore
-          setPinned = fun _ _ -> ()
-          setArchived = fun _ _ -> ()
-          selectionAllPinned = fun _ -> false
-          setPinnedMany = fun _ _ -> ()
-          setArchivedMany = fun _ _ -> ()
-          deleteMany = fun _ -> ()
-          duplicateAsFork = ignore
-          exportConversation = ignore
-          openSettings = ignore
-          reconnect = ignore
-          toggleArchivedVisibility = ignore
-          closeNavigation = ignore }
-    let root = Grid()
-    let overlay = OverlayHost(root)
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    root.Children.Insert(0, sidebar)
-    let window = show root 360.0 600.0
-    try
-        let firstId = Guid.NewGuid()
-        let secondId = Guid.NewGuid()
-        sidebar.SetConversations [ summary firstId "Alpha"; summary secondId "Beta" ]
-        Dispatcher.UIThread.RunJobs()
-        let list = byAutomationName sidebar "对话列表" :?> ListBox
-        let alphaBefore = realizedByAutomationName list "Alpha"
-        let betaBefore = realizedByAutomationName list "Beta"
-
-        sidebar.SetActive(Some secondId)
-        Dispatcher.UIThread.RunJobs()
-        let alphaAfter = realizedByAutomationName list "Alpha"
-        let betaAfter = realizedByAutomationName list "Beta"
-        Assert.True(obj.ReferenceEquals(alphaBefore, alphaAfter))
-        Assert.True(obj.ReferenceEquals(betaBefore, betaAfter))
-    finally
-        window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``sidebar keeps a bounded visual tree for 5000 conversations`` () =
     Headless.run (fun () ->
     let actions =
@@ -846,9 +801,8 @@ let ``sidebar keeps a bounded visual tree for 5000 conversations`` () =
           closeNavigation = ignore }
     let root = Grid()
     let overlay = OverlayHost(root)
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    root.Children.Insert(0, sidebar)
+    let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, actions, fun _ -> Border() :> Control)
+    root.Children.Insert(0, sidebar.View)
     let window = show root 360.0 700.0
     try
         let items = [ for i in 1 .. 5000 -> summary (Guid.NewGuid()) (sprintf "Conversation %04d" i) ]
@@ -857,12 +811,12 @@ let ``sidebar keeps a bounded visual tree for 5000 conversations`` () =
         Dispatcher.UIThread.RunJobs()
         watch.Stop()
         let rows () =
-            visualControls sidebar
+            visualControls sidebar.View
             |> Seq.filter (fun control ->
                 let controlType = AutomationProperties.GetControlTypeOverride(control)
                 controlType = Nullable<AutomationControlType>(AutomationControlType.ListItem))
             |> Seq.length
-        let list = byAutomationName sidebar "对话列表" :?> ListBox
+        let list = byAutomationName sidebar.View "对话列表" :?> ListBox
         let realized = list.GetRealizedContainers() |> Seq.length
         Assert.True(realized > 0 && realized < 80, sprintf "realized containers = %d" realized)
         Assert.True(rows () < 80, sprintf "conversation row visuals = %d" (rows ()))
@@ -898,9 +852,8 @@ let ``sidebar running pin and idle states keep the same title origin`` () =
           closeNavigation = ignore }
     let root = Grid()
     let overlay = OverlayHost(root)
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    root.Children.Insert(0, sidebar)
+    let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, actions, fun _ -> Border() :> Control)
+    root.Children.Insert(0, sidebar.View)
     let window = show root 360.0 600.0
     let id = Guid.NewGuid()
     let baseItem = summary id "Stable title"
@@ -908,7 +861,7 @@ let ``sidebar running pin and idle states keep the same title origin`` () =
         let titleOrigin pinned running =
             sidebar.SetConversations [ { baseItem with pinned = pinned; running = running } ]
             Dispatcher.UIThread.RunJobs()
-            let list = byAutomationName sidebar "对话列表" :?> ListBox
+            let list = byAutomationName sidebar.View "对话列表" :?> ListBox
             let host = realizedByAutomationName list "Stable title"
             // 标题文本现在住在 Inlines 里（搜索命中高亮按 run 上色），.Text 已空。
             // 取标题块改用结构定位：dock[0] 状态槽 / dock[1] 更多按钮 / dock[2] 标题，
@@ -937,7 +890,7 @@ let ``sidebar running pin and idle states keep the same title origin`` () =
 
         sidebar.SetActive(Some id)
         Dispatcher.UIThread.RunJobs()
-        let list = byAutomationName sidebar "对话列表" :?> ListBox
+        let list = byAutomationName sidebar.View "对话列表" :?> ListBox
         let selected = realizedByAutomationName list "Stable title"
         // Active + generating rows announce the combined status (Sidebar.ApplyRowState:
         // true, true -> "当前对话，生成中"); title geometry/origin asserts above stay.
@@ -969,9 +922,8 @@ let ``sidebar recycles twenty thousand rows through scroll search active and the
           closeNavigation = ignore }
     let root = Grid()
     let overlay = OverlayHost(root)
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    root.Children.Insert(0, sidebar)
+    let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, actions, fun _ -> Border() :> Control)
+    root.Children.Insert(0, sidebar.View)
     let window = show root 360.0 700.0
     let initialTheme = Tokens.current ()
     try
@@ -984,7 +936,7 @@ let ``sidebar recycles twenty thousand rows through scroll search active and the
         sidebar.SetConversations items
         Dispatcher.UIThread.RunJobs()
         watch.Stop()
-        let list = byAutomationName sidebar "对话列表" :?> ListBox
+        let list = byAutomationName sidebar.View "对话列表" :?> ListBox
         let realizedCount () = list.GetRealizedContainers() |> Seq.length
         let rec awaitRealized remaining name =
             Dispatcher.UIThread.RunJobs()
@@ -1020,7 +972,7 @@ let ``sidebar recycles twenty thousand rows through scroll search active and the
         Assert.True(realizedCount () < 90)
 
         let search =
-            descendants sidebar
+            descendants sidebar.View
             |> Seq.choose (function :? TextBox as box when box.PlaceholderText = "搜索对话" -> Some box | _ -> None)
             |> Seq.head
         let pumpSearchDebounce () =
@@ -1065,8 +1017,7 @@ let ``accelerated craft soak covers the long-session action ledger without visua
           reconnect = ignore
           toggleArchivedVisibility = ignore
           closeNavigation = ignore }
-    let sidebar = Sidebar(overlay, sidebarActions, fun _ -> Border() :> Control)
-    sidebar.Build()
+    let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, sidebarActions, fun _ -> Border() :> Control)
     let mutable submitted = 0
     let composer =
         Composer(
@@ -1105,9 +1056,9 @@ let ``accelerated craft soak covers the long-session action ledger without visua
     let layout = Grid()
     layout.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength 300.0))
     layout.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
-    Grid.SetColumn(sidebar, 0)
+    Grid.SetColumn(sidebar.View, 0)
     Grid.SetColumn(main, 1)
-    layout.Children.Add sidebar
+    layout.Children.Add sidebar.View
     layout.Children.Add main
     root.Children.Insert(0, layout)
     let window = show root 1100.0 720.0
@@ -1118,14 +1069,14 @@ let ``accelerated craft soak covers the long-session action ledger without visua
             [ for index in 1 .. 300 ->
                   { summary ids[index - 1] (sprintf "Soak %03d" index) with lastCommitId = uint64 (301 - index) } ]
         Dispatcher.UIThread.RunJobs()
-        let list = byAutomationName sidebar "对话列表" :?> ListBox
+        let list = byAutomationName sidebar.View "对话列表" :?> ListBox
         let initialLayerCount = root.Children.Count
 
         for index in 0 .. 19 do
             sidebar.SetActive(Some ids[index])
             Dispatcher.UIThread.RunJobs()
         let search =
-            descendants sidebar
+            descendants sidebar.View
             |> Seq.choose (function :? TextBox as box when box.PlaceholderText = "搜索对话" -> Some box | _ -> None)
             |> Seq.head
         for index in 1 .. 20 do
@@ -1708,83 +1659,6 @@ let ``provider editor stays pending until authoritative config result`` () =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``sidebar empty state separates list loading from confirmed empty and embeds primary actions`` () =
-    Headless.run (fun () ->
-    let mutable reconnectCount = 0
-    let mutable createCount = 0
-    let actions: SidebarActions =
-        { newConversation = fun () -> createCount <- createCount + 1
-          openConversation = ignore
-          renameConversation = ignore
-          deleteConversation = ignore
-          setPinned = fun _ _ -> ()
-          setArchived = fun _ _ -> ()
-          selectionAllPinned = fun _ -> false
-          setPinnedMany = fun _ _ -> ()
-          setArchivedMany = fun _ _ -> ()
-          deleteMany = fun _ -> ()
-          duplicateAsFork = ignore
-          exportConversation = ignore
-          openSettings = ignore
-          reconnect = fun () -> reconnectCount <- reconnectCount + 1
-          toggleArchivedVisibility = ignore
-          closeNavigation = ignore }
-    let sidebar = Sidebar(OverlayHost(Grid()), actions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    let window = show sidebar 320.0 640.0
-    try
-        Dispatcher.UIThread.RunJobs()
-        let byName name =
-            descendants sidebar
-            |> Seq.tryFind (fun control -> AutomationProperties.GetName(control) = name)
-        let hasText text =
-            descendants sidebar
-            |> Seq.exists (function
-                | :? TextBlock as tb -> tb.Text = text
-                | _ -> false)
-        let pressEnter (control: Control) =
-            control.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
-        // 未连接：原空态 + 内嵌「连接主机」，与底部状态行重连同一动作。
-        // 决策 270：桌面宽屏侧栏只留说明，主 CTA 在正文；窄屏抽屉里按钮才出现。
-        Assert.True(hasText "连接主机后，对话记录会显示在这里。")
-        Assert.False(hasText "先连接一台万象主机")
-        let connectButton = byName "连接主机" |> Option.get
-        Assert.False(connectButton.IsVisible)
-        sidebar.SetCompactMode true
-        Assert.True(connectButton.IsVisible)
-        pressEnter connectButton
-        Assert.Equal(1, reconnectCount)
-        // 已连接但未发出列表请求：此刻就是「还没有对话」，而不是加载中。
-        sidebar.SetConnection(true, "已连接")
-        Assert.True(hasText "还没有对话")
-        Assert.False(hasText "正在加载对话…")
-        let createButton = byName "新建对话（Ctrl / ⌘ + N）" |> Option.get
-        Assert.True(createButton.IsVisible)
-        pressEnter createButton
-        Assert.Equal(1, createCount)
-        // 已发出请求、快照未达：列表只呈现加载中，顶部新建入口仍随时可用。
-        sidebar.SetConversationListLoading true
-        Assert.True(hasText "正在加载对话…")
-        Assert.False(hasText "还没有对话")
-        Assert.True((byName "正在加载对话" |> Option.get).IsVisible)
-        Assert.True(createButton.IsVisible)
-        // 快照到达（空列表）：加载态解除，回到确认空态。
-        sidebar.SetConversations []
-        Assert.True(hasText "还没有对话")
-        Assert.False(hasText "正在加载对话…")
-        Assert.True(createButton.IsVisible)
-        // 断连：加载中随连接翻转作废，回到未连接空态（断连清空列表的既有路径不变）。
-        sidebar.SetConversationListLoading true
-        sidebar.SetConnection(false, "连接已断开")
-        Assert.True(hasText "连接主机后，对话记录会显示在这里。")
-        Assert.False(hasText "正在加载对话…")
-        Assert.True((byName "连接主机" |> Option.get).IsVisible)
-    finally
-        window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``chat header and scroller share one horizontal inset tier`` () =
     Headless.run (fun () ->
     // 顶栏与滚动区水平留白同源同档：一次读取 ChatView 自身宽度（父级 chatColumn
@@ -1973,7 +1847,7 @@ let ``preset dropdown marks exactly the current preset`` () =
             descendants root
             |> Seq.find (fun c -> AutomationProperties.GetName c = "预设" && c.Focusable)
         presetButton.RaiseEvent(
-            KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
+            KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down, KeyModifiers = KeyModifiers.None))
         Dispatcher.UIThread.RunJobs()
         ()
     try

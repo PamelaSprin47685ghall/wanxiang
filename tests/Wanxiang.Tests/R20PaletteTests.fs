@@ -47,7 +47,7 @@ module R20PaletteTests =
             let window = Window(Width = 1000.0, Height = 800.0, Content = shell)
             window.Show()
             Dispatcher.UIThread.RunJobs()
-            let sidebar = typeof<MainView>.GetField("sidebar", BindingFlags.NonPublic ||| BindingFlags.Instance).GetValue(shell) :?> Sidebar
+            let sidebar = typeof<MainView>.GetField("sidebar", BindingFlags.NonPublic ||| BindingFlags.Instance).GetValue(shell) :?> Wanxiang2.SidebarDesk.SidebarDesk
             Assert.True(sidebar.PaletteButton.IsVisible)
             let e = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.K, KeyModifiers = KeyModifiers.Control)
             shell.HandleShortcut e

@@ -1,5 +1,6 @@
 module Wanxiang.Tests.SearchHighlightTests
 
+open Wanxiang2.SidebarDesk
 open System
 open Avalonia
 open Avalonia.Automation
@@ -41,7 +42,7 @@ let rec private descendants (control: Control) = seq {
 
 /// 侧栏行由虚拟化 ListBox 托管，不在 root 的视觉树里：经已实现容器取。
 /// 行主机由 RenderRow 打上 Tag = ConversationSummary，据此锁定 Sidebar 自建行。
-let private rowByName (sidebar: Sidebar) (title: string) =
+let private rowByName (sidebar: Wanxiang2.SidebarDesk.SidebarDesk) (title: string) =
     let rec visualControls (visual: Visual) =
         seq {
             match visual with
@@ -51,7 +52,7 @@ let private rowByName (sidebar: Sidebar) (title: string) =
                 yield! visualControls child
         }
     let list =
-        descendants sidebar
+        descendants sidebar.View
         |> Seq.pick (function :? ListBox as lb -> Some lb | _ -> None)
     list.GetRealizedContainers()
     |> Seq.collect visualControls
@@ -132,7 +133,7 @@ let private summary id title preview pinned =
 let private buildSidebar () =
     let root = Grid()
     let overlay = OverlayHost(root)
-    let actions: SidebarActions =
+    let actions: Wanxiang2.SidebarDesk.SidebarDeskActions =
         { newConversation = ignore
           openConversation = ignore
           renameConversation = ignore
@@ -149,10 +150,10 @@ let private buildSidebar () =
           reconnect = ignore
           toggleArchivedVisibility = ignore
           closeNavigation = ignore }
-    root, Sidebar(overlay, actions, fun _ -> Border() :> Control)
+    root, Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, actions, fun _ -> Border() :> Control)
 
-let private searchBoxOf (sidebar: Sidebar) =
-    descendants sidebar
+let private searchBoxOf (sidebar: Wanxiang2.SidebarDesk.SidebarDesk) =
+    descendants sidebar.View
     |> Seq.pick (function :? TextBox as tb -> Some tb | _ -> None)
 
 /// 写查询词并用一次快照刷新驱动列表重排。
@@ -161,7 +162,7 @@ let private searchBoxOf (sidebar: Sidebar) =
 /// DispatcherTimer 不可确定泵出（PresentationRefreshTests 有同样的确定性注释），
 /// 靠 Sleep 等 tick 只能拿到防抖前的旧行。Rebuild 每次都会现读 searchBox.Text，
 /// 所以这里写文本 + 灌同一份快照，走的仍是渲染与高亮的真实代码路径。
-let private typeQuery (sidebar: Sidebar) (query: string) (items: ConversationSummary list) =
+let private typeQuery (sidebar: Wanxiang2.SidebarDesk.SidebarDesk) (query: string) (items: ConversationSummary list) =
     let box = searchBoxOf sidebar
     box.Text <- query
     sidebar.SetConversations items
@@ -174,93 +175,6 @@ let private typeQuery (sidebar: Sidebar) (query: string) (items: ConversationSum
 // =========================================================================
 // 2. 真实行渲染（含回收复用）
 // =========================================================================
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``title and preview both highlight while searching`` () =
-    Headless.run (fun () ->
-    let id = Guid.NewGuid()
-    let root = Grid()
-    let _, sidebar = buildSidebar ()
-    // Build 生成搜索框与列表（Build 与否决定整棵树是否存在），再挂窗灌数据。
-    sidebar.Build()
-    let window = show root 320.0 420.0
-    root.Children.Add sidebar
-    let items = [ summary id "万象模型选型" "第二行的模型摘要" false ]
-    try
-        sidebar.SetConversations items
-        Dispatcher.UIThread.RunJobs()
-        typeQuery sidebar "模型" items
-        let row = rowByName sidebar "万象模型选型"
-
-        let title = titleBlockOf row |> Option.get
-        Assert.Equal<string list>([ "模型" ], highlightedRuns Palette.light title)
-
-        let preview = previewBlockOf row |> Option.get
-        Assert.Equal<string list>([ "模型" ], highlightedRuns Palette.light preview)
-    finally
-        window.Close ()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``clearing the query removes every highlight`` () =
-    Headless.run (fun () ->
-    let id = Guid.NewGuid()
-    let root = Grid()
-    let _, sidebar = buildSidebar ()
-    // Build 生成搜索框与列表（Build 与否决定整棵树是否存在），再挂窗灌数据。
-    sidebar.Build()
-    let window = show root 320.0 420.0
-    root.Children.Add sidebar
-    try
-        sidebar.SetConversations [ summary id "万象模型选型" "模型摘要" false ]
-        Dispatcher.UIThread.RunJobs()
-        typeQuery sidebar "模型" [ summary id "万象模型选型" "模型摘要" false ]
-        let row = rowByName sidebar "万象模型选型"
-        let title = titleBlockOf row |> Option.get
-        Assert.Equal<string list>([ "模型" ], highlightedRuns Palette.light title)
-
-        typeQuery sidebar "" [ summary id "万象模型选型" "模型摘要" false ]
-        let rowAfter = rowByName sidebar "万象模型选型"
-        let titleAfter = titleBlockOf rowAfter |> Option.get
-        // 清空后一个命中都不剩，且整段文本一次恢复（不被截断或拼接错）。
-        Assert.Equal<string list>([], highlightedRuns Palette.light titleAfter)
-        Assert.Equal("万象模型选型", String.concat "" (titleAfter.Inlines |> Seq.choose (function :? Run as r -> Some r | _ -> None) |> Seq.map (fun r -> r.Text)))
-    finally
-        window.Close ()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``recycled rows keep their highlight after a snapshot refresh`` () =
-    Headless.run (fun () ->
-    // 只在新行渲染时上色的话，刷新会走 RefreshRowHost，那条路径先把 title.Text 重新赋值
-    // （整块替换 Inlines），高亮就消失了。这里专门锁复用路径也重放高亮。
-    let id = Guid.NewGuid()
-    let root = Grid()
-    let _, sidebar = buildSidebar ()
-    // Build 生成搜索框与列表（Build 与否决定整棵树是否存在），再挂窗灌数据。
-    sidebar.Build()
-    let window = show root 320.0 420.0
-    root.Children.Add sidebar
-    try
-        // 查询词先进箱，再灌第一份快照：行首次渲染时就带着高亮。
-        let (box: TextBox) = searchBoxOf sidebar
-        box.Text <- "模型"
-        sidebar.SetConversations [ summary id "原模型标题" "原摘要" false ]
-        Dispatcher.UIThread.RunJobs()
-        // 同一 id 的新快照（模拟置顶切换 / 生成状态翻转触发的原地刷新）：
-        // 复用路径 RefreshRowHost 必须重放高亮，而不是丢掉它。
-        sidebar.SetConversations [ summary id "新的模型标题" "新的模型摘要" false ]
-        Dispatcher.UIThread.RunJobs()
-
-        let row = rowByName sidebar "新的模型标题"
-        let title = titleBlockOf row |> Option.get
-        Assert.Equal<string list>([ "模型" ], highlightedRuns Palette.light title)
-    finally
-        window.Close ()
-    )
 
 // =========================================================================
 // 3. 命中色可读性

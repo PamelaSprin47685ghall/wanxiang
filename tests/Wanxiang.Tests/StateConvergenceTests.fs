@@ -146,9 +146,6 @@ module StateConvergenceTests =
             "附件行内联文字的 hover 变色改的是 `Run.Foreground`——Markdown 内联渲染\
              的产物，不是控件表面；伪类无法按内联片段选择"
 
-            "Wanxiang.UI/Views/Sidebar.fs", 2,
-            "对话行的 hover 底依赖 `isActive` / `isSelected`（选中 / 运行中 / 生成中）\
-             ——业务状态，伪类表达不了；`:pointerover` 只负责无状态那一档"
         ]
 
     [<Fact>]

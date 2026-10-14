@@ -1,5 +1,6 @@
 module Wanxiang.Tests.InteractabilityPolish8Tests
 
+open Wanxiang2.SidebarDesk
 open System
 open System.Reflection
 open Avalonia
@@ -86,7 +87,7 @@ let private sidebarSummary (id: Guid) title =
 let private buildSidebar () =
     let root = Grid()
     let overlay = OverlayHost(root)
-    let actions: SidebarActions =
+    let actions: Wanxiang2.SidebarDesk.SidebarDeskActions =
         { newConversation = ignore
           openConversation = ignore
           renameConversation = ignore
@@ -103,9 +104,8 @@ let private buildSidebar () =
           reconnect = ignore
           toggleArchivedVisibility = ignore
           closeNavigation = ignore }
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    root.Children.Add sidebar
+    let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, actions, fun _ -> Border() :> Control)
+    root.Children.Add sidebar.View
     root, overlay, sidebar
 
 // ── 1. 零对话：搜索框 Down 落到唯一的顶部新建入口 ─────────────────────────
@@ -294,7 +294,7 @@ let ``batch delete of the active conversation lands on a surviving neighbor`` ()
         Assert.True(not (isNull activeField), "activeConvId 字段应可反射到")
         let sideField = typeof<MainView>.GetField("sidebar", flags)
         Assert.True(not (isNull sideField), "sidebar 字段应可反射到")
-        let sidebar = unbox<Sidebar>(sideField.GetValue shell)
+        let sidebar = unbox<Wanxiang2.SidebarDesk.SidebarDesk>(sideField.GetValue shell)
         let kept = Guid.NewGuid()
         let doomed = Guid.NewGuid()
         let doomed2 = Guid.NewGuid()

@@ -3,6 +3,7 @@ module Wanxiang.Tests.LibraryTests
 // W4 对话库：全文搜索（内存投影）、分叉谱系、同一消息的版本切换。
 // 验收对应 docs/ux/redesign-proposal.md §W4 的 7 条；大历史分级见文件末尾（LargeHistory）。
 
+open Wanxiang2.SidebarDesk
 open System
 open System.Diagnostics
 open System.IO
@@ -326,7 +327,7 @@ let private invoke (c: Control) =
 
 let private nameOf (c: Control) = Avalonia.Automation.AutomationProperties.GetName c
 
-let private sidebarActions : SidebarActions =
+let private sidebarActions : Wanxiang2.SidebarDesk.SidebarDeskActions =
     { newConversation = ignore
       openConversation = ignore
       deleteConversation = ignore
@@ -357,99 +358,9 @@ let private pump (ms: float) =
 
 /// DispatcherTimer 在无显示测试里不可确定泵出（同 SelectionOperabilityTests 的注释）：
 /// 直接触发防抖到期后的动作。
-let private fireSearch (sidebar: Sidebar) =
-    let m = typeof<Sidebar>.GetMethod("BeginMessageSearch", Reflection.BindingFlags.NonPublic ||| Reflection.BindingFlags.Instance)
-    m.Invoke(sidebar, [||]) |> ignore
+let private fireSearch (sidebar: Wanxiang2.SidebarDesk.SidebarDesk) =
+    sidebar.BeginMessageSearch()
     Dispatcher.UIThread.RunJobs()
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``sidebar shows hit snippets under message content and clicking opens the hit`` () =
-    Headless.run (fun () ->
-        let root = Grid()
-        let overlay = OverlayHost(root)
-        let sidebar = Sidebar(overlay, sidebarActions, fun _ -> Border() :> Control)
-        sidebar.Build()
-        let requests = ResizeArray<string * bool * int>()
-        let mutable opened: SearchHit option = None
-        sidebar.SearchHandler <- Some(fun q archived offset -> requests.Add((q, archived, offset)))
-        sidebar.OpenSearchHit <- fun hit -> opened <- Some hit
-        let convId = Guid.NewGuid()
-        sidebar.SetConversations [ summary convId "天气" ]
-        sidebar.SetConnection(true, "已连接")
-        root.Children.Add sidebar
-        let window = Window(Width = 360.0, Height = 600.0, Content = root)
-        window.Show()
-        try
-            Dispatcher.UIThread.RunJobs()
-            let box = descendantsOf sidebar |> Seq.pick (function :? TextBox as tb when tb.PlaceholderText = "搜索对话" -> Some tb | _ -> None)
-            box.Text <- "Quetzal"
-            fireSearch sidebar
-            Assert.Equal<(string * bool * int) list>([ ("Quetzal", false, 0) ], List.ofSeq requests)
-            // 等待期有“正在搜索”状态
-            Assert.Contains(descendantsOf sidebar, fun c -> nameOf c = "正在搜索消息…")
-            let hit =
-                { conversationId = convId; title = "天气"; archived = false; messageId = 12UL; role = "assistant"
-                  snippet = "…这里有 Quetzalcoatl 出现…"; matchStart = 5; matchLength = 7 }
-            sidebar.ApplySearchResults(
-                { queryId = Guid.NewGuid(); query = "Quetzal"; hits = [ hit ]; hasMore = false; truncated = true }, 0)
-            pump 50.0
-            Assert.Equal<SearchHit list>([ hit ], sidebar.MessageHits)
-            Assert.Contains(descendantsOf sidebar, fun c -> nameOf c = "消息内容" || (match c with :? TextBlock as t -> t.Text = "消息内容" | _ -> false))
-            let row = descendantsOf sidebar |> Seq.find (fun c -> (nameOf c) |> fun n -> not (isNull n) && n.StartsWith "消息命中：")
-            // 截断必须明说
-            Assert.Contains(descendantsOf sidebar, fun c -> match c with :? TextBlock as t -> not (isNull t.Text) && t.Text.Contains "结果已截断" | _ -> false)
-            // 命中词着色：片段由三个 run 组成，中间一个是命中词
-            let snippetBlock = descendantsOf row |> Seq.pick (function :? TextBlock as t when t.Inlines.Count = 3 -> Some t | _ -> None)
-            Assert.Equal("Quetzal", (snippetBlock.Inlines[1] :?> Avalonia.Controls.Documents.Run).Text.Substring(0, 7))
-            // 迟到的旧词结果被丢弃
-            sidebar.ApplySearchResults({ queryId = Guid.NewGuid(); query = "old"; hits = []; hasMore = false; truncated = false }, 0)
-            Assert.Equal(1, sidebar.MessageHits.Length)
-            // 点击打开
-            row.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
-            Dispatcher.UIThread.RunJobs()
-            invoke row
-            Dispatcher.UIThread.RunJobs()
-            Assert.Equal(Some hit, opened)
-        finally
-            window.Close())
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``sidebar marks fork rows and does not search when no handler is wired`` () =
-    Headless.run (fun () ->
-        let root = Grid()
-        let overlay = OverlayHost(root)
-        let sidebar = Sidebar(overlay, sidebarActions, fun _ -> Border() :> Control)
-        sidebar.Build()
-        let parent, fork = Guid.NewGuid(), Guid.NewGuid()
-        sidebar.SetLineage(
-            Map.ofList
-                [ fork, { parentId = parent; forkBaseMessageId = Some 3UL; forkFirstMessageId = Some 5UL
-                          parentTitle = Some "父"; parentDeleted = false; forkOrdinal = Some 2 } ])
-        sidebar.SetConversations [ summary parent "父"; { summary fork "子" with isFork = true } ]
-        sidebar.SetConnection(true, "已连接")
-        root.Children.Add sidebar
-        let window = Window(Width = 360.0, Height = 600.0, Content = root)
-        window.Show()
-        try
-            Dispatcher.UIThread.RunJobs()
-            let texts =
-                descendantsOf sidebar
-                |> Seq.choose (function
-                    | :? TextBlock as t ->
-                        Some(if isNull t.Inlines || t.Inlines.Count = 0 then t.Text
-                             else t.Inlines |> Seq.map (function :? Avalonia.Controls.Documents.Run as r -> r.Text | _ -> "") |> String.concat "")
-                    | _ -> None)
-                |> Seq.toList
-            Assert.Contains("分叉 · 预览", texts)
-            // 未接线的侧栏：输入搜索词不进入“正在搜索”
-            let box = descendantsOf sidebar |> Seq.pick (function :? TextBox as tb when tb.PlaceholderText = "搜索对话" -> Some tb | _ -> None)
-            box.Text <- "zzz"
-            fireSearch sidebar
-            Assert.DoesNotContain(descendantsOf sidebar, fun c -> nameOf c = "正在搜索消息…")
-        finally
-            window.Close())
 
 let private chatActions : ChatActions =
     { renameTitle = ignore

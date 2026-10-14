@@ -157,7 +157,7 @@ type MainView() as this =
             toast (sprintf "无法打开链接：%s" url) Warning
 
     // ---- 视图 ----
-    let mutable sidebar: Sidebar = Unchecked.defaultof<Sidebar>
+    let mutable sidebar: Wanxiang2.SidebarDesk.SidebarDesk = Unchecked.defaultof<_>
     let mutable chat: ChatView = Unchecked.defaultof<ChatView>
     let mutable composer: Composer = Unchecked.defaultof<Composer>
     let mutable settings: Wanxiang2.SettingsScreen.SettingsScreen = Unchecked.defaultof<Wanxiang2.SettingsScreen.SettingsScreen>
@@ -1912,7 +1912,7 @@ type MainView() as this =
     // ---- 组装 ----
 
     member private this.BuildSidebar() =
-        let actions =
+        let actions: Wanxiang2.SidebarDesk.SidebarDeskActions =
             { newConversation = fun () -> this.CreateConversation() |> ignore
               openConversation = fun id -> this.OpenConversation id
               renameConversation =
@@ -2002,7 +2002,7 @@ type MainView() as this =
                     else this.ShowConnectDialog()
               toggleArchivedVisibility = fun () -> this.SavePrefs { prefs with showArchived = not prefs.showArchived }
               closeNavigation = fun () -> this.SetCompactNavigation false }
-        sidebar <- Sidebar(overlay, actions, SharedTheme.logo)
+        sidebar <- Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, actions, SharedTheme.logo)
         // W4：消息正文搜索。查询在主机内存投影上完成；每次发出都换一个 queryId，旧结果迟到即丢。
         sidebar.SearchHandler <-
             Some(fun query includeArchived offset ->
@@ -2021,7 +2021,6 @@ type MainView() as this =
                           offset = offset
                           limit = SearchLimits.defaultPageSize }))
         sidebar.OpenSearchHit <- fun hit -> this.OpenSearchHit hit
-        sidebar.Build()
         sidebar.SetShowArchived prefs.showArchived
 
     member private this.ShowSessionContext() =
@@ -2367,7 +2366,7 @@ type MainView() as this =
               PrefersTouch = fun () -> SharedTheme.input.PrefersTouch }
         shellDesk <-
             Wanxiang2.ShellDesk.ShellDesk(
-                SharedTheme.manager, shellGrid, sidebar, sidebarSplitter, chat, composer,
+                SharedTheme.manager, shellGrid, sidebar.View, sidebarSplitter, chat, composer,
                 shellHooks, initialNavigation.sidebarCollapsed, (fun () -> prefs.sidebarWidth))
         workspace.Children.Add shellGrid
 

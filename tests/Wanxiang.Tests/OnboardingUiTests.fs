@@ -549,7 +549,7 @@ module OnboardingUiTests =
                 let presetButton =
                     visual root |> List.find (fun c -> AutomationProperties.GetName c = "预设" && c.Focusable)
                 presetButton.RaiseEvent(
-                    KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
+                    KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down, KeyModifiers = KeyModifiers.None))
                 Dispatcher.UIThread.RunJobs()
                 Assert.True overlay.IsPopupOpen
                 let entries =
@@ -577,7 +577,7 @@ module OnboardingUiTests =
                 Assert.DoesNotContain(named root "改用兼容端点", fun c -> c.IsVisible)
                 let presetButton = visual root |> List.find (fun c -> AutomationProperties.GetName c = "预设" && c.Focusable)
                 presetButton.RaiseEvent(
-                    KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
+                    KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down, KeyModifiers = KeyModifiers.None))
                 Dispatcher.UIThread.RunJobs()
                 let claudeEntry =
                     visual root

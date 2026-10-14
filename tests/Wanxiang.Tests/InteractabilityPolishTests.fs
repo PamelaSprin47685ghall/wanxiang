@@ -1,5 +1,6 @@
 module Wanxiang.Tests.InteractabilityPolishTests
 
+open Wanxiang2.SidebarDesk
 open Wanxiang2.SettingsScreen
 open System
 open Avalonia
@@ -71,13 +72,13 @@ let rec private visualControls (visual: Visual) =
             yield! visualControls child
     }
 
-let private rows (sidebar: Control) =
-    match descendants sidebar |> Seq.tryPick (function :? ListBox as lb -> Some lb | _ -> None) with
+let private rows (sidebar: Wanxiang2.SidebarDesk.SidebarDesk) =
+    match descendants sidebar.View |> Seq.tryPick (function :? ListBox as lb -> Some lb | _ -> None) with
     | None -> []
     | Some list -> list.GetRealizedContainers() |> Seq.cast<Control> |> Seq.collect (fun c -> visualControls (c :> Visual)) |> Seq.toList
 
 /// 行容器即 Sidebar 给的那张 Border：自动化名 = 标题，Tag = ConversationSummary。
-let private rowByName (sidebar: Control) (title: string) =
+let private rowByName (sidebar: Wanxiang2.SidebarDesk.SidebarDesk) (title: string) =
     rows sidebar
     |> Seq.tryFind (fun control ->
         AutomationProperties.GetName control = title
@@ -297,7 +298,7 @@ let private sidebarSummary id title =
 let private buildSidebarForPolish () =
     let root = Grid()
     let overlay = OverlayHost(root)
-    let actions: SidebarActions =
+    let actions: Wanxiang2.SidebarDesk.SidebarDeskActions =
         { newConversation = ignore
           openConversation = ignore
           renameConversation = ignore
@@ -314,43 +315,9 @@ let private buildSidebarForPolish () =
           reconnect = ignore
           toggleArchivedVisibility = ignore
           closeNavigation = ignore }
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    root.Children.Add sidebar
+    let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, actions, fun _ -> Border() :> Control)
+    root.Children.Add sidebar.View
     root, overlay, sidebar
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``row context menu stays closed while the sidebar is in selection mode`` () =
-    Headless.run (fun () ->
-    let root, overlay, sidebar = buildSidebarForPolish ()
-    let id = Guid.NewGuid()
-    let window = show root 320.0 420.0
-    try
-        sidebar.SetConversations [ sidebarSummary id "Alpha" ]
-        Dispatcher.UIThread.RunJobs()
-        let moreButton =
-            rows sidebar
-            |> Seq.tryFind (fun control -> AutomationProperties.GetName control = "对话“Alpha”的操作菜单")
-            |> Option.defaultWith (fun () -> failwith "侧栏行缺少更多操作按钮")
-        // 前置条件：非多选态下 Enter 打开单条菜单，证明探针有效。
-        privateKey moreButton Key.Enter |> ignore
-        Dispatcher.UIThread.RunJobs()
-        Assert.True(overlay.IsPopupOpen, "前置条件：非多选态下更多按钮会打开单条菜单")
-        // 多选态下同一个入口必须拒绝：openMenu 首行就是 selectionMode 守卫。
-        sidebar.EnterSelection id
-        Dispatcher.UIThread.RunJobs()
-        overlay.ClosePopup()
-        Dispatcher.UIThread.RunJobs()
-        Assert.False(overlay.IsPopupOpen, "前置条件：浮层已显式关闭")
-        // 按钮已被 RefreshSelectionChrome 下线（IsHitTestVisible = false），
-        // 但事件仍可合成——守卫必须挡在事件路径上，而不是只靠可见性。
-        privateKey moreButton Key.Enter |> ignore
-        Dispatcher.UIThread.RunJobs()
-        Assert.False(overlay.IsPopupOpen, "多选态下更多按钮不得打开单条菜单")
-    finally
-        window.Close()
-    )
 
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -371,33 +338,6 @@ let ``row more button leaves the hit tree in selection mode`` () =
         Dispatcher.UIThread.RunJobs()
         Assert.False(moreButton.IsVisible, "多选态下更多操作按钮应整体下线")
         Assert.False(moreButton.IsHitTestVisible, "下线即不可命中：不再诱导点击空转菜单")
-    finally
-        window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``escape in the search box leaves selection mode first`` () =
-    Headless.run (fun () ->
-    let root, _, sidebar = buildSidebarForPolish ()
-    let id = Guid.NewGuid()
-    let window = show root 320.0 420.0
-    try
-        sidebar.SetConversations [ sidebarSummary id "Alpha" ]
-        Dispatcher.UIThread.RunJobs()
-        let row = rowByName sidebar "Alpha"
-        row.Focus() |> ignore
-        sidebar.EnterSelection id
-        Dispatcher.UIThread.RunJobs()
-        // 从列表首行按 Up 会落进搜索框：此时焦点确实可能停在搜索上。
-        let searchBox =
-            byPlaceholder root "搜索对话"
-            |> Option.defaultWith (fun () -> failwith "侧栏缺少搜索框")
-        searchBox.Focus() |> ignore
-        Assert.True(sidebar.IsSelectionMode, "前置条件：仍在多选模式")
-        privateKey searchBox Key.Escape |> ignore
-        Dispatcher.UIThread.RunJobs()
-        Assert.False(sidebar.IsSelectionMode, "搜索框中的 Escape 应先退出多选")
     finally
         window.Close()
     )

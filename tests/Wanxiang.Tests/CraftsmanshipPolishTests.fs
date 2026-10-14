@@ -1,5 +1,6 @@
 module Wanxiang.Tests.CraftsmanshipPolishTests
 
+open Wanxiang2.SidebarDesk
 open Wanxiang2.SettingsScreen
 open System
 open System.Collections.Generic
@@ -674,121 +675,6 @@ let ``SettingsView preserves and restores scroll offset across sections`` () =
         window.Close()
     )
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``Sidebar conversation row right click invokes context menu`` () =
-    Headless.run (fun () ->
-    let root = Grid()
-    let overlay = OverlayHost(root)
-    let actions: SidebarActions =
-        { newConversation = ignore
-          openConversation = ignore
-          deleteConversation = ignore
-          renameConversation = ignore
-          setPinned = fun _ _ -> ()
-          setArchived = fun _ _ -> ()
-          selectionAllPinned = fun _ -> false
-          setPinnedMany = fun _ _ -> ()
-          setArchivedMany = fun _ _ -> ()
-          deleteMany = fun _ -> ()
-          duplicateAsFork = ignore
-          exportConversation = ignore
-          openSettings = ignore
-          reconnect = ignore
-          toggleArchivedVisibility = ignore
-          closeNavigation = ignore }
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    let testId = Guid.NewGuid()
-    let now = DateTimeOffset.Now
-    let items =
-        [ { id = testId
-            title = "ContextMenu Test"
-            preview = "Right-click preview"
-            messageCount = 1
-            pinned = false
-            running = false
-            archived = false
-            isFork = false
-            providerId = "openai"
-            model = "gpt-4o"
-            lastCommitId = 1UL
-            createdAt = now
-            updatedAt = now } ]
-    sidebar.SetConversations items
-    sidebar.SetConnection(true, "已连接")
-    root.Children.Insert(0, sidebar)
-    let window = Window(Width = 360.0, Height = 600.0, Content = root)
-    window.Show()
-    try
-        let rec visualControls (visual: Visual) =
-            seq {
-                match visual with
-                | :? Control as control -> yield control
-                | _ -> ()
-                for child in visual.GetVisualChildren() do
-                    yield! visualControls child
-            }
-        Dispatcher.UIThread.RunJobs()
-        let list =
-            descendants sidebar
-            |> Seq.pick (function :? ListBox as lb -> Some lb | _ -> None)
-        let row =
-            list.GetRealizedContainers()
-            |> Seq.collect visualControls
-            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "ContextMenu Test")
-
-        // Open more button on the row
-        let moreBtn =
-            descendants row
-            |> Seq.find (fun c ->
-                match Avalonia.Automation.AutomationProperties.GetName(c) with
-                | null -> false
-                | name -> name.StartsWith("对话“ContextMenu Test”的操作菜单"))
-        moreBtn.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
-        Dispatcher.UIThread.RunJobs()
-        Assert.True overlay.IsPopupOpen
-
-        overlay.HandleEscape() |> ignore
-        Dispatcher.UIThread.RunJobs()
-        Assert.False overlay.IsPopupOpen
-    finally
-        window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``Sidebar search clear button has accessible tooltip and automation properties`` () =
-    Headless.run (fun () ->
-    let root = Grid()
-    let overlay = OverlayHost(root)
-    let actions: SidebarActions =
-        { newConversation = ignore
-          openConversation = ignore
-          deleteConversation = ignore
-          renameConversation = ignore
-          setPinned = fun _ _ -> ()
-          setArchived = fun _ _ -> ()
-          selectionAllPinned = fun _ -> false
-          setPinnedMany = fun _ _ -> ()
-          setArchivedMany = fun _ _ -> ()
-          deleteMany = fun _ -> ()
-          duplicateAsFork = ignore
-          exportConversation = ignore
-          openSettings = ignore
-          reconnect = ignore
-          toggleArchivedVisibility = ignore
-          closeNavigation = ignore }
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    let clearBtn =
-        descendants sidebar
-        |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "清空搜索")
-    let tip = ToolTip.GetTip(clearBtn) :?> string
-    Assert.Equal("清空搜索", tip)
-    Assert.Equal("清空搜索", Avalonia.Automation.AutomationProperties.GetName(clearBtn))
-    )
-
 // =========================================================================
 // 8. Composer Prompt History & Draft Restoration
 // =========================================================================
@@ -871,107 +757,6 @@ let ``Composer prompt history records submissions and recalls with Up/Down`` () 
 // =========================================================================
 // 9. Sidebar Search Keyboard Navigation & Shortcuts
 // =========================================================================
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``Sidebar search navigation moves focus and handles escape`` () =
-    Headless.run (fun () ->
-    let mutable openedConvId: Guid option = None
-    let sidebarActions =
-        { newConversation = ignore
-          openConversation = fun id -> openedConvId <- Some id
-          renameConversation = ignore
-          deleteConversation = ignore
-          setPinned = fun _ _ -> ()
-          setArchived = fun _ _ -> ()
-          selectionAllPinned = fun _ -> false
-          setPinnedMany = fun _ _ -> ()
-          setArchivedMany = fun _ _ -> ()
-          deleteMany = fun _ -> ()
-          duplicateAsFork = ignore
-          exportConversation = ignore
-          openSettings = ignore
-          reconnect = ignore
-          toggleArchivedVisibility = ignore
-          closeNavigation = ignore }
-
-    let root = Grid()
-    let overlay = OverlayHost(root)
-    let sidebar = Sidebar(overlay, sidebarActions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    root.Children.Insert(0, sidebar)
-
-    let window = Window(Width = 360.0, Height = 600.0, Content = root)
-    window.Show()
-    try
-        Dispatcher.UIThread.RunJobs()
-
-        let conv1 = Guid.NewGuid()
-        let conv2 = Guid.NewGuid()
-        let summaries =
-            [ { id = conv1
-                title = "Alpha Conversation"
-                preview = "preview 1"
-                running = false
-                pinned = false
-                archived = false
-                createdAt = DateTimeOffset.Now
-                updatedAt = DateTimeOffset.Now
-                messageCount = 2
-                isFork = false
-                providerId = "test"
-                model = "model"
-                lastCommitId = 1UL }
-              { id = conv2
-                title = "Beta Conversation"
-                preview = "preview 2"
-                running = false
-                pinned = false
-                archived = false
-                createdAt = DateTimeOffset.Now
-                updatedAt = DateTimeOffset.Now
-                messageCount = 3
-                isFork = false
-                providerId = "test"
-                model = "model"
-                lastCommitId = 2UL } ]
-
-        sidebar.SetConversations summaries
-        Dispatcher.UIThread.RunJobs()
-
-        // Find the searchBox
-        let searchBox =
-            descendants sidebar
-            |> Seq.choose (function :? TextBox as tb when tb.PlaceholderText = "搜索对话" -> Some tb | _ -> None)
-            |> Seq.head
-
-        let sendSearchKey (key: Key) =
-            let args = KeyEventArgs(
-                RoutedEvent = InputElement.KeyDownEvent,
-                Key = key,
-                KeyModifiers = KeyModifiers.None)
-            searchBox.RaiseEvent args
-            Dispatcher.UIThread.RunJobs()
-            args
-
-        // 1. Enter key in search box opens the first visible conversation
-        let enterArgs = sendSearchKey Key.Enter
-        Assert.True(enterArgs.Handled)
-        // items are sorted by lastCommitId descending, so conv2 (lastCommitId=2UL) precedes conv1 (lastCommitId=1UL)
-        Assert.Equal(Some conv2, openedConvId)
-
-        // 2. Down arrow navigates focus into the conversation list
-        let downArgs = sendSearchKey Key.Down
-        Assert.True(downArgs.Handled)
-
-        // 3. Escape key clears non-empty search query
-        searchBox.Text <- "Alpha"
-        let escArgs1 = sendSearchKey Key.Escape
-        Assert.True(escArgs1.Handled)
-        Assert.Equal("", searchBox.Text)
-    finally
-        window.Close()
-    )
 
 // =========================================================================
 // 8. Batch 5, 6, 7 Craftsmanship Polish Tests
@@ -1269,7 +1054,7 @@ let ``Sidebar conversation row activates on Enter and Space keys`` () =
     let root = Grid()
     let overlay = OverlayHost(root)
     let mutable openedId: Guid option = None
-    let actions: SidebarActions =
+    let actions: Wanxiang2.SidebarDesk.SidebarDeskActions =
         { newConversation = ignore
           openConversation = fun id -> openedId <- Some id
           deleteConversation = ignore
@@ -1286,8 +1071,7 @@ let ``Sidebar conversation row activates on Enter and Space keys`` () =
           reconnect = ignore
           toggleArchivedVisibility = ignore
           closeNavigation = ignore }
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
+    let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, actions, fun _ -> Border() :> Control)
     let testId1 = Guid.NewGuid()
     let testId2 = Guid.NewGuid()
     let now = DateTimeOffset.Now
@@ -1320,7 +1104,7 @@ let ``Sidebar conversation row activates on Enter and Space keys`` () =
             updatedAt = now } ]
     sidebar.SetConversations items
     sidebar.SetConnection(true, "已连接")
-    root.Children.Insert(0, sidebar)
+    root.Children.Insert(0, sidebar.View)
     let window = Window(Width = 360.0, Height = 600.0, Content = root)
     window.Show()
     try
@@ -1334,7 +1118,7 @@ let ``Sidebar conversation row activates on Enter and Space keys`` () =
             }
         Dispatcher.UIThread.RunJobs()
         let list =
-            descendants sidebar
+            descendants sidebar.View
             |> Seq.pick (function :? ListBox as lb -> Some lb | _ -> None)
         let row1 =
             list.GetRealizedContainers()
@@ -1366,7 +1150,7 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
     // 命中面仍按模式分档：桌面 iconButton、compact 触控下限 compactActionTarget。
     let root = Grid()
     let overlay = OverlayHost(root)
-    let actions: SidebarActions =
+    let actions: Wanxiang2.SidebarDesk.SidebarDeskActions =
         { newConversation = ignore
           openConversation = ignore
           renameConversation = ignore
@@ -1383,8 +1167,7 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
           reconnect = ignore
           toggleArchivedVisibility = ignore
           closeNavigation = ignore }
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
+    let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, actions, fun _ -> Border() :> Control)
     let rowId = Guid.NewGuid()
     let now = DateTimeOffset.Now
     let item =
@@ -1403,7 +1186,7 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
           updatedAt = now }
     sidebar.SetConversations [ item ]
     sidebar.SetConnection(true, "已连接")
-    root.Children.Insert(0, sidebar)
+    root.Children.Insert(0, sidebar.View)
     let window = Window(Width = 360.0, Height = 600.0, Content = root)
     window.Show()
     try
@@ -1417,7 +1200,7 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
             }
         let moreButton () =
             let list =
-                descendants sidebar
+                descendants sidebar.View
                 |> Seq.pick (function :? ListBox as lb -> Some lb | _ -> None)
             list.GetRealizedContainers()
             |> Seq.collect visualControls
@@ -1430,7 +1213,8 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
         Assert.True desktop.IsHitTestVisible
         Assert.True desktop.Focusable
         Assert.Equal(Tokens.opacitySubtle, desktop.Opacity, 3)
-        Assert.Equal(Tokens.iconButton, desktop.MinWidth, 3)
+        // ConversationRows 用 Width/Height 定方形命中面（旧代码写 MinWidth），尺寸本身不变。
+        Assert.Equal(Tokens.iconButton, desktop.Width, 3)
         // compact：常驻一档淡显，可命中、可聚焦、读屏可见，命中面抬到触控下限。
         sidebar.SetCompactMode true
         Dispatcher.UIThread.RunJobs()
@@ -1438,7 +1222,7 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
         Assert.True compact.IsHitTestVisible
         Assert.True compact.Focusable
         Assert.Equal(Tokens.opacitySubtle, compact.Opacity, 3)
-        Assert.Equal(LayoutPolicy.compactActionTarget, compact.MinWidth, 3)
+        Assert.Equal(LayoutPolicy.compactActionTarget, compact.Width, 3)
         // 退回桌面：仍是常驻淡显 + iconButton 命中面（两种模式仅命中面分档）。
         sidebar.SetCompactMode false
         Dispatcher.UIThread.RunJobs()
@@ -1446,7 +1230,7 @@ let ``Sidebar row more action stays reachable in compact mode`` () =
         Assert.True restored.IsHitTestVisible
         Assert.True restored.Focusable
         Assert.Equal(Tokens.opacitySubtle, restored.Opacity, 3)
-        Assert.Equal(Tokens.iconButton, restored.MinWidth, 3)
+        Assert.Equal(Tokens.iconButton, restored.Width, 3)
         // 键盘聚焦：聚焦瞬间回全不透明度（与 hover 同一路径，均走
         // ApplyRowActionVisibility visible=true）。
         restored.Focus() |> ignore

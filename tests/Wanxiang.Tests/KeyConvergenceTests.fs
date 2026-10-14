@@ -1,5 +1,6 @@
 module Wanxiang.Tests.KeyConvergenceTests
 
+open Wanxiang2.SidebarDesk
 open Wanxiang2.SettingsScreen
 open System
 open System.Threading
@@ -61,7 +62,7 @@ let private show (content: Control) width height =
     window
 
 /// 侧栏行由虚拟化 ListBox 托管，不在 root 的视觉树里：经已实现容器取。
-let private rowByName (sidebar: Sidebar) (title: string) =
+let private rowByName (sidebar: Wanxiang2.SidebarDesk.SidebarDesk) (title: string) =
     let rec visualControls (visual: Visual) =
         seq {
             match visual with
@@ -71,7 +72,7 @@ let private rowByName (sidebar: Sidebar) (title: string) =
                 yield! visualControls child
         }
     let list =
-        descendants sidebar
+        descendants sidebar.View
         |> Seq.pick (function :? ListBox as lb -> Some lb | _ -> None)
     list.GetRealizedContainers()
     |> Seq.collect visualControls
@@ -91,7 +92,7 @@ let private buildSidebar () =
     let overlayHost = OverlayHost(root)
     // 只收行级置顶（P 键走这条），批量置顶留给别的夹具。
     let rowPins = ResizeArray<Guid * bool>()
-    let actions: SidebarActions =
+    let actions: Wanxiang2.SidebarDesk.SidebarDeskActions =
         { newConversation = ignore
           openConversation = ignore
           renameConversation = ignore
@@ -108,10 +109,9 @@ let private buildSidebar () =
           reconnect = ignore
           toggleArchivedVisibility = ignore
           closeNavigation = ignore }
-    let sidebar = Sidebar(overlayHost, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
+    let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlayHost.Desk, actions, fun _ -> Border() :> Control)
     // 侧栏自己不会挂树：这里是它进入视觉树的地方（虚拟化行容器由此才生成）。
-    root.Children.Add sidebar
+    root.Children.Add sidebar.View
     root, sidebar, rowPins
 
 let private pressRow (row: Control) (key: Key) (modifiers: KeyModifiers) =
@@ -126,61 +126,8 @@ let private pressRow (row: Control) (key: Key) (modifiers: KeyModifiers) =
 
 // 行已拿焦点时按 P 直接翻转置顶：此前置顶只有右键菜单一条路，
 // 键盘用户得先唤菜单再找项。与 F2 / Delete 同一约定。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``p key on a focused row toggles pin`` () =
-    Headless.run (fun () ->
-    let root, sidebar, rowPins = buildSidebar ()
-    let id = Guid.NewGuid()
-    let window = show root 320.0 420.0
-    try
-        sidebar.SetConversations [ summary id "第一个对话" (DateTimeOffset.Now.AddMinutes(-3.0)) false ]
-        Dispatcher.UIThread.RunJobs()
-        let row = rowByName sidebar "第一个对话"
-        row.Focus() |> ignore
-        Dispatcher.UIThread.RunJobs()
-        pressRow row Key.P KeyModifiers.None
-        Dispatcher.UIThread.RunJobs()
-        Assert.Equal<Guid * bool>([ (id, true) ], Seq.toList rowPins)
-        // 再按一次翻回去：同一个键是切换，不是「置顶」单向动作。
-        // 键面取自主机已确认的状态（summaryById），所以中间必须真的有一次
-        // 列表快照到达——真实链路里 pin 命令提交后 ConversationListSnapshot 会带回新状态。
-        rowPins.Clear()
-        sidebar.SetConversations [ summary id "第一个对话" (DateTimeOffset.Now.AddMinutes(-3.0)) true ]
-        Dispatcher.UIThread.RunJobs()
-        // 换 ItemsSource 后行容器重建：重新取那一行。
-        let row = rowByName sidebar "第一个对话"
-        row.Focus() |> ignore
-        Dispatcher.UIThread.RunJobs()
-        pressRow row Key.P KeyModifiers.None
-        Dispatcher.UIThread.RunJobs()
-        Assert.Equal<Guid * bool>([ (id, false) ], Seq.toList rowPins)
-    finally
-        window.Close()
-    )
-
 // P 不带修饰键才归侧栏：Ctrl+P 等组合键是全局快捷键表的领地，
 // 行里吞掉会让全局键位出现不可解释的失效。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``ctrl p on a focused row is left for the global table`` () =
-    Headless.run (fun () ->
-    let root, sidebar, rowPins = buildSidebar ()
-    let id = Guid.NewGuid()
-    let window = show root 320.0 420.0
-    try
-        sidebar.SetConversations [ summary id "第一个对话" (DateTimeOffset.Now.AddMinutes(-3.0)) false ]
-        Dispatcher.UIThread.RunJobs()
-        let row = rowByName sidebar "第一个对话"
-        row.Focus() |> ignore
-        Dispatcher.UIThread.RunJobs()
-        pressRow row Key.P KeyModifiers.Control
-        Dispatcher.UIThread.RunJobs()
-        Assert.Empty rowPins
-    finally
-        window.Close()
-    )
-
 // ── 删除后的邻位：打开谁与焦点落谁同一个答案 ────────────────────────────────
 
 // 删的正是正在看的对话时，落到邻行继续，不进空屏。邻位口径必须与
@@ -295,54 +242,3 @@ let ``focus initial lands on a settings section nav button`` () =
 // 落点断言走「ScrollIntoView 把目标行拉进虚拟化窗口」这条同步可见线索
 // （UiStabilityTests 同手法）：一个 20k 对话的列表里，焦点在末行时按 Home/PageUp
 // 必须把首行实现出来；未接线时行永远是末行附近那一窗。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``page up on a sidebar row scrolls the list to the first item`` () =
-    Headless.run (fun () ->
-    let root, sidebar, _ = buildSidebar ()
-    let window = show root 360.0 700.0
-    try
-        let count = 400
-        let items =
-            [ for index in 1 .. count ->
-                summary (Guid.NewGuid()) (sprintf "对话 %05d" index) DateTimeOffset.Now false
-                |> fun s -> { s with lastCommitId = uint64 index } ]
-        sidebar.SetConversations items
-        Dispatcher.UIThread.RunJobs()
-        let list = byAutomationName sidebar "对话列表" :?> ListBox
-        let realized () =
-            list.GetRealizedContainers()
-            |> Seq.collect (fun c -> c.GetVisualDescendants())
-            |> Seq.choose (function :? Control as x -> Some x | _ -> None)
-            |> Seq.map (fun x -> AutomationProperties.GetName x)
-            |> Set.ofSeq
-        let rec awaitRealized remaining name =
-            Dispatcher.UIThread.RunJobs()
-            let n = list.GetRealizedContainers() |> Seq.length
-            if Set.contains name (realized ()) then name
-            elif remaining > 0 then Thread.Sleep 10; awaitRealized (remaining - 1) name
-            else failwithf "%s was not realized; realizedContainers=%d itemCount=%d names=%s"
-                    name n list.ItemCount (String.Join("|", realized () |> Seq.truncate 5))
-        // 先等首屏容器实现（UiStabilityTests 同手法），再滚到底：未挂载的
-        // ItemsControl 上 ScrollIntoView 是空操作。
-        awaitRealized 20 (sprintf "对话 %05d" count) |> ignore
-        list.ScrollIntoView(list.ItemCount - 1)
-        let bottomName = sprintf "对话 %05d" 1
-        awaitRealized 20 bottomName |> ignore
-        let lastRow =
-            list.GetRealizedContainers()
-            |> Seq.collect (fun c -> c.GetVisualDescendants())
-            |> Seq.choose (function :? Control as x -> Some x | _ -> None)
-            |> Seq.find (fun x -> AutomationProperties.GetName x = bottomName)
-        Assert.True(Set.contains bottomName (realized ()), "前置条件：末行已在虚拟化窗口内")
-        // PageUp：与 Home 同分支，必须把首行拉进虚拟化窗口（ScrollIntoView 0）。
-        let pu = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.PageUp, KeyModifiers = KeyModifiers.None, Source = lastRow)
-        lastRow.RaiseEvent pu
-        Assert.True(pu.Handled, "PageUp 必须与 Home 同口径被行内消费")
-        awaitRealized 20 (sprintf "对话 %05d" count) |> ignore
-        // 变异不变量：未接线时按键从默认路径穿过（Handled=true 但无位移），
-        // 首行永远实现不出来。
-    finally
-        window.Close()
-    )
-

@@ -217,7 +217,7 @@ let ``r26 截图：预设入口、另存、设置管理`` () =
     Assert.Equal(3, (typeof<MainView>.GetField("chat", flags).GetValue(view) :?> ChatView).PresetStarterCount)
     capture w1 "01-empty-state-preset-chips"
     // 2 侧栏 ▾：用预设新建
-    let sidebar = typeof<MainView>.GetField("sidebar", flags).GetValue(view) :?> Sidebar
+    let sidebar = typeof<MainView>.GetField("sidebar", flags).GetValue(view) :?> Wanxiang2.SidebarDesk.SidebarDesk
     Assert.True(sidebar.PresetMenuButton.IsVisible)
     pressEnter sidebar.PresetMenuButton
     capture w1 "02-sidebar-new-from-preset-menu"
@@ -252,7 +252,7 @@ let ``r26 截图：预设入口、另存、设置管理`` () =
     w1.Close()
     // 6 首次使用：没有预设时空态与侧栏不多任何东西
     let view2, w2 = shellWith (hostConfig false) true
-    let sidebar2 = typeof<MainView>.GetField("sidebar", flags).GetValue(view2) :?> Sidebar
+    let sidebar2 = typeof<MainView>.GetField("sidebar", flags).GetValue(view2) :?> Wanxiang2.SidebarDesk.SidebarDesk
     Assert.False(sidebar2.PresetMenuButton.IsVisible)
     Assert.Equal(0, (typeof<MainView>.GetField("chat", flags).GetValue(view2) :?> ChatView).PresetStarterCount)
     capture w2 "06-first-run-no-presets"

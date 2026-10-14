@@ -403,7 +403,7 @@ module ComposerReliabilityTests =
                     Assert.True health.ConfigIssue.IsNone
                     dispatchEvent shell (HostConfigRejected {| summary = "配置有误，仍在使用上一份有效配置：第 3 行"; errors = [ "第 3 行：未知键" ] |})
                     Assert.Equal(Some("配置有误，仍在使用上一份有效配置：第 3 行", [ "第 3 行：未知键" ]), health.ConfigIssue)
-                    let sidebar: Sidebar = getField shell "sidebar"
+                    let sidebar: Wanxiang2.SidebarDesk.SidebarDesk = getField shell "sidebar"
                     Assert.Contains("配置有误", sidebar.ConnectionText)
                     dispatchEvent shell (ConfigChanged {| reason = "reloaded" |})
                     Assert.True health.ConfigIssue.IsNone

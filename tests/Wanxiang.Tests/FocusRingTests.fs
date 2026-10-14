@@ -1,5 +1,6 @@
 module Wanxiang.Tests.FocusRingTests
 
+open Wanxiang2.SidebarDesk
 open Avalonia.Controls
 open Avalonia.Input
 open Avalonia.Layout
@@ -122,7 +123,7 @@ let private buildCompactDrawer () =
     let root = Grid()
     let overlay = OverlayHost(root)
     let background = TextBox(PlaceholderText = "背景输入区")
-    let actions: SidebarActions =
+    let actions: Wanxiang2.SidebarDesk.SidebarDeskActions =
         { newConversation = fun () -> ()
           openConversation = fun _ -> ()
           renameConversation = fun _ -> ()
@@ -139,10 +140,9 @@ let private buildCompactDrawer () =
           reconnect = fun () -> ()
           toggleArchivedVisibility = fun () -> ()
           closeNavigation = fun () -> () }
-    let sidebar = Sidebar(overlay, actions, fun _ -> Border() :> Control)
-    sidebar.Build()
+    let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, overlay.Desk, actions, fun _ -> Border() :> Control)
     root.Children.Add background
-    root.Children.Add sidebar
+    root.Children.Add sidebar.View
     let window = Window(Width = 360.0, Height = 600.0, Content = root)
     window.Show()
     Dispatcher.UIThread.RunJobs()
@@ -163,7 +163,7 @@ let ``compact 抽屉 Tab 只在侧栏内循环，两端回绕、不漏到背景`
         Dispatcher.UIThread.RunJobs()
 
         // 抽屉的可聚焦集合沿用对话框 trapTab 的同一谓词 OverlayHost.Focusables。
-        let ring = overlay.Focusables(sidebar)
+        let ring = overlay.Focusables(sidebar.View)
         Assert.True(ring.Length >= 2, "抽屉内至少要有两个可聚焦项才谈得上循环")
         Assert.False(ring |> Array.contains background, "背景输入区不属于抽屉的可聚焦集合")
 
@@ -223,7 +223,7 @@ let ``非 compact 下侧栏不拦截 Tab，桌面态与主区互 Tab 如常`` ()
         // 判据取产品语义本身：焦点从侧栏搜索框出发连续 Tab 一圈多一点，
         // 必须越过侧栏边界落到背景输入区（与 compact 用例互为对偶：抽屉内永远到不了背景）。
         // 不再盯 args.Handled——那是窗口级焦点导航的框架信号，不等于侧栏消费 Tab。
-        let ring = overlay.Focusables(sidebar)
+        let ring = overlay.Focusables(sidebar.View)
         let searchBox = drawerSearchBox ring
         searchBox.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
@@ -278,7 +278,7 @@ let ``窄屏不自动打开抽屉，显式打开后焦点留在抽屉内`` () =
         sidebar.FocusSearch()
         Dispatcher.UIThread.RunJobs()
 
-        let ring = overlay.Focusables(sidebar)
+        let ring = overlay.Focusables(sidebar.View)
         let searchBox = drawerSearchBox ring
         Assert.True(obj.ReferenceEquals(focused (), searchBox), "显式打开后焦点应落在抽屉搜索框")
         Assert.False(background.IsFocused, "焦点不应落在背景输入区")

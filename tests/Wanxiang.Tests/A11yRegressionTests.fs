@@ -241,7 +241,7 @@ let ``顶栏模型芯片对读屏是按钮并说明生效时机`` () =
 // 附件上传完成不再 toast；顶栏菜单不重复「回到最新」浮钮。
 [<Fact>]
 let ``r18 菜单与入口一致性`` () =
-    let sidebar = read "src/Wanxiang.UI/Views/Sidebar.fs"
+    let sidebar = read "vendor/wanxiang2/compose/SidebarDesk/SidebarDesk.fs"
     let chat = read "src/Wanxiang.UI/Views/ChatView.fs"
     let shell = read "src/Wanxiang.UI/AppShell.fs"
     for bad in [ "\"重命名 (F2)\""; "置顶 (P)\""; "\"删除 (Delete)\""; "已归档对话 (%d)" ] do

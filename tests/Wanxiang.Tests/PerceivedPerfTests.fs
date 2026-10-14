@@ -1,5 +1,6 @@
 module Wanxiang.Tests.PerceivedPerfTests
 
+open Wanxiang2.SidebarDesk
 open System
 open System.Diagnostics
 open Avalonia.Controls
@@ -125,15 +126,14 @@ type Bench(output: ITestOutputHelper) =
     [<Fact>]
     member _.``侧栏 2000 个对话：首次填充与刷新``() =
         Headless.run (fun () ->
-            let actions: SidebarActions =
+            let actions: Wanxiang2.SidebarDesk.SidebarDeskActions =
                 { newConversation = ignore; openConversation = ignore; renameConversation = ignore; deleteConversation = ignore
                   setPinned = (fun _ _ -> ()); setArchived = (fun _ _ -> ()); selectionAllPinned = (fun _ -> false)
                   setPinnedMany = (fun _ _ -> ()); setArchivedMany = (fun _ _ -> ()); deleteMany = ignore
                   duplicateAsFork = ignore; exportConversation = ignore; openSettings = ignore; reconnect = ignore
                   toggleArchivedVisibility = ignore; closeNavigation = ignore }
-            let sidebar = Sidebar(OverlayHost(Grid()), actions, SharedTheme.logo)
-            sidebar.Build()
-            let window = Window(Width = 300.0, Height = 900.0, Content = sidebar)
+            let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(SharedTheme.manager, OverlayHost(Grid()).Desk, actions, SharedTheme.logo)
+            let window = Window(Width = 300.0, Height = 900.0, Content = sidebar.View)
             window.Show()
             try
                 let now = DateTimeOffset.Now

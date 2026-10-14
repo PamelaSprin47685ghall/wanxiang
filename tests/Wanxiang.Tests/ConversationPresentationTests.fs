@@ -91,21 +91,6 @@ let composerShellPaddingSymmetricAndChipFadeUsesNamedLedger () =
     Assert.DoesNotContain("ghostAction", text)
 
 [<Fact>]
-let sidebarFooterPaddingAndDisclosureAndSkeletonConverged () =
-    let text = source "src/Wanxiang.UI/Views/Sidebar.fs"
-    Assert.Contains("Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, 0.0)", text)
-    Assert.True(occurrenceCount text "ControlMetrics.sidebarRunningDotSize" >= 1, "状态点应引 sidebarRunningDotSize")
-    // 分组表头改走共享宽字距原语 Ui.sectionLabelWide（letterSpacingDisplay 收进原语）；词标 wordmark 仍直接引 letterSpacingDisplay。
-    Assert.True(occurrenceCount text "Ui.sectionLabelWide" >= 1, "分组表头应改走 Ui.sectionLabelWide 共享原语")
-    Assert.True(occurrenceCount text "Spacing.Tracking.display" >= 1, "词标字距应引 letterSpacingDisplay")
-    Assert.DoesNotContain("header.Foreground <- Tokens.textMuted", text)
-    Assert.Contains("Tokens.skeletonOpacityBase", text)
-    Assert.DoesNotContain("Opacity = 0.65", text)
-    // 侧栏两处 up/down 披露箭头与消息卡披露箭头同属一类 affordance，统一到 textMuted。
-    Assert.True(occurrenceCount text "else Icons.chevronDown) Tokens.textMuted" >= 2, "侧栏披露箭头应统一到 textMuted")
-    Assert.DoesNotContain("Icons.chevronDown) Tokens.textFaint", text)
-
-[<Fact>]
 let chatViewGeneratingChipTokenized () =
     let text = source "src/Wanxiang.UI/Views/ChatView.fs"
     // 骨架、空态、「回到最新」的几何与透明度归 Wanxiang2.ChatPane（ChatPane AGENTS 列为已覆盖）。

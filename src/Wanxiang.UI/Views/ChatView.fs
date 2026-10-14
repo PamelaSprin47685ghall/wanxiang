@@ -155,7 +155,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable openBreadcrumbParent: Guid -> unit = ignore
 
     /// 滚动区、空态、骨架、问答跳转、贴底与「回到最新」归 Wanxiang2.ChatPane；消息卡放进它的 Messages 插槽。
-    let pane = Wanxiang2.ChatPane.ChatPane<CardKey>(Wanxiang2.ChatPane.ChatPaneLooks.ofTheme SharedTheme.manager SharedTheme.styles)
+    let pane = Wanxiang2.ChatPane.ChatPane<CardKey>(Wanxiang2.ChatPane.ChatPaneLooks.ofTheme SharedTheme.manager SharedTheme.styles, brandLogo)
     let messagePanel = pane.Messages
     let scroller = pane.Scroller.Viewer
     let follow = pane.Follow
@@ -639,9 +639,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member _.SetSavePresetAction(action: (unit -> unit) option) = savePresetAction <- action
 
     member this.ShowEmpty(state: ChatEmptyState, onPrimary: (string * (unit -> unit)) option) =
-        let logo = brandLogo Tokens.logoEmpty
-        logo.HorizontalAlignment <- HorizontalAlignment.Center
-        pane.ShowEmpty(state, logo, onPrimary)
+        pane.ShowEmpty(state, onPrimary)
         messagePanel.IsVisible <- false
 
     /// 在空态位置放一块自带交互的内容（首次运行的「连接一个模型」卡片）。

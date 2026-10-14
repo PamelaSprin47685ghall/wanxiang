@@ -568,7 +568,14 @@ let ``batch delete reports what it did instead of staying silent`` () =
     invoke sidebar "ToggleSelected" [| box b |] |> ignore
     Dispatcher.UIThread.RunJobs()
     // §214：批量删除不再弹确认框——立即隐去，提示条给汇总与「撤销」。
-    invoke sidebar "DeleteSelected" [| |] |> ignore
+    // SidebarDesk 不公开 DeleteSelected：走多选条上的「删除」键，与用户同一路径。
+    let deleteButton =
+        ((sidebar :?> Wanxiang2.SidebarDesk.SidebarDesk).View :> Visual).GetVisualDescendants()
+        |> Seq.pick (function
+            | :? Control as c when c.IsEffectivelyVisible && c.Focusable
+                                   && (string (Avalonia.Automation.AutomationProperties.GetName c)).StartsWith "删除" -> Some c
+            | _ -> None)
+    deleteButton.RaiseEvent(Avalonia.Input.KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Enter, Source = deleteButton))
     Dispatcher.UIThread.RunJobs()
     Assert.False(overlay.IsDialogOpen, "删除即撤销：不应再有确认框")
     let texts () =
@@ -605,7 +612,14 @@ let ``§214 撤销把批量删除的行放回列表且不提交`` () =
     let sidebar = (field view "sidebar").GetValue view
     invoke sidebar "EnterSelection" [| box a |] |> ignore
     Dispatcher.UIThread.RunJobs()
-    invoke sidebar "DeleteSelected" [| |] |> ignore
+    // SidebarDesk 不公开 DeleteSelected：走多选条上的「删除」键，与用户同一路径。
+    let deleteButton =
+        ((sidebar :?> Wanxiang2.SidebarDesk.SidebarDesk).View :> Visual).GetVisualDescendants()
+        |> Seq.pick (function
+            | :? Control as c when c.IsEffectivelyVisible && c.Focusable
+                                   && (string (Avalonia.Automation.AutomationProperties.GetName c)).StartsWith "删除" -> Some c
+            | _ -> None)
+    deleteButton.RaiseEvent(Avalonia.Input.KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Enter, Source = deleteButton))
     Dispatcher.UIThread.RunJobs()
     let order () = invoke sidebar "GetVisibleOrder" [| |] :?> string list
     Assert.DoesNotContain(a.ToString(), order ())
