@@ -228,8 +228,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         |> Option.orElseWith (fun () -> List.tryHead cards)
         |> Option.defaultValue 0
 
-    /// 「回到最新」浮钮随 follow 状态重画（ChatPane 没有公开的刷新入口，SetCompact 会重算一次）。
-    let refreshLatest () = pane.SetCompact compactMode
+    /// 「回到最新」浮钮随 follow 状态重画。
+    let refreshLatest () = pane.RefreshLatestButton()
 
     /// 把某张用户卡平滑带到视口顶部：目标卡片尽量完整可见，不被输入区挡住。每帧按卡片当前位置取目标（决策 460）。
     let smoothScrollToCard (child: Control) =
@@ -1068,7 +1068,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 if isNull child.Parent then revealTarget <- None
                 else
                     let target = max 0.0 (child.Bounds.Y - Spacing.space3xl)
-                    if abs (scroller.Offset.Y - target) > 1.0 then pane.Scroller.SetOffset target
+                    if abs (scroller.Offset.Y - target) > 1.0 then pane.PinOffset target
             | _ -> ()
             syncExchangeNavState ()
             // 骨架可见时不预取更早历史。
