@@ -117,7 +117,8 @@ type IconCenteringTests() =
             // 漏加载 → PackIconLucide 无模板 → 在树里量不到尺寸 → 这里变红。
             // 只断言「有没有」不断言「在哪」：字形内部怎么画是上游的契约。
             let icons = factories ()
-            Assert.True(icons.Length >= 40, $"反射只找到 {icons.Length} 个图标，Icons 模块结构可能变了")
+            // 不设数量下限（未用图标会被删）：反射得到的每个现存图标都要在活视觉树里取得尺寸。
+            Assert.NotEmpty icons
             let window = Window(Width = 400.0, Height = 300.0)
             let panel = StackPanel(Orientation = Orientation.Horizontal, Spacing = 0.0)
             for _, icon in icons do

@@ -83,11 +83,7 @@ module Icons =
     /// 搜索
     let search : IBrush -> Control = glyph PackIconLucideKind.Search
 
-    /// 新增
-    let plus : IBrush -> Control = glyph PackIconLucideKind.Plus
 
-    /// 减少
-    let minus : IBrush -> Control = glyph PackIconLucideKind.Minus
 
     /// 关闭
     let close : IBrush -> Control = glyph PackIconLucideKind.X
@@ -95,8 +91,6 @@ module Icons =
     /// 确认
     let check : IBrush -> Control = glyph PackIconLucideKind.Check
 
-    /// 完成（圆圈勾）
-    let checkCircle : IBrush -> Control = glyph PackIconLucideKind.CircleCheck
 
     /// 跳到开头
     let chevronsUp : IBrush -> Control = glyph PackIconLucideKind.ChevronsUp
@@ -107,8 +101,6 @@ module Icons =
     /// 展开
     let chevronDown : IBrush -> Control = glyph PackIconLucideKind.ChevronDown
 
-    /// 收起
-    let chevronUp : IBrush -> Control = glyph PackIconLucideKind.ChevronUp
 
     /// 下一级
     let chevronRight : IBrush -> Control = glyph PackIconLucideKind.ChevronRight
@@ -116,14 +108,8 @@ module Icons =
     /// 上一级
     let chevronLeft : IBrush -> Control = glyph PackIconLucideKind.ChevronLeft
 
-    /// 下移
-    let arrowDown : IBrush -> Control = glyph PackIconLucideKind.ArrowDown
 
-    /// 上移
-    let arrowUp : IBrush -> Control = glyph PackIconLucideKind.ArrowUp
 
-    /// 返回
-    let arrowLeft : IBrush -> Control = glyph PackIconLucideKind.ArrowLeft
 
     /// 附件
     let paperclip : IBrush -> Control = glyph PackIconLucideKind.Paperclip
@@ -155,20 +141,12 @@ module Icons =
     /// 归档
     let archive : IBrush -> Control = glyph PackIconLucideKind.Archive
 
-    /// 设置（滑块齿轮，小尺寸下比整块齿轮更可辨）
-    let gear : IBrush -> Control = glyph PackIconLucideKind.Settings2
 
     /// 配置项
     let sliders : IBrush -> Control = glyph PackIconLucideKind.SlidersHorizontal
 
-    /// 浅色主题
-    let sun : IBrush -> Control = glyph PackIconLucideKind.Sun
 
-    /// 深色主题
-    let moon : IBrush -> Control = glyph PackIconLucideKind.Moon
 
-    /// 工具
-    let wrench : IBrush -> Control = glyph PackIconLucideKind.Wrench
 
     /// 主机
     let server : IBrush -> Control = glyph PackIconLucideKind.Server
@@ -178,8 +156,6 @@ module Icons =
     /// 设备（手机 + 显示器）：设置「设备」分区用；钥匙易被读成「密钥/API Key」
     let devices : IBrush -> Control = glyph PackIconLucideKind.MonitorSmartphone
 
-    /// 软换行
-    let textWrap : IBrush -> Control = glyph PackIconLucideKind.TextWrap
 
     /// 下载
     let download : IBrush -> Control = glyph PackIconLucideKind.Download
@@ -187,8 +163,6 @@ module Icons =
     /// 导入（决策 313）
     let upload : IBrush -> Control = glyph PackIconLucideKind.Upload
 
-    /// 错误
-    let alert : IBrush -> Control = glyph PackIconLucideKind.CircleAlert
 
     /// 说明
     let info : IBrush -> Control = glyph PackIconLucideKind.Info
@@ -205,8 +179,6 @@ module Icons =
     /// 链接（复制消息链接；与「复制」区分开，视觉走查 r8）
     let link : IBrush -> Control = glyph PackIconLucideKind.Link
 
-    /// 外部链接
-    let externalLink : IBrush -> Control = glyph PackIconLucideKind.ExternalLink
 
     /// 文件
     let file : IBrush -> Control = glyph PackIconLucideKind.FileText
@@ -217,14 +189,10 @@ module Icons =
     /// 时间
     let clock : IBrush -> Control = glyph PackIconLucideKind.Clock
 
-    /// 生成中
-    let sparkle : IBrush -> Control = glyph PackIconLucideKind.Sparkles
 
     /// 快捷键
     let keyboard : IBrush -> Control = glyph PackIconLucideKind.Keyboard
 
-    /// 退出
-    let logOut : IBrush -> Control = glyph PackIconLucideKind.LogOut
 
     /// 数据目录
     let database : IBrush -> Control = glyph PackIconLucideKind.Database
