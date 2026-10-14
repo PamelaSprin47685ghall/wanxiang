@@ -279,7 +279,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             HorizontalAlignment = HorizontalAlignment.Stretch,
             IsVisible = false)
     let mutable skeletonTimer: DispatcherTimer option = None
-    let mutable skeletonOpacityPhase = 0.0
+    /// 骨架呼吸的相位归 BreathPhase；计时器与减弱动效时的静态透明度在这里。
+    let breath = BreathPhase()
     let mutable motionSubscription: IDisposable option = None
     let mutable attached = false
 
@@ -287,13 +288,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     ///
     /// 不加这层缓存的话，流式期间每批 delta 都要把整表拆掉重建：
     /// 200 条消息实测约 100ms 一次，越聊越卡，而其中只有最后一张卡真的变了。
-    let cardCache = Dictionary<CardKey, Control>()
+    /// 缓存与当前挂在面板上的卡片身份（算最长公共前缀用）归 Reconciler。
+    let reconciler = Reconciler<CardKey, Control>()
     /// 决策 292：流式卡原位更新。外形（除正文外的一切：思考、工具调用、附件、字号、审批）不变时，
     /// 同一张卡留在面板上，只把新文字交给它的 StreamingMarkdown；外形变了才换代（streamGeneration + 1）。
     let mutable streamSlot: (obj * CardKey * StreamingMarkdown) option = None
     let mutable streamGeneration = 0
-    /// 当前挂在面板上的卡片身份，用来算最长公共前缀
-    let mutable mountedKeys: CardKey option array = [||]
 
     let scrollToBottomButton = Ui.iconButtonAccent Icons.arrowDown "回到最新"
     let scrollToBottomLabel =
@@ -320,9 +320,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 决策 460：定位钉住的目标卡。钉住期间布局再变（分页前置、卡片晚量高、重绘）都按它的当前位置重新对齐，
     /// 而不是只在发起时量一次 Bounds——满载 CI 上量早了就会停在旧底部。
     let mutable revealTarget: Control option = None
-    /// 平滑滚动动画最近一次写入的偏移。ScrollChanged 据此区分「动画自己往上走」和「用户往上滚」：
+    /// 平滑滚动的补间与最近一次动画写入的偏移归 ScrollTween。ScrollChanged 据此区分「动画自己往上走」和「用户往上滚」：
     /// 向上的动画（定位到更早的消息、回到顶部）每一帧都是负增量，若当成用户手势就会在第一帧把自己打断（v4 走查）。
-    let mutable lastAnimatedOffset = nan
+    let tween = ScrollTween()
     let mutable headerBar: Border = Unchecked.defaultof<Border>
     let mutable pendingHistoryAnchor: (float * float) option = None
     /// 决策 293：打开长对话只挂尾部一个窗口的卡片（首屏只排这几十张），
@@ -342,9 +342,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     // ---------- 问答跳转（上一条 / 下一条） ----------
 
     /// 当前面板上每张卡的「用户消息」身份，按挂载顺序。
-    /// mountedKeys 与 messagePanel.Children 逐一对齐（渲染循环一帧一卡），
+    /// reconciler.MountedKeys 与 messagePanel.Children 逐一对齐（渲染循环一帧一卡），
     /// 所以这里是用户卡的下标表，不必给卡打 Tag。
-    let exchangeIndices () : int list = ExchangeJump<CardKey>.Cards(mountedKeys, fun k -> k.role = "user")
+    let exchangeIndices () : int list = ExchangeJump<CardKey>.Cards(reconciler.MountedKeys, fun k -> k.role = "user")
 
     /// 当前所在的那一轮问答 = 第一张「结尾已经越过视口顶端」的用户卡。
     /// 取视口顶端的第一张：用户在屏幕上方读第 1 轮时「下一条」就该送第 2 轮，
@@ -372,29 +372,19 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             smoothScrollTimer <- None
         let targetOf () = max 0.0 (child.Bounds.Y - Spacing.space3xl)
         let target = targetOf ()
-        if abs (scroller.Offset.Y - target) < 5.0 then
-            scroller.Offset <- Vector(scroller.Offset.X, target)
-        elif MotionPolicy.isReduced () then
+        if not (tween.Start(DateTimeOffset.UtcNow, scroller.Offset.Y, target, MotionPolicy.isReduced ())) then
             scroller.Offset <- Vector(scroller.Offset.X, target)
         else
             stopSmoothScroll ()
-            let startOffset = scroller.Offset.Y
-            let startTime = DateTime.UtcNow
-            let durationMs = MotionLedger.smoothScrollDuration.TotalMilliseconds
             let timer = new DispatcherTimer(Interval = MotionLedger.smoothScrollFrame)
             timer.Tick.Add(fun _ ->
-                let elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds
                 // 每帧按卡片当前位置取目标：动画途中布局变了也落在卡片上（决策 460）。
-                let target = targetOf ()
-                if elapsed >= durationMs then
+                match tween.Frame(DateTimeOffset.UtcNow, targetOf ()) with
+                | ScrollFrame.Done target ->
                     stopSmoothScroll ()
-                    lastAnimatedOffset <- target
+                    tween.Pin target
                     scroller.Offset <- Vector(scroller.Offset.X, target)
-                else
-                    let progress = min 1.0 (elapsed / durationMs)
-                    let eased = MotionPolicy.easeOutCubic.Ease progress
-                    let newY = startOffset + (target - startOffset) * eased
-                    lastAnimatedOffset <- newY
+                | ScrollFrame.Offset newY ->
                     scroller.Offset <- Vector(scroller.Offset.X, newY))
             smoothScrollTimer <- Some timer
             timer.Start()
@@ -404,7 +394,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let syncExchangeNavState () =
         let cards = exchangeIndices ()
         // 贴底时没有「下一条」；窗口外或主机上还有更早消息时「上一轮」永远可用（决策 300）。规则见 ExchangeJump。
-        let hasPrev, hasNext = jump.NavState(mountedKeys, cards, currentExchangeIndex (), follow.AtBottom, mountWindow.HiddenCount > 0)
+        let hasPrev, hasNext = jump.NavState(reconciler.MountedKeys, cards, currentExchangeIndex (), follow.AtBottom, mountWindow.HiddenCount > 0)
         canJumpPrevious <- hasPrev
         canJumpNext <- hasNext
 
@@ -706,7 +696,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             flash.Revealed commitId
             Dispatcher.UIThread.Post(
                 (fun () ->
-                    let index = mountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
+                    let index = reconciler.MountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
                     match index with
                     | Some i when i < messagePanel.Children.Count ->
                         // 卡片本身是 StackPanel（或带版本条的竖排），背景刷不出圆角面：
@@ -758,7 +748,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.ScrollToMessage(commitId: uint64) : bool =
         this.EnsureMounted commitId
         let indexOf () =
-            mountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
+            reconciler.MountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
         match indexOf () with
         | Some _ ->
             follow.Pin()
@@ -953,14 +943,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         elif not attached then
             // 尚未挂载到视觉树时不启动计时器；挂载时若骨架仍可见会触发
             skeletonPanel.Opacity <- Tokens.skeletonOpacityReduced
-        else
-            skeletonOpacityPhase <- 0.0
+        elif breath.Start(false, true) then
             let timer = new DispatcherTimer(Interval = MotionLedger.skeletonBreathFrame)
             timer.Tick.Add(fun _ ->
-                skeletonOpacityPhase <- skeletonOpacityPhase + 0.12
-                // 0.55 ~ 0.95 之间的平滑呼吸
-                let alpha = 0.75 + 0.2 * Math.Sin(skeletonOpacityPhase)
-                skeletonPanel.Opacity <- alpha)
+                // 0.55 ~ 0.95 之间的平滑呼吸（相位归 BreathPhase）
+                skeletonPanel.Opacity <- breath.Step())
             timer.Start()
             skeletonTimer <- Some timer
 
@@ -1223,7 +1210,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                       awaitingTools = false
                       approvalTag = 0 }
                 let card, live = MessageCard.renderWithStream streaming ctx actions.message None
-                cardCache[key] <- card
                 streamSlot <- live |> Option.map (fun l -> shape, key, l)
                 desired.Add(Some key, fun () -> card)
         | _ -> streamSlot <- None
@@ -1243,50 +1229,19 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         | None -> ()
 
         // 只动前缀之后的部分。追加一条消息或刷新流式卡时，前面几十上百张卡不动。
-        let mutable common = 0
-        while common < mountedKeys.Length
-              && common < desired.Count
-              && (match mountedKeys[common], fst desired[common] with
-                  | Some mounted, Some wanted -> mounted = wanted
-                  | _ -> false) do
-            common <- common + 1
-
-        if messagePanel.Children.Count > common then
-            messagePanel.Children.RemoveRange(common, messagePanel.Children.Count - common)
-
-        for index in common .. desired.Count - 1 do
-            let key, create = desired[index]
-            let control =
-                match key with
-                | None -> create ()
-                | Some k ->
-                    match cardCache.TryGetValue k with
-                    | true, cached -> cached
-                    | _ ->
-                        let created = create ()
-                        cardCache[k] <- created
-                        created
+        // 缓存只保留这一帧用到的身份：换对话、改字号都会让旧身份失效，留着只是占内存（Reconciler 每帧清）。
+        let plan = reconciler.Reconcile(List.ofSeq desired)
+        if messagePanel.Children.Count > plan.Keep then
+            messagePanel.Children.RemoveRange(plan.Keep, messagePanel.Children.Count - plan.Keep)
+        for control in plan.Append do
             messagePanel.Children.Add control
-
-        mountedKeys <- desired |> Seq.map fst |> Array.ofSeq
         // 锚点指向的卡可能已经不在了（流式卡换代、错误卡消失）：丢掉锚点，
         // 下一次跳转重新用视口位置起算，不会指向一张不存在的卡。
-        let resume = jump.Mounted(mountedKeys, mountWindow.LastFirstCommit)
+        let resume = jump.Mounted(reconciler.MountedKeys, mountWindow.LastFirstCommit)
         syncExchangeNavState ()
         if resume then
             // 等分页锚点恢复（Background）之后再跳，免得被写回旧偏移。
             Dispatcher.UIThread.Post((fun () -> this.JumpExchange -1), DispatcherPriority.ContextIdle)
-
-        // 缓存只保留这一帧用到的身份：换对话、改字号都会让旧身份失效，
-        // 留着只是占内存
-        let live = HashSet<CardKey>()
-        for key in mountedKeys do
-            match key with
-            | Some k -> live.Add k |> ignore
-            | None -> ()
-        if cardCache.Count > live.Count then
-            for stale in cardCache.Keys |> Seq.filter (live.Contains >> not) |> Array.ofSeq do
-                cardCache.Remove stale |> ignore
 
         // 窗口外未挂载的消息也算条数（决策 293）；分页前置与流式占位不记未读，流式收尾补记一条。规则见 ScrollFollow。
         match follow.Rendered(streamingMessage.IsSome, desired.Count + firstMounted, pendingHistoryAnchor.IsSome) with
@@ -1330,8 +1285,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 后台着色算完时要用：着色结果缓存在 `Highlight` 里，
     /// 但卡片身份没变，不清缓存的话屏幕上会一直挂着没着色的那一版。
     member _.InvalidateCards() =
-        cardCache.Clear()
-        mountedKeys <- [||]
+        reconciler.Clear()
 
     /// 滚到底必须等布局把新内容的高度算进 Extent，否则会停在旧的底部，
     /// 末条消息（例如带「重试」按钮的错误卡片）就被输入区挡住。
@@ -1361,29 +1315,21 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         follow.LeaveForBeginning()
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
-        if MotionPolicy.isReduced () then
-            this.ScrollToBeginningDeferred()
+        let reduced = MotionPolicy.isReduced ()
+        if not (tween.Start(DateTimeOffset.UtcNow, scroller.Offset.Y, 0.0, reduced)) then
+            if reduced then this.ScrollToBeginningDeferred()
+            else this.UpdateScrollToBottomAppearance()
         else
-            let startOffset = scroller.Offset.Y
-            if startOffset < 5.0 then
-                this.UpdateScrollToBottomAppearance()
-            else
-                let startTime = DateTime.UtcNow
-                let durationMs = MotionLedger.smoothScrollDuration.TotalMilliseconds
                 let timer = new DispatcherTimer(Interval = MotionLedger.smoothScrollFrame)
                 timer.Tick.Add(fun _ ->
-                    let elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds
-                    if elapsed >= durationMs then
+                    match tween.Frame(DateTimeOffset.UtcNow, 0.0) with
+                    | ScrollFrame.Done _ ->
                         timer.Stop()
                         smoothScrollTimer <- None
                         scroller.Offset <- Vector(scroller.Offset.X, 0.0)
                         this.UpdateScrollToBottomAppearance()
-                    else
-                        let progress = min 1.0 (elapsed / durationMs)
+                    | ScrollFrame.Offset newY ->
                         // 同一 easeOutCubic：上滚与下滚共享同一条曲线，端点两条路手感不劈叉。
-                        let eased = MotionPolicy.easeOutCubic.Ease progress
-                        let newY = startOffset * (1.0 - eased)
-                        lastAnimatedOffset <- newY
                         scroller.Offset <- Vector(scroller.Offset.X, newY)
                         this.UpdateScrollToBottomAppearance())
                 smoothScrollTimer <- Some timer
@@ -1420,38 +1366,28 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
         this.UpdateScrollToBottomAppearance()
-        if MotionPolicy.isReduced () then
-            this.ScrollToEndDeferred()
-        else
-            let startOffset = scroller.Offset.Y
-            let maxTarget = max 0.0 (scroller.Extent.Height - scroller.Viewport.Height)
-            let distance = maxTarget - startOffset
-            if distance < 5.0 then
+        let reduced = MotionPolicy.isReduced ()
+        let maxTarget = max 0.0 (scroller.Extent.Height - scroller.Viewport.Height)
+        if not (tween.Start(DateTimeOffset.UtcNow, scroller.Offset.Y, maxTarget, reduced)) then
+            if reduced then this.ScrollToEndDeferred()
+            else
                 follow.Arrived()
                 this.ScrollToEndDeferred()
                 this.UpdateScrollToBottomAppearance()
-            else
-                let startTime = DateTime.UtcNow
-                let durationMs = MotionLedger.smoothScrollDuration.TotalMilliseconds
+        else
                 let timer = new DispatcherTimer(Interval = MotionLedger.smoothScrollFrame)
                 timer.Tick.Add(fun _ ->
-                    let elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds
-                    let currentExtent = scroller.Extent.Height
-                    let currentViewport = scroller.Viewport.Height
-                    let target = max 0.0 (currentExtent - currentViewport)
-                    if elapsed >= durationMs || target <= 0.0 then
+                    let target = max 0.0 (scroller.Extent.Height - scroller.Viewport.Height)
+                    // 目标 ≤ 0（内容不足一屏）时宿主自己收尾（旧判据）。
+                    if target <= 0.0 then tween.Cancel()
+                    match tween.Frame(DateTimeOffset.UtcNow, target) with
+                    | ScrollFrame.Done _ ->
                         timer.Stop()
                         smoothScrollTimer <- None
                         follow.Arrived()
                         scroller.ScrollToEnd()
                         this.UpdateScrollToBottomAppearance()
-                    else
-                        let progress = min 1.0 (elapsed / durationMs)
-                        // 统一缓动：改走 MotionPolicy.easeOutCubic（与全应用状态补间同一条
-                        // 曲线），替换本地手写 cubic，兑现 smoothScrollDuration 的 ease-out 注释。
-                        let eased = MotionPolicy.easeOutCubic.Ease progress
-                        let newY = startOffset + (target - startOffset) * eased
-                        lastAnimatedOffset <- newY
+                    | ScrollFrame.Offset newY ->
                         scroller.Offset <- Vector(scroller.Offset.X, newY))
                 smoothScrollTimer <- Some timer
                 timer.Start()
@@ -1482,7 +1418,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 连续按「上一条」能一排排往回翻。
     member this.JumpExchange(direction: int) =
         let cards = exchangeIndices ()
-        match jump.Jump(direction, mountedKeys, cards, currentExchangeIndex (), mountWindow.HiddenCount > 0, mountWindow.LastFirstCommit) with
+        match jump.Jump(direction, reconciler.MountedKeys, cards, currentExchangeIndex (), mountWindow.HiddenCount > 0, mountWindow.LastFirstCommit) with
         | JumpStep.ExpandAndRetry ->
             // 决策 300：本机已加载、只是没挂载——先挂上一步再续跳（锚点不变，索引随之后移）。
             if this.ExpandMountWindow() then this.JumpExchange direction
@@ -1605,14 +1541,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                 else
                     let target = max 0.0 (child.Bounds.Y - Spacing.space3xl)
                     if abs (scroller.Offset.Y - target) > 1.0 then
-                        lastAnimatedOffset <- target
+                        tween.Pin target
                         scroller.Offset <- Vector(scroller.Offset.X, target)
             | _ -> ()
             let extent = scroller.Extent.Height
             let viewport = scroller.Viewport.Height
             let offset = scroller.Offset.Y
             // 用户手动向上滚动（或滚轮/触控向上拉），立即打断平滑自动滚动，不与用户手势冲突
-            let fromAnimation = abs (offset - lastAnimatedOffset) < 1.0
+            let fromAnimation = tween.IsOwnOffset offset
             let nowAtBottom = extent - viewport - offset < ContentMetrics.scrollBottomThreshold
             // 中途帧仍按用户已发出的“回到底”意图处理，不重新显示按钮。
             if follow.Scrolled(e.OffsetDelta.Y < -0.1 && not fromAnimation, nowAtBottom) then

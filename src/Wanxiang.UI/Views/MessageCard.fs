@@ -157,63 +157,31 @@ module MessageCard =
         Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
         Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
         Avalonia.Automation.AutomationProperties.SetLiveSetting(button, AutomationLiveSetting.Polite)
-        let mutable copyTimer: DispatcherTimer option = None
-        let mutable fadeTimer: DispatcherTimer option = None
-        let stopFade () =
-            match fadeTimer with
-            | Some t ->
-                t.Stop()
-                fadeTimer <- None
-            | None -> ()
-        let stopTimer () =
-            match copyTimer with
-            | Some t ->
-                t.Stop()
-                copyTimer <- None
-            | None -> ()
-            stopFade ()
-        // 复制确认反馈：opacity 淡到 opacityCopyConfirmFade 再回 1.0，只改透明度、
-        // 不改尺寸（节奏 MotionLedger.copyConfirmationFade）；减弱动效时不做这段淡出。
-        let pulseCopyConfirmation () =
-            if not (MotionPolicy.isReduced ()) then
-                stopFade ()
-                button.Opacity <- Tokens.opacityCopyConfirmFade
-                let fade = new DispatcherTimer(Interval = MotionLedger.copyConfirmationFade)
-                fade.Tick.Add(fun _ ->
-                    fade.Stop()
-                    if fadeTimer = Some fade then fadeTimer <- None
-                    button.Opacity <- 1.0)
-                fadeTimer <- Some fade
-                fade.Start()
-        let restoreDefaultState () =
-            stopTimer ()
-            button.Opacity <- 1.0
-            Ui.setIcon button Icons.copy Tokens.textMuted
-            Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-            alignIconCentrally button
-            ToolTip.SetTip(button, tipText)
-            Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
-            Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
+        let confirmCopy =
+            CopyFeedback.attach button (fun visual ->
+                match visual with
+                | CopyVisual.Default ->
+                    Ui.setIcon button Icons.copy Tokens.textMuted
+                    Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+                    alignIconCentrally button
+                    ToolTip.SetTip(button, tipText)
+                    Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
+                    Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
+                | CopyVisual.Confirmed
+                | CopyVisual.Fading ->
+                    Ui.setIcon button Icons.check Tokens.success
+                    Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+                    alignIconCentrally button
+                    ToolTip.SetTip(button, "已复制")
+                    Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
+                    Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制到剪贴板"))
         // 复制一律走注入的 actions.copyText（剪贴板唯一入口；异步化与失败提示由 AppShell 侧负责）。
-        // 保持既有确认形态：图标变 check、MotionLedger.copyConfirmationHold 后复位。
+        // 保持既有确认形态：图标变 check、保持一段时间后复位（CopyConfirm）。
         let doCopy () =
             let payload = getText ()
             if not (String.IsNullOrEmpty payload) then
                 copyText payload
-                stopTimer ()
-                pulseCopyConfirmation ()
-                Ui.setIcon button Icons.check Tokens.success
-                Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-                alignIconCentrally button
-                ToolTip.SetTip(button, "已复制")
-                Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
-                Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制到剪贴板")
-                let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
-                timer.Tick.Add(fun _ ->
-                    if copyTimer = Some timer then
-                        restoreDefaultState ())
-                copyTimer <- Some timer
-                timer.Start()
+                confirmCopy ()
         // 确认淡出与基控件同一机制：往既有过渡集合追加 opacity 补间，不改几何。
         let fadeTransition = Avalonia.Animation.DoubleTransition()
         fadeTransition.Property <- Visual.OpacityProperty
@@ -224,7 +192,6 @@ module MessageCard =
         if isNull button.Transitions then button.Transitions <- Avalonia.Animation.Transitions()
         button.Transitions.Add fadeTransition
         Ui.onClick button doCopy
-        button.DetachedFromVisualTree.Add(fun _ -> restoreDefaultState ())
         button
 
     /// 思考过程：左缘竖线 + 可折叠。流式期间默认展开，让人看到模型在动。
@@ -972,59 +939,27 @@ module MessageCard =
             Avalonia.Automation.AutomationProperties.SetName(button, messageCopyName)
             Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
             Avalonia.Automation.AutomationProperties.SetLiveSetting(button, AutomationLiveSetting.Polite)
-            let mutable copyTimer: DispatcherTimer option = None
-            let mutable fadeTimer: DispatcherTimer option = None
-            let stopFade () =
-                match fadeTimer with
-                | Some t ->
-                    t.Stop()
-                    fadeTimer <- None
-                | None -> ()
-            let stopTimer () =
-                match copyTimer with
-                | Some t ->
-                    t.Stop()
-                    copyTimer <- None
-                | None -> ()
-                stopFade ()
-            // 复制确认反馈：opacity 淡到 opacityCopyConfirmFade 再回 1.0，只改透明度、
-            // 不改尺寸（节奏 MotionLedger.copyConfirmationFade）；减弱动效时不做这段淡出。
-            let pulseCopyConfirmation () =
-                if not (MotionPolicy.isReduced ()) then
-                    stopFade ()
-                    button.Opacity <- Tokens.opacityCopyConfirmFade
-                    let fade = new DispatcherTimer(Interval = MotionLedger.copyConfirmationFade)
-                    fade.Tick.Add(fun _ ->
-                        fade.Stop()
-                        if fadeTimer = Some fade then fadeTimer <- None
-                        button.Opacity <- 1.0)
-                    fadeTimer <- Some fade
-                    fade.Start()
-            let restoreDefaultState () =
-                stopTimer ()
-                button.Opacity <- 1.0
-                Ui.setIcon button Icons.copy Tokens.textMuted
-                Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-                alignIconCentrally button
-                ToolTip.SetTip(button, "复制")
-                Avalonia.Automation.AutomationProperties.SetName(button, messageCopyName)
-                Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
+            let confirmCopy =
+                CopyFeedback.attach button (fun visual ->
+                    match visual with
+                    | CopyVisual.Default ->
+                        Ui.setIcon button Icons.copy Tokens.textMuted
+                        Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+                        alignIconCentrally button
+                        ToolTip.SetTip(button, "复制")
+                        Avalonia.Automation.AutomationProperties.SetName(button, messageCopyName)
+                        Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
+                    | CopyVisual.Confirmed
+                    | CopyVisual.Fading ->
+                        Ui.setIcon button Icons.check Tokens.success
+                        Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
+                        alignIconCentrally button
+                        ToolTip.SetTip(button, "已复制")
+                        Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
+                        Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制消息正文"))
             let doCopy () =
                 actions.copyText text
-                stopTimer ()
-                pulseCopyConfirmation ()
-                Ui.setIcon button Icons.check Tokens.success
-                Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
-                alignIconCentrally button
-                ToolTip.SetTip(button, "已复制")
-                Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
-                Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制消息正文")
-                let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
-                timer.Tick.Add(fun _ ->
-                    if copyTimer = Some timer then
-                        restoreDefaultState ())
-                copyTimer <- Some timer
-                timer.Start()
+                confirmCopy ()
             // 确认淡出与基控件同一机制：往既有过渡集合追加 opacity 补间，不改几何。
             let fadeTransition = Avalonia.Animation.DoubleTransition()
             fadeTransition.Property <- Visual.OpacityProperty
@@ -1035,7 +970,6 @@ module MessageCard =
             if isNull button.Transitions then button.Transitions <- Avalonia.Animation.Transitions()
             button.Transitions.Add fadeTransition
             Ui.onClick button doCopy
-            button.DetachedFromVisualTree.Add(fun _ -> restoreDefaultState ())
             row.Children.Add button
         // 复制与编辑/分叉/重生成/删除同门：流式进行中一律不挂，避免拷走半句话。
         if not (String.IsNullOrWhiteSpace message.text) && not ctx.streaming then
@@ -1106,7 +1040,8 @@ module MessageCard =
         // 决策 242：等待信号变成实时倒计时，到点改成「现在可以重试了」。
         // 截止时刻由 RetryCountdown 挂在错误实例上，卡片重建不会让倒计时重来。
         // 决策 262：倒计时没走完时「重试」不可按——按了只会再吃一次 429，还会重置等待。
-        let mutable countdownLeft = 0
+        /// 最近一次剩余秒数与「只播报一次、走完停表」归 CountdownTicker。
+        let ticker = CountdownTicker()
         let mutable onCountdown: int -> unit = ignore
         match RetryCountdown.tryGet error DateTimeOffset.UtcNow with
         | Some info when error.retryable ->
@@ -1122,26 +1057,23 @@ module MessageCard =
                     TextWrapping = TextWrapping.Wrap)
             // 决策 302：读屏名带上剩余时间（每秒刷新但不播报）；走完那一刻才以 polite 播报一次「可以重试了」。
             Avalonia.Automation.AutomationProperties.SetName(countdown, "重试倒计时")
-            let mutable announcedReady = false
             let refresh () =
-                let left = RetryCountdown.remainingSeconds info DateTimeOffset.UtcNow
-                countdown.Text <- ProviderRateLimit.countdownText left
+                let frame = ticker.Refresh(RetryCountdown.remainingSeconds info DateTimeOffset.UtcNow)
+                countdown.Text <- ProviderRateLimit.countdownText frame.Left
                 Avalonia.Automation.AutomationProperties.SetName(countdown, sprintf "重试倒计时：%s" countdown.Text)
-                if left <= 0 && not announcedReady then
-                    announcedReady <- true
+                if frame.Announce then
                     Avalonia.Automation.AutomationProperties.SetLiveSetting(countdown, AutomationLiveSetting.Polite)
-                countdown.Foreground <- if left <= 0 then Tokens.success else Tokens.warning
+                countdown.Foreground <- if frame.Ready then Tokens.success else Tokens.warning
                 // 决策 352：等待中秒数只在「重试（N 秒）」按钮上说一遍；走完才显示「现在可以重试了」。
-                countdown.IsVisible <- left <= 0
-                countdownLeft <- left
-                onCountdown left
-                left
+                countdown.IsVisible <- frame.Ready
+                onCountdown frame.Left
+                frame
             refresh () |> ignore
-            let timer = DispatcherTimer(Interval = TimeSpan.FromSeconds 1.0)
-            timer.Tick.Add(fun _ -> if refresh () <= 0 then timer.Stop())
+            let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds CountdownTicker.IntervalMs)
+            timer.Tick.Add(fun _ -> if not (refresh ()).KeepTicking then timer.Stop())
             countdown.AttachedToVisualTree.Add(fun _ ->
                 ParityProbe.hit "timer.rateLimitCountdown"
-                if refresh () > 0 then timer.Start())
+                if (refresh ()).KeepTicking then timer.Start())
             countdown.DetachedFromVisualTree.Add(fun _ -> timer.Stop())
             column.Children.Add countdown
         | _ -> ()
@@ -1187,7 +1119,7 @@ module MessageCard =
                     retryButton,
                     (if waiting then sprintf "重试生成，%d 秒后可用" left else "重试生成"))
             onCountdown <- applyCountdown
-            applyCountdown countdownLeft
+            applyCountdown (ticker.Left |> Option.defaultValue 0)
             actionRow.Children.Add retryButton
         match ErrorRecovery.forKind error.kind, recoverySink with
         | Some recovery, Some sink ->

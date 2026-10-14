@@ -18,34 +18,17 @@ module Highlight =
     /// 事件在后台线程上触发，订阅方自己负责切回 UI 线程。
     let Ready = ready.Publish
 
-    /// 正在后台着色的代码，避免同一段被反复排队
-    let private inFlight = HashSet<struct (string * string)>()
-    let private gate = obj ()
+    /// 在途集合与合并通知的认领归 HighlightQueue：同一段不反复排队；
+    /// 打开含二十个代码块的旧对话时，一个通知窗口内的完成合并成一次重画，屏幕不连抖。
+    let private queue = HighlightQueue<struct (string * string)>()
 
-    /// 通知窗口（毫秒）。
-    ///
-    /// 打开一个含二十个代码块的旧对话会同时排出二十个后台任务，
-    /// 各自算完各自触发一次全量重画 —— 屏幕会连抖几秒。
-    /// 一个窗口内的完成合并成一次通知。
-    [<Literal>]
-    let private notifyWindowMs = 120
-
-    let mutable private notifyScheduled = false
-
-    /// 合并通知：窗口内第一个完成负责安排，其余搭车。
-    let private notifyOnce () =
-        let claimed =
-            lock gate (fun () ->
-                if notifyScheduled then false
-                else
-                    notifyScheduled <- true
-                    true)
-        if claimed then
-            Task.Run(fun () ->
-                Task.Delay(notifyWindowMs).GetAwaiter().GetResult()
-                lock gate (fun () -> notifyScheduled <- false)
-                ready.Trigger())
-            |> ignore
+    /// 窗口内第一个完成负责安排通知，其余搭车。
+    let private scheduleNotify () =
+        Task.Run(fun () ->
+            Task.Delay(HighlightQueue<struct (string * string)>.NotifyWindowMs).GetAwaiter().GetResult()
+            queue.NotifyFired()
+            ready.Trigger())
+        |> ignore
 
     let private plainOf (code: string) = [ { text = code; kind = CodePlain } ]
 
@@ -63,8 +46,7 @@ module Highlight =
     /// 5000 行要 6 秒。这些若发生在 UI 线程上就是整窗冻结，
     /// 所以先给纯文本，算好了再让视图重画一次。
     let private enqueue (backend: IRichBackend) (key: struct (string * string)) =
-        let claimed = lock gate (fun () -> inFlight.Add key)
-        if claimed then
+        if queue.TryClaim key then
             let struct (canonical, code) = key
             Task.Run(fun () ->
                 let mutable ok = false
@@ -72,8 +54,7 @@ module Highlight =
                     cache.Set(key, compute backend canonical code)
                     ok <- true
                 finally
-                    lock gate (fun () -> inFlight.Remove key |> ignore)
-                if ok then notifyOnce ())
+                    if queue.Finished(key, ok) then scheduleNotify ())
             |> ignore
 
     /// 着色。`allowHighlight = false`（流式进行中）时直接给纯文本：

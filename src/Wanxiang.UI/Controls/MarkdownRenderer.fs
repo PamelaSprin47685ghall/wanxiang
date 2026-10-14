@@ -273,56 +273,23 @@ type MarkdownRenderer(
         Avalonia.Automation.AutomationProperties.SetHelpText(copyButton, codeCopyName)
         ToolTip.SetTip(copyButton, "复制代码")
 
-        let mutable copyTimer: DispatcherTimer option = None
-        let mutable fadeTimer: DispatcherTimer option = None
-        let stopFade () =
-            match fadeTimer with
-            | Some t ->
-                t.Stop()
-                fadeTimer <- None
-            | None -> ()
-        let stopTimer () =
-            match copyTimer with
-            | Some t ->
-                t.Stop()
-                copyTimer <- None
-            | None -> ()
-            stopFade ()
-        // 复制确认反馈：opacity 淡到 opacityCopyConfirmFade 再回 1.0，只改透明度、
-        // 不改尺寸（节奏 MotionLedger.copyConfirmationFade）；减弱动效时不做这段淡出。
-        let pulseCopyConfirmation () =
-            if not (MotionPolicy.isReduced ()) then
-                stopFade ()
-                copyButton.Opacity <- Tokens.opacityCopyConfirmFade
-                let fade = new DispatcherTimer(Interval = MotionLedger.copyConfirmationFade)
-                fade.Tick.Add(fun _ ->
-                    fade.Stop()
-                    if fadeTimer = Some fade then fadeTimer <- None
-                    copyButton.Opacity <- 1.0)
-                fadeTimer <- Some fade
-                fade.Start()
-
-        let restoreDefaultState () =
-            stopTimer ()
-            copyButton.Opacity <- 1.0
-            Ui.setIcon copyButton Icons.copy Tokens.codeMuted
-            ToolTip.SetTip(copyButton, "复制代码")
-            Avalonia.Automation.AutomationProperties.SetName(copyButton, codeCopyName)
-            Avalonia.Automation.AutomationProperties.SetHelpText(copyButton, codeCopyName)
+        let confirmCopy =
+            CopyFeedback.attach copyButton (fun visual ->
+                match visual with
+                | CopyVisual.Default ->
+                    Ui.setIcon copyButton Icons.copy Tokens.codeMuted
+                    ToolTip.SetTip(copyButton, "复制代码")
+                    Avalonia.Automation.AutomationProperties.SetName(copyButton, codeCopyName)
+                    Avalonia.Automation.AutomationProperties.SetHelpText(copyButton, codeCopyName)
+                | CopyVisual.Confirmed
+                | CopyVisual.Fading ->
+                    Ui.setIcon copyButton Icons.check Tokens.success
+                    ToolTip.SetTip(copyButton, "已复制")
+                    Avalonia.Automation.AutomationProperties.SetName(copyButton, "已复制"))
 
         let doCopy () =
             copyText code
-            stopTimer ()
-            pulseCopyConfirmation ()
-            Ui.setIcon copyButton Icons.check Tokens.success
-            ToolTip.SetTip(copyButton, "已复制")
-            Avalonia.Automation.AutomationProperties.SetName(copyButton, "已复制")
-            let timer = new DispatcherTimer(Interval = MotionLedger.copyConfirmationHold)
-            timer.Tick.Add(fun _ ->
-                if copyTimer = Some timer then
-                    restoreDefaultState ())
-            copyTimer <- Some timer
-            timer.Start()
+            confirmCopy ()
         // 确认淡出与基控件同一机制：往既有过渡集合追加 opacity 补间，不改几何。
         let fadeTransition = Avalonia.Animation.DoubleTransition()
         fadeTransition.Property <- Visual.OpacityProperty
@@ -332,9 +299,6 @@ type MarkdownRenderer(
         copyButton.Transitions.Add fadeTransition
 
         Ui.onClick copyButton doCopy
-
-        copyButton.DetachedFromVisualTree.Add(fun _ ->
-            restoreDefaultState ())
 
         // 长行原来只能横向滚动：一行长命令要么看不全，要么读一行拖一次。
         // 折行是逐块开关，初值取自 UI 偏好。
@@ -408,7 +372,7 @@ type MarkdownRenderer(
                 // 与段落同一节奏：只留底外边距一段 paragraphGap。
                 Margin = Thickness(0.0, 0.0, 0.0, ReadingRhythm.paragraphGap),
                 Child = stack)
-        root.DetachedFromVisualTree.Add(fun _ -> restoreDefaultState ())
+        // 离开可视树时复制按钮随之复位（CopyFeedback 挂在按钮自己的 DetachedFromVisualTree 上）。
         root
         :> Control
 
@@ -721,33 +685,27 @@ type MarkdownRenderer(
 /// 结果与 `MarkdownRenderer.RenderText` 同构：同一纵向面板、同一末块边距规则。
 type StreamingMarkdown(renderer: MarkdownRenderer) =
     let panel = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
-    /// 已挂的块与各自占用的控件（含原始外边距，末块的底边距会被临时清零）
-    let mounted = Collections.Generic.List<MdBlock * (Control * Thickness) list>()
-    let mutable lastRaw: string = null
+    /// 已挂的块与各自占用的控件（含原始外边距，末块的底边距会被临时清零）、上次原文归 BlockDiff。
+    let diff = BlockDiff<MdBlock, Control * Thickness>()
 
     member _.Panel: Control = panel :> Control
 
     /// 当前挂载的块数（测试用）
-    member _.BlockCount = mounted.Count
+    member _.BlockCount = diff.BlockCount
 
     member _.Update(raw: string) =
-        if not (Object.ReferenceEquals(raw, lastRaw) || raw = lastRaw) then
-            lastRaw <- raw
-            let blocks = Markdown.parse raw |> Array.ofList
-            let common = Markdown.commonPrefix (mounted |> Seq.map fst |> List.ofSeq) (List.ofArray blocks)
+        if diff.Accept raw then
+            let plan = diff.Diff(Markdown.parse raw)
             // 卸下第一个变化块之后的控件
-            let keepControls = mounted |> Seq.take common |> Seq.sumBy (fun (_, cs) -> List.length cs)
-            if panel.Children.Count > keepControls then
-                panel.Children.RemoveRange(keepControls, panel.Children.Count - keepControls)
-            mounted.RemoveRange(common, mounted.Count - common)
+            if panel.Children.Count > plan.KeepControls then
+                panel.Children.RemoveRange(plan.KeepControls, panel.Children.Count - plan.KeepControls)
             // 原末块的底边距恢复（它可能不再是末块）
-            if mounted.Count > 0 then
-                for control, margin in snd mounted[mounted.Count - 1] do
-                    control.Margin <- margin
-            for index in common .. blocks.Length - 1 do
-                let controls = renderer.RenderBlock blocks[index]
+            for control, margin in plan.Restore do
+                control.Margin <- margin
+            for block in plan.Render do
+                let controls = renderer.RenderBlock block
                 let withMargins = controls |> List.map (fun c -> c, c.Margin)
-                mounted.Add((blocks[index], withMargins))
+                diff.Mounted(block, withMargins)
                 for control in controls do
                     panel.Children.Add control
             if panel.Children.Count > 0 then

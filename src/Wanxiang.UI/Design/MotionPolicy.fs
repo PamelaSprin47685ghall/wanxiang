@@ -26,19 +26,7 @@ module MotionPolicy =
     /// Avalonia 未内置 cubic-bezier 四参构造，按 Easings.Easing 基类落一条同名曲线。
     type EaseOutCubicEasing() =
         inherit Avalonia.Animation.Easings.Easing()
-        override _.Ease(t: float) =
-            let p1 = 0.215
-            let p2 = 0.61
-            // 解出该三次贝塞尔在给定 t 处的显式近似：二分法求参数 u 使 x(u)=t，
-            // 再代入 y(u)。纯逻辑，无外部副作用。
-            let rec solveX lo hi =
-                let mid = (lo + hi) / 2.0
-                let x = 3.0 * p1 * mid * (1.0 - mid) * (1.0 - mid) + 3.0 * p2 * mid * mid * (1.0 - mid) + mid * mid * mid
-                if hi - lo < 1e-9 then mid
-                elif x < t then solveX mid hi
-                else solveX lo mid
-            let u = solveX 0.0 1.0
-            3.0 * (1.0 - p1) * u * (1.0 - u) * (1.0 - u) + 3.0 * p2 * u * u * (1.0 - u) + u * u * u
+        override _.Ease(t: float) = EaseOutCubic.ease t
 
     let easeOutCubic = EaseOutCubicEasing()
 

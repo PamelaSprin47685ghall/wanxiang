@@ -187,24 +187,11 @@ module Tokens =
     let private colorTransitionDuration () =
         if MotionPolicy.isReduced () then TimeSpan.Zero else MotionLedger.themeColorTransition
 
-    /// 单通道插值（纯逻辑）。t = 1 时四舍五入精确落在目标通道，收尾无偏差。
-    let private lerpChannel (from: byte) (target: byte) (t: float) =
-        let raw = Math.Round(float from + (float target - float from) * t) |> int
-        if raw < 0 then 0uy elif raw > 255 then 255uy else byte raw
-
-    let private lerpColor (from: Color) (target: Color) (t: float) : Color =
-        Color.FromArgb(
-            lerpChannel from.A target.A t,
-            lerpChannel from.R target.R t,
-            lerpChannel from.G target.G t,
-            lerpChannel from.B target.B t)
-
-    /// 每支画笔本段补间的起点色。apply 时从 brush.Color 现读：补间途中再切换时
-    /// 起点就是当前中间色，后来的切换因此接管前一段补间，两段不会叠加。
-    let mutable private transitionFrom = System.Collections.Generic.Dictionary<SolidColorBrush, Color>()
-    let mutable private transitionStarted = DateTime.UtcNow
-    /// 当前补间段的时长（ms）。接管时按它计算前段已滚到哪个逻辑进度。
-    let mutable private transitionSegmentMs = MotionLedger.themeColorTransition.TotalMilliseconds
+    /// 每支画笔本段补间的起点色、目标色、起始时刻与本段时长归 ThemeTween：补间途中再切换时
+    /// 起点是前一段的逻辑当前色，后来的切换因此接管前一段补间，两段不会叠加。
+    let private tween = ThemeTween<SolidColorBrush>()
+    let private toArgb (c: Color) : Argb = { A = c.A; R = c.R; G = c.G; B = c.B }
+    let private ofArgb (c: Argb) = Color.FromArgb(c.A, c.R, c.G, c.B)
 
     // ---- 帧调度 ----
     // 为什么不用 DispatcherTimer 驱动补间：本项目的无显示测试制度是
@@ -227,25 +214,14 @@ module Tokens =
             timer.Dispose()
         | None -> ()
 
-    /// 在 UI 线程上按墙钟推进一帧。t 由 `transitionStarted` 实时计算，
+    /// 在 UI 线程上按墙钟推进一帧。t 由 ThemeTween 按本段起点实时计算，
     /// 因此中途被接管时迟到的帧也只是按新起点画一帧，不会叠加两段补间。
     let private advanceFrame generation =
-        if transitionFrom.Count > 0 then
-            let duration = colorTransitionDuration ()
-            if duration.Ticks <= 0L then
-                // 运行中被降级：立即到位并收尾，避免除零。
-                for brush, pick in brushes do
-                    brush.Color <- pick palette
-                transitionFrom.Clear()
-                if generation = frameGeneration then stopFrames ()
-            else
-                let elapsed = (DateTime.UtcNow - transitionStarted).TotalMilliseconds
-                let t = min 1.0 (elapsed / transitionSegmentMs)
-                for brush, pick in brushes do
-                    brush.Color <- lerpColor transitionFrom[brush] (pick palette) t
-                if t >= 1.0 then
-                    transitionFrom.Clear()
-                    if generation = frameGeneration then stopFrames ()
+        // 运行中被降级（时长为零）时 ThemeTween 立即给出目标色并收尾，避免除零。
+        let frame = tween.Frame(DateTimeOffset.UtcNow, (colorTransitionDuration ()).TotalMilliseconds)
+        for brush, color in frame.Colors do
+            brush.Color <- ofArgb color
+        if frame.Finished && generation = frameGeneration then stopFrames ()
 
     let private startFrames () =
         frameGeneration <- frameGeneration + 1
@@ -274,40 +250,15 @@ module Tokens =
     let apply (next: ThemeMode) : unit =
         let sameMode = (mode = next)
         let duration = colorTransitionDuration ()
-        if sameMode || duration.Ticks <= 0L then
-            mode <- next
-            palette <- Palette.ofMode next
+        mode <- next
+        palette <- Palette.ofMode next
+        let plan = [ for brush, pick in brushes -> brush, toArgb brush.Color, toArgb (pick palette) ]
+        match tween.Apply(DateTimeOffset.UtcNow, sameMode, duration.TotalMilliseconds, plan) with
+        | ThemeStart.Snap ->
             stopFrames ()
-            transitionFrom.Clear()
             for brush, pick in brushes do
                 brush.Color <- pick palette
-        else
-            // 接管前一段未完成的补间：起点取前段的「逻辑当前色」——按前段已经历的
-            // 墙上时间把它的 from/target 滚到这一刻应处的位置，而不是读最后一次
-            // 落笔的物理画笔色。真实应用里帧一直在跑，两者本就一致；无 Pump 的
-            // 无显示测试环境里（两次 apply 之间没有 RunJobs），逻辑进度依然定义
-            // 良好，接管因此不丢进度、两段也不会叠加。
-            let rolloverT =
-                if transitionFrom.Count > 0 then
-                    let elapsed = (DateTime.UtcNow - transitionStarted).TotalMilliseconds
-                    min 1.0 (elapsed / transitionSegmentMs)
-                else
-                    0.0
-            let previousFrom = transitionFrom
-            let previousPalette = palette
-            mode <- next
-            palette <- Palette.ofMode next
-            transitionFrom <- System.Collections.Generic.Dictionary<SolidColorBrush, Color>()
-            for brush, pick in brushes do
-                let startColor =
-                    if previousFrom.Count > 0 then
-                        lerpColor previousFrom.[brush] (pick previousPalette) rolloverT
-                    else
-                        brush.Color
-                transitionFrom.Add(brush, startColor)
-            transitionStarted <- DateTime.UtcNow
-            transitionSegmentMs <- duration.TotalMilliseconds
-            startFrames ()
+        | ThemeStart.Tween -> startFrames ()
         Changed.Trigger next
 
     /// 立即把进行中的补间收尾到目标色并停帧（决策 430）。测试用它代替
@@ -316,7 +267,7 @@ module Tokens =
     let completeTransition () : unit =
         stopFrames ()
         frameGeneration <- frameGeneration + 1
-        transitionFrom.Clear()
+        tween.Complete() |> ignore
         for brush, pick in brushes do
             brush.Color <- pick palette
 

@@ -52,11 +52,11 @@ type ConversationExportDialog(
     // 进度文字节流：高频分页（ExportReading）到达时合并重排，窗口末尾再补一次当前状态；
     // 关键跳变与终态（阶段切换、完成、失败、取消、保存反馈）走急件通道，立即呈现。
     let throttleTimer = DispatcherTimer(Interval = MotionLedger.progressTextThrottle)
-    let mutable lastProgressRefresh = DateTimeOffset.MinValue
-    let mutable throttlePending = false
+    /// 上次刷新时刻与「尾巴已排上」归 ProgressThrottle；尾巴计时器在这里。
+    let mutable throttle = ProgressThrottle()
     do
         throttleTimer.Tick.Add(fun _ ->
-            if throttlePending then this.RenderProgress())
+            if throttle.TailFired() then this.RenderProgress())
     // 读取中点「取消导出」只中止本次读取并停在取消态：界面原地给出「重新导出」入口，
     // 用户不再必须关掉对话框重开；取消后同一按钮即「关闭」。Esc 走 OverlayHost 既有路径，始终关闭。
     let closeButton = Ui.button Ui.Ghost "取消导出" (fun () ->
@@ -70,9 +70,8 @@ type ConversationExportDialog(
     // 立即渲染一帧进度：记下刷新时刻，并取消尚未落地的节流尾巴。
     // 这一层只把 controller.Status 同步到控件，不做任何时间判断。
     member private this.RenderProgress() =
-        throttlePending <- false
         throttleTimer.Stop()
-        lastProgressRefresh <- DateTimeOffset.UtcNow
+        throttle.Rendered DateTimeOffset.UtcNow
         let phase =
             match controller.Status with
             | ExportReading(received, total) -> ExportPhase.Reading(received, total)
@@ -123,18 +122,13 @@ type ConversationExportDialog(
     // 补渲染一次（throttleTimer 尾巴），让最终计数也落地；非高频态（含全部终态）始终立即呈现。
     member private this.Refresh(?forceImmediate: bool) =
         let force = defaultArg forceImmediate false
-        let phase =
-            match controller.Status with
-            | ExportReading(received, total) -> ExportPhase.Reading(received, total)
-            | _ -> ExportPhase.Idle
-        let elapsedMs = (DateTimeOffset.UtcNow - lastProgressRefresh).TotalMilliseconds
-        match ExportView.refresh force phase elapsedMs MotionLedger.progressTextThrottle.TotalMilliseconds throttlePending with
-        | ExportRefresh.Now -> this.RenderProgress()
-        | ExportRefresh.Schedule delayMs ->
-            throttlePending <- true
+        let highFrequency = match controller.Status with ExportReading _ -> true | _ -> false
+        match throttle.Request(DateTimeOffset.UtcNow, force, highFrequency) with
+        | ProgressRefresh.Now -> this.RenderProgress()
+        | ProgressRefresh.Schedule delayMs ->
             throttleTimer.Interval <- TimeSpan.FromMilliseconds delayMs
             throttleTimer.Start()
-        | ExportRefresh.Skip -> ()
+        | ProgressRefresh.Skip -> ()
 
     member private this.Dispatch(query: ConversationExportQuery) =
         let sending = sendQuery query
@@ -224,7 +218,7 @@ type ConversationExportDialog(
             active <- false
             timer.Stop()
             throttleTimer.Stop()
-            throttlePending <- false
+            throttle <- ProgressThrottle()
             controller.Cancel()
             output <- None
             outputJson <- None))
