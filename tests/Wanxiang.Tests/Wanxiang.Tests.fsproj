@@ -20,7 +20,6 @@
     <Compile Include="OnboardingConfigTests.fs" />
     <Compile Include="OnboardingUiTests.fs" />
     <Compile Include="PolishTests.fs" />
-    <Compile Include="MathRenderTests.fs" />
     <Compile Include="NativeTransportTests.fs" />
     <Compile Include="AgentCoverageTests.fs" />
     <Compile Include="ScrollLayoutTests.fs" />
@@ -29,7 +28,6 @@
     <Compile Include="EndpointScrollTests.fs" />
     <Compile Include="CloseWindowTests.fs" />
     <Compile Include="ConversationJourneyTests.fs" />
-    <Compile Include="MathBaselineTests.fs" />
     <Compile Include="RenderCostTests.fs" />
     <Compile Include="IncrementalRenderTests.fs" />
     <Compile Include="PathologicalRenderTests.fs" />

@@ -52,14 +52,6 @@ module PwaToolApprovalUiTests =
         (Assert.IsAssignableFrom<IInvokeProvider> peer).Invoke()
         Dispatcher.UIThread.RunJobs()
 
-    let private request () : ApprovalRequestView =
-        { approvalId = Guid.NewGuid()
-          conversationId = Guid.NewGuid()
-          callId = "call-1"; toolName = "builtin_file_read"
-          summary = "读取文件 /home/a/very/long/path/that/should/wrap/on/a/phone/screen/notes-and-more-notes.txt"
-          argumentsJson = """{"path":"/home/a/very/long/path/that/should/wrap/on/a/phone/screen/notes-and-more-notes.txt"}"""
-          policy = "first" }
-
     let private layoutAt (width: float) (control: Control) =
         let host = Border(Width = width, Child = control)
         host.Measure(Size(width, infinity))
@@ -67,56 +59,9 @@ module PwaToolApprovalUiTests =
         Dispatcher.UIThread.RunJobs()
 
     [<Fact>]
-    let ``审批卡：批准/拒绝/查看参数的命中高度不低于触控下限`` () =
-        Headless.run (fun () ->
-            let card = ToolApprovalCard.build (request ()) ignore
-            layoutAt 360.0 card
-            for id in [ "tool-approval-approve"; "tool-approval-deny"; "tool-approval-args-toggle" ] do
-                let c = byId card id
-                Assert.True(c.MinHeight >= Spacing.Hit.touch, id)
-                Assert.True(c.Bounds.Height >= Spacing.Hit.touch, sprintf "%s height %f" id c.Bounds.Height))
-
-    [<Fact>]
-    let ``审批卡：手机宽度下摘要换行而不溢出，两个按钮等宽且都在卡内`` () =
-        Headless.run (fun () ->
-            let width = 320.0
-            let card = ToolApprovalCard.build (request ()) ignore
-            layoutAt width card
-            let summary = byId card "tool-approval-summary"
-            Assert.True(summary.Bounds.Width <= width, sprintf "summary width %f" summary.Bounds.Width)
-            Assert.True(summary.Bounds.Height > 30.0, "长摘要应换成多行")
-            let approve = byId card "tool-approval-approve"
-            let deny = byId card "tool-approval-deny"
-            Assert.Equal(approve.Bounds.Width, deny.Bounds.Width, 1)
-            let right (c: Control) = (c.TranslatePoint(Point(c.Bounds.Width, 0.0), card)).Value.X
-            Assert.True(right deny <= width + 0.5, sprintf "deny right %f" (right deny)))
-
-    [<Fact>]
-    let ``审批卡：触屏没有悬停提示，点「查看参数」展开完整参数，再点收起`` () =
-        Headless.run (fun () ->
-            let card = ToolApprovalCard.build (request ()) ignore
-            let args = byId card "tool-approval-args" :?> TextBlock
-            let toggle = byId card "tool-approval-args-toggle"
-            // 参数只出现一处：收起时不显示预览，展开才显示全文
-            Assert.False args.IsVisible
-            Assert.Equal("查看参数", AutomationProperties.GetName toggle)
-            invoke toggle
-            Assert.True args.IsVisible
-            Assert.Equal(Media.TextWrapping.Wrap, args.TextWrapping)
-            Assert.Equal("收起参数", AutomationProperties.GetName toggle)
-            invoke toggle
-            Assert.False args.IsVisible)
-
-    [<Fact>]
-    let ``审批卡：没有参数时不显示「查看参数」`` () =
-        Headless.run (fun () ->
-            let card = ToolApprovalCard.build { request () with argumentsJson = "{}" } ignore
-            Assert.False((byId card "tool-approval-args-toggle").IsVisible))
-
-    [<Fact>]
     let ``审批面板：放在输入框正上方的附属位，与输入框同列同宽，不浮层遮挡消息`` () =
         Headless.run (fun () ->
-            let panel = ToolApprovalPanel(fun _ _ -> ())
+            let panel = Wanxiang2.ApprovalDesk.ApprovalDesk(SharedTheme.manager, (OverlayHost(Grid())).Desk, ignore).View
             Assert.Equal(HorizontalAlignment.Stretch, panel.HorizontalAlignment)
             // 宽度由宿主列决定，面板自己不另设上限（此前 720 与输入框 748 错位）
             Assert.True(Double.IsPositiveInfinity panel.MaxWidth)

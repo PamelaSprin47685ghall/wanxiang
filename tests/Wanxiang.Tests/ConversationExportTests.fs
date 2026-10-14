@@ -130,7 +130,7 @@ let ``export footer arrows move focus between the three buttons`` width =
     let overlay = OverlayHost root
     let window = Window(Content = root, Width = width, Height = 600.0)
     let requested = ResizeArray<ConversationExportQuery>()
-    let dialog = ConversationExportDialog(overlay, id, "完整导出", (fun query -> requested.Add query; Task.FromResult true), fun () -> window :> TopLevel)
+    let dialog = Wanxiang2.TransferDesk.ExportDesk(SharedTheme.manager, overlay.Desk, id, "完整导出", (fun query -> requested.Add query; Task.FromResult true), fun () -> window :> TopLevel)
     window.Show()
     try
         dialog.Show()
@@ -198,7 +198,7 @@ let ``export ready state skips the hidden retry slot for arrow navigation`` () =
     let requested = ResizeArray<ConversationExportQuery>()
     let proj, id = fixture 5
     let dialog =
-        ConversationExportDialog(overlay, id, "就绪态方向键", (fun query -> requested.Add query; Task.FromResult true), fun () -> window :> TopLevel)
+        Wanxiang2.TransferDesk.ExportDesk(SharedTheme.manager, overlay.Desk, id, "就绪态方向键", (fun query -> requested.Add query; Task.FromResult true), fun () -> window :> TopLevel)
     window.Show()
     try
         dialog.Show()
@@ -255,7 +255,7 @@ let ``export save action appears only after the last page and fits the window`` 
     let overlay = OverlayHost root
     let window = Window(Content = root, Width = width, Height = 600.0)
     let requested = ResizeArray<ConversationExportQuery>()
-    let dialog = ConversationExportDialog(overlay, id, "完整导出", (fun query -> requested.Add query; Task.FromResult true), fun () -> window :> TopLevel)
+    let dialog = Wanxiang2.TransferDesk.ExportDesk(SharedTheme.manager, overlay.Desk, id, "完整导出", (fun query -> requested.Add query; Task.FromResult true), fun () -> window :> TopLevel)
     window.Show()
     try
         dialog.Show()
@@ -304,99 +304,7 @@ let ``reconnecting the same instance keeps export recovery but changing instance
     finally overlay.CloseDialog()
     )
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``cancel stays in the dialog and offers the retry entry`` () =
-    Headless.run (fun () ->
-    let root = Grid()
-    let overlay = OverlayHost root
-    let window = Window(Content = root, Width = 480.0, Height = 600.0)
-    let dialog =
-        ConversationExportDialog(
-            overlay,
-            Guid.NewGuid(),
-            "取消后可重试",
-            (fun _ -> Task.FromResult true),
-            fun () -> window :> TopLevel)
-    window.Show()
-    try
-        dialog.Show()
-        Dispatcher.UIThread.RunJobs()
-        let byName name =
-            root.GetVisualDescendants()
-            |> Seq.choose (function :? Control as control -> Some control | _ -> None)
-            |> Seq.find (fun control -> AutomationProperties.GetName control = name)
-        let invoke control =
-            ControlAutomationPeer.CreatePeerForElement control
-            |> Assert.IsAssignableFrom<IInvokeProvider>
-            |> fun provider -> provider.Invoke()
-            Dispatcher.UIThread.RunJobs()
-
-        // 读取中点「取消导出」：对话框保持打开，原地进入取消态。
-        invoke (byName "取消导出")
-        let cancelledText =
-            root.GetVisualDescendants()
-            |> Seq.choose (function :? TextBlock as block -> Some block | _ -> None)
-            |> Seq.tryFind (fun block -> block.Text = "导出已取消。")
-        Assert.True(cancelledText.IsSome, "取消后对话框必须原地呈现取消态，而不是直接关掉。")
-
-        // 取消态提供重试入口：重新导出按钮可见。
-        let retry = byName "重新导出"
-        Assert.True retry.IsVisible
-
-        // 重新导出回到读取态：进度条回来，重试入口收起。
-        invoke retry
-        let bars =
-            root.GetVisualDescendants()
-            |> Seq.choose (function :? ProgressBar as bar -> Some bar | _ -> None)
-            |> Seq.toList
-        Assert.Equal(1, List.length bars)
-        Assert.True(List.forall (fun (bar: ProgressBar) -> bar.IsVisible) bars)
-    finally
-        overlay.CloseDialog()
-        window.Close()
-    )
-
 // 保存键被禁用/藏掉时，Avalonia 把焦点直接清成 null（不自动迁到相邻键，
 // 探针实测 focused=<null>）：键盘用户刚按完保存就失焦，随后 Tab/Esc 无处可去。
 // 与方向键「落点必须同时可用」同一条纪律（Show 内 rowButtons 注释）：宿主不可用
 // 时把焦点交回始终可用的关闭键。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``export dialog returns focus to close when the save slot becomes unusable`` () =
-    Headless.run (fun () ->
-    let root = Grid()
-    let overlay = OverlayHost root
-    let window = Window(Content = root, Width = 480.0, Height = 600.0)
-    let requested = ResizeArray<ConversationExportQuery>()
-    let proj, id = fixture 5
-    let dialog =
-        ConversationExportDialog(overlay, id, "禁用态焦点", (fun query -> requested.Add query; Task.FromResult true), fun () -> window :> TopLevel)
-    window.Show()
-    try
-        dialog.Show()
-        Dispatcher.UIThread.RunJobs()
-        let mutable pages = 0
-        while requested.Count > pages && pages < 64 do
-            dialog.Handle(page proj requested[pages])
-            pages <- pages + 1
-            Dispatcher.UIThread.RunJobs()
-        let find name =
-            root.GetVisualDescendants()
-            |> Seq.choose (function :? Control as c -> Some c | _ -> None)
-            |> Seq.find (fun c -> AutomationProperties.GetName c = name)
-        let close = find "关闭"
-        let save = find "保存 Markdown"
-        save.Focus() |> ignore
-        Dispatcher.UIThread.RunJobs()
-        Assert.True(save.IsFocused, "前置条件：焦点在保存键上")
-        // 进入保存中：保存键随之禁用，焦点须交还关闭。
-        typeof<ConversationExportDialog>.GetField("saving", flags).SetValue(dialog, true)
-        typeof<ConversationExportDialog>.GetMethod("Refresh", flags).Invoke(dialog, [| box (Some true) |]) |> ignore
-        Dispatcher.UIThread.RunJobs()
-        Assert.False(save.IsEnabled, "前置条件：保存中保存键禁用")
-        Assert.True(close.IsFocused, "保存键不可用时焦点必须回到始终可用的关闭键")
-    finally
-        overlay.CloseDialog()
-        window.Close()
-    )

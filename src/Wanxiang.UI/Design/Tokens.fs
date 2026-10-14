@@ -196,12 +196,11 @@ module Tokens =
     ///
     /// 正文用**比例宽度**的 Sarasa Gothic SC。此前用的是等宽的 Sarasa Term SC，
     /// 于是中文段落里的拉丁词全部被拉成等宽，观感像日志而非文章。
-    let fontFamily = FontFamily("avares://Wanxiang.UI/Assets/Fonts/#Sarasa Gothic SC")
+    let fontFamily = SharedTheme.manager.FontFamily.Value
 
     /// 代码与等宽场景。等宽子集只含拉丁与符号，因此把正文字体列为回落，
     /// 否则代码或工具参数里出现中文会渲染成豆腐块。
-    let monoFontFamily =
-        FontFamily("avares://Wanxiang.UI/Assets/Fonts/#Sarasa Term SC, Sarasa Gothic SC")
+    let monoFontFamily = SharedTheme.manager.MonoFontFamily.Value
 
     let thickness (all: float) = Thickness all
     let corner (all: float) = CornerRadius all

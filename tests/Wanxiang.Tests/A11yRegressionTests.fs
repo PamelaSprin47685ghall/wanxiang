@@ -245,12 +245,6 @@ let ``顶栏模型芯片对读屏是按钮并说明生效时机`` () =
     Assert.Contains("SetRole(headerModelChip, AutomationRole.Button)", src)
     Assert.Contains("SetHelpText(headerModelChip,", src)
 
-[<Fact>]
-let ``模型切换器写明键盘路径且空结果会播报`` () =
-    let src = read "src/Wanxiang.UI/Views/ModelSwitcherView.fs"
-    Assert.Contains("SetHelpText(search,", src)
-    Assert.Contains("SetLiveSetting(empty,", src)
-
 // r18 一致性（决策 350–354）：同一动作同一个名字，快捷键走 hint 列而不是塞进标签；
 // 附件上传完成不再 toast；顶栏菜单不重复「回到最新」浮钮。
 [<Fact>]

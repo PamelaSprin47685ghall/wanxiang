@@ -130,7 +130,7 @@ type Bench(output: ITestOutputHelper) =
                   setPinnedMany = (fun _ _ -> ()); setArchivedMany = (fun _ _ -> ()); deleteMany = ignore
                   duplicateAsFork = ignore; exportConversation = ignore; openSettings = ignore; reconnect = ignore
                   toggleArchivedVisibility = ignore; closeNavigation = ignore }
-            let sidebar = Sidebar(OverlayHost(Grid()), actions, Brand.logo)
+            let sidebar = Sidebar(OverlayHost(Grid()), actions, SharedTheme.logo)
             sidebar.Build()
             let window = Window(Width = 300.0, Height = 900.0, Content = sidebar)
             window.Show()

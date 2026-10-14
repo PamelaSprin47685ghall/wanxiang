@@ -51,7 +51,7 @@ let private chat () =
           stopGeneration = ignore; requestOlderHistory = ignore; retryLast = ignore
           toggleSidebar = ignore; focusHome = ignore
           message = { copyText = ignore; regenerate = ignore; editAndFork = ignore
-                      deleteMessage = ignore; downloadAttachment = ignore; openLink = ignore } }, Brand.logo)
+                      deleteMessage = ignore; downloadAttachment = ignore; openLink = ignore } }, SharedTheme.logo)
     view.Build()
     view.SetConversationChrome true
     view.SetTitle("讨论一个问题", true)
@@ -84,50 +84,12 @@ let private applyTheme (window: Window) (light: bool) =
     window.RequestedThemeVariant <- (if light then ThemeVariant.Light else ThemeVariant.Dark)
     Dispatcher.UIThread.RunJobs()
 
-[<Trait("Category", "UI"); Theory; InlineData(false); InlineData(true)>]
-let ``starting and continuing share the same focused draft and attachment controls`` (lightTheme: bool) =
-    Headless.run (fun () ->
-        let initialTheme = Tokens.current ()
-        let chat = chat ()
-        chat.ShowEmpty(NoConversation, None)
-        let composer = composer ()
-        let surface = ConversationWorkspace(chat, composer)
-        let window = Window(Width = 1000.0, Height = 820.0, Content = surface)
-        applyTheme window lightTheme
-        window.Show()
-        try
-            surface.SetStarting true
-            composer.SetText "保留这段尚未发送的想法"
-            Dispatcher.UIThread.RunJobs()
-            let input = descendants composer |> Seq.pick (function :? TextBox as b when b.AcceptsReturn -> Some b | _ -> None)
-            let parent = composer.Parent
-            Assert.True(input.IsFocused)
-            let before = composer.TranslatePoint(Point(), surface).Value.Y
-            Assert.True(before < surface.Bounds.Height * 0.75, "起步输入应在画面中部，而非底边")
-            capture window "start-desktop" lightTheme
-            surface.SetStarting false
-            Dispatcher.UIThread.RunJobs()
-            Assert.Same(parent, composer.Parent)
-            Assert.True(input.IsFocused)
-            Assert.Equal("保留这段尚未发送的想法", composer.Text)
-            let after = composer.TranslatePoint(Point(), surface).Value.Y
-            Assert.True(after > before)
-            window.Height <- 460.0
-            surface.SetStarting true
-            Dispatcher.UIThread.RunJobs()
-            let at = composer.TranslatePoint(Point(), surface).Value
-            Assert.True(at.Y + composer.Bounds.Height <= surface.Bounds.Height + 1.0)
-            Assert.True(input.IsEffectivelyVisible)
-        finally
-            Tokens.apply initialTheme
-            window.Close())
-
 [<Trait("Category", "UI"); Fact>]
 let ``a normal conversation start is an unboxed prompt followed by the sole composer`` () =
     Headless.run (fun () ->
         let chat = chat ()
         let composer = composer ()
-        let surface = ConversationWorkspace(chat, composer)
+        let surface = Wanxiang2.ShellLayout.WorkspaceStack(chat, composer, Wanxiang2.ShellDesk.ShellLook.layoutOf SharedTheme.manager)
         let window = Window(Width = 900.0, Height = 780.0, Content = surface)
         window.Show()
         try
@@ -209,7 +171,7 @@ let ``conversation first desktop composition keeps history secondary to the curr
               reconnect = ignore
               toggleArchivedVisibility = ignore
               closeNavigation = ignore }
-        let sidebar = Sidebar(OverlayHost(Grid()), actions, Brand.logo)
+        let sidebar = Sidebar(OverlayHost(Grid()), actions, SharedTheme.logo)
         sidebar.Build()
         let now = DateTimeOffset.Now
         let summary title preview pinned : ConversationSummary =
@@ -228,7 +190,7 @@ let ``conversation first desktop composition keeps history secondary to the curr
         chat.SetTitle("新对话", false)
         chat.ShowEmpty(NoConversation, None)
         let composer = composer ()
-        let surface = ConversationWorkspace(chat, composer)
+        let surface = Wanxiang2.ShellLayout.WorkspaceStack(chat, composer, Wanxiang2.ShellDesk.ShellLook.layoutOf SharedTheme.manager)
         Grid.SetColumn(sidebar, 0)
         Grid.SetColumn(surface, 2)
         root.Children.Add sidebar

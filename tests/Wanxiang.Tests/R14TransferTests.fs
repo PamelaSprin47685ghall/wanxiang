@@ -114,68 +114,6 @@ let ``313 导入后对话可读：投影里有全部消息且不触发生成`` (
         Assert.Equal(2, (Projection.effectiveMessages after after.conversations[id]).Length)
     | o -> failwithf "%A" o
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``313 导入对话框：选文件前不能导入，预览通过后才发命令，失败可重试`` () =
-    Headless.run (fun () ->
-    let root = Grid()
-    let window = Window(Width = 900.0, Height = 700.0, Content = root)
-    window.Show()
-    let overlay = OverlayHost(root)
-    let submitted = ResizeArray<ImportPreview>()
-    let mutable finish: bool -> unit = ignore
-    let dialog = ConversationImportDialog(overlay, (fun () -> window :> TopLevel), fun p onDone -> submitted.Add p; finish <- onDone)
-    dialog.Show()
-    Dispatcher.UIThread.RunJobs()
-    Assert.True overlay.IsDialogOpen
-    Assert.False dialog.ImportButton.IsVisible
-    dialog.LoadText("bad.md", 10L, "# 不是 JSON")
-    Assert.Contains("不是有效的 JSON", dialog.StatusText)
-    Assert.False dialog.ImportButton.IsVisible
-    let text = exported 2
-    dialog.LoadText("旅行计划.json", int64 text.Length, text)
-    Assert.True dialog.ImportButton.IsVisible
-    Assert.Contains("2 条消息", dialog.StatusText)
-    Assert.Contains("旅行计划（导入）", dialog.DetailsText)
-    dialog.ImportButton.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = dialog.ImportButton))
-    Assert.Equal(1, submitted.Count)
-    finish false
-    Assert.True overlay.IsDialogOpen
-    Assert.Contains("没有完成", dialog.StatusText)
-    Assert.True dialog.ImportButton.IsEnabled
-    dialog.ImportButton.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = dialog.ImportButton))
-    finish true
-    Assert.False overlay.IsDialogOpen
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``312 导出对话框同一次读取备好 Markdown 和 JSON，并显示隐私说明`` () =
-    Headless.run (fun () ->
-    let proj, id = fixture 3
-    let root = Grid()
-    let window = Window(Width = 900.0, Height = 700.0, Content = root)
-    window.Show()
-    let overlay = OverlayHost(root)
-    let requested = ResizeArray<ConversationExportQuery>()
-    let dialog = ConversationExportDialog(overlay, id, "旅行计划", (fun q -> requested.Add q; Task.FromResult true), (fun () -> window :> TopLevel), forkLineage (Guid.NewGuid()))
-    dialog.Show()
-    Dispatcher.UIThread.RunJobs()
-    let mutable i = 0
-    while i < requested.Count do
-        match ServerModel.exportPage proj requested[i] with
-        | Ok p -> dialog.Handle p
-        | Error e -> failwith e
-        i <- i + 1
-    Assert.Contains("「原对话」第 3 条消息的分叉", dialog.MarkdownText.Value)
-    Assert.Contains("\"kind\": \"fork\"", dialog.JsonText.Value)
-    let texts =
-        window.GetVisualDescendants() |> Seq.choose (function :? TextBlock as t -> Some t.Text | _ -> None) |> String.concat "\n"
-    Assert.Contains("不含 API 密钥", texts)
-    Assert.Contains("保存 JSON", texts)
-    overlay.CloseDialog()
-    )
-
 // ---------- 311 ----------
 
 [<Trait("Category", "UI")>]
@@ -286,7 +224,7 @@ let ``r14 截图：导出、导入、更早一页失败、撤销提示条`` () =
     // 1 导出对话框（分叉）
     let _, w1, o1 = shellWindow ()
     let requested = ResizeArray<ConversationExportQuery>()
-    let export = ConversationExportDialog(o1, id, "旅行计划", (fun q -> requested.Add q; Task.FromResult true), (fun () -> w1 :> TopLevel), forkLineage (Guid.NewGuid()))
+    let export = Wanxiang2.TransferDesk.ExportDesk(SharedTheme.manager, o1.Desk, id, "旅行计划", (fun q -> requested.Add q; Task.FromResult true), (fun () -> w1 :> TopLevel), forkLineage (Guid.NewGuid()))
     export.Show()
     Dispatcher.UIThread.RunJobs()
     let mutable i = 0
@@ -297,7 +235,7 @@ let ``r14 截图：导出、导入、更早一页失败、撤销提示条`` () =
     w1.Close()
     // 2 导入预览 / 3 导入错误
     let _, w2, o2 = shellWindow ()
-    let import = ConversationImportDialog(o2, (fun () -> w2 :> TopLevel), fun _ _ -> ())
+    let import = Wanxiang2.TransferDesk.ImportDesk(SharedTheme.manager, o2.Desk, (fun () -> w2 :> TopLevel), fun _ _ -> ())
     import.Show()
     Dispatcher.UIThread.RunJobs()
     capture w2 "02-import-dialog-before-pick"

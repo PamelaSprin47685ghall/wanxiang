@@ -59,7 +59,7 @@ module ConversationJourneyTests =
                   deleteMessage = ignore
                   downloadAttachment = ignore
                   openLink = ignore } }
-        let chat = ChatView(actions, Brand.logo)
+        let chat = ChatView(actions, SharedTheme.logo)
         chat.Build()
         chat
 

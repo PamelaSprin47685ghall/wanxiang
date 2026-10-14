@@ -133,7 +133,7 @@ let private presetChips (root: Avalonia.Visual) =
 [<Fact>]
 let ``empty state shows preset chips only when presets exist`` () =
     Headless.run (fun () ->
-    let chat = ChatView(chatActions, Brand.logo)
+    let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
     let window = Window(Content = chat, Width = 900.0, Height = 700.0)
     window.Show()

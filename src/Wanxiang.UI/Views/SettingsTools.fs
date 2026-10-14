@@ -432,7 +432,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         if List.isEmpty next.tools then
             builtinPanel.Children.Add(
                 Ui.emptyState
-                    (Brand.logo Tokens.logoEmpty)
+                    (SharedTheme.logo Tokens.logoEmpty)
                     None
                     "当前没有可用工具。内置文件工具需要主机配置沙箱根目录后才会出现。"
                     None
@@ -443,7 +443,7 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         if List.isEmpty next.mcpServers then
             mcpPanel.Children.Add(
                 Ui.emptyState
-                    (Brand.logo Tokens.logoEmpty)
+                    (SharedTheme.logo Tokens.logoEmpty)
                     None
                     "还没有 MCP 服务。添加后它提供的工具会自动出现在上面的清单里。"
                     None

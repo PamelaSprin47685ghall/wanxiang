@@ -1547,13 +1547,13 @@ module MessageCard =
 
     /// 决策 292：流式卡的正文改走 `StreamingMarkdown`，返回值的第二项是原位更新正文的入口；
     /// 非流式或没有 Markdown 正文时为 None。
-    let renderWithStream (message: MessageView) (ctx: MessageContext) (actions: MessageActions) (index: int option) : Control * StreamingMarkdown option =
+    let renderWithStream (message: MessageView) (ctx: MessageContext) (actions: MessageActions) (index: int option) : Control * Wanxiang2.MarkdownView.MarkdownStream option =
         // 剪贴板入口的运行时绑定（ChatView 直接调用的 errorCard 未显式注入 copyText）：
         // 这里写入的仍是 AppShell 持有的同一函数，不是第二真源。
         copyTextSink <- Some actions.copyText
-        let renderer = MarkdownRenderer(ctx.fontSize, actions.copyText, actions.openLink, not ctx.streaming)
+        let renderer = Reading.view ctx.fontSize actions.copyText actions.openLink (not ctx.streaming)
         let body = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)
-        let mutable stream: StreamingMarkdown option = None
+        let mutable stream: Wanxiang2.MarkdownView.MarkdownStream option = None
 
         if not (String.IsNullOrWhiteSpace message.reasoning) then
             let duration = ctx.usage |> Option.bind (fun u -> u.durationMs)
@@ -1579,7 +1579,7 @@ module MessageCard =
                 let host, _ = detailViewport LayoutPolicy.expandedLongMessageMaxHeight (text :> Control) true
                 body.Children.Add host
             elif ctx.streaming then
-                let live = StreamingMarkdown(renderer)
+                let live = Wanxiang2.MarkdownView.MarkdownStream(renderer)
                 live.Update message.text
                 stream <- Some live
                 body.Children.Add live.Panel

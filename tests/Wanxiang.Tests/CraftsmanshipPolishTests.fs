@@ -191,7 +191,7 @@ let ``ChatView skeleton loading transitions toggle skeletonPanel and messagePane
               downloadAttachment = ignore
               openLink = ignore } }
 
-    let chat = ChatView(chatActions, Brand.logo)
+    let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
 
     // Initially before skeleton loading: messagePanel is visible, skeleton is not
@@ -399,7 +399,7 @@ let ``ChatView empty state renders balanced optical layout and accessible primar
               downloadAttachment = ignore
               openLink = ignore } }
 
-    let chat = ChatView(chatActions, Brand.logo)
+    let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
     let mutable clicked = false
     chat.ShowEmpty(EmptyConversation, Some("开始对话", fun () -> clicked <- true))
@@ -442,51 +442,6 @@ let rec private descendants (control: Control) =
         | _ -> ()
     }
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``MarkdownRenderer wide table (>4 columns) wraps in horizontal scroll viewer`` () =
-    Headless.run (fun () ->
-    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
-
-    // 1. Wide table with 6 columns (> 4)
-    let wideDoc =
-        "| A | B | C | D | E | F |\n"
-        + "|---|---|---|---|---|---|\n"
-        + "| 1 | 2 | 3 | 4 | 5 | 6 |"
-
-    let wideControl = renderer.RenderText wideDoc
-    let wideScrollViewers =
-        descendants wideControl
-        |> Seq.choose (function :? ScrollViewer as s -> Some s | _ -> None)
-        |> Seq.toList
-
-    Assert.NotEmpty wideScrollViewers
-    let sv = wideScrollViewers.Head
-    Assert.Equal(ScrollBarVisibility.Auto, sv.HorizontalScrollBarVisibility)
-    Assert.Equal(ScrollBarVisibility.Disabled, sv.VerticalScrollBarVisibility)
-
-    // Grid inside wide table must enforce min column widths
-    let grid = Assert.IsAssignableFrom<Grid>(sv.Content)
-    Assert.Equal(6, grid.ColumnDefinitions.Count)
-    for col in grid.ColumnDefinitions do
-        Assert.Equal(120.0, col.MinWidth)
-
-    // 2. Narrow table with 2 columns (<= 4)
-    let narrowDoc =
-        "| Col1 | Col2 |\n"
-        + "|------|------|\n"
-        + "| val1 | val2 |"
-
-    let narrowControl = renderer.RenderText narrowDoc
-    let narrowScrollViewers =
-        descendants narrowControl
-        |> Seq.choose (function :? ScrollViewer as s -> Some s | _ -> None)
-        |> Seq.toList
-
-    // 2-column table renders directly without an inner horizontal ScrollViewer
-    Assert.Empty narrowScrollViewers
-    )
-
 // =========================================================================
 // 7. ChatView Floating Rhythm & Scroll-to-Bottom Unread Indicator
 // =========================================================================
@@ -512,7 +467,7 @@ let ``ChatView tracks unread messages when scrolled away from bottom`` () =
               downloadAttachment = ignore
               openLink = ignore } }
 
-    let chat = ChatView(chatActions, Brand.logo)
+    let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
 
     let window = Window(Width = 760.0, Height = 520.0, Content = chat)
@@ -603,7 +558,7 @@ let ``paging older history does not count as unread messages`` () =
               downloadAttachment = ignore
               openLink = ignore } }
 
-    let chat = ChatView(chatActions, Brand.logo)
+    let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
 
     let window = Window(Width = 760.0, Height = 520.0, Content = chat)
@@ -795,38 +750,6 @@ let ``Sidebar conversation row right click invokes context menu`` () =
         overlay.HandleEscape() |> ignore
         Dispatcher.UIThread.RunJobs()
         Assert.False overlay.IsPopupOpen
-    finally
-        window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``Markdown hyperlink responds to Enter and Space key to openLink`` () =
-    Headless.run (fun () ->
-    let mutable opened = None
-    let renderer = MarkdownRenderer(14.0, ignore, (fun url -> opened <- Some url), false)
-    let doc =
-        [ MdParagraph [ MdText("Click this ", false, false, false, false); MdLink("example link", "https://wanxiang.ai") ] ]
-    let rendered = renderer.Render doc
-    let window = Window(Width = 600.0, Height = 400.0, Content = rendered)
-    window.Show()
-    try
-        Dispatcher.UIThread.RunJobs()
-        let link =
-            descendants rendered
-            |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "example link")
-        Assert.True link.Focusable
-
-        // Press Enter
-        link.RaiseEvent(KeyEventArgs(Key = Key.Enter, RoutedEvent = InputElement.KeyDownEvent))
-        Dispatcher.UIThread.RunJobs()
-        Assert.Equal(Some "https://wanxiang.ai", opened)
-
-        opened <- None
-        // Press Space
-        link.RaiseEvent(KeyEventArgs(Key = Key.Space, RoutedEvent = InputElement.KeyDownEvent))
-        Dispatcher.UIThread.RunJobs()
-        Assert.Equal(Some "https://wanxiang.ai", opened)
     finally
         window.Close()
     )
@@ -1392,41 +1315,6 @@ let ``ChatView ShowEmpty configures action button accessibility properties`` () 
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``Markdown code block copy button confirms visually with check icon and tooltip`` () =
-    Headless.run (fun () ->
-    let mutable copiedText = ""
-    let renderer = MarkdownRenderer(14.0, (fun t -> copiedText <- t), ignore, false)
-    let markdown = "```fsharp\nlet x = 42\n```"
-    let controls = renderer.RenderText markdown
-    let window = Window(Width = 600.0, Height = 400.0, Content = controls)
-    window.Show()
-    try
-        Dispatcher.UIThread.RunJobs()
-        let copyButton =
-            descendants controls
-            |> Seq.find (fun c ->
-                match ToolTip.GetTip(c) with
-                | :? string as tip -> tip = "复制代码"
-                | _ -> false)
-        Assert.True copyButton.Focusable
-        Assert.Equal("复制代码", ToolTip.GetTip(copyButton) :?> string)
-
-        // Invoke copy
-        let invoke =
-            Avalonia.Automation.Peers.ControlAutomationPeer.CreatePeerForElement copyButton
-            |> Assert.IsAssignableFrom<Avalonia.Automation.Provider.IInvokeProvider>
-        invoke.Invoke()
-        Dispatcher.UIThread.RunJobs()
-
-        Assert.Equal("let x = 42", copiedText.Trim())
-        Assert.Equal("已复制", Avalonia.Automation.AutomationProperties.GetName(copyButton))
-        Assert.Equal("已复制", ToolTip.GetTip(copyButton) :?> string)
-    finally
-        window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``Sidebar conversation row activates on Enter and Space keys`` () =
     Headless.run (fun () ->
     let root = Grid()
@@ -1696,70 +1584,9 @@ let ``ChatView header title tooltip reflects full title and preserves character 
 // 超长代码块（>120 行）折叠后底部有「展开全部 / 收起」按钮：文案之外，
 // 展开态还应对无障碍树报成 expander 状态（SetExpanded），读屏据此播音
 // 「已展开 / 已折叠」，不靠按钮名猜。此前只改了名称，读屏听到的仍是错的状态。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``huge code block expand button reports its expanded state`` () =
-    Headless.run (fun () ->
-    // 本项目的 expander 语义经 AutomationProperties.SetExpanded 落到 ItemStatus。
-    let expandedState (control: Control) =
-        Avalonia.Automation.AutomationProperties.GetItemStatus control
-    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
-    let hugeDoc =
-        let lines =
-            [ for i in 1 .. 130 -> sprintf "let value%d = %d" i i ]
-            |> String.concat "\n"
-        sprintf "```fsharp\n%s\n```" lines
-    let control = renderer.RenderText hugeDoc
-    let expandButton =
-        descendants control
-        |> Seq.choose (function
-            | :? Border as border ->
-                match border.Child with
-                | :? TextBlock as text when text.Text = "展开全部" -> Some border
-                | _ -> None
-            | _ -> None)
-        |> Seq.head
-    // 初始折叠：expander 状态为 false。
-    Assert.Equal<string>("已折叠", expandedState expandButton)
-    expandButton.RaiseEvent(
-        KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
-    // 展开：名称与 expander 状态一起跟着翻。
-    Assert.Equal("收起", ((expandButton.Child :?> TextBlock).Text))
-    Assert.Equal<string>("已展开", expandedState expandButton)
-    expandButton.RaiseEvent(
-        KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
-    Assert.Equal("展开全部", ((expandButton.Child :?> TextBlock).Text))
-    Assert.Equal<string>("已折叠", expandedState expandButton)
-    )
-
 // kelivo markdown_with_highlight.dart:5877-5950 的任务勾号是 Flutter 原生
 // Checkbox，读屏直接播报勾选态；我们自绘 Border 只有视觉，补 CheckBox 语义
 // 与勾选名（视觉不变）。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``MarkdownRenderer task boxes expose checkbox automation state`` () =
-    Headless.run (fun () ->
-    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
-    let doc = "- [x] 已完成的一步\n- [ ] 还没做的一步"
-    let control = renderer.RenderText doc
-    let names =
-        descendants control
-        |> Seq.choose (fun c ->
-            let name = Avalonia.Automation.AutomationProperties.GetName c
-            if String.IsNullOrEmpty name then None else Some name)
-        |> Seq.toList
-    Assert.Contains("已完成任务", names)
-    Assert.Contains("未完成任务", names)
-    // 勾选框本身要声明为 CheckBox，否则读屏只会念正文。
-    let overrides =
-        descendants control
-        |> Seq.choose (fun c ->
-            let o = Avalonia.Automation.AutomationProperties.GetControlTypeOverride c
-            if o.HasValue then Some o.Value else None)
-        |> Seq.toList
-    Assert.Contains(Avalonia.Automation.Peers.AutomationControlType.CheckBox, overrides)
-    )
-
 /// 视觉走查 r6：手机宽度（390）时工具行曾拆成两行，发送键单独占一行，输入卡白白多出约 50px。
 /// 宽度够放下模型胶囊 + 附件/发送时，发送键必须和模型胶囊同一行。
 [<Trait("Category", "UI")>]

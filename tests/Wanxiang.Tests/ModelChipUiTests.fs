@@ -42,44 +42,6 @@ module ModelChipUiTests =
         |> List.ofSeq
 
     [<Fact>]
-    let ``switcher shows provider, default and current, plus the next reply note`` () =
-        Headless.run (fun () ->
-            let overlay = OverlayHost(Grid())
-            let root = ModelSwitcherView.build overlay options "切换本对话的模型" ignore
-            let names = rowNames root
-            Assert.Equal(3, names.Length)
-            Assert.Contains("gpt-4o，OpenAI，当前", names)
-            Assert.Contains("deepseek-chat，DeepSeek，默认", names)
-            let texts = descendants root |> Seq.choose (function :? TextBlock as t -> Some t.Text | _ -> None) |> List.ofSeq
-            Assert.Contains(ModelSwitcher.appliesNote, texts)
-            Assert.Contains("默认", texts))
-
-    [<Fact>]
-    let ``typing filters rows and enter picks the first hit`` () =
-        Headless.run (fun () ->
-            let overlay = OverlayHost(Grid())
-            let mutable picked: ModelOption option = None
-            let root = ModelSwitcherView.build overlay options "t" (fun o -> picked <- Some o)
-            let search = descendants root |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
-            search.Text <- "deep"
-            Dispatcher.UIThread.RunJobs()
-            Assert.Equal<string list>([ "deepseek-chat，DeepSeek，默认" ], rowNames root)
-            search.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = search))
-            Assert.Equal(Some "deepseek-chat", picked |> Option.map _.model))
-
-    [<Fact>]
-    let ``picking the current model is a no-op`` () =
-        Headless.run (fun () ->
-            let overlay = OverlayHost(Grid())
-            let mutable picked = 0
-            let root = ModelSwitcherView.build overlay options "t" (fun _ -> picked <- picked + 1)
-            let search = descendants root |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
-            search.Text <- "gpt"
-            Dispatcher.UIThread.RunJobs()
-            search.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = search))
-            Assert.Equal(0, picked))
-
-    [<Fact>]
     let ``rate limited error card shows a live countdown instead of a static hint`` () =
         Headless.run (fun () ->
             let err = { GenerationError.create ProviderRateLimited "「OpenAI」限流了这次请求。" with retryAfterSeconds = Some 90 }

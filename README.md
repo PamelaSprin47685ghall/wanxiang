@@ -409,11 +409,7 @@ node tools/e2e_smoke.js
 node tools/qa_shot.js --tag now --out .scratch/shots
 node tools/qa_shot.js --tag now-dark --theme dark --out .scratch/shots
 
-# 重建内嵌字体（正文比例字 + 代码等宽字，均已子集化）
-python3 tools/build_fonts.py
-
-# 重建 KaTeX 字体（脚本资源归 wanxiang2 的 libs/RichScripts）
-node tools/build_webassets.js
+# 内嵌字体（正文、等宽、KaTeX）归 wanxiang2 的 libs/ThemeFonts，由那边自己生成
 ```
 
 ### 界面约定
@@ -430,9 +426,9 @@ node tools/build_webassets.js
 界面思路受 [Kelivo](https://github.com/kelivo) 启发；万象的数据模型、协议与实现均为独立设计。
 
 内嵌字体为 [Sarasa Gothic](https://github.com/be5invis/Sarasa-Gothic)（OFL-1.1，见
-`src/Wanxiang.UI/Assets/Fonts/LICENSE-Sarasa.txt`）的子集，
+wanxiang2 `libs/ThemeFonts/Assets/Fonts/LICENSE-Sarasa.txt`）的子集，
 以及 [KaTeX](https://katex.org) 的数学字体（MIT，见
-`src/Wanxiang.UI/Assets/Fonts/LICENSE-KaTeX.txt`）。
+wanxiang2 `libs/ThemeFonts/Assets/Fonts/LICENSE-KaTeX.txt`）。
 
 代码着色用 [highlight.js](https://highlightjs.org)（BSD-3-Clause，见
 `src/Wanxiang.UI/Assets/Js/LICENSE-highlight.js.txt`），公式排版用

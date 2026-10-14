@@ -437,7 +437,7 @@ let ``the sole primary stop returns keyboard focus to input when a run finishes`
                   deleteMessage = ignore
                   downloadAttachment = ignore
                   openLink = ignore } },
-            Brand.logo)
+            SharedTheme.logo)
     chat.Build()
     let composer = Composer(
         { submit = (fun _ -> true); stopGeneration = ignore; pickAttachment = ignore

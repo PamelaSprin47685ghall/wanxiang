@@ -20,9 +20,6 @@
     <Compile Include="Model/ParityProbe.fs" />
     <Compile Include="Model/UiPrefs.fs" />
     <Compile Include="Rich/RichBackend.fs" />
-    <Compile Include="Rich/Highlight.fs" />
-    <Compile Include="Rich/MathLayout.fs" />
-    <Compile Include="Rich/MathVisual.fs" />
     <Compile Include="Model/ImageShrink.fs" />
     <Compile Include="Model/DesktopLinks.fs" />
     <Compile Include="Model/CommandPalette.fs" />
@@ -34,17 +31,11 @@
     <Compile Include="Controls/Primitives.fs" />
     <Compile Include="Controls/OverlayHost.fs" />
     <Compile Include="Controls/Menu.fs" />
-    <Compile Include="Controls/MarkdownRenderer.fs" />
+    <Compile Include="Rich/Reading.fs" />
     <Compile Include="CredentialStore.fs" />
-    <Compile Include="Views/Brand.fs" />
-    <Compile Include="Views/ExportDialog.fs" />
-    <Compile Include="Views/ImportDialog.fs" />
     <Compile Include="Views/MessageCard.fs" />
-    <Compile Include="Views/ToolApprovalCard.fs" />
     <Compile Include="Views/ChatView.fs" />
     <Compile Include="Views/Composer.fs" />
-    <Compile Include="Views/ModelSwitcherView.fs" />
-    <Compile Include="Views/CommandPaletteView.fs" />
     <Compile Include="Views/OnboardingCard.fs" />
     <Compile Include="Views/Sidebar.fs" />
     <Compile Include="Views/SettingsProviders.fs" />
@@ -53,22 +44,14 @@
     <Compile Include="Views/SettingsDevices.fs" />
     <Compile Include="Views/SettingsView.fs" />
     <Compile Include="Views/Dialogs.fs" />
-    <Compile Include="Views/MainLayout.fs" />
     <Compile Include="AppShell.fs" />
     <Compile Include="Views/MainWindow.fs" />
     <Compile Include="App.fs" />
   </ItemGroup>
 
-  <!-- 内嵌 Sarasa Term SC（OFL-1.1，见 LICENSE-Sarasa.txt）：browser-wasm 的 Skia 无法访问宿主系统字体，
-       PWA 中文显示依赖内嵌字体；桌面端同样生效，保证两端字形一致。 -->
+  <!-- 内嵌字体（正文、等宽、KaTeX）归 Wanxiang2.ThemeFonts（avares://ThemeFonts）；这里只留品牌图。 -->
   <ItemGroup>
-    <AvaloniaResource Include="Assets/Fonts/**" />
     <AvaloniaResource Include="Assets/logo.png" />
-  </ItemGroup>
-
-  <!-- KaTeX 字体（MIT）由 tools/build_webassets.js 装配，与正文字体同放 Assets/Fonts，
-       由上面那条 AvaloniaResource 一并打包。highlight.js 与 KaTeX 脚本归 Wanxiang2.RichScripts。 -->
-  <ItemGroup>
   </ItemGroup>
 
   <ItemGroup>
@@ -163,6 +146,16 @@
     <PackageReference Include="Wanxiang2.InputSense" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.FieldCheck" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.CopyButton" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ThemeFonts" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MathFigure" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.CodeTint" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MarkdownView" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ReadingLook" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ApprovalDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PaletteDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ModelSwitchDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.TransferDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ShellDesk" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProgressThrottle" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.HighlightQueue" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.DeferredReveal" Version="0.0.0-local" />

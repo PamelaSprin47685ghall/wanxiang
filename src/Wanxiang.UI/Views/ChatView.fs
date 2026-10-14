@@ -292,7 +292,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let reconciler = Reconciler<CardKey, Control>()
     /// 决策 292：流式卡原位更新。外形（除正文外的一切：思考、工具调用、附件、字号、审批）不变时，
     /// 同一张卡留在面板上，只把新文字交给它的 StreamingMarkdown；外形变了才换代（streamGeneration + 1）。
-    let mutable streamSlot: (obj * CardKey * StreamingMarkdown) option = None
+    let mutable streamSlot: (obj * CardKey * Wanxiang2.MarkdownView.MarkdownStream) option = None
     let mutable streamGeneration = 0
 
     let scrollToBottomButton = Ui.iconButtonAccent Icons.arrowDown "回到最新"

@@ -75,32 +75,6 @@ let ``craft metrics form a stable readable hierarchy`` () =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``markdown and primitive controls consume shared craft metrics`` () =
-    Headless.run (fun () ->
-    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
-    let rendered = renderer.RenderText "一段用于验证阅读节奏的正文。"
-    let button = Ui.button Ui.Secondary "保存" ignore
-    let fieldShell, field = Ui.textField "输入内容"
-    let root = StackPanel()
-    root.Children.Add rendered
-    root.Children.Add button
-    root.Children.Add fieldShell
-    let window = show root 620.0 260.0
-    try
-        let prose =
-            descendants rendered
-            |> Seq.choose (function :? SelectableTextBlock as text -> Some text | _ -> None)
-            |> Seq.head
-        Assert.Equal(ReadingRhythm.proseLineHeight Tokens.fontReading, prose.LineHeight, 3)
-        Assert.Equal(ControlMetrics.textButtonMinHeight, button.MinHeight, 3)
-        Assert.Equal(ControlMetrics.textFieldTextMinHeight, field.MinHeight, 3)
-        Assert.Equal(ControlMetrics.textFieldPaddingY, fieldShell.Padding.Top, 3)
-    finally
-        window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``reserved contextual actions never change their layout slot`` () =
     Headless.run (fun () ->
     let action = Ui.iconButton Icons.more "更多"
@@ -204,128 +178,6 @@ let ``chat reading column relies on avalonia stretch and max width across viewpo
     )
 
 // probe: collapse focus destination
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``main layout controller is the only column projector and survives every matrix boundary`` () =
-    Headless.run (fun () ->
-    let sidebarActions =
-        { newConversation = ignore
-          openConversation = ignore
-          renameConversation = ignore
-          deleteConversation = ignore
-          setPinned = fun _ _ -> ()
-          setArchived = fun _ _ -> ()
-          selectionAllPinned = fun _ -> false
-          setPinnedMany = fun _ _ -> ()
-          setArchivedMany = fun _ _ -> ()
-          deleteMany = fun _ -> ()
-          duplicateAsFork = ignore
-          exportConversation = ignore
-          openSettings = ignore
-          reconnect = ignore
-          toggleArchivedVisibility = ignore
-          closeNavigation = ignore }
-    let messageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
-    let chatActions =
-        { renameTitle = ignore
-          openSessionSettings = ignore
-          forkFromHere = ignore
-          stopGeneration = ignore
-          requestOlderHistory = ignore
-          retryLast = ignore
-          toggleSidebar = ignore
-          focusHome = ignore
-          message = messageActions }
-    let sidebar = Sidebar(OverlayHost(Grid()), sidebarActions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    let chat = ChatView(chatActions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
-    chat.Build()
-    let composer =
-        Composer(
-            { submit = fun _ -> true
-              stopGeneration = ignore
-              pickAttachment = ignore
-              removeAttachment = ignore
-              openModelPicker = ignore
-              dropFiles = ignore
-              pasteFromClipboard = fun () -> false })
-    composer.Build()
-    let chatColumn = DockPanel()
-    DockPanel.SetDock(composer, Dock.Bottom)
-    chatColumn.Children.Add composer
-    chatColumn.Children.Add chat
-    let splitter = GridSplitter()
-    let shell = Grid()
-    shell.ColumnDefinitions.Add(ColumnDefinition(MaxWidth = Tokens.sidebarMaxWidth))
-    shell.ColumnDefinitions.Add(ColumnDefinition())
-    shell.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
-    shell.Children.Add sidebar
-    shell.Children.Add splitter
-    shell.Children.Add chatColumn
-    let window = show shell 1000.0 640.0
-    try
-        let mutable savedWidth = Tokens.sidebarWidth
-        let controller = MainLayoutController(shell, sidebar, splitter, chatColumn, composer, chat, fun () -> savedWidth)
-        let compact =
-            NavigationController(false, LayoutPolicy.compactBreakpoint).ApplyViewport(719.0) |> snd
-            |> fun state -> { state with compactNavigationOpen = true }
-        let wide = NavigationController(false, LayoutPolicy.compactBreakpoint).ApplyViewport(721.0) |> snd
-        let collapsed = { wide with sidebarCollapsed = true }
-
-        // 宽视口：三列投影，splitter 只在未折叠时可见。
-        controller.Apply wide
-        Assert.False wide.compactMode
-        Assert.Equal(GridLength(float Tokens.sidebarWidth), shell.ColumnDefinitions[0].Width)
-        Assert.Equal(GridLength LayoutPolicy.sidebarSplitterWidth, shell.ColumnDefinitions[1].Width)
-        Assert.Equal(GridLength.Star, shell.ColumnDefinitions[2].Width)
-        Assert.True splitter.IsVisible
-        Assert.True sidebar.IsVisible
-        Assert.Equal(0, Grid.GetColumn sidebar)
-        Assert.Equal(1, Grid.GetColumn splitter)
-        Assert.Equal(2, Grid.GetColumn chatColumn)
-
-        // 折叠：第 0/1 列清零，splitter 隐藏，chatColumn 拿满宽度。
-        controller.Apply collapsed
-        Assert.Equal(GridLength 0.0, shell.ColumnDefinitions[0].Width)
-        Assert.Equal(GridLength 0.0, shell.ColumnDefinitions[1].Width)
-        Assert.False splitter.IsVisible
-        Assert.False sidebar.IsVisible
-
-        // 紧凑：全部折叠到第 0 列，抽屉 ZIndex 抬高，splitter 不可见。
-        controller.Apply compact
-        Assert.True compact.compactMode
-        Assert.Equal(GridLength.Star, shell.ColumnDefinitions[0].Width)
-        Assert.Equal(GridLength 0.0, shell.ColumnDefinitions[1].Width)
-        Assert.Equal(GridLength 0.0, shell.ColumnDefinitions[2].Width)
-        Assert.Equal(0, Grid.GetColumn chatColumn)
-        Assert.Equal(2, sidebar.ZIndex)
-        Assert.False splitter.IsVisible
-
-        // 拖拽落定：钳制在 Min/Max 之间，并写回第 0 列。
-        let noted = controller.NoteUserSidebarWidth(9999.0)
-        Assert.Equal(Tokens.sidebarMaxWidth, noted)
-        Assert.Equal(GridLength Tokens.sidebarMaxWidth, shell.ColumnDefinitions[0].Width)
-        let clampedLow = controller.NoteUserSidebarWidth(1.0)
-        Assert.Equal(Tokens.sidebarMinWidth, clampedLow)
-
-        // compact↔wide 往返后投影仍一致（矩阵 resize sweep 的核心序列）。
-        controller.Apply wide
-        Assert.Equal(GridLength(float savedWidth), shell.ColumnDefinitions[0].Width)
-        Assert.True splitter.IsVisible
-        controller.Apply compact
-        Assert.False splitter.IsVisible
-        controller.Apply wide
-        Assert.True splitter.IsVisible
-    finally
-        window.Close()
-    )
 
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -793,7 +645,7 @@ let ``large tool detail is bounded first and can explicitly expand fully`` () =
 [<Fact>]
 let ``long markdown link has one keyboard stop and remote image states its source`` () =
     Headless.run (fun () ->
-    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
+    let renderer = Reading.view Tokens.fontReading ignore ignore (false)
     let longLabel = String.replicate 12 "very-long-link-segment-"
     let rendered = renderer.RenderText(sprintf "[%s](https://example.com/path)\n\n![架构图](https://cdn.example.com/diagram.png)" longLabel)
     let window = show rendered 420.0 220.0
@@ -2401,7 +2253,7 @@ let ``form error summary clears as soon as the user starts fixing a field`` () =
 [<Fact>]
 let ``unloaded remote image placeholder has an automation name`` () =
     Headless.run (fun () ->
-    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
+    let renderer = Reading.view Tokens.fontReading ignore ignore (false)
     let control = renderer.RenderText("![架构图](https://cdn.example.com/diagram.png)")
     let window = show control 420.0 200.0
     try
@@ -2431,7 +2283,7 @@ let ``unloaded remote image placeholder has an automation name`` () =
 [<Fact>]
 let ``secondary link chunks stay out of the screen-reader tree`` () =
     Headless.run (fun () ->
-    let renderer = MarkdownRenderer(Tokens.fontReading, ignore, ignore, false)
+    let renderer = Reading.view Tokens.fontReading ignore ignore (false)
     let longLabel = String.replicate 12 "very-long-link-segment-"
     let control = renderer.RenderText(sprintf "[%s](https://example.com/path)" longLabel)
     let window = show control 420.0 200.0
@@ -2460,93 +2312,3 @@ let ``secondary link chunks stay out of the screen-reader tree`` () =
 // Avalonia 不会自动迁到相邻键，焦点若停在侧栏行/搜索/归档开关上直接被清 null
 // （对照组：不折叠时再 Apply 同一宽态，焦点寸步不移——见 Assert 前的 reapply），
 // 键盘用户按完快捷键就失焦。归宿与 compact 收起分支同一目标——输入区。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``collapsing the desktop sidebar returns focus to the composer`` () =
-    Headless.run (fun () ->
-    let sidebarActions =
-        { newConversation = ignore
-          openConversation = ignore
-          renameConversation = ignore
-          deleteConversation = ignore
-          setPinned = fun _ _ -> ()
-          setArchived = fun _ _ -> ()
-          selectionAllPinned = fun _ -> false
-          setPinnedMany = fun _ _ -> ()
-          setArchivedMany = fun _ _ -> ()
-          deleteMany = fun _ -> ()
-          duplicateAsFork = ignore
-          exportConversation = ignore
-          openSettings = ignore
-          reconnect = ignore
-          toggleArchivedVisibility = ignore
-          closeNavigation = ignore }
-    let messageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
-    let chatActions =
-        { renameTitle = ignore
-          openSessionSettings = ignore
-          forkFromHere = ignore
-          stopGeneration = ignore
-          requestOlderHistory = ignore
-          retryLast = ignore
-          toggleSidebar = ignore
-          focusHome = ignore
-          message = messageActions }
-    let sidebar = Sidebar(OverlayHost(Grid()), sidebarActions, fun _ -> Border() :> Control)
-    sidebar.Build()
-    let chat = ChatView(chatActions, fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
-    chat.Build()
-    let composer =
-        Composer(
-            { submit = fun _ -> true
-              stopGeneration = ignore
-              pickAttachment = ignore
-              removeAttachment = ignore
-              openModelPicker = ignore
-              dropFiles = ignore
-              pasteFromClipboard = fun () -> false })
-    composer.Build()
-    let chatColumn = DockPanel()
-    DockPanel.SetDock(composer, Dock.Bottom)
-    chatColumn.Children.Add composer
-    chatColumn.Children.Add chat
-    let splitter = GridSplitter()
-    let shell = Grid()
-    shell.ColumnDefinitions.Add(ColumnDefinition(MaxWidth = Tokens.sidebarMaxWidth))
-    shell.ColumnDefinitions.Add(ColumnDefinition())
-    shell.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
-    shell.Children.Add sidebar
-    shell.Children.Add splitter
-    shell.Children.Add chatColumn
-    let window = show shell 1000.0 640.0
-    try
-        let mutable savedWidth = Tokens.sidebarWidth
-        let controller = MainLayoutController(shell, sidebar, splitter, chatColumn, composer, chat, fun () -> savedWidth)
-        let wide = NavigationController(false, LayoutPolicy.compactBreakpoint).ApplyViewport(1200.0) |> snd
-        controller.Apply wide
-        // 焦点放进侧栏：ListBox 本体可聚焦（进入侧栏的 Tab 停靠点）。
-        let list = byAutomationName sidebar "对话列表" :?> ListBox
-        list.Focus() |> ignore
-        Dispatcher.UIThread.RunJobs()
-        Assert.True(list.IsFocused, "precondition: focus in sidebar")
-        // 对照组：不折叠地重新 Apply 同一宽态，焦点必须留在侧栏 ListBox 上，
-        // 证明下面的迁移不是 Avalonia 自带回退或夹具副作用。
-        controller.Apply wide
-        Dispatcher.UIThread.RunJobs()
-        Assert.True(list.IsFocused, "对照组：不折叠时焦点必须留在侧栏")
-        // 折叠：焦点必须迁到输入区（Composer 内部输入框）。
-        controller.Apply { wide with sidebarCollapsed = true }
-        Dispatcher.UIThread.RunJobs()
-        match window.FocusManager.GetFocusedElement() with
-        | :? Control as focused -> Assert.True((composer :> Avalonia.Visual).IsVisualAncestorOf focused, "折叠后焦点必须落在输入区内")
-        | _ -> Assert.True(false, "折叠后焦点不得为 null")
-    finally
-        window.Close()
-    )
-

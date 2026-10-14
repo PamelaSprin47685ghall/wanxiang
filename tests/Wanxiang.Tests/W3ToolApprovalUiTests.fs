@@ -39,30 +39,6 @@ module W3ToolApprovalUiTests =
 
     let private textOf (c: Control) = match c with :? TextBlock as t when not (isNull t.Text) -> t.Text | _ -> ""
 
-    let private request (conv: Guid) : ApprovalRequestView =
-        { approvalId = Guid.NewGuid()
-          conversationId = conv
-          callId = "call-1"; toolName = "builtin_file_read"
-          summary = "读取文件 /home/a/notes.txt"
-          argumentsJson = """{"path":"/home/a/notes.txt"}"""
-          policy = "always" }
-
-    [<Fact>]
-    let ``审批卡：展示人话摘要，批准与拒绝各只触发一次并立即置灰`` () =
-        Headless.run (fun () ->
-            for approve in [ true; false ] do
-                let decisions = ResizeArray<bool>()
-                let card = ToolApprovalCard.build (request (Guid.NewGuid())) decisions.Add
-                Assert.Equal("读取文件 /home/a/notes.txt", textOf (byId card "tool-approval-summary").Value)
-                let button = byId card (if approve then "tool-approval-approve" else "tool-approval-deny")
-                invoke button.Value
-                invoke button.Value // 重复点击不应再发
-                invoke (byId card (if approve then "tool-approval-deny" else "tool-approval-approve")).Value
-                Assert.Equal<bool list>([ approve ], List.ofSeq decisions)
-                let status = byId card "tool-approval-status"
-                Assert.True status.Value.IsVisible
-                Assert.Equal(ApprovalCardText.sentText approve, textOf status.Value))
-
     [<Fact>]
     let ``审批卡：说明批准的后果（首次询问 / 每次询问）`` () =
         Assert.Contains("不会再问", ApprovalCardText.policyNote "first")
@@ -70,42 +46,6 @@ module W3ToolApprovalUiTests =
         Assert.Contains("已经被批准", ApprovalCardText.alreadyHandledText "approved")
         Assert.Contains("已经被拒绝", ApprovalCardText.alreadyHandledText "denied")
         Assert.Contains("失效", ApprovalCardText.alreadyHandledText "expired")
-
-    [<Fact>]
-    let ``审批面板：只显示当前对话的卡片，已处理即移除，断线清空`` () =
-        Headless.run (fun () ->
-            let sent = ResizeArray<Guid * bool>()
-            let panel = ToolApprovalPanel(fun id ok -> sent.Add((id, ok)))
-            let a, b = Guid.NewGuid(), Guid.NewGuid()
-            let ra, rb = request a, request b
-            panel.SetConversation(Some a)
-            panel.Upsert ra
-            panel.Upsert rb
-            Assert.Equal(2, panel.Pending.Length)
-            Assert.Single(panel.Children) |> ignore
-            Assert.True panel.IsVisible
-            // 点卡片上的批准，决定带着正确的 approvalId 发出
-            invoke (byId (panel :> Control) "tool-approval-approve").Value
-            Assert.Equal<(Guid * bool) list>([ ra.approvalId, true ], List.ofSeq sent)
-            // 同一审批重复到达（重连补发）不产生第二张卡
-            panel.Upsert ra
-            Assert.Equal(2, panel.Pending.Length)
-            Assert.Single(panel.Children) |> ignore
-            panel.SetConversation(Some b)
-            let shownIds =
-                descendants (panel :> Control)
-                |> Seq.map (fun c -> match AutomationProperties.GetAutomationId c with null -> "" | id -> id)
-                |> Seq.filter (fun id -> id.StartsWith "tool-approval-" && id.Length > 40)
-                |> List.ofSeq
-            Assert.Equal<string list>([ sprintf "tool-approval-%O" rb.approvalId ], shownIds)
-            panel.Remove rb.approvalId
-            Assert.Empty(panel.Children)
-            Assert.False panel.IsVisible
-            panel.SetConversation(Some a)
-            Assert.Single(panel.Children) |> ignore
-            panel.Clear()
-            Assert.Empty(panel.Pending)
-            Assert.False panel.IsVisible)
 
     let private card (name: string) (args: string) =
         let msg: MessageView =

@@ -22,98 +22,12 @@ let private uniqueCode (tag: string) =
 
 let private waitForReady (timeoutMs: int) =
     use signal = new ManualResetEventSlim(false)
-    use subscription = Highlight.Ready.Subscribe(fun _ -> signal.Set())
+    use subscription = Reading.tint.Ready.Subscribe(fun _ -> signal.Set())
     signal.Wait timeoutMs
 
 let private kindsOf (tokens: CodeToken list) = tokens |> List.map (fun t -> t.kind)
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``桌面端先给纯文本，后台算完再换成着色版`` () =
-    Headless.run (fun () ->
-    let backend = CountingBackend()
-    RichBackend.install backend
-    let code = uniqueCode "delayed"
-
-    // 第一次问：不能占着 UI 线程去算，先拿纯文本
-    Assert.Equal<CodeTokenKind list>([ CodePlain ], kindsOf (Highlight.tokenize true "fsharp" code))
-    Assert.True(waitForReady 5000, "等不到后台着色完成")
-
-    let highlighted = Highlight.tokenize true "fsharp" code
-    Assert.Contains(CodeKeyword, kindsOf highlighted)
-    // 着色不能吃字
-    Assert.Equal(code, highlighted |> List.map (fun t -> t.text) |> String.concat "")
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``流式进行中一次也不调用着色`` () =
-    Headless.run (fun () ->
-    // 未写完的代码着不准，而每个 token 重算一遍会把机器点着
-    let backend = CountingBackend()
-    RichBackend.install backend
-    let code = uniqueCode "streaming"
-    let before = backend.Calls
-    for cut in 4 .. code.Length do
-        Highlight.tokenize false "fsharp" (code.Substring(0, cut)) |> ignore
-    Thread.Sleep 120
-    Assert.Equal(before, backend.Calls)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``同一段代码只排队一次`` () =
-    Headless.run (fun () ->
-    // 重绘很频繁；同一段被反复排队会灌满线程池
-    let backend = CountingBackend()
-    RichBackend.install backend
-    let code = uniqueCode "once"
-    for _ in 1 .. 20 do
-        Highlight.tokenize true "fsharp" code |> ignore
-    Assert.True(waitForReady 5000, "等不到后台着色完成")
-    Thread.Sleep 150
-    Assert.Equal(1, backend.Calls)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``认不出的语言不进后台队列`` () =
-    Headless.run (fun () ->
-    let backend = CountingBackend()
-    RichBackend.install backend
-    let before = backend.Calls
-    Assert.Equal<CodeTokenKind list>([ CodePlain ], kindsOf (Highlight.tokenize true "沒有這種語言" "任意内容"))
-    Thread.Sleep 120
-    Assert.Equal(before, backend.Calls)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``多段代码同时算完只通知一次`` () =
-    Headless.run (fun () ->
-    // 打开含二十个代码块的旧对话时，每次通知都会触发一次全量重画。
-    // 不合并的话屏幕要连抖几秒。
-    let backend = CountingBackend()
-    RichBackend.install backend
-    let mutable notifications = 0
-    use subscription = Highlight.Ready.Subscribe(fun _ -> Interlocked.Increment(&notifications) |> ignore)
-
-    let blocks = [ for i in 1 .. 20 -> uniqueCode ("batch" + string i) ]
-    for code in blocks do
-        Highlight.tokenize true "fsharp" code |> ignore
-
-    // 等到全部算完（按调用计数轮询，不靠墙钟），再过掉合并窗口
-    let deadline = DateTime.UtcNow.AddSeconds 30.0
-    while backend.Calls < 20 && DateTime.UtcNow < deadline do Thread.Sleep 10
-    Thread.Sleep 400
-    Assert.Equal(20, backend.Calls)
-    Assert.True(notifications <= 3, $"二十段代码触发了 {notifications} 次通知，没有合并")
-    // 而且结果都进了缓存
-    for code in blocks do
-        Assert.Contains(CodeKeyword, kindsOf (Highlight.tokenize true "fsharp" code))
-    )
-
-/// 决策 421 续：`Highlight.Ready` 是模块级事件、在后台线程上触发；外壳订阅它后用
+/// 决策 421 续：`Reading.tint.Ready` 是模块级事件、在后台线程上触发；外壳订阅它后用
 /// `Dispatcher.UIThread.Post` 切回 UI 线程。测试会话在每个 UI 测试结束时重置 UI 调度器，
 /// 若此后才触发，`Dispatcher.UIThread` 就在线程池线程上**新建**一个调度器并归它所有，
 /// 下一个 UI 测试的装配随即抛 VerifyAccess（导出页脚、分叉焦点两条偶发失败的根因）。
@@ -123,12 +37,12 @@ let ``多段代码同时算完只通知一次`` () =
 let ``a highlight finishing after the ui test ended does not create a dispatcher off the ui thread`` () =
     let code = uniqueCode "late"
     use signal = new ManualResetEventSlim(false)
-    use _subscription = Highlight.Ready.Subscribe(fun _ -> signal.Set())
+    use _subscription = Reading.tint.Ready.Subscribe(fun _ -> signal.Set())
     Headless.run (fun () ->
         let view = MainView()
         view.Build()
         RichBackend.install (CountingBackend())
-        Assert.Equal<CodeTokenKind list>([ CodePlain ], kindsOf (Highlight.tokenize true "fsharp" code)))
+        Assert.Equal<CodeTokenKind list>([ CodePlain ], kindsOf (Reading.tint.Tokenize(true, "fsharp", code))))
     // 会话已收尾；后台着色此刻才完成，在线程池线程上触发 Ready
     Assert.True(signal.Wait 5000, "等不到后台着色完成")
     Thread.Sleep 100

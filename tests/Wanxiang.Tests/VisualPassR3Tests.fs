@@ -43,19 +43,6 @@ let ``等审批的工具调用显示「等待批准」而不是「执行中」``
     Assert.Equal(ToolCallStatus.Running, MessageCard.resolveStatus (ctx true (Set.ofList [ "c1" ])) (call "c2"))
     Assert.Equal(ToolCallStatus.Unknown, MessageCard.resolveStatus (ctx false (Set.ofList [ "c1" ])) (call "c1")))
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``审批面板汇报待批准的 callId`` () =
-    Headless.run (fun () ->
-        let panel = ToolApprovalPanel(fun _ _ -> ())
-        let req =
-            { approvalId = Guid.NewGuid(); conversationId = Guid.NewGuid(); callId = "c9"
-              toolName = "t"; summary = "s"; argumentsJson = ""; policy = "first" }
-        panel.Upsert req
-        Assert.Equal<Set<string>>(Set.ofList [ "c9" ], panel.AwaitingCallIds)
-        panel.Remove req.approvalId
-        Assert.True panel.AwaitingCallIds.IsEmpty)
-
 [<Fact>]
 let ``触屏输入后按触屏对待，键盘输入后恢复`` () =
     SharedTheme.input.Reset()
@@ -70,7 +57,7 @@ let ``触屏输入后按触屏对待，键盘输入后恢复`` () =
 [<Fact>]
 let ``品牌标有图时不垫白底`` () =
     Headless.run (fun () ->
-        match Brand.logo 48.0 with
+        match SharedTheme.logo 48.0 with
         | :? Border as tile when not (isNull tile.Child) && (tile.Child :? Image) ->
             Assert.Equal(Brushes.Transparent :> IBrush, tile.Background)
         | _ -> ())

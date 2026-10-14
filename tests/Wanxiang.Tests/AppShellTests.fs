@@ -95,7 +95,7 @@ module AppShellTests =
             Assert.Equal(AlwaysLight, updated.theme)
             Assert.True(updated.codeWrap)
             Assert.True(updated.reduceMotion)
-            Assert.True(MarkdownRenderer.DefaultCodeWrap)
+            Assert.True(Reading.wrap.Wrapped)
         )
 
     [<Trait("Category", "UI")>]

@@ -12,3 +12,8 @@ module SharedTheme =
 
     /// 全应用唯一的输入方式记录（旧 InputModality）。
     let input = Wanxiang2.InputSense.InputSense()
+
+    let private brandMark = lazy (Wanxiang2.ShellDesk.ShellBrand(manager))
+
+    /// 品牌标（旧 Brand.logo）：Wanxiang2.ShellDesk.ShellBrand，图只找一次，随主题换色。
+    let logo (size: float) : Avalonia.Controls.Control = brandMark.Force().Logo size

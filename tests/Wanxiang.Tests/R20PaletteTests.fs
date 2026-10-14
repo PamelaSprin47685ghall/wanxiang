@@ -39,32 +39,6 @@ module R20PaletteTests =
 
     [<Trait("Category", "UI")>]
     [<Fact>]
-    let ``376 面板键盘：方向键选择、回车执行所选项、全文交接在末尾`` () =
-        Headless.run (fun () ->
-            let mutable ran: (string * string) option = None
-            let content, search = CommandPaletteView.build (fun () -> sample) (fun () -> []) (fun i q -> ran <- Some(i.id, q))
-            let window = Window(Width = 700.0, Height = 600.0, Content = content)
-            window.Show()
-            Dispatcher.UIThread.RunJobs()
-            search.Text <- "对话"
-            Dispatcher.UIThread.RunJobs()
-            let all = texts content
-            Assert.Contains("在全部消息中搜索「对话」", all)
-            let press k = search.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = k, KeyModifiers = KeyModifiers.None))
-            press Key.Down
-            press Key.Enter
-            Assert.True(ran.IsSome)
-            Assert.Equal("对话", snd ran.Value)
-            // 读屏：状态行是 polite 活动区域，并播报所选项位置。
-            let status = content.GetVisualDescendants() |> Seq.pick (function :? TextBlock as t when t.Name = "CommandPaletteStatus" -> Some t | _ -> None)
-            Assert.Equal(Avalonia.Automation.AutomationLiveSetting.Polite, Avalonia.Automation.AutomationProperties.GetLiveSetting status)
-            search.Text <- "zzzzq"
-            Dispatcher.UIThread.RunJobs()
-            Assert.Contains("没有匹配", status.Text)
-            window.Close())
-
-    [<Trait("Category", "UI")>]
-    [<Fact>]
     let ``374 抽屉里有命令面板入口，Ctrl+K 在主界面打开面板`` () =
         Headless.run (fun () ->
             MotionPolicy.setReduced true

@@ -45,7 +45,7 @@ module EndpointScrollTests =
                   deleteMessage = ignore
                   downloadAttachment = ignore
                   openLink = ignore } }
-        let chat = ChatView(chatActions, Brand.logo)
+        let chat = ChatView(chatActions, SharedTheme.logo)
         chat.Build()
         let window = Window(Width = 900.0, Height = 700.0, Content = chat)
         window.Show()

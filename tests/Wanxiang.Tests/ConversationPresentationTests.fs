@@ -145,21 +145,3 @@ let chatViewSkeletonOpacitiesAndEmptyStateGeometryTokenized () =
     Assert.Contains("Ui.emptyStateWith", text)
     // 「生成中」chip 收敛到 chip 密度唯一真源（此前是 12/3 的离群值）。
     Assert.Contains("ControlMetrics.chipPaddingX", text)
-
-[<Fact>]
-let markdownQuoteListAndTaskGeometryTokenizedButColumnLadderStaysContentPolicy () =
-    let text = source "src/Wanxiang.UI/Controls/MarkdownRenderer.fs"
-    Assert.Contains("ControlMetrics.quoteEdgeWidth", text)
-    Assert.DoesNotContain("Thickness(3.0, 0.0, 0.0, 0.0)", text)
-    Assert.Contains("Spacing.Tracking.emphasis", text)
-    Assert.True(occurrenceCount text "ControlMetrics.listMarkerDotSize" >= 2, "列表圆点直径应引 listMarkerDotSize")
-    Assert.Contains("ControlMetrics.listMarkerDotRadius", text)
-    Assert.True(occurrenceCount text "ControlMetrics.taskBoxSize" >= 2, "任务框尺寸应引 taskBoxSize")
-    Assert.Contains("ControlMetrics.taskBoxBorderWidth", text)
-    Assert.True(occurrenceCount text "ControlMetrics.taskCheckGlyphSize" >= 2, "勾形尺寸应引 taskCheckGlyphSize")
-    // 列宽阶梯是内容策略而非视觉令牌：保留 100/90/80/120 并就地声明，不强行令牌化。
-    Assert.Contains("不是视觉令牌", text)
-    Assert.Contains("| 1 | 2 -> 100.0", text)
-    Assert.Contains("| 3 -> 90.0", text)
-    Assert.Contains("| 4 -> 80.0", text)
-    Assert.Contains("| _ -> 120.0", text)

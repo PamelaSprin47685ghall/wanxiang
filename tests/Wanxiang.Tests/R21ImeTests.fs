@@ -28,26 +28,6 @@ module R21ImeTests =
 
     [<Trait("Category", "UI")>]
     [<Fact>]
-    let ``386 命令面板：组合中回车不执行、方向键不移动`` () =
-        Headless.run (fun () ->
-            let mutable ran = 0
-            let sample : PaletteItem list = []
-            let content, search = CommandPaletteView.build (fun () -> sample) (fun () -> []) (fun _ _ -> ran <- ran + 1)
-            let w = show content
-            search.Text <- "对话"
-            Dispatcher.UIThread.RunJobs()
-            search.Focus() |> ignore
-            (presenter search).PreeditText <- "dui"
-            press search Key.Down
-            press search Key.Enter
-            Assert.Equal(0, ran)
-            (presenter search).PreeditText <- null
-            press search Key.Enter
-            Assert.Equal(1, ran)
-            w.Close())
-
-    [<Trait("Category", "UI")>]
-    [<Fact>]
     let ``387 输入框：组合中回车不发送`` () =
         Headless.run (fun () ->
             let mutable sent = 0

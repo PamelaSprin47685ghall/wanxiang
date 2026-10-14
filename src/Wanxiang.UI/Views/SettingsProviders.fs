@@ -761,7 +761,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 // 空态统一为单行说明（logo + 一行 caption），与 SettingsTools 的两个空态同一节律：
                 // 不再单独给模型服务面板加标题，三个设置空态一致。
                 Ui.emptyState
-                    (Brand.logo Tokens.logoEmpty)
+                    (SharedTheme.logo Tokens.logoEmpty)
                     None
                     "添加一个模型服务后就能开始对话。预设已经填好端点和常见模型，你只需要粘贴密钥。"
                     None

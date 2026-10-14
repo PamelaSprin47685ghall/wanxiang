@@ -283,56 +283,6 @@ let ``rebuilt streaming caret continues the breath run instead of restarting at 
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``code block copy confirmation dips toward fade opacity and keeps the confirmed label`` () =
-    Headless.run (fun () ->
-    // 确定性说明：回到 1.0 的那一腿跑在 MotionLedger.copyConfirmationFade 的
-    // DispatcherTimer 上，本套件的无显示制度无法确定性地泵到它（同 Tokens.fs 帧调度注释），
-    // 因此这里锁两件确定的事：(1) 点下复制的瞬间 opacity 同步 dip 到中间档附近、
-    // 且始终不越过 [fade, 1.0] 闭区间；(2) 减弱动效时完全不做这段淡出，保持 1.0。
-    let runCopy () =
-        let mutable copiedText = ""
-        let renderer = MarkdownRenderer(14.0, (fun text -> copiedText <- text), ignore, false)
-        let controls = renderer.RenderText "```fsharp\nlet x = 42\n```"
-        let window = show controls 600.0 400.0
-        let button =
-            descendants controls
-            |> Seq.find (fun control ->
-                match ToolTip.GetTip control with
-                | :? string as tip -> tip = "复制代码"
-                | _ -> false)
-        let invoke =
-            ControlAutomationPeer.CreatePeerForElement button
-            |> Assert.IsAssignableFrom<IInvokeProvider>
-        invoke.Invoke ()
-        Dispatcher.UIThread.RunJobs ()
-        (window, button, copiedText)
-
-    let normalWindow, normalButton, copiedText = runCopy ()
-    try
-        Assert.Equal("let x = 42", copiedText.Trim())
-        Assert.Equal("已复制", AutomationProperties.GetName(normalButton))
-        Assert.Equal("已复制", ToolTip.GetTip(normalButton) :?> string)
-        Assert.True(normalButton.Opacity >= Tokens.opacityCopyConfirmFade - 0.001)
-        Assert.True(normalButton.Opacity <= 1.0 + 0.001)
-        Assert.Equal(150.0, MotionLedger.copyConfirmationFade.TotalMilliseconds, 3)
-    finally
-        normalWindow.Close()
-
-    MotionPolicy.setReduced true
-    try
-        let reducedWindow, reducedButton, reducedCopied = runCopy ()
-        try
-            Assert.Equal("let x = 42", reducedCopied.Trim())
-            Assert.Equal("已复制", AutomationProperties.GetName(reducedButton))
-            Assert.Equal(1.0, reducedButton.Opacity, 3)
-        finally
-            reducedWindow.Close()
-    finally
-        MotionPolicy.setReduced false
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``disclosure chevron and copy confirmation ride the shared easeOutCubic`` () =
     Headless.run (fun () ->
     // 全应用统一缓动：披露箭头旋转与复制确认淡出都接 MotionPolicy.easeOutCubic，
@@ -532,51 +482,4 @@ let ``disclosure headers share one bordered transition`` () =
           retryable = true
           retryAfterSeconds = Some 5 }
     withHeader "技术细节" (MessageCard.errorCard err (fun () -> ()) None)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``export progress bar is determinate under reduced motion`` () =
-    Headless.run (fun () ->
-    // 确定性说明：ConversationExportController.Start 必然把状态置为 ExportReading(0, None)，
-    // RenderProgress 因此必定经过 total.IsNone 分支。这里只锁 IsIndeterminate 这一个
-    // 确定不变量：注入的 sendQuery 返回 false 后异步 continuation 可能把状态推到
-    // ExportFailed（隐藏进度条），但那不改 IsIndeterminate，故不断言可见性/文字。
-
-    let renderProgress () =
-        // OverlayHost 是控制器而非控件：对话框挂在它持有的 root Grid 上，从 root 遍历。
-        let root = Grid()
-        let overlay = OverlayHost(root)
-        let dialog =
-            ConversationExportDialog(
-                overlay,
-                Guid.NewGuid(),
-                "测试对话",
-                (fun _ -> Task.FromResult false),
-                (fun () -> Unchecked.defaultof<TopLevel>))
-        let window = show root 480.0 360.0
-        try
-            dialog.Show()
-            Dispatcher.UIThread.RunJobs()
-            let bars =
-                descendants root
-                |> Seq.choose (function
-                    | :? ProgressBar as bar -> Some bar
-                    | _ -> None)
-                |> Seq.toList
-            Assert.Equal(1, List.length bars)
-            List.head bars
-        finally
-            overlay.CloseDialog()
-            window.Close()
-
-    let normalBar = renderProgress ()
-    Assert.True(normalBar.IsIndeterminate)
-
-    MotionPolicy.setReduced true
-    try
-        let reducedBar = renderProgress ()
-        Assert.False(reducedBar.IsIndeterminate)
-    finally
-        MotionPolicy.setReduced false
     )

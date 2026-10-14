@@ -41,7 +41,7 @@ type MainView() as this =
     let mutable prefs = UiPrefsFile.load ()
     // 启动就把折行默认值交给渲染器：它是渲染期读的静态值，不走构造参数
     do
-        MarkdownRenderer.DefaultCodeWrap <- prefs.codeWrap
+        Reading.wrap.Wrapped <- prefs.codeWrap
         MotionPolicy.setReduced prefs.reduceMotion
     let mutable catalog = Catalog.empty
     /// 还没有对话时用户在输入区芯片上挑的模型：草稿模型的暂存位。
@@ -121,8 +121,8 @@ type MainView() as this =
     let mutable listReceived = false
     let commandFeedback = CommandFeedbackTracker()
     let configFeedback = ConfigFeedbackTracker()
-    let mutable exportDialog: ConversationExportDialog option = None
-    let mutable importDialog: ConversationImportDialog option = None
+    let mutable exportDialog: Wanxiang2.TransferDesk.ExportDesk option = None
+    let mutable importDialog: Wanxiang2.TransferDesk.ImportDesk option = None
 
     let toast message tone = overlay.Toast(message, tone)
     let topLevel () = TopLevel.GetTopLevel this
@@ -164,18 +164,17 @@ type MainView() as this =
     /// 聊天主界面上的「连接一个模型」卡片（W1）：首次运行不进设置页。
     let mutable onboarding: OnboardingCard = Unchecked.defaultof<OnboardingCard>
     let mutable sidebarSplitter: GridSplitter = Unchecked.defaultof<GridSplitter>
-    let mutable mainLayout: MainLayoutController = Unchecked.defaultof<MainLayoutController>
-    let navigation = NavigationController(prefs.sidebarCollapsed, LayoutPolicy.compactBreakpoint)
+    let mutable shellDesk: Wanxiang2.ShellDesk.ShellDesk = Unchecked.defaultof<Wanxiang2.ShellDesk.ShellDesk>
     let workspace = Grid()
     let settingsHost = Grid(IsVisible = false)
     let mutable shellGrid: Grid = Unchecked.defaultof<Grid>
-    let mutable chatColumn: DockPanel = Unchecked.defaultof<DockPanel>
 
     let send (ev: WireEvent) = client.SendAsync ev |> ignore
 
     /// 工具审批卡（第 71 节）：对话内、浮在输入框上方；状态只在内存里，由主机事件驱动。
-    let approvalPanel =
-        ToolApprovalPanel(fun approvalId approved -> send (ToolApprovalDecision {| approvalId = approvalId; approved = approved |}))
+    let approvalPanel = Wanxiang2.ApprovalDesk.ApprovalDesk(SharedTheme.manager, overlay.Desk, send)
+    let palette = Wanxiang2.PaletteDesk.PaletteDesk(SharedTheme.manager, overlay.Desk, fun () -> SharedTheme.input.PrefersTouch)
+    let modelSwitch = Wanxiang2.ModelSwitchDesk.ModelSwitchDesk(SharedTheme.manager, overlay.Desk)
     /// 发出对话列表观察：请求一经发出就置侧栏加载中，
     /// 快照到达时由 Sidebar.SetConversations 解除（AppShell 不重复清除，避免双写）。
     let observeConversationList () =
@@ -225,28 +224,19 @@ type MainView() as this =
     let messagesOf (view: ConversationView) =
         view.messages |> Seq.cast<JsonNode> |> Seq.map MessageView.ofSnapshotItem |> List.ofSeq
 
+    /// 导航状态归 ShellDesk 的 NavigationController；外壳建好之前按偏好给初值。
+    member private this.Navigation : NavigationSnapshot =
+        if isNull (box shellDesk) then NavigationController(prefs.sidebarCollapsed, LayoutPolicy.compactBreakpoint).State
+        else shellDesk.State
+
+    /// compact 抽屉开合；焦点归宿（打开进搜索框、收起回输入区，触屏不自动聚焦）在 ShellDesk。
     member private this.SetCompactNavigation(opened: bool) =
-        let before = navigation.State
-        let state = navigation.SetCompactNavigation opened
-        if state.compactMode && not (isNull (box mainLayout)) then mainLayout.Apply state
-        // compact 抽屉的焦点归宿：打开进抽屉（搜索框），收起回输入区（D3/D4）。
-        if state.compactMode then
-            // 触屏上不自动聚焦搜索框：软键盘会弹出遮住对话列表（第 212 节）
-            if opened then (if not (SharedTheme.input.PrefersTouch) then sidebar.FocusSearch())
-            elif before.compactNavigationOpen then composer.Focus()
+        if not (isNull (box shellDesk)) then shellDesk.SetCompactNavigation opened |> ignore
 
     member private this.ApplyResponsiveLayout(width: float) =
         let effective = hostViewportWidth.Last |> Option.defaultValue width
-        if effective > 0.0 && not (isNull (box mainLayout)) then
-            let before = navigation.State
-            let needsApply, state = navigation.ApplyViewport(effective)
-            if needsApply then mainLayout.Apply state
-            // compact 抽屉的焦点归宿与用户手动打开一致（D3/D4）：视口把抽屉自动带开时
-            // （进入 compact 且无对话），也先把焦点送进抽屉（搜索框），避免 Tab 漏到背景聊天/输入区。
-            // 触发条件与 SetCompactNavigation 同口径：抽屉由「未开」翻到「compact 打开」才聚焦——
-            // 关闭态、非 compact、以及开合状态未变的普通缩放都不抢焦点。
-            if NavigationSnapshot.autofocusDrawer before state (SharedTheme.input.PrefersTouch) then
-                sidebar.FocusSearch()
+        if effective > 0.0 && not (isNull (box shellDesk)) then shellDesk.ApplyViewport effective |> ignore
+
 
     /// 浏览器 CSS 视口轮询：zoom、DPR、显示器移动都不会可靠触发 Bounds 更新，
     /// 但 innerWidth 永远是真相。桌面端不调用（保留 Bounds 路径）。
@@ -327,9 +317,7 @@ type MainView() as this =
                  | None, _ -> ActiveConversation.None
                  | Some _, Some view -> ActiveConversation.Loaded view.messages.Count
                  | Some _, None -> ActiveConversation.Loading)
-        match chatColumn with
-        | :? ConversationWorkspace as surface -> surface.SetStarting startReady
-        | _ -> ()
+        if not (isNull (box shellDesk)) then shellDesk.SetStarting startReady
         composer.SetSessionContext(activeConversation () |> Option.map _.config, authenticated, fun () -> this.ShowSessionContext())
         match activeConvId, activeConversation () with
         | None, _ ->
@@ -529,7 +517,7 @@ type MainView() as this =
         if motionChanged then MotionPolicy.setReduced prefs.reduceMotion
         sidebar.SetShowArchived prefs.showArchived
         // 代码块折行是渲染期读取的默认值，改完要立刻生效
-        MarkdownRenderer.DefaultCodeWrap <- prefs.codeWrap
+        Reading.wrap.Wrapped <- prefs.codeWrap
         composer.SetEnterSends prefs.enterSends
         settings.SetPrefs prefs
         // 关闭保存：立即删除本机已存的内容（之后不再写）；重新打开：下一次保存即生效。
@@ -738,7 +726,7 @@ type MainView() as this =
             pageLoading <- false
             pageRequestedAt <- None
         this.DisarmSkeletonLoading()
-        let navBefore = navigation.State
+        let navBefore = this.Navigation
         this.SetCompactNavigation false
         sidebar.SetActive activeConvId
         this.Render()
@@ -1200,7 +1188,7 @@ type MainView() as this =
                 let title =
                     if generating then "正在生成的这条回复不受影响，切换从下一条开始。"
                     else "切换本对话的模型"
-                ModelSwitcherView.show overlay anchor false options title (fun picked ->
+                modelSwitch.Show(anchor, false, options, title, fun picked ->
                     let config = { view.config with provider = picked.providerId; model = picked.model }
                     let command =
                         UpdateConversationConfig
@@ -1220,7 +1208,7 @@ type MainView() as this =
                 toast "还没有可用的模型，先添加一个模型服务。" Warning
                 this.ShowAddProvider()
             else
-                ModelSwitcherView.show overlay anchor false options "新对话使用的模型" (fun picked ->
+                modelSwitch.Show(anchor, false, options, "新对话使用的模型", fun picked ->
                     draftModelSelection <- Some(picked.providerId, picked.model)
                     composer.SetModelLabel(Catalog.describeModel picked.providerId picked.model catalog)
                     toast (sprintf "已选择 %s · %s" picked.providerLabel picked.model) Info)
@@ -1434,8 +1422,9 @@ type MainView() as this =
         else
             let ownerInstance = instanceId
             let dialog =
-                ConversationImportDialog(
-                    overlay,
+                Wanxiang2.TransferDesk.ImportDesk(
+                    SharedTheme.manager,
+                    overlay.Desk,
                     topLevel,
                     fun preview onDone ->
                         if not authenticated || instanceId <> ownerInstance then onDone false
@@ -1471,8 +1460,8 @@ type MainView() as this =
         else
             let ownerInstance = instanceId
             let dialog =
-                ConversationExportDialog(
-                    overlay, summary.id, summary.title,
+                Wanxiang2.TransferDesk.ExportDesk(
+                    SharedTheme.manager, overlay.Desk, summary.id, summary.title,
                     (fun query ->
                         if authenticated && instanceId = ownerInstance then
                             client.TrySendAtGenerationAsync(client.ConnectionGeneration, ConversationExportRead query)
@@ -1489,8 +1478,7 @@ type MainView() as this =
         toast (ThemePreference.switchedText nextTheme) Info
 
     member private this.FocusSidebarSearch(query: string option) =
-        let state = navigation.EnsureSearchVisible()
-        mainLayout.Apply state
+        let state = shellDesk.EnsureSearchVisible()
         if not state.compactMode && prefs.sidebarCollapsed <> state.sidebarCollapsed then
             prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
             UiPrefsFile.save prefs
@@ -1513,7 +1501,7 @@ type MainView() as this =
         paletteRecent <- CommandPalette.pushRecent item.id paletteRecent
         PaletteRecent.saveRecent paletteRecent
         let closeDrawer () =
-            if navigation.State.compactMode && navigation.State.compactNavigationOpen then this.SetCompactNavigation false
+            if this.Navigation.compactMode && this.Navigation.compactNavigationOpen then this.SetCompactNavigation false
         let sectionOf (key: string) =
             SettingsSection.all |> List.tryFind (fun s -> (string s).ToLowerInvariant() = key)
         let command = ShellPalette.commandOf item.id
@@ -1560,28 +1548,12 @@ type MainView() as this =
         | PaletteCommand.Action _ | PaletteCommand.Ignore -> ()
 
     member this.ShowCommandPalette() =
-        if not overlay.IsDialogOpen then
-            if overlay.IsPopupOpen then overlay.ClosePopup()
-            let content, search =
-                CommandPaletteView.build
-                    (fun () -> this.PaletteItems())
-                    (fun () -> paletteRecent)
-                    (fun item query ->
-                        overlay.CloseDialog()
-                        // 先让焦点归还、对话层关闭，再执行（执行可能再开对话框或切页面）。
-                        ui.Post(fun () -> this.RunPaletteItem(item, query)))
-            overlay.ShowDialog(content, 560.0, initialFocus = search, scrollWholeContent = false)
+        palette.Show((fun () -> this.PaletteItems()), (fun () -> paletteRecent))
 
     member this.ToggleSidebar() =
-        let state = navigation.ToggleSidebar()
-        mainLayout.Apply state
-        if state.compactMode then
-            // compact 抽屉开关的焦点归宿：打开进抽屉，收起回输入区（D3/D4）。
-            if state.compactNavigationOpen then sidebar.FocusSearch()
-            else composer.Focus()
-        else
-            // 桌面态折叠的焦点归宿由 MainLayout.Apply 收口（侧栏隐藏的必然副作用），
-            // 与 compact 收起分支同一归宿——焦点回输入区。
+        // 焦点归宿（compact 打开进抽屉、收起回输入区；桌面折叠焦点在侧栏时回输入区）在 ShellDesk。
+        let state = shellDesk.ToggleSidebar()
+        if not state.compactMode then
             prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
             UiPrefsFile.save prefs
 
@@ -1595,7 +1567,7 @@ type MainView() as this =
             // 浮层先试；抽屉内有焦点的分支已先消费 Escape，落到这里说明焦点在抽屉外（D3/D4）。
             let overlayHandled = overlay.HandleEscape()
             match EscapeChain.decide overlayHandled settingsHost.IsVisible
-                      (navigation.State.compactMode && navigation.State.compactNavigationOpen)
+                      (this.Navigation.compactMode && this.Navigation.compactNavigationOpen)
                       (runs.Get activeConvId).generationId.IsSome with
             | EscapeTarget.Overlay -> e.Handled <- true
             | EscapeTarget.CloseSettings -> e.Handled <- true; this.CloseSettings()
@@ -1773,21 +1745,8 @@ type MainView() as this =
         | DevicesSnapshot d -> settings.Devices.SetDevices(DevicesModel.parse d.items, d.canInvite)
         | PairingInviteIssued d -> settings.Devices.SetInvite(d.code, d.expiresAtUtc, DateTimeOffset.UtcNow)
         | PairingInviteRejected d -> settings.Devices.SetInviteRejected d.reason
-        | ToolApprovalRequested d ->
-            approvalPanel.Upsert
-                { approvalId = d.approvalId
-                  conversationId = d.conversationId
-                  toolName = d.toolName
-                  callId = d.callId
-                  summary = d.summary
-                  argumentsJson = (if isNull d.arguments then "" else d.arguments.ToJsonString())
-                  policy = d.policy }
-            if activeConvId <> Some d.conversationId then toast ApprovalCardText.otherConversationWaitingText Info
-            this.SyncAwaitingApproval()
-        | ToolApprovalResolved d ->
-            approvalPanel.Remove d.approvalId
-            this.SyncAwaitingApproval()
-            if d.alreadyHandled then toast (ApprovalCardText.alreadyHandledText d.status) Info
+        | ToolApprovalRequested _
+        | ToolApprovalResolved _ -> approvalPanel.Handle ev |> ignore
         | ToolApprovalCapability _ | ToolApprovalDecision _ | ConfigUpdateTools _ -> ()
         | ProviderProbeResult d ->
             probes.Resolve d.requestId
@@ -2060,7 +2019,7 @@ type MainView() as this =
                     else this.ShowConnectDialog()
               toggleArchivedVisibility = fun () -> this.SavePrefs { prefs with showArchived = not prefs.showArchived }
               closeNavigation = fun () -> this.SetCompactNavigation false }
-        sidebar <- Sidebar(overlay, actions, Brand.logo)
+        sidebar <- Sidebar(overlay, actions, SharedTheme.logo)
         // W4：消息正文搜索。查询在主机内存投影上完成；每次发出都换一个 queryId，旧结果迟到即丢。
         sidebar.SearchHandler <-
             Some(fun query includeArchived offset ->
@@ -2154,7 +2113,7 @@ type MainView() as this =
               toggleSidebar = fun () -> this.ToggleSidebar()
               focusHome = fun () -> composer.Focus()
               message = messageActions }
-        chat <- ChatView(chatActions, Brand.logo)
+        chat <- ChatView(chatActions, SharedTheme.logo)
         chat.SiblingProvider <-
             fun commit prev ->
                 match activeConvId with
@@ -2377,6 +2336,8 @@ type MainView() as this =
         overlay.SetToastFocusHome(fun () -> composer.Focus())
         sidebar.ConfigureImport(fun () -> this.ImportConversation())
         sidebar.ConfigurePalette(fun () -> this.ShowCommandPalette())
+        palette.Run.Add(fun (item, query) -> this.RunPaletteItem(item, query))
+        approvalPanel.AwaitingChanged.Add(fun _ -> this.SyncAwaitingApproval())
         this.BuildSettings()
         settings.ConfigureImport(fun () ->
             this.CloseSettings()
@@ -2384,18 +2345,14 @@ type MainView() as this =
         settings.ConfigurePresets((fun p -> this.RenamePreset p), (fun p -> this.DeletePreset p))
         this.BuildOnboarding()
 
-        chatColumn <- ConversationWorkspace(chat, composer)
         // 审批卡放进输入框正上方的附属位：与输入框同列同宽、占布局高度，
         // 不再浮层盖住消息列表最后一条的操作行（视觉走查 11 号截图）。
-        composer.SetAccessory approvalPanel
+        composer.SetAccessory approvalPanel.View
 
-        let initialNavigation = navigation.State
+        let initialNavigation = this.Navigation
         shellGrid <- Grid()
         SharedTheme.input.Track this
-        // 列宽唯一投影器是 MainLayoutController.Apply：这里只建空定义，初值由下方的 Apply 落定。
-        shellGrid.ColumnDefinitions.Add(ColumnDefinition(MaxWidth = Tokens.sidebarMaxWidth))
-        shellGrid.ColumnDefinitions.Add(ColumnDefinition())
-        shellGrid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
+        // 列定义、列宽投影、抽屉遮罩与起步居中都归 ShellDesk（下方构造时落定初值）。
         sidebarSplitter <-
             GridSplitter(
                 Background = Brushes.Transparent,
@@ -2414,18 +2371,25 @@ type MainView() as this =
         Interaction.surface sidebarSplitter Interaction.HoverVariant.plain |> ignore
         Interaction.reportFocusOrigin sidebarSplitter
         sidebarSplitter.DragCompleted.Add(fun _ ->
-            let nav = navigation.State
-            if not nav.compactMode && not nav.sidebarCollapsed then
-                let width = mainLayout.NoteUserSidebarWidth shellGrid.ColumnDefinitions[0].ActualWidth
+            match shellDesk.NoteSidebarDragged() with
+            | Some width ->
                 prefs <- { prefs with sidebarWidth = width }
-                UiPrefsFile.save prefs)
-        shellGrid.Children.Add sidebar
-        shellGrid.Children.Add sidebarSplitter
-        shellGrid.Children.Add chatColumn
-        mainLayout <- MainLayoutController(shellGrid, sidebar, sidebarSplitter, chatColumn, composer, chat, fun () -> prefs.sidebarWidth)
-        // 抽屉遮罩与 Escape / 侧栏行同一归宿：SetCompactNavigation 的收起分支（D3/D4）。
-        mainLayout.OnScrimPressed <- Some (fun () -> this.SetCompactNavigation false)
-        mainLayout.Apply initialNavigation
+                UiPrefsFile.save prefs
+            | None -> ())
+        let shellHooks : Wanxiang2.ShellDesk.ShellHooks =
+            { SetCompactMode =
+                fun compact ->
+                    composer.SetCompactMode compact
+                    sidebar.SetCompactMode compact
+                    chat.SetCompactMode compact
+              SetStartMode = fun centered -> chat.SetStartMode centered
+              FocusComposer = fun () -> composer.Focus()
+              FocusSidebarSearch = fun () -> sidebar.FocusSearch()
+              PrefersTouch = fun () -> SharedTheme.input.PrefersTouch }
+        shellDesk <-
+            Wanxiang2.ShellDesk.ShellDesk(
+                SharedTheme.manager, shellGrid, sidebar, sidebarSplitter, chat, composer,
+                shellHooks, initialNavigation.sidebarCollapsed, (fun () -> prefs.sidebarWidth))
         workspace.Children.Add shellGrid
 
         settingsHost.Children.Add settings
@@ -2444,7 +2408,7 @@ type MainView() as this =
             ui.Post(fun () ->
                 if epoch = client.ConnectionGeneration then
                     authenticated <- false
-                    approvalPanel.Clear()
+                    approvalPanel.Disconnected()
                     chat.SetAwaitingApproval Set.empty
                     runs.Disconnect()
                     exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
@@ -2468,7 +2432,7 @@ type MainView() as this =
                 this.Background <- Tokens.canvas
                 this.Render()))
         // 后台着色算完：卡片身份没变，必须显式丢缓存才会换成着色版
-        Highlight.Ready.Add(fun _ ->
+        Reading.tint.Ready.Add(fun _ ->
             ui.Post(fun () ->
                 chat.InvalidateCards()
                 this.Render()))

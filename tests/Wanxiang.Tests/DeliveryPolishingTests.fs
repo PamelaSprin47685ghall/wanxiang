@@ -250,26 +250,6 @@ let ``ui button triggers callback on Enter and Space keys`` () =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``markdown renderer renders complex markdown with code, tables and math without error`` () =
-    Headless.run (fun () ->
-    let doc =
-        "# 标题一\n" +
-        "正文包含 **粗体**、*斜体*、`行内代码` 和 [链接](https://example.com)。\n\n" +
-        "> 引用块测试\n\n" +
-        "- [x] 任务完成\n" +
-        "- [ ] 任务待办\n\n" +
-        "| 列 A | 列 B |\n" +
-        "|---|---|\n" +
-        "| 1 | 2 |\n\n" +
-        "```fsharp\nlet x = 42\n```\n\n" +
-        "$$E = mc^2$$\n"
-    let renderer = MarkdownRenderer(14.0, ignore, ignore, true)
-    let control = renderer.RenderText doc
-    Assert.NotNull control
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``message card renders user and assistant with reasoning and tools without error`` () =
     Headless.run (fun () ->
     let ctx =
@@ -441,7 +421,7 @@ let ``chat view renders a focused empty state without extra actions`` () =
               deleteMessage = ignore
               downloadAttachment = ignore
               openLink = ignore } }
-    let chat = ChatView(chatActions, Brand.logo)
+    let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
     chat.ShowEmpty(EmptyConversation, None)
     Assert.True(chat.IsVisible)
@@ -487,7 +467,7 @@ let ``message card renders assistant markdown without extra view mode`` () =
           isLastAssistant = true
           usage = None
           missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> Brand.logo 26.0 }
+          awaitingApproval = Set.empty; brandAvatar = fun () -> SharedTheme.logo 26.0 }
     let actions: MessageActions =
         { copyText = ignore
           regenerate = ignore
