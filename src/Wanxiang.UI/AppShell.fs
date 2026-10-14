@@ -362,16 +362,9 @@ type MainView() as this =
                 this.Onboarding.StartDiscovery()
             | IdleEmpty.NoConversation -> chat.ShowEmpty(ChatEmptyState.NoConversation, None)
             composer.SetEnabled(idle.composerEnabled, idle.composerReason)
-            match idle.modelLabel with
-            | Some label -> composer.SetModelLabel label
-            | None ->
-                    match draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog) with
-                    | Some(providerId, model) ->
-                        composer.SetModelLabel(Catalog.describeModel providerId model catalog)
-                        composer.SetModelVision(fst (Catalog.visionOf providerId model catalog), Catalog.describeModel providerId model catalog)
-                    | None ->
-                        composer.SetModelLabel "未选择模型"
-                        composer.SetModelVision(VisionUnknown, "")
+            let chip = Catalog.idleModelChip idle.modelLabel draftModelSelection catalog
+            composer.SetModelLabel chip.label
+            chip.vision |> Option.iter composer.SetModelVision
         | Some convId, None ->
             chat.SetConversationChrome true
             // Loading 分级：快照 300ms 内到达就不闪任何 loading chrome，超时才在本地挂骨架；
@@ -473,8 +466,7 @@ type MainView() as this =
     member private this.UpdateDraftSummary() =
         if not (isNull (box settings)) then
             let snapshot = this.CurrentDraftSnapshot()
-            let texts = snapshot.drafts |> List.filter (fun d -> not (String.IsNullOrWhiteSpace d.text) || not (List.isEmpty d.attachments)) |> List.length
-            let unsent = snapshot.unsent |> List.length
+            let texts, unsent = DraftRestore.summaryCounts snapshot
             settings.LocalDrafts.Summary <-
                 DraftSummaryText.text prefs.persistDrafts texts unsent
 
@@ -490,24 +482,11 @@ type MainView() as this =
             let unsentBefore = outbox.ForInstance instanceId |> List.length
             DraftPolicy.restoreInto storedDrafts instanceId drafts outbox |> ignore
             let unsentRestored = (outbox.ForInstance instanceId |> List.length) - unsentBefore
-            for d in storedDrafts.drafts do
-                if d.instanceId = instanceId then
-                    d.conversationId |> Option.iter (fun id -> knownConversationIds <- knownConversationIds.Add id)
-            for u in storedDrafts.unsent do
-                if u.instanceId = instanceId then knownConversationIds <- knownConversationIds.Add u.conversationId
+            knownConversationIds <- Set.union knownConversationIds (DraftRestore.knownConversations storedDrafts instanceId)
             let live = drafts.Get(instanceId, activeConvId)
-            if String.IsNullOrWhiteSpace composer.Text && not (String.IsNullOrWhiteSpace live.text) then
-                composer.SetText live.text
+            if DraftRestore.fillComposer composer.Text live.text then composer.SetText live.text
             composer.SetAttachments((attachmentDraft ()).Items)
-            let hasDrafts =
-                storedDrafts.drafts |> List.exists (fun d -> d.instanceId = instanceId && (not (String.IsNullOrWhiteSpace d.text) || not (List.isEmpty d.attachments)))
-            if hasDrafts || unsentRestored > 0 then
-                let needsReselect =
-                    storedDrafts.drafts |> List.exists (fun d -> d.instanceId = instanceId && not (List.isEmpty d.attachments))
-                let message =
-                    if unsentRestored > 0 then "已恢复上次未发送的内容；未确认的消息可重试，不会重复保存。"
-                    else "已恢复上次未发送的草稿。"
-                toast (if needsReselect then message + "附件需要重新选择。" else message) Info
+            DraftRestore.restoreNotice storedDrafts instanceId unsentRestored |> Option.iter (fun message -> toast message Info)
             this.UpdateDraftSummary()
 
     /// 清除本地草稿：本机落盘内容、内存里各对话的草稿、未确认的消息一并清空。
@@ -527,7 +506,7 @@ type MainView() as this =
         draftStore.Clear() |> ignore
         this.UpdateDraftSummary()
         this.Render()
-        toast "本地草稿已清除。" Success
+        toast DraftRestore.clearedText Success
 
     /// 列表里消失的对话 = 已被删除：它的草稿与未确认消息已无处可发，随之清理。
     member private this.PruneDeletedConversationDrafts() =
@@ -543,10 +522,8 @@ type MainView() as this =
                 if activeConvId <> Some id then
                     drafts.Remove(instanceId, Some id)
                 outbox.DiscardConversation(instanceId, id)
-                storedDrafts <-
-                    { drafts = storedDrafts.drafts |> List.filter (fun d -> not (d.instanceId = instanceId && d.conversationId = Some id))
-                      unsent = storedDrafts.unsent |> List.filter (fun u -> not (u.instanceId = instanceId && u.conversationId = id)) }
-            knownConversationIds <- Set.union (Set.difference knownConversationIds gone) listed
+            storedDrafts <- DraftRestore.pruneStored storedDrafts instanceId gone
+            knownConversationIds <- DraftRestore.knownAfterPrune knownConversationIds gone listed
 
     /// 主机状态行：连接正常时带上「配置有误」提示。
     member private this.UpdateHostStatusLine() =
