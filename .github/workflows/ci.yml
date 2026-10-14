@@ -15,7 +15,7 @@ on:
 
 jobs:
   pr-gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -84,7 +84,7 @@ jobs:
   main-gate:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: pr-gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -114,7 +114,7 @@ jobs:
   # 不会被静默跳过。路径判断用 git diff，不引第三方 action。
   history-changes:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       touched: ${{ steps.diff.outputs.touched }}
     steps:
@@ -139,7 +139,7 @@ jobs:
       (github.event_name == 'schedule' ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
        (github.event_name == 'pull_request' && needs.history-changes.outputs.touched == 'true'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
