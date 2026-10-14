@@ -146,7 +146,7 @@ let ``264 桌面浏览器安装引导不说主屏幕`` () =
 [<Fact>]
 let ``侧栏搜索防抖到期时词未变不重发查询`` () =
     let src = read "src/Wanxiang.UI/Views/Sidebar.fs"
-    Assert.Contains("if SearchRequery.shouldQuery searchBox.Text searchHitsQuery then", src)
+    Assert.Contains("if SearchRequery.shouldQuery searchBox.Text messageSearch.Query then", src)
 
 [<Fact>]
 let ``粘贴位图读完时已换主机或重连就不上传`` () =

@@ -11,24 +11,13 @@ open System.Threading.Tasks
 /// 启动参数、第二个实例转发、macOS 系统激活都投到这里；MainView 订阅后在 UI 线程打开。
 /// MainView 还没起来时先排队，订阅时一次交付。
 module ExternalLinks =
-    let private gate = obj ()
-    let private queue = System.Collections.Generic.Queue<string>()
-    let mutable private sink: (string -> unit) option = None
+    /// 进程内唯一的收件箱（Program 在 MainView 起来之前就会投递）；排队与交付规则归 LinkInbox。
+    let inbox = Inbox<string>()
 
-    let post (url: string) =
-        if not (String.IsNullOrWhiteSpace url) then
-            let target = lock gate (fun () -> match sink with Some s -> Some s | None -> queue.Enqueue url; None)
-            target |> Option.iter (fun s -> s url)
+    let post (url: string) = LinkInbox.post inbox url
 
     /// 订阅（MainView 构造时）。返回此前排队的链接已交付。
-    let subscribe (handler: string -> unit) =
-        let pending =
-            lock gate (fun () ->
-                sink <- Some handler
-                let items = queue.ToArray()
-                queue.Clear()
-                items)
-        for url in pending do handler url
+    let subscribe (handler: string -> unit) = inbox.Subscribe handler
 
 /// 决策 251：系统注册 `wanxiang://` 协议。只写当前用户范围，幂等（内容不变就不碰）。
 module UrlSchemeRegistration =

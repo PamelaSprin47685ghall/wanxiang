@@ -195,13 +195,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let mutable summaries: ConversationSummary list = []
     /// W4：分叉谱系（对话 id → 谱系）。根对话与旧主机不在表里。
     let mutable lineage: Map<Guid, ForkLineage> = Map.empty
-    /// W4：消息正文搜索的界面状态。命中只属于 `searchHitsQuery` 这个查询词，词变了就作废。
-    let mutable searchHits: SearchHit list = []
-    let mutable searchHitsQuery = ""
-    let mutable searchPending = false
-    let mutable searchHasMore = false
-    let mutable searchTruncated = false
-    let mutable searchError: string option = None
+    /// W4：消息正文搜索的会话状态归 SearchSession。命中只属于它记下的查询词，词变了就作废。
+    let messageSearch = SearchSession<SearchHit>()
     /// 当前搜索词（Rebuild 时从搜索框快照）：行渲染与回收复用都据此上高亮。
     /// 只有 Rebuild 会写它，行渲染只是读者，所以防抖/立即两种时机不会互相打脸。
     let mutable searchQuery = ""
@@ -219,14 +214,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let summaryById = System.Collections.Generic.Dictionary<Guid, ConversationSummary>()
     let mutable visibleRowIds: Guid array = [||]
     let flatIndexByConversation = System.Collections.Generic.Dictionary<Guid, int>()
-    let mutable focusedRowId: Guid option = None
     let mutable archivedCount = 0
     let mutable hasArchivedToggle = false
     let mutable archivedToggleFlatIndex: int option = None
     let mutable archivedToggleHost: Border option = None
     let mutable compactMode = false
-    let mutable focusedRowIndex = -1
-    let mutable pendingFocusId: Guid option = None
+    /// 行焦点、删除后的邻位与焦点意图归 RowFocus；visibleRowIds 是本次渲染的行序，每次重建同步给它。
+    let rowFocus = RowFocus()
     /// 批量选择模式：行点击改为切换选中，底部换成批量操作条。
     /// 桌面端从行的右键菜单进入；触屏没有右键与 Shift+F10，行的更多菜单同样提供入口。
     /// 多选状态与批量条文案归 SidebarSelection。
@@ -447,59 +441,44 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 停掉 TextChanged 已启动的防抖：手动触发（测试 / 回车）或防抖本身到期后，
         // 若定时器再响一次会清空刚到的命中（CI 上 160ms 窗口内很容易撞上）。
         searchDebounce.Stop()
-        let q = (if isNull searchBox.Text then "" else searchBox.Text).Trim()
-        searchHits <- []
-        searchHasMore <- false
-        searchTruncated <- false
-        searchError <- None
-        match this.SearchHandler with
-        | Some handler when q <> "" && connected ->
-            searchHitsQuery <- q
-            searchPending <- true
+        match messageSearch.Begin(searchBox.Text, this.SearchHandler.IsSome && connected), this.SearchHandler with
+        | Some q, Some handler ->
             this.Rebuild()
             handler q showArchived 0
-        | _ ->
-            searchHitsQuery <- ""
-            searchPending <- false
+        | _ -> ()
 
     member private this.LoadMoreMessageHits() =
         match this.SearchHandler with
-        | Some handler when searchHitsQuery <> "" && not searchPending ->
-            searchPending <- true
-            this.Rebuild()
-            handler searchHitsQuery showArchived (List.length searchHits)
-        | _ -> ()
+        | Some handler ->
+            messageSearch.LoadMore()
+            |> Option.iter (fun (q, offset) ->
+                this.Rebuild()
+                handler q showArchived offset)
+        | None -> ()
 
     member private this.RetryMessageSearch() =
         match this.SearchHandler with
-        | Some handler when searchHitsQuery <> "" ->
-            searchError <- None
-            searchPending <- true
-            this.Rebuild()
-            handler searchHitsQuery showArchived (List.length searchHits)
-        | _ -> ()
+        | Some handler ->
+            messageSearch.Retry()
+            |> Option.iter (fun (q, offset) ->
+                this.Rebuild()
+                handler q showArchived offset)
+        | None -> ()
 
     /// 一页结果到达。词已变（用户又改了输入）的迟到结果直接丢弃；offset > 0 是“显示更多”的追加页。
     member this.ApplySearchResults(page: SearchPageState, offset: int) =
-        if page.query.Trim() = searchHitsQuery && searchHitsQuery <> "" then
-            searchHits <- if offset <= 0 then page.hits else searchHits @ page.hits
-            searchHasMore <- page.hasMore
-            searchTruncated <- page.truncated
-            searchPending <- false
-            searchError <- None
+        if messageSearch.Apply(page.query, page.hits, page.hasMore, page.truncated, offset) then
             this.Rebuild()
 
     member this.ApplySearchFailure(query: string, message: string) =
-        if query.Trim() = searchHitsQuery && searchHitsQuery <> "" then
-            searchPending <- false
-            searchError <- Some message
+        if messageSearch.Fail(query, message) then
             this.Rebuild()
 
     /// 搜索框里当前的查询词（去首尾空白）。
     member _.SearchQueryText: string = (if isNull searchBox.Text then "" else searchBox.Text).Trim()
 
     /// 当前正在显示的消息命中（测试与 AppShell 取状态用）。
-    member _.MessageHits: SearchHit list = if searchHitsQuery <> "" then searchHits else []
+    member _.MessageHits: SearchHit list = messageSearch.Hits
 
     /// 谱系随列表快照一起更新；只影响行的“分叉”标记与提示。
     /// 在 `SetConversations` 之前调用，随后那次重建就会带上新谱系（本方法自己不重建，避免一次快照两次重建）。
@@ -918,11 +897,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             this.ApplyRowState(summary.id, host)
             if not moreButton.IsFocused then this.ApplyRowActionVisibility moreButton false)
         host.GotFocus.Add(fun _ ->
-            focusedRowId <- Some summary.id
-            focusedRowIndex <-
-                visibleRowIds
-                |> Array.tryFindIndex ((=) summary.id)
-                |> Option.defaultValue focusedRowIndex
+            rowFocus.Focused summary.id
             this.ApplyRowState(summary.id, host)
             this.ApplyRowActionVisibility moreButton true)
         host.LostFocus.Add(fun _ ->
@@ -1082,7 +1057,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // Rebuild 会整体替换 ItemsSource：焦点若在某行上先记住，刷新后仍可见就还回去；
         // 搜索框里打字时焦点不在行上，此时绝不抢焦点。
         let restoreFocusId =
-            match focusedRowId with
+            match rowFocus.FocusedId with
             | Some id ->
                 match rowHosts.TryGetValue id with
                 | true, host when host.IsFocused -> Some id
@@ -1116,25 +1091,23 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 flatIndexByConversation[item.id] <- flattened.Count
                 flattened.Add(ConversationRow item)
         // W4：消息正文命中（只在查询词与命中所属词一致时显示，词一变旧命中立即作废）。
-        let trimmedQuery = query.Trim()
-        let hitsCurrent = trimmedQuery <> "" && searchHitsQuery = trimmedQuery
-        let hitSection =
-            hitsCurrent && (searchPending || searchError.IsSome || not (List.isEmpty searchHits))
-        if hitSection then
+        let section = messageSearch.Section query
+        let hitSection = section.IsSome
+        match section with
+        | Some(hits, lines) ->
             flattened.Add(SectionHeader "消息内容")
-            for hit in searchHits do
+            for hit in hits do
                 flattened.Add(MessageHitRow hit)
-            match searchError with
-            | Some message ->
-                flattened.Add(SearchStatusRow(sprintf "消息搜索失败：%s" message, Some("重试", fun () -> this.RetryMessageSearch())))
-            | None ->
-                if searchPending then
-                    flattened.Add(SearchStatusRow((if List.isEmpty searchHits then "正在搜索消息…" else "正在加载更多…"), None))
-                else
-                    if searchHasMore then
-                        flattened.Add(SearchStatusRow("还有更多匹配的消息", Some("显示更多", fun () -> this.LoadMoreMessageHits())))
-                    if searchTruncated then
-                        flattened.Add(SearchStatusRow("结果已截断：只显示了最近的一部分匹配，请换更具体的词。", None))
+            for line in lines do
+                let action =
+                    line.action
+                    |> Option.map (fun action ->
+                        SearchStatusAction.label action,
+                        match action with
+                        | SearchStatusAction.Retry -> fun () -> this.RetryMessageSearch()
+                        | SearchStatusAction.LoadMore -> fun () -> this.LoadMoreMessageHits())
+                flattened.Add(SearchStatusRow(line.text, action))
+        | None -> ()
         let archived = summaries |> List.filter (fun s -> s.archived)
         archivedCount <- archived.Length
         // 折叠时它是展开入口，展开时它是收起入口：两种状态都留在列表末尾，
@@ -1156,26 +1129,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     | _ -> None
                 else None)
             |> Array.ofSeq
+        rowFocus.SetVisible visibleRowIds
         savedOffset
         |> Option.iter (fun offset ->
             match scroller with
             | Some sv -> sv.Offset <- offset
             | None -> ())
         // 删除流先记的邻位意图优先于常规焦点还原；消费一次即清。
-        let targetRestoreId =
-            match pendingFocusId with
-            | Some id when visibleRowIds |> Array.contains id ->
-                pendingFocusId <- None
-                Some id
-            | Some _ ->
-                pendingFocusId <- None
-                None
-            | None -> None
-        let targetRestoreId =
-            match targetRestoreId, restoreFocusId with
-            | Some id, _ -> Some id
-            | None, Some id when visibleRowIds |> Array.contains id -> Some id
-            | _ -> None
+        let targetRestoreId = rowFocus.RestoreAfterRebuild restoreFocusId
         match targetRestoreId with
 
         | Some id ->
@@ -1299,7 +1260,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 快照只可能属于某一代连接，跨连接的 loading 不成立。
         listLoading <- false
         // 搜索在途的结果只可能属于某一代连接：断开后不会再来，别让“正在搜索”挂着。
-        if not isConnected then searchPending <- false
+        if not isConnected then messageSearch.Disconnected()
         statusDot.Fill <- if isConnected then Tokens.success :> IBrush else Tokens.textFaint :> IBrush
         statusText.Text <- text
         this.Rebuild()
@@ -1360,38 +1321,12 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     /// 删除后调用（id 已不在）按上次行焦点位置钳制。
     /// 邻位口径与 FocusAfterDelete 完全一致：同一个 neighborIndex，
     /// 不另写一份挑选规则——两份规则必然漂移。
-    member this.NeighborAfterDelete(removedId: string) : Guid option =
-        this.NeighborIndexAfterDelete(removedId)
-        |> Option.map (fun idx -> visibleRowIds.[idx])
-
-    /// 邻位在 visibleRowIds 里的下标（下一行优先，其次上一行）；没有行时为 None。
-    /// 抽出来是为了让「删除后打开谁」与「删除后焦点落谁」读同一个答案。
-    member private this.NeighborIndexAfterDelete(removedId: string) : int option =
-        if visibleRowIds.Length = 0 then
-            None
-        else
-            match Guid.TryParse removedId with
-            | true, removed ->
-                match visibleRowIds |> Array.tryFindIndex ((=) removed) with
-                | Some idx ->
-                    if idx + 1 < visibleRowIds.Length then Some(idx + 1)
-                    elif idx - 1 >= 0 then Some(idx - 1)
-                    else None
-                | None ->
-                    Some(min (max focusedRowIndex 0) (visibleRowIds.Length - 1))
-            | _ ->
-                Some(min (max focusedRowIndex 0) (visibleRowIds.Length - 1))
+    member this.NeighborAfterDelete(removedId: string) : Guid option = rowFocus.NeighborAfterDelete removedId
 
     member this.FocusAfterDelete(removedId: string) =
-        match this.NeighborIndexAfterDelete(removedId) with
-        | Some idx ->
-            let id = visibleRowIds.[idx]
-            pendingFocusId <- Some id
-            focusedRowId <- Some id
-            focusedRowIndex <- idx
-            this.FocusRowAt idx
-        | None ->
-            this.FocusSearch(selectAll = false)
+        match rowFocus.FocusAfterDelete removedId with
+        | RowFocusTarget.Row(idx, _) -> this.FocusRowAt idx
+        | RowFocusTarget.Search -> this.FocusSearch(selectAll = false)
 
     /// 进入批量选择模式：以 seedId 为第一项选中，底部换成批量操作条。
     /// 已在模式内则只把 seedId 并入选择（菜单入口可重复点）。
@@ -1539,7 +1474,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             searchDebounce.Stop()
             // 词没变（已为它发过查询，结果已到或在途）就不重发：迟到的防抖 Tick
             // 否则会清空刚到的命中（CI 上 LibraryTests 偶发失败的根因）。
-            if SearchRequery.shouldQuery searchBox.Text searchHitsQuery then
+            if SearchRequery.shouldQuery searchBox.Text messageSearch.Query then
                 this.BeginMessageSearch()
             this.Rebuild()
             // 结果刷新不碰滚动：首项可见由 Down 通路的 FocusRowAt/BringIntoView 保证。

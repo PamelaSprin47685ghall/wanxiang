@@ -70,7 +70,8 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
     let mutable canInvite = false
     let mutable invite: PairingInviteView option = None
     let mutable inviteRejected: string option = None
-    let mutable loading = false
+    /// 读取设备列表的有界等待：旧主机忽略未知事件时不会回复，不能一直显示“正在读取”。
+    let loadWait = BoundedWait(BoundedWaits.devicesLimit)
     let mutable loadNote: string option = None
     let mutable wsUrl = ""
     let mutable lan: unit -> string list = DevicesModel.lanAddresses
@@ -249,7 +250,7 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
         match loadNote with
         | Some note -> [ Ui.caption note :> Control ]
         | None ->
-            if loading && devices.IsEmpty then [ Ui.caption "正在读取设备列表…" :> Control ]
+            if loadWait.IsWaiting && devices.IsEmpty then [ Ui.caption "正在读取设备列表…" :> Control ]
             elif devices.IsEmpty then [ Ui.caption "还没有设备。" :> Control ]
             else
                 // 有效设备在前，已吊销在后
@@ -268,7 +269,6 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
         timer |> Option.iter (fun t -> t.Stop())
         timer <- None
 
-    /// 读取设备列表的有界等待：旧主机忽略未知事件时不会回复，不能一直显示“正在读取”。
     let mutable loadTimer: DispatcherTimer option = None
     let stopLoadTimer () =
         loadTimer |> Option.iter (fun t -> t.Stop())
@@ -286,10 +286,10 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
 
     /// 请求设备列表时开始有界等待；超时无回复则提示主机版本可能较旧。
     member private this.BeginLoad() =
-        loading <- true
+        loadWait.Begin DateTimeOffset.UtcNow
         loadNote <- None
         stopLoadTimer ()
-        let t = DispatcherTimer(Interval = TimeSpan.FromSeconds 8.0)
+        let t = DispatcherTimer(Interval = loadWait.Limit)
         t.Tick.Add(fun _ -> this.NotifyLoadTimeout())
         t.Start()
         loadTimer <- Some t
@@ -297,9 +297,8 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
     /// 等待超时（也供测试直接调用）：仍在读取则结束等待并提示。
     member _.NotifyLoadTimeout() =
         stopLoadTimer ()
-        if loading then
-            loading <- false
-            loadNote <- Some "主机没有返回设备列表。如果主机版本较旧，可能还不支持设备管理，请先升级主机。"
+        if loadWait.TimeOut() then
+            loadNote <- Some BoundedWaits.devicesTimeoutText
             if built then render ()
 
     /// 测试注入局域网地址来源。
@@ -337,7 +336,7 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
         canInvite <- canInviteNow
         now <- DateTimeOffset.UtcNow
         stopLoadTimer ()
-        loading <- false
+        loadWait.Settle() |> ignore
         loadNote <- None
         if built then render ()
 
@@ -366,8 +365,7 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
     /// 读取设备列表期间连接断开：旧版主机不认识设备事件时会直接断开。
     member _.NotifyDisconnected() =
         stopLoadTimer ()
-        if loading then
-            loading <- false
+        if loadWait.Settle() then
             loadNote <- Some "读取设备列表时连接断开了。如果主机版本较旧，可能还不支持设备管理，请先升级主机。"
             if built then render ()
         invite <- None
@@ -377,7 +375,7 @@ type SettingsDevices(overlay: OverlayHost, initialActions: DeviceActions) =
     member _.CurrentInvite = invite
     member _.Devices = devices
     member _.CanInvite = canInvite
-    member _.IsLoading = loading
+    member _.IsLoading = loadWait.IsWaiting
     member _.IsBuilt = built
     /// 面板当前是否真的在屏幕上（用于只在可见时响应配置变更）。
     member _.IsShown = built && root.IsEffectivelyVisible

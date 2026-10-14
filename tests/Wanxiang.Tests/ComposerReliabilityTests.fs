@@ -180,15 +180,18 @@ module ComposerReliabilityTests =
         let backend = MemoryDraftBackend()
         let mutable enabled = true
         let store = LocalDraftStore(backend, fun () -> enabled)
+        let session = DraftSession()
+        session.Loaded(store.Load().Result)
         let snapshot = { drafts = [ { instanceId = "h"; conversationId = None; text = "x"; attachments = [] } ]; unsent = [] }
-        store.Save(snapshot).Wait()
+        store.Apply(session.Flush(enabled, snapshot)).Wait()
         Assert.True backend.Stored.IsSome
         enabled <- false
         store.Clear().Wait()
+        session.StorageCleared()
         Assert.True backend.Stored.IsNone
-        store.Save(snapshot).Wait()
+        store.Apply(session.Flush(enabled, snapshot)).Wait()
         Assert.True(backend.Stored.IsNone, "关闭后不得再写")
-        Assert.True(DraftSnapshot.isEmpty (store.Load().Result), "关闭后不得读出旧内容")
+        Assert.True((store.Load().Result).IsNone, "关闭后不得读出旧内容")
 
     [<Trait("Category", "UI")>]
     [<Fact>]

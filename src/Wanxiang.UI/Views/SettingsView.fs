@@ -65,7 +65,8 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     let groupLabels = ResizeArray<TextBlock>()
     let scopeCaption = Ui.sectionLabel "主机"
     let targetCaption = Ui.caption "尚未连接主机"
-    let mutable current = Providers
+    /// 当前分区、构建缓存与各分区滚动位置归 SectionMemory；控件与滚动容器在这里。
+    let memory = SectionMemory<SettingsSection, Control>(Providers)
     let mutable instanceId = ""
     let mutable serverUrl = ""
     let navButtons = System.Collections.Generic.Dictionary<SettingsSection, Border>()
@@ -73,13 +74,10 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     let navGlyphs = System.Collections.Generic.Dictionary<SettingsSection, Control>()
     /// 选中左缘强调条：与侧栏选中同一语言（sidebarSelectedEdgeWidth），独立元素叠画、零几何位移。
     let navAccents = System.Collections.Generic.Dictionary<SettingsSection, Border>()
-    let scrollPositions = System.Collections.Generic.Dictionary<SettingsSection, float>()
     let mutable responsiveCompact: bool option = None
 
-    /// 每个分区只构建一次并缓存。
-    /// 面板内部复用同一批输入控件实例，重复 Build 会把它们挂到第二个父级上，
-    /// Avalonia 直接抛「already has a visual parent」。
-    let builtSections = System.Collections.Generic.Dictionary<SettingsSection, Control>()
+    // 每个分区只构建一次并缓存（memory）：面板内部复用同一批输入控件实例，
+    // 重复 Build 会把它们挂到第二个父级上，Avalonia 直接抛「already has a visual parent」。
 
     let buildSection (section: SettingsSection) : Control =
         match section with
@@ -91,21 +89,20 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         | About -> generalPanel.BuildAbout(instanceId, serverUrl)
 
     let renderSection (section: SettingsSection) : Control =
-        match builtSections.TryGetValue section with
-        | true, existing -> existing
-        | _ ->
+        match memory.TryBuilt section with
+        | Some existing -> existing
+        | None ->
             let built = buildSection section
-            builtSections[section] <- built
+            memory.Keep(section, built)
             built
 
     /// 数据变化后需要重建的分区：丢弃缓存，下次切进去时重新构建。
     let invalidate (sections: SettingsSection list) =
-        for section in sections do
-            builtSections.Remove section |> ignore
+        memory.Invalidate sections
 
     member private this.UpdateNavButtonStates() =
         for KeyValue(key, button) in navButtons do
-            let selected = key = current
+            let selected = key = memory.Current
             let bg =
                 if selected then Tokens.selected :> IBrush
                 elif button.IsPointerOver || button.IsFocused then Tokens.hover :> IBrush
@@ -128,12 +125,8 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
             | _ -> ()
 
     member private this.Select(section: SettingsSection) =
-        let changed = current <> section
-        if changed then
-            contentScroll |> Option.iter (fun scroller ->
-                if scroller.Offset.Y > 0.0 || not (scrollPositions.ContainsKey current) then
-                    scrollPositions[current] <- scroller.Offset.Y)
-        current <- section
+        let restoreY = memory.Select(section, contentScroll |> Option.map (fun scroller -> scroller.Offset.Y))
+        let changed = restoreY.IsSome
         scopeCaption.Text <- SettingsSection.scope section
         targetCaption.Text <-
             match section with
@@ -147,13 +140,9 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         contentHost.Content <- renderSection section
         // 设备列表是运行时状态：每次切进来都向主机要最新的
         if section = Devices && changed then devicesPanel.Refresh()
-        if changed then
-            let targetY =
-                match scrollPositions.TryGetValue section with
-                | true, y -> y
-                | _ -> 0.0
+        restoreY |> Option.iter (fun targetY ->
             contentScroll |> Option.iter (fun scroller ->
-                scroller.Offset <- Vector(0.0, targetY))
+                scroller.Offset <- Vector(0.0, targetY)))
         match navButtons.TryGetValue section with
         | true, button -> button.BringIntoView()
         | _ -> ()
@@ -161,7 +150,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
     member private this.NavigateSection(direction: int) =
         let sections = SettingsSection.all
         let count = sections.Length
-        let idx = sections |> List.tryFindIndex ((=) current) |> Option.defaultValue 0
+        let idx = sections |> List.tryFindIndex ((=) memory.Current) |> Option.defaultValue 0
         let nextIdx = RovingIndex.wrap idx direction count
         let target = sections[nextIdx]
         this.Select target
@@ -178,7 +167,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
 
     member this.FocusInitial() =
         let target =
-            match navButtons.TryGetValue current with
+            match navButtons.TryGetValue memory.Current with
             | true, button -> button
             | _ ->
                 // 极端情形（分区还没建出来）：退回第一个分区。
@@ -195,13 +184,11 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         | _ -> ()
 
     member this.GetSectionScrollOffset(section: SettingsSection) =
-        match scrollPositions.TryGetValue section with
-        | true, y -> y
-        | _ -> 0.0
+        memory.Offset section
 
     member this.SetSectionScrollOffset(section: SettingsSection, y: float) =
-        scrollPositions[section] <- y
-        if current = section then
+        memory.SetOffset(section, y)
+        if memory.Current = section then
             contentScroll |> Option.iter (fun s -> s.Offset <- Vector(0.0, y))
 
     member private this.NavButton(section: SettingsSection) : Border =
@@ -292,7 +279,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         // 模型服务与工具面板自己维护列表内容，无需重建；生成面板的字段已被 SetCatalog 回填。
         // 只有「关于」依赖构建时的快照，交给切换时重建。
         invalidate [ About ]
-        if current = About then contentHost.Content <- renderSection current
+        if memory.Current = About then contentHost.Content <- renderSection memory.Current
 
     member this.SetPrefs(prefs: UiPrefs) =
         generalPanel.SetPrefs prefs
@@ -306,7 +293,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         serverUrl <- url
         devicesPanel.SetConnection url
         invalidate [ About ]
-        this.Select current
+        this.Select memory.Current
 
     member _.HasUnsavedChanges = generalPanel.HasUnsavedGeneration
 
@@ -446,4 +433,4 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         this.PropertyChanged.Add(fun args ->
             if args.Property = Visual.BoundsProperty then applyResponsive this.Bounds.Width)
         applyResponsive this.Bounds.Width
-        this.Select current
+        this.Select memory.Current

@@ -68,10 +68,9 @@ type BrowserDraftBackend() =
         member _.Clear() =
             task { try do! BrowserDrafts.Delete() with _ -> () } :> Task
 
-/// 草稿存储外壳：把「是否启用」的唯一判断收在这里，关闭时不写、也不读。
-/// 去重与编解码在 Wanxiang2.DraftStore，这里只执行它给出的写 / 删。
+/// 草稿落点外壳：把「是否启用」的唯一判断收在这里，关闭时不读。
+/// 去重闸门与会话状态在 Wanxiang2.DraftSession，这里只执行它给出的写 / 删。
 type LocalDraftStore(backend: IDraftBackend, isEnabled: unit -> bool) =
-    let gate = DraftStore()
 
     /// 平台默认落点：桌面文件 / PWA IndexedDB。开关由调用方（外壳持有的偏好）决定。
     static member Default(isEnabled: unit -> bool) : LocalDraftStore =
@@ -82,26 +81,16 @@ type LocalDraftStore(backend: IDraftBackend, isEnabled: unit -> bool) =
 
     member _.Enabled = isEnabled ()
 
-    member _.Load() : Task<DraftSnapshot> =
-        task {
-            if not (isEnabled ()) then return DraftSnapshot.empty
-            else
-                let! text = backend.Load()
-                return gate.Loaded text
-        }
+    /// 读已存文本；关闭保存时不读。
+    member _.Load() : Task<string option> =
+        if not (isEnabled ()) then Task.FromResult None else backend.Load()
 
-    member _.Save(snapshot: DraftSnapshot) : Task =
-        task {
-            if isEnabled () then
-                match gate.Save snapshot with
-                | DraftWrite.Write text -> do! backend.Save text
-                | DraftWrite.Delete -> do! backend.Clear()
-                | DraftWrite.Unchanged -> ()
-        } :> Task
+    /// 按 DraftSession.Flush 给出的结果写或删。
+    member _.Apply(write: DraftWrite) : Task =
+        match write with
+        | DraftWrite.Write text -> backend.Save text
+        | DraftWrite.Delete -> backend.Clear()
+        | DraftWrite.Unchanged -> Task.CompletedTask
 
     /// 清除本地草稿（设置里的显式动作，以及关闭保存时）：删除落盘内容。
-    member _.Clear() : Task =
-        task {
-            do! backend.Clear()
-            gate.Cleared()
-        } :> Task
+    member _.Clear() : Task = backend.Clear()

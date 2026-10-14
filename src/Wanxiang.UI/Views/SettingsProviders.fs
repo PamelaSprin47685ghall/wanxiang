@@ -71,13 +71,13 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         Ui.clearFieldError box
         syncShellVisual box
 
-    /// 探活结果按模型服务 id 暂存，用于在编辑器里回填模型列表。
-    let probeResults = System.Collections.Generic.Dictionary<string, string list>()
+    /// 探活归属（哪个编辑器在等）与结果缓存归 ProbeSlot。
+    let probeSlot = ProbeSlot()
 
     /// 当前编辑器的探活挂钩：ApplyProbe 到达时清掉按钮 pending 并回填模型框，
     /// 避免用户用陈旧列表覆盖刚探到的结果。对话框关闭时清空。
     /// 失败时还在编辑器里留一行常驻标记：toast 一闪而过，这行留到下一次探活。
-    let mutable activeProbe: (string * (bool -> unit) * (string list -> unit) * (string -> unit)) option = None
+    let mutable probeEditor: ((bool -> unit) * (string list -> unit) * (string -> unit)) option = None
 
     /// 所有 loopback 写法都算本机：127.0.0.1、localhost、::1（含括号写法）。
     /// Uri.IsLoopback 覆盖标准解析；子串回退覆盖非常规输入。
@@ -328,14 +328,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             idBox.IsEnabled <- false
             labelBox.Text <- p.label
             urlBox.Text <- p.baseUrl
-            let effectiveModels =
-                match probeResults.TryGetValue p.id with
-                | true, cachedModels when not (List.isEmpty cachedModels) -> cachedModels
-                | _ -> p.models
+            let effectiveModels = probeSlot.EffectiveModels(p.id, p.models)
             modelsBox.Text <- String.Join("\n", effectiveModels)
-            defaultModelBox.Text <-
-                if List.contains p.defaultModel effectiveModels then p.defaultModel
-                else effectiveModels |> List.tryHead |> Option.defaultValue ""
+            defaultModelBox.Text <- ProbeSlot.DefaultModel(p.defaultModel, effectiveModels)
             timeoutBox.Text <- string p.timeoutSeconds
             retriesBox.Text <- string p.maxRetries
             keyBox.PlaceholderText <- if p.hasApiKey then "已保存（留空则不改动）" else "粘贴密钥"
@@ -373,8 +368,9 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
                 clearFieldError urlBox
                 setProbeStatus ""
                 setProbePending true
-                activeProbe <-
-                    Some (id, setProbePending, (fun models ->
+                probeSlot.Open id
+                probeEditor <-
+                    Some (setProbePending, (fun models ->
                         modelsBox.Text <- String.Join("\n", models)
                         let currentDefault = if isNull defaultModelBox.Text then "" else defaultModelBox.Text.Trim()
                         if String.IsNullOrWhiteSpace currentDefault || not (List.contains currentDefault models) then
@@ -629,7 +625,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             // 无论新建还是编辑，首焦均落在快速接入的名称输入框（如果是已有模型服务，名称即首个可编辑项；
             // 如果是新建，名称已由预设填好且可改，保证首次交互直接处于输入就绪态，满足无障碍焦点契约）。
             initialFocus = labelBox,
-            onClosed = (fun () -> editorActive <- false; activeProbe <- None),
+            onClosed = (fun () -> editorActive <- false; probeSlot.Close()),
             canDismiss = (fun () -> not savePending))
 
     /// 探活结果回填：把模型服务的模型列表回填到草稿中，不自动提交保存（W2.5）。
@@ -637,19 +633,16 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         // 主机下发 `[code] 说明`：类型决定下一步，说明本身是「发生了什么 / 为什么 / 下一步」。
         let errMsg = if ok then "" else snd (ProbeFailureKind.parse (error |> Option.defaultValue ProviderProbeText.unknownReason))
         let editor =
-            match activeProbe with
-            | Some (pid, setPending, applyModels, setStatus) when pid = providerId -> Some(setPending, applyModels, setStatus)
-            | _ -> None
+            if probeSlot.Claim providerId then probeEditor else None
         // 编辑器未打开或不是当前模型服务时：仅缓存结果和给出反馈，绝不后台自动 upsert。
         let fb = ProviderProbeText.feedback editor.IsSome ok (List.length models) errMsg
         match editor with
         | Some(setPending, applyModels, setStatus) ->
-            activeProbe <- None
             setPending false
             fb.editorStatus |> Option.iter setStatus
             if fb.fillModels then applyModels models
         | None -> ()
-        if fb.cacheModels then probeResults[providerId] <- models
+        if fb.cacheModels then probeSlot.Remember(providerId, models)
         actions.toast fb.toast
             (match fb.tone with
              | ProbeTone.Info -> Info

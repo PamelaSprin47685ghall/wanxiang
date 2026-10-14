@@ -935,12 +935,12 @@ module SettingsViewTests =
             Dispatcher.UIThread.RunJobs()
 
             // 默认展示 Providers 分区
-            let currentSec: SettingsSection = getPrivateField view "current"
+            let currentSec: SettingsSection = (getPrivateField<SectionMemory<SettingsSection, Control>> view "memory").Current
             Assert.Equal(Providers, currentSec)
 
             // 切换到 Tools
             invokePrivate<unit> view "Select" [| box Tools |]
-            let currentSec2: SettingsSection = getPrivateField view "current"
+            let currentSec2: SettingsSection = (getPrivateField<SectionMemory<SettingsSection, Control>> view "memory").Current
             Assert.Equal(Tools, currentSec2)
 
             // 验证分区滚动位置设定与读取
@@ -949,14 +949,14 @@ module SettingsViewTests =
 
             // 相对方向导航 NavigateSection (+1)
             invokePrivate<unit> view "NavigateSection" [| box 1 |]
-            let currentSec3: SettingsSection = getPrivateField view "current"
+            let currentSec3: SettingsSection = (getPrivateField<SectionMemory<SettingsSection, Control>> view "memory").Current
             Assert.Equal(Generation, currentSec3)
 
             // 验证失效缓存
             invokePrivate<unit> view "invalidate" [| box [ Generation; Appearance ] |]
-            let builtMap: System.Collections.Generic.Dictionary<SettingsSection, Control> = getPrivateField view "builtSections"
-            Assert.False(builtMap.ContainsKey(Generation))
-            Assert.False(builtMap.ContainsKey(Appearance))
+            let memory: SectionMemory<SettingsSection, Control> = getPrivateField view "memory"
+            Assert.True((memory.TryBuilt Generation).IsNone)
+            Assert.True((memory.TryBuilt Appearance).IsNone)
 
             window.Close()
         )

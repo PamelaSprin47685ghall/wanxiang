@@ -28,16 +28,6 @@ type OnboardingActions = {
     toast: string -> ToastTone -> unit
 }
 
-/// 卡片所处阶段。
-type OnboardingStep =
-    | Idle
-    /// 正在保存模型服务（第一次 upsert）
-    | Saving
-    /// 已保存，正在向对方请求模型清单
-    | Probing
-    /// 已拿到清单，正在把清单与默认模型写回
-    | Applying
-
 module Onboarding =
 
     /// 卡片里可选的预设：不含需要自填端点的「自定义」（那在高级设置里）。
@@ -53,15 +43,8 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
     /// 构造时所在的 UI 调度器；后台续延一律投递到这里，不在调用方线程上新建调度器（决策 421）。
     let ui = Avalonia.Threading.Dispatcher.UIThread
     let mutable selected: ProviderPreset = List.head ProviderPresets.featured
-    /// 是否改用同一家的另一条传输（兼容端点）：只在探测失败的下一步里出现。
-    let mutable useAlternate = false
-    let mutable step = Idle
-    /// 本次尝试创建的模型服务 id（探测失败时据此撤销）
-    let mutable attemptId: string option = None
-    /// 连接成功、等目录快照到达后由外壳收尾的 (id, 模型)
-    let mutable connected: (string * string) option = None
-    let mutable discovered: string list option = None
-    let mutable discoveryStarted = false
+    /// 步骤、本次尝试、兼容端点切换、发现结果与状态文字归 OnboardingFlow；控件在这里。
+    let flow = OnboardingFlow()
     let mutable disposed = false
 
     let chipRow = WrapPanel(Orientation = Orientation.Horizontal)
@@ -95,21 +78,22 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
     let mutable switchButton: Border = null
     let mutable chipsHost: Control = null
 
-    let setStatus (message: string) (isError: bool) =
-        statusText.Text <- message
-        statusText.Foreground <- (if isError then Tokens.danger else Tokens.textMuted)
-        statusText.IsVisible <- not (String.IsNullOrWhiteSpace message)
+    let renderStatus () =
+        let status = flow.Status
+        statusText.Text <- status.text
+        statusText.Foreground <- (if status.isError then Tokens.danger else Tokens.textMuted)
+        statusText.IsVisible <- not (String.IsNullOrWhiteSpace status.text)
 
     /// 实际使用的预设：探测失败后可改用同一家的兼容端点。
     let effectivePreset () : ProviderPreset =
-        match useAlternate, selected.alternate with
+        match flow.UseAlternate, selected.alternate with
         | true, Some(kind, url) -> { selected with kind = kind; baseUrl = url }
         | _ when selected.key = "custom" ->
             { selected with label = "自定义 OpenAI 兼容端点"; baseUrl = (if isNull customUrlBox.Text then "" else customUrlBox.Text.Trim()) }
         | _ -> selected
 
     let syncControls () =
-        let busy = step <> Idle
+        let busy = flow.IsBusy
         Ui.setButtonPending connectButton busy "连接" "正在连接…"
         keyGroup.IsVisible <- selected.needsApiKey
         customUrlGroup.IsVisible <- (selected.key = "custom")
@@ -118,57 +102,43 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
         hintText.Text <- selected.hint
         hintText.IsVisible <- not (String.IsNullOrWhiteSpace selected.hint)
 
-    let fail (message: string) =
-        step <- Idle
-        attemptId <- None
-        setStatus message true
+    let showFlow () =
+        renderStatus ()
         syncControls ()
 
     /// 第二次写回：把探测到的清单与默认模型落盘（同一个 upsert，apiKey 缺省即保持原值）。
     let applyProbed (id: string) (models: string list) =
         let preset = effectivePreset ()
         let defaultModel = OnboardingRules.pickDefaultModel preset.models models
-        step <- Applying
-        setStatus "已获取模型列表，正在选定默认模型…" false
-        syncControls ()
+        flow.BeginApply()
+        showFlow ()
         let payload =
             ProviderPresets.payload id preset.label preset.kind preset.baseUrl None models defaultModel true 120 2
         actions.upsertProvider payload (fun ok ->
-            if ok then
-                connected <- Some(id, defaultModel)
-                step <- Idle
-                attemptId <- None
-                setStatus (sprintf "已连接 %s，默认模型 %s。" preset.label defaultModel) false
-                syncControls ()
-            else
-                fail "保存模型列表失败：配置没有写入。请重试一次，仍不行就到设置里添加。")
+            flow.Applied(ok, id, defaultModel, preset.label)
+            showFlow ())
 
     let connect () =
-        if step = Idle then
+        if not flow.IsBusy then
             let preset = effectivePreset ()
             let key = if isNull keyBox.Text then "" else keyBox.Text.Trim()
-            if preset.key = "custom" && String.IsNullOrWhiteSpace preset.baseUrl then
-                setStatus "还没有填写服务地址。请先填入兼容 OpenAI 的接口地址，再点「连接」。" true
+            match flow.Check(preset.key = "custom", preset.baseUrl, preset.needsApiKey, key) with
+            | OnboardingInput.MissingUrl ->
+                renderStatus ()
                 customUrlBox.Focus() |> ignore
-            elif preset.needsApiKey && String.IsNullOrWhiteSpace key then
-                setStatus "还没有填写密钥。请先粘贴 API Key，再点「连接」。" true
+            | OnboardingInput.MissingKey ->
+                renderStatus ()
                 keyBox.Focus() |> ignore
-            else
+            | OnboardingInput.Ready ->
                 let id = ProviderPresets.suggestId preset (actions.takenIds ())
-                step <- Saving
-                attemptId <- Some id
-                setStatus "正在保存模型服务…" false
-                syncControls ()
+                flow.Begin id |> ignore
+                showFlow ()
                 let payload =
                     ProviderPresets.presetPayload preset id (if preset.needsApiKey then Some key else None) []
                 actions.upsertProvider payload (fun ok ->
-                    if ok then
-                        step <- Probing
-                        setStatus (sprintf "正在向 %s 获取模型列表…" preset.label) false
-                        syncControls ()
-                        actions.probeProvider id
-                    else
-                        fail "保存失败：配置没有写入。请检查密钥后重试，或到设置里查看详情。")
+                    let probe = flow.Saved(ok, preset.label)
+                    showFlow ()
+                    if probe then actions.probeProvider id)
 
     let rec rebuildChips () =
         chipRow.Children.Clear()
@@ -176,10 +146,9 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
             let tone = if preset.key = selected.key then Ui.Primary else Ui.Secondary
             let button =
                 Ui.button tone preset.label (fun () ->
-                    if step = Idle then
+                    if flow.Select() then
                         selected <- preset
-                        useAlternate <- false
-                        setStatus "" false
+                        renderStatus ()
                         rebuildChips ()
                         syncControls ()
                         if preset.key = "custom" then customUrlBox.Focus() |> ignore
@@ -199,7 +168,7 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
         moreButton.Margin <- Thickness(0.0, 0.0, Spacing.spaceMd, Spacing.spaceMd)
         Avalonia.Automation.AutomationProperties.SetName(moreButton, "更多模型服务")
         Ui.onClick moreButton (fun () ->
-            if step = Idle then
+            if not flow.IsBusy then
                 Menu.show
                     overlay
                     (moreButton :> Control)
@@ -207,9 +176,9 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
                     [ for preset in Onboarding.selectablePresets do
                           if not (List.contains preset ProviderPresets.featured) then
                               MenuEntry.create preset.label (fun () ->
+                                  flow.Select() |> ignore
                                   selected <- preset
-                                  useAlternate <- false
-                                  setStatus "" false
+                                  renderStatus ()
                                   rebuildChips ()
                                   syncControls ()
                                   if preset.needsApiKey then keyBox.Focus() |> ignore)
@@ -229,11 +198,9 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
         Avalonia.Automation.AutomationProperties.SetName(connectButton, "连接")
         switchButton <-
             Ui.button Ui.Secondary "改用兼容端点" (fun () ->
-                if step = Idle then
-                    useAlternate <- not useAlternate
+                if flow.ToggleAlternate() then
                     switchButton.IsVisible <- false
-                    setStatus "已切换传输，请再点「连接」重试。" false
-                    syncControls ())
+                    showFlow ())
         switchButton.IsVisible <- false
         switchButton.HorizontalAlignment <- HorizontalAlignment.Left
         Avalonia.Automation.AutomationProperties.SetLiveSetting(
@@ -275,50 +242,47 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
         let canSwitch = selected.alternate.IsSome && ProbeFailureKind.suggestsTransportSwitch failure
         switchButton.IsVisible <- canSwitch
         if canSwitch then
-            Ui.setButtonText switchButton (if useAlternate then "改回原生接口" else "改用兼容端点")
+            Ui.setButtonText switchButton flow.SwitchLabel
 
     member _.Root: Control = root
 
-    member _.Step = step
+    member _.Step = flow.Step
 
     /// 正在连接中：外壳据此在目录暂时「就绪」时仍保留卡片，避免中途被收起。
-    member _.IsBusy = step <> Idle
+    member _.IsBusy = flow.IsBusy
 
     member _.SelectedPreset = selected
 
-    member _.Discovered = discovered
+    member _.Discovered = flow.Discovered
 
     /// 探测结果入口。返回 true 表示这是本卡片发起的探测（设置页不应再处理）。
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) : bool =
-        match step, attemptId with
-        | Probing, Some id when id = providerId ->
-            if ok then
-                let usable = if List.isEmpty models then (effectivePreset ()).models else models
-                applyProbed id usable
-            else
-                let failure, message = ProbeFailureKind.parse (error |> Option.defaultValue "未知原因")
-                // 探测失败：撤销刚创建的模型服务，免得留下一个连不通的半成品。
-                actions.discardProvider id
-                fail message
-                this.OfferSwitch failure
+        let parsed = if ok then None else Some(ProbeFailureKind.parse (error |> Option.defaultValue "未知原因"))
+        match flow.Probed(providerId, ok, (match parsed with Some(_, message) -> message | None -> "")) with
+        | OnboardingProbe.Apply id ->
+            let usable = if List.isEmpty models then (effectivePreset ()).models else models
+            applyProbed id usable
             true
-        | _ -> false
+        | OnboardingProbe.Failed id ->
+            // 探测失败：撤销刚创建的模型服务，免得留下一个连不通的半成品。
+            actions.discardProvider id
+            showFlow ()
+            parsed |> Option.iter (fst >> this.OfferSwitch)
+            true
+        | OnboardingProbe.NotMine -> false
 
     /// 本卡片刚连接成功且目录里已能用时，取走 (id, 模型) 交给外壳收尾（只取一次）。
     member _.TakeConnected(catalog: Catalog) : (string * string) option =
-        match connected with
-        | Some(id, model) ->
+        match flow.Connected with
+        | Some(id, _) ->
             match Catalog.tryProvider id catalog with
-            | Some p when p.enabled && not (List.isEmpty p.models) ->
-                connected <- None
-                Some(id, model)
+            | Some p when p.enabled && not (List.isEmpty p.models) -> flow.TakeConnected()
             | _ -> None
         | None -> None
 
     /// 外壳在卡片显示时调用：发现本机 Ollama（每次显示只探一次）。
     member this.StartDiscovery() =
-        if not discoveryStarted then
-            discoveryStarted <- true
+        if flow.StartDiscovery() then
             let task = actions.discoverLocal ()
             task.ContinueWith(fun (t: Task<string list option>) ->
                 let result = if t.IsCompletedSuccessfully then t.Result else None
@@ -326,51 +290,38 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
             |> ignore
 
     member this.ShowDiscovered(result: string list option) =
-        discovered <- result
         discoveryPanel.Children.Clear()
-        match result with
-        | Some models when not (List.isEmpty models) ->
+        match flow.ShowDiscovered result, result with
+        | true, Some models ->
             let use' =
                 Ui.button Ui.Secondary "一键使用本机 Ollama" (fun () ->
-                    if step = Idle then
+                    if not flow.IsBusy then
                         let preset = ProviderPresets.tryFind "ollama" |> Option.get
                         let id = ProviderPresets.suggestId preset (actions.takenIds ())
+                        flow.BeginLocal id |> ignore
                         selected <- preset
-                        useAlternate <- false
-                        attemptId <- Some id
-                        step <- Saving
                         rebuildChips ()
-                        setStatus "正在保存本机 Ollama…" false
-                        syncControls ()
+                        showFlow ()
                         // 默认模型 = 本机已装的第一个：那是用户自己的选择，预设里的名字未必装了。
                         let defaultModel = List.head models
                         let payload =
                             ProviderPresets.payload id preset.label preset.kind preset.baseUrl None models defaultModel true 120 2
                         actions.upsertProvider payload (fun ok ->
-                            if ok then
-                                connected <- Some(id, defaultModel)
-                                step <- Idle
-                                attemptId <- None
-                                setStatus (sprintf "已连接本机 Ollama，默认模型 %s。" defaultModel) false
-                                syncControls ()
-                            else
-                                fail "保存失败：配置没有写入。请重试，或到设置里添加。"))
+                            flow.LocalSaved(ok, id, defaultModel)
+                            showFlow ()))
             use'.HorizontalAlignment <- HorizontalAlignment.Left
             Avalonia.Automation.AutomationProperties.SetName(use', "一键使用本机 Ollama")
             discoveryPanel.Children.Add(
-                Ui.caption (sprintf "发现本机 Ollama 正在运行，有 %d 个模型。" (List.length models)))
+                Ui.caption (OnboardingFlow.DiscoveredText(List.length models)))
             discoveryPanel.Children.Add use'
             discoveryPanel.IsVisible <- true
         | _ -> discoveryPanel.IsVisible <- false
 
     /// 卡片被收起（有可用模型）后复位，下次再显示是干净的。
     member _.Reset() =
-        if step = Idle then
+        if flow.Reset() then
             keyBox.Text <- ""
-            setStatus "" false
-            useAlternate <- false
-            attemptId <- None
-            discoveryStarted <- false
+            renderStatus ()
 
     member _.FocusInitial() =
         if selected.needsApiKey then keyBox.Focus() |> ignore else connectButton.Focus() |> ignore

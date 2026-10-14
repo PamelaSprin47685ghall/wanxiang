@@ -66,6 +66,10 @@ type MainView() as this =
     let mutable paletteRecent: string list = PaletteRecent.loadRecent ()
     /// §214：宽限期内的待删批次——列表里隐去，过期才提交删除命令。
     let mutable pendingDeletes = PendingDeletion.empty
+    /// 待删批次的到期由 PendingDeletion 记；这里只有一个计时器，指向最早的到期时刻。
+    let mutable deleteTimer: DispatcherTimer option = None
+    /// 「检查主机」的有界等待（旧主机不认识这个事件会直接忽略）。
+    let doctorWait = BoundedWait(BoundedWaits.doctorLimit)
     /// W4：分叉谱系（随列表快照更新）、最近一次搜索的 queryId、待滚动到的消息。
     let mutable lineage: Map<Guid, ForkLineage> = Map.empty
     let mutable pendingReveal: (Guid * RevealTarget) option = None
@@ -73,14 +77,9 @@ type MainView() as this =
     let drafts = ComposerDrafts()
     let outbox = MessageOutbox()
     // ---- 本地草稿（W5，决策 80/81）：只存本机，不入日志、不上传、不同步 ----
-    let mutable draftStore = LocalDraftStore.Default(fun () -> prefs.persistDrafts)
-    /// 启动时从本机读到的快照；保存时其中「尚未恢复的主机」原样保留。
-    let mutable storedDrafts = DraftSnapshot.empty
-    let mutable draftsLoaded = false
-    let restoredInstances = System.Collections.Generic.HashSet<string>()
-    /// 曾在列表或本地恢复里见过的对话 id：之后从列表里消失，才视为被删除并清理其草稿。
-    let mutable knownConversationIds: Set<Guid> = Set.empty
-    let unsentSavedAt = System.Collections.Generic.Dictionary<Guid, DateTimeOffset>()
+    let draftStore = LocalDraftStore.Default(fun () -> prefs.persistDrafts)
+    /// 已存快照、读完标志、已恢复主机、认得的对话与落盘闸门归 DraftSession；读写落点在 draftStore。
+    let draftSession = DraftSession()
     let attachmentDraft () = (drafts.Get(instanceId, activeConvId)).attachments
     // 附件下载在途缓冲：容量上限 + 断连整体丢弃，替代此前无上限的裸字典（R1）。
     let downloads = DownloadBuffers()
@@ -107,16 +106,16 @@ type MainView() as this =
     let mutable settingsReturnFocus: Control option = None
     /// 对话快照等待中的骨架屏延时器：300ms 内到达就不挂任何 loading chrome。
     let mutable skeletonTimer: DispatcherTimer option = None
-    /// 骨架屏延时器已为哪个对话武装：Render 会被后台事件反复触发，不得重启它，一对话只武装一次（D1）。
-    let mutable skeletonArmedFor: Guid option = None
+    /// 骨架屏延时器为哪个对话武装归 DeferredReveal：Render 会被后台事件反复触发，不得重启它，一对话只武装一次（D1）。
+    let skeletonReveal = DeferredReveal<Guid>(MotionLedger.conversationSkeletonDelay)
     /// 浏览器宿主的 CSS 像素视口宽（`wxViewportWidth` 轮询写入）。
     /// Browser 后端高 DPR 下 `Bounds.Width` 会被 DPR 除一次，不可做断点依据；
     /// 有覆盖值时响应式布局只认它，桌面/测试走 Bounds 原路径。
-    let mutable hostViewportWidth: float option = None
+    let hostViewportWidth = ChangeWatch<float>()
     /// 浏览器 CSS 视口轮询计时器：仅在 Browser 环境启动，卸载时停止。
     let mutable viewportTimer: DispatcherTimer option = None
     /// 上次看到的浏览器“恢复”计数（online / 回到前台，第 213 节）。
-    let mutable lastResumeEpoch = 0
+    let resumeEpoch = ChangeWatch<int>(Some 0)
     let mutable lastPageLink = ""
     let mutable pendingLink: (Guid * uint64) option = None
     let mutable listReceived = false
@@ -237,7 +236,7 @@ type MainView() as this =
             elif before.compactNavigationOpen then composer.Focus()
 
     member private this.ApplyResponsiveLayout(width: float) =
-        let effective = hostViewportWidth |> Option.defaultValue width
+        let effective = hostViewportWidth.Last |> Option.defaultValue width
         if effective > 0.0 && not (isNull (box mainLayout)) then
             let before = navigation.State
             let needsApply, state = navigation.ApplyViewport(effective)
@@ -258,14 +257,12 @@ type MainView() as this =
                 ParityProbe.hit "timer.viewport"
                 try
                     let css = BrowserPage.ViewportWidth()
-                    if css > 0.0 && hostViewportWidth <> Some css then
-                        hostViewportWidth <- Some css
+                    if css > 0.0 && hostViewportWidth.Observe css then
                         this.ApplyResponsiveLayout css
                 with _ -> ()
                 try
                     let epoch = BrowserPage.ResumeEpoch()
-                    if epoch <> lastResumeEpoch then
-                        lastResumeEpoch <- epoch
+                    if resumeEpoch.Observe epoch then
                         ParityProbe.hit "reconnect.resume"
                         this.ResumeReconnectNow()
                 with _ -> ()
@@ -285,15 +282,14 @@ type MainView() as this =
     /// 快照先到则定时器自证过期，不做任何事。
     member private this.ShowConversationLoadingDeferred(convId: Guid) =
         // 一对话只武装一次：后台事件触发的 Render 若重启计时器，骨架屏会被无限顺延（D1）。
-        if skeletonArmedFor <> Some convId then
-            skeletonArmedFor <- Some convId
+        if skeletonReveal.Arm(convId, DateTimeOffset.UtcNow) then
             match skeletonTimer with
             | Some timer -> timer.Stop()
             | None -> ()
-            let timer = DispatcherTimer(Interval = MotionLedger.conversationSkeletonDelay)
+            let timer = DispatcherTimer(Interval = skeletonReveal.Delay)
             timer.Tick.Add(fun _ ->
                 timer.Stop()
-                if activeConvId = Some convId && (activeConversation ()).IsNone then
+                if skeletonReveal.Expired convId && activeConvId = Some convId && (activeConversation ()).IsNone then
                     chat.SetTitle("加载中…", false)
                     chat.ShowSkeletonLoading())
             skeletonTimer <- Some timer
@@ -305,7 +301,7 @@ type MainView() as this =
         | Some timer -> timer.Stop()
         | None -> ()
         skeletonTimer <- None
-        skeletonArmedFor <- None
+        skeletonReveal.Disarm()
 
     /// 断线时把所有上传中的附件标成失败：底层流已死，不会再有 Complete/Abort（C4）。
     member private this.FailUploadingAttachments() =
@@ -447,17 +443,13 @@ type MainView() as this =
         if instanceId <> "" && not (isNull (box composer)) then
             (drafts.Get(instanceId, activeConvId)).text <- composer.Text
 
-    member private this.CurrentDraftSnapshot() : DraftSnapshot =
+    /// 内存里的草稿与未确认消息（先把输入框文字同步进去）。
+    member private this.LiveDraftSnapshot() : DraftSnapshot =
         this.SyncActiveDraftText()
-        let savedAtOf (id: Guid) =
-            match unsentSavedAt.TryGetValue id with
-            | true, t -> t
-            | _ ->
-                let t = DateTimeOffset.UtcNow
-                unsentSavedAt[id] <- t
-                t
-        let current = DraftPolicy.snapshotOf drafts outbox savedAtOf
-        DraftPolicy.mergeForSave storedDrafts (Set.ofSeq restoredInstances) current
+        DraftPolicy.snapshotOf drafts outbox (fun id -> draftSession.SavedAt(id, DateTimeOffset.UtcNow))
+
+    member private this.CurrentDraftSnapshot() : DraftSnapshot =
+        draftSession.ForSave(this.LiveDraftSnapshot())
 
     member private this.UpdateDraftSummary() =
         if not (isNull (box settings)) then
@@ -468,22 +460,25 @@ type MainView() as this =
 
     /// 保存到本机。关闭保存、尚未读完磁盘、或内容没变时什么也不做。
     member this.FlushDrafts() =
-        if draftsLoaded && prefs.persistDrafts then
+        // 读完之前连快照都不算（不记保存时刻），与旧时序相同。
+        if draftSession.IsLoaded && prefs.persistDrafts then
             ParityProbe.hit "drafts.flush"
-            draftStore.Save(this.CurrentDraftSnapshot()) |> ignore
+            draftStore.Apply(draftSession.Flush(prefs.persistDrafts, this.LiveDraftSnapshot())) |> ignore
 
     /// 把本机保存的内容放回内存：只处理当前主机，且不覆盖用户这次已经输入的文字。
     member private this.RestoreLocalDrafts() =
-        if draftsLoaded && prefs.persistDrafts && instanceId <> "" && restoredInstances.Add instanceId then
+        match draftSession.Restore(prefs.persistDrafts, instanceId) with
+        | Some stored ->
             let unsentBefore = outbox.ForInstance instanceId |> List.length
-            DraftPolicy.restoreInto storedDrafts instanceId drafts outbox |> ignore
+            DraftPolicy.restoreInto stored instanceId drafts outbox |> ignore
             let unsentRestored = (outbox.ForInstance instanceId |> List.length) - unsentBefore
-            knownConversationIds <- Set.union knownConversationIds (DraftRestore.knownConversations storedDrafts instanceId)
+            let notice = draftSession.Restored(instanceId, unsentRestored)
             let live = drafts.Get(instanceId, activeConvId)
             if DraftRestore.fillComposer composer.Text live.text then composer.SetText live.text
             composer.SetAttachments((attachmentDraft ()).Items)
-            DraftRestore.restoreNotice storedDrafts instanceId unsentRestored |> Option.iter (fun message -> toast message Info)
+            notice |> Option.iter (fun message -> toast message Info)
             this.UpdateDraftSummary()
+        | None -> ()
 
     /// 清除本地草稿：本机落盘内容、内存里各对话的草稿、未确认的消息一并清空。
     /// 已发送并保存的对话不受影响。
@@ -495,14 +490,13 @@ type MainView() as this =
             drafts.Remove(instance, conversation)
         for instance in outbox.AllInstances() do
             outbox.DiscardUnsent instance
-        storedDrafts <- DraftSnapshot.empty
-        unsentSavedAt.Clear()
+        let cleared = draftSession.Clear()
         composer.SetText ""
         composer.SetAttachments []
         draftStore.Clear() |> ignore
         this.UpdateDraftSummary()
         this.Render()
-        toast DraftRestore.clearedText Success
+        toast cleared Success
 
     /// 列表里消失的对话 = 已被删除：它的草稿与未确认消息已无处可发，随之清理。
     member private this.PruneDeletedConversationDrafts() =
@@ -513,13 +507,11 @@ type MainView() as this =
                 |> List.filter (fun item -> not (PendingMessage.canRetry item))
                 |> List.map _.conversationId
                 |> Set.ofList
-            let gone = DraftPolicy.deletedConversations listed knownConversationIds inFlight
+            let gone = draftSession.Prune(instanceId, listed, inFlight)
             for id in gone do
                 if activeConvId <> Some id then
                     drafts.Remove(instanceId, Some id)
                 outbox.DiscardConversation(instanceId, id)
-            storedDrafts <- DraftRestore.pruneStored storedDrafts instanceId gone
-            knownConversationIds <- DraftRestore.knownAfterPrune knownConversationIds gone listed
 
     /// 主机状态行：连接正常时带上「配置有误」提示。
     member private this.UpdateHostStatusLine() =
@@ -542,7 +534,9 @@ type MainView() as this =
         settings.SetPrefs prefs
         // 关闭保存：立即删除本机已存的内容（之后不再写）；重新打开：下一次保存即生效。
         if draftsToggled then
-            if not prefs.persistDrafts then draftStore.Clear() |> ignore
+            if not prefs.persistDrafts then
+                draftStore.Clear() |> ignore
+                draftSession.StorageCleared()
             else this.FlushDrafts()
             this.UpdateDraftSummary()
         this.Render()
@@ -672,7 +666,7 @@ type MainView() as this =
         match ids with
         | [ single ] -> sidebar.FocusAfterDelete(single.ToString())
         | _ -> ()
-        let next, batch = PendingDeletion.schedule titled pendingDeletes
+        let next, batch = PendingDeletion.scheduleAt DateTimeOffset.UtcNow titled pendingDeletes
         pendingDeletes <- next
         match batch with
         | None -> ()
@@ -681,26 +675,41 @@ type MainView() as this =
             if deletingCurrent then
                 this.SelectConversation neighbor
                 sidebar.SetActive activeConvId
-            let timer = DispatcherTimer(Interval = PendingDeletion.grace)
-            timer.Tick.Add(fun _ ->
-                timer.Stop()
-                this.CommitDelete batch.token)
-            timer.Start()
+            this.ArmDeleteTimer()
             overlay.ToastWith(
                 batch.label,
                 Info,
                 Some(
                     "撤销",
                     fun () ->
-                        timer.Stop()
                         let restored, ids = PendingDeletion.undo batch.token pendingDeletes
                         pendingDeletes <- restored
+                        this.ArmDeleteTimer()
                         if not (List.isEmpty ids) then
                             sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
                             if deletingCurrent && ids.Length = 1 then this.SelectConversation(Some ids.Head)
                             this.Render()
                             toast (PendingDeletion.restoredText ids.Length) Success))
             this.Render()
+
+    /// 计时器指向最早到期的批次；到期的批次逐个提交，再指向下一个。
+    member private this.ArmDeleteTimer() =
+        deleteTimer |> Option.iter (fun t -> t.Stop())
+        deleteTimer <- None
+        match PendingDeletion.nextDue pendingDeletes with
+        | Some due ->
+            let wait = due - DateTimeOffset.UtcNow
+            let timer = DispatcherTimer(Interval = (if wait > TimeSpan.FromMilliseconds 1.0 then wait else TimeSpan.FromMilliseconds 1.0))
+            timer.Tick.Add(fun _ ->
+                timer.Stop()
+                deleteTimer <- None
+                let next, tokens = PendingDeletion.tick DateTimeOffset.UtcNow pendingDeletes
+                pendingDeletes <- next
+                for token in tokens do this.CommitDelete token
+                this.ArmDeleteTimer())
+            deleteTimer <- Some timer
+            timer.Start()
+        | None -> ()
 
     /// 宽限期到：真正提交删除。被拒的条目在下一次列表快照里自然回到列表。
     member private this.CommitDelete(token: Guid) =
@@ -1758,6 +1767,7 @@ type MainView() as this =
             this.UpdateHostStatusLine()
             notice |> Option.iter (fun text -> toast text Warning)
         | DoctorReport d ->
+            doctorWait.Settle() |> ignore
             settings.Health.SetReport(d.ok, DoctorCheck.parseChecks d.checks)
         | DoctorRequest _ -> ()
         | DevicesSnapshot d -> settings.Devices.SetDevices(DevicesModel.parse d.items, d.canInvite)
@@ -2276,16 +2286,17 @@ type MainView() as this =
         settings.Health.CheckRequested.Add(fun () ->
                 if authenticated && client.IsConnected then
                     send (DoctorRequest {| requestId = newInvocation () |})
-                    let timeout = DispatcherTimer(Interval = TimeSpan.FromSeconds 30.0)
+                    doctorWait.Begin DateTimeOffset.UtcNow
+                    let timeout = DispatcherTimer(Interval = doctorWait.Limit)
                     timeout.Tick.Add(fun _ ->
                         timeout.Stop()
-                        match settings.Health.Doctor with
-                        | Running ->
-                            settings.Health.SetUnavailable "没有拿到检查结果：主机可能版本较旧，或检查超时了。请稍后重试，仍不行就升级主机。"
-                        | _ -> ())
+                        if doctorWait.TimeOut() then
+                            match settings.Health.Doctor with
+                            | Running -> settings.Health.SetUnavailable BoundedWaits.doctorTimeoutText
+                            | _ -> ())
                     timeout.Start()
                 else
-                    settings.Health.SetUnavailable "还没连接主机，无法检查。连接后再试。")
+                    settings.Health.SetUnavailable BoundedWaits.doctorOfflineText)
         settings.LocalDrafts.ClearRequested.Add(fun () ->
                 Dialogs.confirm
                     overlay
@@ -2533,19 +2544,18 @@ type MainView() as this =
     /// 读本机保存的草稿。桌面是同步完成的文件读取；PWA 的 IndexedDB 读取完成后回到 UI 线程。
     /// 读完之前不写盘，避免用空内存覆盖尚未读到的内容。
     member private this.LoadLocalDrafts() =
-        let apply (snapshot: DraftSnapshot) =
+        let apply (text: string option) =
             ParityProbe.hit "drafts.loaded"
-            storedDrafts <- snapshot
-            draftsLoaded <- true
+            draftSession.Loaded text
             this.RestoreLocalDrafts()
             this.UpdateDraftSummary()
         let task = draftStore.Load()
         if task.IsCompleted then
-            apply (try task.Result with _ -> DraftSnapshot.empty)
+            apply (try task.Result with _ -> None)
         else
-            task.ContinueWith(fun (t: System.Threading.Tasks.Task<DraftSnapshot>) ->
-                let snapshot = if t.IsFaulted then DraftSnapshot.empty else t.Result
-                ui.Post(fun () -> apply snapshot))
+            task.ContinueWith(fun (t: System.Threading.Tasks.Task<string option>) ->
+                let text = if t.IsFaulted then None else t.Result
+                ui.Post(fun () -> apply text))
             |> ignore
 
     /// 已有凭据时自动连接：桌面读 client.toml，PWA 读 IndexedDB（决策 52/53、Q191）。

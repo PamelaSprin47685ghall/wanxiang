@@ -142,6 +142,16 @@
     <PackageReference Include="Wanxiang2.LocalDraftControls" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.HostHealth" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PendingDeletion" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DeferredReveal" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ChangeWatch" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BoundedWait" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.LinkInbox" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.OnboardingFlow" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ProbeSlot" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SectionMemory" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SearchSession" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.RowFocus" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DraftSession" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ForkLineage" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.RevealTarget" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.SearchHit" Version="0.0.0-local" />
