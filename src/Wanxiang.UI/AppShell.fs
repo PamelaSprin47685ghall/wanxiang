@@ -246,9 +246,7 @@ type MainView() as this =
             // （进入 compact 且无对话），也先把焦点送进抽屉（搜索框），避免 Tab 漏到背景聊天/输入区。
             // 触发条件与 SetCompactNavigation 同口径：抽屉由「未开」翻到「compact 打开」才聚焦——
             // 关闭态、非 compact、以及开合状态未变的普通缩放都不抢焦点。
-            if state.compactMode && state.compactNavigationOpen
-               && not (before.compactMode && before.compactNavigationOpen)
-               && not (InputModality.prefersTouch ()) then
+            if NavigationSnapshot.autofocusDrawer before state (InputModality.prefersTouch ()) then
                 sidebar.FocusSearch()
 
     /// 浏览器 CSS 视口轮询：zoom、DPR、显示器移动都不会可靠触发 Bounds 更新，
@@ -1047,21 +1045,18 @@ type MainView() as this =
 
     /// Ctrl+Shift+G：与卡片菜单的「重新生成」同一路径；生成中、未连接、尾部不是回复时不动作。
     member private this.RegenerateLatest() =
-        match activeConversation () with
-        | Some view when not (runs.Get activeConvId).generationId.IsSome ->
-            let messages = messagesOf view
-            match List.tryLast messages with
-            | Some last when last.role = "user" || not (List.isEmpty (ReplyTail.chain messages)) ->
-                this.Regenerate()
-            | _ -> toast "这段对话还没有可以重新生成的回复" Warning
-        | Some _ -> toast "正在生成；先按 Esc 停止，再重新生成" Info
-        | None -> toast "没有打开的对话" Warning
+        let gate = ReplyGate.regenerate (activeConversation () |> Option.map messagesOf) (runs.Get activeConvId).generationId.IsSome
+        match gate, ReplyGate.regenerateText gate with
+        | RegenerateGate.Allowed, _ -> this.Regenerate()
+        | RegenerateGate.Generating, Some text -> toast text Info
+        | _, Some text -> toast text Warning
+        | _, None -> ()
 
     /// Ctrl+Shift+C：复制最新一条有正文的回复。
     member private this.CopyLatestReply() =
         match activeConversation () |> Option.bind (fun view -> ReplyTail.latestText (messagesOf view)) with
         | Some text -> copyToClipboard text
-        | None -> toast "还没有可以复制的回复" Warning
+        | None -> toast ReplyGate.nothingToCopyText Warning
 
     member private this.StopGeneration() =
         match activeConvId, (runs.Get activeConvId).generationId with
@@ -1075,23 +1070,8 @@ type MainView() as this =
         match activeConvId, activeConversation () with
         | Some convId, Some view ->
             Dialogs.editText overlay "编辑并分叉" seedText "创建分叉" (fun edited ->
-                let messages = messagesOf view
-                let forkAfterId =
-                    match commitId with
-                    | Some target ->
-                        messages
-                        |> List.choose (fun m -> m.commitId)
-                        |> List.filter (fun id -> id < target)
-                        |> List.sortDescending
-                        |> List.tryHead
-                    | None -> messages |> List.choose (fun m -> m.commitId) |> List.sortDescending |> List.tryHead
-                let editedMessage = JsonObject()
-                editedMessage["role"] <- "user"
-                let contents = JsonArray()
-                let textContent = JsonObject()
-                textContent["text"] <- edited
-                contents.Add textContent
-                editedMessage["contents"] <- contents
+                let forkAfterId = ForkAnchor.forkAfter (messagesOf view |> List.choose (fun m -> m.commitId)) commitId
+                let editedMessage = ForkAnchor.editedMessage edited
                 let newId = Guid.CreateVersion7()
                 let command =
                     ForkConversation
@@ -1111,7 +1091,7 @@ type MainView() as this =
                 // 同步而非 Post：editText 的 submit 先 CloseDialog() 再 onConfirm，
                 // 还原焦点发生在内、发生在前，这一行随后落地不为空转（实测验证）。
                 composer.Focus())
-        | _ -> toast "当前没有可分叉的对话。" Warning
+        | _ -> toast ForkAnchor.noConversationText Warning
 
     member private _.CurrentFocusControl() : Control option =
         try
@@ -1495,18 +1475,9 @@ type MainView() as this =
 
     member private this.CycleTheme() =
         // 主题三态轮转：跟随系统 → 浅色 → 深色 → 回到跟随系统。
-        let nextTheme =
-            match prefs.theme with
-            | FollowSystem -> AlwaysLight
-            | AlwaysLight -> AlwaysDark
-            | AlwaysDark -> FollowSystem
+        let nextTheme = ThemePreference.next prefs.theme
         this.SavePrefs { prefs with theme = nextTheme }
-        toast
-            (match nextTheme with
-             | FollowSystem -> "已切换为跟随系统主题"
-             | AlwaysDark -> "已切换为深色主题"
-             | AlwaysLight -> "已切换为浅色主题")
-            Info
+        toast (ThemePreference.switchedText nextTheme) Info
 
     member private this.FocusSidebarSearch(query: string option) =
         let state = navigation.EnsureSearchVisible()
@@ -1568,7 +1539,7 @@ type MainView() as this =
             | Some view ->
                 let seed = messagesOf view |> List.filter MessageView.isUser |> List.tryLast |> Option.map (fun m -> m.text) |> Option.defaultValue ""
                 this.ForkFrom(None, seed)
-            | None -> toast "当前没有可分叉的对话。" Warning
+            | None -> toast ForkAnchor.noConversationText Warning
         | PaletteCommand.Action "copy-reply" -> this.CopyLatestReply()
         | PaletteCommand.Action "regenerate" -> this.RegenerateLatest()
         | PaletteCommand.Action "import" -> this.ImportConversation()
@@ -2166,7 +2137,7 @@ type MainView() as this =
                             |> Option.map (fun m -> m.text)
                             |> Option.defaultValue ""
                         this.ForkFrom(None, seed)
-                    | None -> toast "当前没有可分叉的对话。" Warning
+                    | None -> toast ForkAnchor.noConversationText Warning
               stopGeneration = fun () -> this.StopGeneration()
               requestOlderHistory = fun () -> this.RequestOlderHistory()
               retryLast = fun () -> this.Regenerate()
@@ -2223,7 +2194,7 @@ type MainView() as this =
     /// 决策 310：更早一页的等待有上限。超时 / 断线都收口到这里：
     /// 解除 pageLoading、丢掉分页锚点、撤销挂起的「上一轮」，消息区顶部给原因 + 「重试」。
     member private this.FailOlderPage(message: string) =
-        if pageLoading || pageRequestedAt.IsSome then
+        if OlderPageLoad.inFlight pageLoading pageRequestedAt then
             pageLoading <- false
             pageRequestedAt <- None
             chat.CancelHistoryPrependAnchor()
@@ -2232,14 +2203,12 @@ type MainView() as this =
     member private this.ShowOlderPageRetry(message: string) =
         chat.ShowOlderPageFailure(message, fun () ->
             if authenticated then this.RequestOlderHistory()
-            else this.ShowOlderPageRetry "还没有连接主机，更早的消息无法加载。连接后再点「重试」。")
+            else this.ShowOlderPageRetry OlderPageLoad.offlineText)
 
     /// 超时检查：只在有请求在途时有事做；tick 本身很轻，不必频繁启停。
     member private this.CheckOlderPageTimeout(now: DateTimeOffset) =
-        match pageRequestedAt with
-        | Some at when pageLoading && now - at >= MotionLedger.olderPageTimeout ->
-            this.FailOlderPage "加载更早消息超时，主机没有回应。可以点「重试」。"
-        | _ -> ()
+        if OlderPageLoad.timedOut pageLoading pageRequestedAt now MotionLedger.olderPageTimeout then
+            this.FailOlderPage OlderPageLoad.timeoutText
 
     member private this.EnsureOlderPageWatchdog() =
         if olderPageWatchdog.IsNone then

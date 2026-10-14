@@ -155,6 +155,8 @@
     <PackageReference Include="Wanxiang2.LinkChunks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MarkdownBlocks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MathTypeset" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ForkAnchor" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.OlderPageLoad" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.UploadFacts" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ServerErrorRoute" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.HostRequests" Version="0.0.0-local" />
