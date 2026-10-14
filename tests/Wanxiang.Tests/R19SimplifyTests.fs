@@ -31,8 +31,8 @@ module R19SimplifyTests =
 
     [<Fact>]
     let ``367 主机生成设置改名为对话默认值`` () =
-        Assert.Equal("对话默认值", SettingsSection.label SettingsSection.Generation)
-        Assert.NotEqual<string>(SettingsSection.label SettingsSection.Generation, SettingsSection.label SettingsSection.Appearance)
+        Assert.Equal("对话默认值", Wanxiang2.SettingsScreen.SettingsPart.label Wanxiang2.SettingsScreen.SettingsPart.Generation)
+        Assert.NotEqual<string>(Wanxiang2.SettingsScreen.SettingsPart.label Wanxiang2.SettingsScreen.SettingsPart.Generation, Wanxiang2.SettingsScreen.SettingsPart.label Wanxiang2.SettingsScreen.SettingsPart.Appearance)
 
     let private ctx (isLastAssistant: bool) : Wanxiang2.MessageCardView.CardContext =
         { FontSize = Tokens.fontReading

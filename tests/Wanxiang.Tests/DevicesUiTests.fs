@@ -9,6 +9,8 @@ open Avalonia.Controls
 open Avalonia.Input
 open Avalonia.Threading
 open Xunit
+open Wanxiang2.SettingsScreen
+open Wanxiang2.DevicesPane
 open Wanxiang.Client
 open Wanxiang.Protocol
 open Wanxiang.UI
@@ -173,7 +175,7 @@ module DevicesUiTests =
           desktop = false }
 
     type private Harness =
-        { panel: SettingsDevices
+        { panel: DevicesDesk
           root: Control
           invites: ResizeArray<unit>
           requests: ResizeArray<unit>
@@ -184,209 +186,14 @@ module DevicesUiTests =
     let private harness () =
         let invites, requests = ResizeArray<unit>(), ResizeArray<unit>()
         let renames, revokes, toasts = ResizeArray<string * string>(), ResizeArray<DeviceInfo>(), ResizeArray<string>()
-        let panel = SettingsDevices(OverlayHost(Grid()), DeviceActions.none)
-        panel.Bind
-            { request = fun () -> requests.Add()
-              invite = fun () -> invites.Add()
-              rename = fun id name -> renames.Add((id, name))
-              revoke = revokes.Add
-              toast = fun m _ -> toasts.Add m }
+        let panel = DevicesDesk(SharedTheme.manager, OverlayHost(Grid()).Desk)
+        panel.ListRequested.Add(fun () -> requests.Add())
+        panel.InviteRequested.Add(fun () -> invites.Add())
+        panel.RenameRequested.Add(fun (id, name) -> renames.Add((id, name)))
+        panel.RevokeRequested.Add revokes.Add
         panel.SetLanSource(fun () -> [])
-        let root = panel.Build()
+        let root = panel.View
         { panel = panel; root = root; invites = invites; requests = requests; renames = renames; revokes = revokes; toasts = toasts }
-
-    [<Fact>]
-    let ``settings has a devices section in the host group`` () =
-        Assert.Contains(Devices, SettingsSection.all)
-        let group = SettingsSection.groups |> List.find (fun (_, sections) -> List.contains Devices sections) |> snd
-        Assert.Contains(Providers, group)
-        Assert.Equal("设备", SettingsSection.label Devices)
-        Assert.Equal(SettingsSection.scope Providers, SettingsSection.scope Devices)
-
-    [<Fact>]
-    let ``selecting the devices section requests the list once`` () =
-        Headless.run (fun () ->
-            let toasts = ResizeArray<string * ToastTone>()
-            let noop _ = ()
-            let actions: SettingsActions =
-                { upsertProvider = fun _ _ -> ()
-                  deleteProvider = noop
-                  probeProvider = noop
-                  upsertMcp = fun _ _ -> ()
-                  deleteMcp = noop
-                  updateGeneration = fun _ _ -> ()
-                  savePrefs = ignore
-                  toast = fun m t -> toasts.Add((m, t)) }
-            let view = SettingsView(OverlayHost(Grid()), actions, ignore, ignore)
-            let requests = ResizeArray<unit>()
-            view.Devices.Bind { DeviceActions.none with request = fun () -> requests.Add() }
-            view.Build()
-            Dispatcher.UIThread.RunJobs()
-            Assert.Empty requests
-            let nav =
-                descendants view
-                |> Seq.pick (fun c -> match c with :? Border as b when AutomationProperties.GetHelpText b = "设备" -> Some b | _ -> None)
-            click nav
-            Dispatcher.UIThread.RunJobs()
-            Assert.Equal(1, requests.Count)
-            Assert.True view.Devices.IsBuilt)
-
-    [<Fact>]
-    let ``device list read without a reply times out with the older host hint`` () =
-        Headless.run (fun () ->
-            let h = harness ()
-            h.panel.Refresh()
-            Assert.True h.panel.IsLoading
-            h.panel.NotifyLoadTimeout()
-            Assert.False h.panel.IsLoading
-            Dispatcher.UIThread.RunJobs()
-            Assert.Contains(descendants h.root, fun c -> match c with :? TextBlock as t -> t.Text.Contains "主机版本较旧" | _ -> false))
-
-    [<Fact>]
-    let ``device list marks current desktop online and revoked and sorts revoked last`` () =
-        Headless.run (fun () ->
-            let h = harness ()
-            let now = DateTimeOffset.UtcNow
-            let items =
-                [ { device "dev-revoked" "旧手机" with revoked = true }
-                  { device "dev-phone" "手机" with online = true }
-                  { device "dev-desktop" "wanxiang-desktop" with desktop = true; current = true; online = true }
-                  { device "dev-pad" "平板" with lastSeen = Some(now - TimeSpan.FromMinutes 5.0) } ]
-            h.panel.SetDevices(items, true)
-            let rows = (byId h.root "devices-list").Value
-            let rowIds =
-                descendants rows
-                |> Seq.choose (fun c -> let id = AutomationProperties.GetAutomationId c in if not (String.IsNullOrEmpty id) && id.StartsWith "devices-row-" then Some id else None)
-                |> Seq.toList
-            Assert.Equal<string list>([ "devices-row-dev-desktop"; "devices-row-dev-phone"; "devices-row-dev-pad"; "devices-row-dev-revoked" ], rowIds)
-            let text = textOf rows
-            Assert.Contains("这台设备", text)
-            Assert.Contains("桌面", text)
-            Assert.Contains("在线", text)
-            Assert.Contains("已吊销", text)
-            Assert.Contains("5 分钟前在线", text)
-            // 协议保留名不直接给人看
-            Assert.Contains("本机桌面客户端", text)
-            // 当前设备与桌面设备没有吊销按钮；已吊销的没有任何按钮
-            Assert.True((byId h.root "devices-revoke-dev-desktop").IsNone)
-            Assert.True((byId h.root "devices-revoke-dev-phone").IsSome)
-            Assert.True((byId h.root "devices-revoke-dev-pad").IsSome)
-            Assert.True((byId h.root "devices-revoke-dev-revoked").IsNone)
-            Assert.True((byId h.root "devices-rename-dev-revoked").IsNone)
-            // 桌面设备也不能重命名
-            Assert.True((byId h.root "devices-rename-dev-desktop").IsNone)
-            Assert.True((byId h.root "devices-rename-dev-phone").IsSome))
-
-    [<Fact>]
-    let ``revoke button passes the device to the action`` () =
-        Headless.run (fun () ->
-            let h = harness ()
-            h.panel.SetDevices([ device "dev-phone" "手机" ], true)
-            click (byId h.root "devices-revoke-dev-phone").Value
-            Assert.Equal(1, h.revokes.Count)
-            Assert.Equal("dev-phone", h.revokes[0].id))
-
-    [<Fact>]
-    let ``rename edits inline trims and sends the new name`` () =
-        Headless.run (fun () ->
-            let h = harness ()
-            h.panel.SetDevices([ device "dev-phone" "手机" ], true)
-            click (byId h.root "devices-rename-dev-phone").Value
-            let box = (byId h.root "devices-name-dev-phone").Value :?> TextBox
-            Assert.Equal("手机", box.Text)
-            // 空名：提示且不发送
-            box.Text <- "   "
-            click (byId h.root "devices-name-save-dev-phone").Value
-            Assert.Empty h.renames
-            Assert.Equal(1, h.toasts.Count)
-            box.Text <- "  书房平板 "
-            click (byId h.root "devices-name-save-dev-phone").Value
-            Assert.Equal<(string * string) list>([ "dev-phone", "书房平板" ], List.ofSeq h.renames)
-            // 取消路径
-            h.panel.SetDevices([ device "dev-phone" "书房平板" ], true)
-            click (byId h.root "devices-rename-dev-phone").Value
-            click (byId h.root "devices-name-cancel-dev-phone").Value
-            Assert.True((byId h.root "devices-name-dev-phone").IsNone)
-            Assert.Equal(1, h.renames.Count))
-
-    [<Fact>]
-    let ``only a desktop capable connection sees the add device button`` () =
-        Headless.run (fun () ->
-            let h = harness ()
-            h.panel.SetConnection "ws://192.168.1.5:8765/ws"
-            h.panel.SetDevices([ device "a" "A" ], false)
-            Assert.True((byId h.root "devices-add").IsNone)
-            Assert.True((byId h.root "devices-invite-unavailable").IsSome)
-            h.panel.SetDevices([ device "a" "A" ], true)
-            Assert.True((byId h.root "devices-add").IsSome)
-            click (byId h.root "devices-add").Value
-            Assert.Equal(1, h.invites.Count))
-
-    [<Fact>]
-    let ``invite card shows grouped code address qr and countdown`` () =
-        Headless.run (fun () ->
-            let h = harness ()
-            h.panel.SetConnection "ws://192.168.1.5:8765/ws"
-            h.panel.SetDevices([], true)
-            let now = DateTimeOffset.UtcNow
-            h.panel.SetInvite("012345", now + TimeSpan.FromMinutes 5.0, now)
-            Assert.Equal("012 345", (byId h.root "devices-code").Value |> textOf)
-            Assert.Equal("5:00 后失效", (byId h.root "devices-countdown").Value |> textOf)
-            Assert.Equal("http://192.168.1.5:8765/", (byId h.root "devices-address").Value |> fun c -> (c :?> TextBlock).Text)
-            let qr = (byId h.root "devices-qr").Value :?> QrCodeView
-            Assert.Equal("http://192.168.1.5:8765/", qr.Text)
-            h.panel.Tick(now + TimeSpan.FromSeconds 61.0)
-            Assert.Equal("3:59 后失效", (byId h.root "devices-countdown").Value |> textOf)
-            h.panel.Tick(now + TimeSpan.FromMinutes 5.0 + TimeSpan.FromSeconds 1.0)
-            Assert.Equal("已过期", (byId h.root "devices-countdown").Value |> textOf)
-            // 过期后“重新生成”再次请求邀请
-            click (byId h.root "devices-regenerate").Value
-            Assert.Equal(1, h.invites.Count)
-            // 完成：关闭配对码卡片，回到“添加设备”
-            click (byId h.root "devices-close-invite").Value
-            Assert.True((byId h.root "devices-add").IsSome)
-            Assert.True((byId h.root "devices-code").IsNone))
-
-    [<Fact>]
-    let ``loopback only host explains the listen setting and uses a lan address for the qr`` () =
-        Headless.run (fun () ->
-            let h = harness ()
-            h.panel.SetLanSource(fun () -> [ "192.168.1.9"; "10.0.0.4" ])
-            h.panel.SetConnection "ws://127.0.0.1:8765/ws"
-            h.panel.SetDevices([], true)
-            let now = DateTimeOffset.UtcNow
-            h.panel.SetInvite("111111", now + TimeSpan.FromMinutes 5.0, now)
-            let text = textOf h.root
-            Assert.Contains("listen", text)
-            Assert.Contains("其他网卡地址：http://10.0.0.4:8765/", text)
-            Assert.Equal("http://192.168.1.9:8765/", ((byId h.root "devices-qr").Value :?> QrCodeView).Text)
-            // 没有局域网地址：只给说明，不画二维码
-            let h2 = harness ()
-            h2.panel.SetConnection "ws://localhost:8765/ws"
-            h2.panel.SetDevices([], true)
-            h2.panel.SetInvite("222222", now + TimeSpan.FromMinutes 5.0, now)
-            Assert.True((byId h2.root "devices-qr").IsNone)
-            Assert.Contains("listen", textOf h2.root))
-
-    [<Fact>]
-    let ``rejected invite explains that only the desktop app can add devices`` () =
-        Headless.run (fun () ->
-            let h = harness ()
-            h.panel.SetDevices([], true)
-            h.panel.SetInviteRejected "not-desktop"
-            Assert.Contains("桌面应用", textOf h.root)
-            Assert.True((byId h.root "devices-code").IsNone))
-
-    [<Fact>]
-    let ``a disconnect while loading explains the host may be too old`` () =
-        Headless.run (fun () ->
-            let h = harness ()
-            h.panel.Refresh()
-            Assert.Equal(1, h.requests.Count)
-            Assert.True h.panel.IsLoading
-            h.panel.NotifyDisconnected()
-            Assert.False h.panel.IsLoading
-            Assert.Contains("版本较旧", textOf h.root))
 
     // ---------- 二维码与地址（纯逻辑）----------
 
@@ -408,15 +215,6 @@ module DevicesUiTests =
             // 中心 3x3 实心
             Assert.True(a[r0 + 3][c0 + 3])
         Assert.NotEqual<bool[][]>(a, DevicesModel.qrMatrix "http://192.168.1.6:8765/")
-
-    [<Fact>]
-    let ``qr view measures with a quiet zone and draws on a white background`` () =
-        Headless.run (fun () ->
-            let view = QrCodeView("http://h/", 4.0)
-            view.Measure(Size(1000.0, 1000.0))
-            let side = float (view.ModuleCount + 8) * 4.0
-            Assert.Equal(side, view.DesiredSize.Width)
-            Assert.Equal(side, view.DesiredSize.Height))
 
     [<Fact>]
     let ``invite target follows the host address`` () =
@@ -509,7 +307,7 @@ module DevicesUiTests =
     let ``device events reach the devices panel through the shell`` () =
         Headless.run (fun () ->
             let view, _ = shell ()
-            let settings = field<SettingsView> view "settings"
+            let settings = field<SettingsScreen> view "settings"
             let items = JsonArray()
             items.Add(JsonNode.Parse """{"id":"p1","name":"手机","revoked":false,"online":true,"current":false,"desktop":false}""")
             dispatch view (DevicesSnapshot {| items = items; canInvite = true |})

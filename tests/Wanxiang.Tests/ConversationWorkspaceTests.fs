@@ -1,5 +1,6 @@
 module Wanxiang.Tests.ConversationWorkspaceTests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.IO
 open System.Text.Json.Nodes
@@ -58,10 +59,10 @@ let private chat () =
     view.SetTitle("讨论一个问题", true)
     view
 
-let private actions update : SettingsActions =
-    { upsertProvider = (fun _ cb -> cb true); deleteProvider = ignore; probeProvider = ignore
-      upsertMcp = (fun _ cb -> cb true); deleteMcp = ignore; updateGeneration = update
-      savePrefs = ignore; toast = fun _ _ -> () }
+let private actions update : Wanxiang2.SettingsScreen.SettingsHooks =
+    { UpsertProvider = (fun _ cb -> cb true); DeleteProvider = ignore; ProbeProvider = ignore
+      UpsertMcp = (fun _ cb -> cb true); DeleteMcp = ignore; UpdateGeneration = update
+      SavePrefs = ignore }
 
 let private field root placeholder =
     descendants root |> Seq.choose (function :? TextBox as box -> Some box | _ -> None)
@@ -308,9 +309,10 @@ let ``save acknowledgement never overwrites edits made while the request is pend
     Headless.run (fun () ->
         let mutable complete: bool -> unit = ignore
         let mutable count = 0
-        let general = SettingsGeneral(OverlayHost(Grid()), actions (fun _ cb -> count <- count + 1; complete <- cb), ignore)
-        general.SetGenerationScope "server-a"
-        let form = general.BuildGeneration()
+        let screen = Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, OverlayHost(Grid()).Desk, actions (fun _ cb -> count <- count + 1; complete <- cb), UiPrefsFile.defaults)
+        let general = screen.General
+        general.SetConnection("server-a", "")
+        let form = general.GenerationView
         general.SetCatalog Catalog.empty
         let context = field form "200"
         context.Text <- "300"
@@ -332,14 +334,15 @@ let ``switching servers keeps the old draft but cannot submit it to the new serv
     Headless.run (fun () ->
         let mutable complete: bool -> unit = ignore
         let mutable count = 0
-        let general = SettingsGeneral(OverlayHost(Grid()), actions (fun _ cb -> count <- count + 1; complete <- cb), ignore)
-        let form = general.BuildGeneration()
-        general.SetGenerationScope "server-a"
+        let screen = Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, OverlayHost(Grid()).Desk, actions (fun _ cb -> count <- count + 1; complete <- cb), UiPrefsFile.defaults)
+        let general = screen.General
+        let form = general.GenerationView
+        general.SetConnection("server-a", "")
         general.SetCatalog Catalog.empty
         let context = field form "200"
         context.Text <- "345"
         press (named form "保存默认值")
-        general.SetGenerationScope "server-b"
+        general.SetConnection("server-b", "")
         general.SetCatalog { Catalog.empty with generation = { Catalog.empty.generation with maxContextMessages = 222 } }
         complete true
         press (named form "保存默认值")

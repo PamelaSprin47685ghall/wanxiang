@@ -1,5 +1,6 @@
 namespace Wanxiang.Tests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.IO
 open System.Reflection
@@ -55,7 +56,7 @@ module ComposerReliabilityTests =
         shell, window
 
     let private composerOf (view: MainView) : Composer = getField view "composer"
-    let private settingsOf (view: MainView) : SettingsView = getField view "settings"
+    let private settingsOf (view: MainView) : Wanxiang2.SettingsScreen.SettingsScreen = getField view "settings"
     let private draftsOf (view: MainView) : ComposerDrafts = getField view "drafts"
     let private outboxOf (view: MainView) : MessageOutbox = getField view "outbox"
 
@@ -446,17 +447,17 @@ module ComposerReliabilityTests =
     [<Fact>]
     let ``the about page renders config status and one row per host check with stable ids`` () =
         Headless.run (fun () ->
-            let actions: SettingsActions =
-                { upsertProvider = fun _ _ -> ()
-                  deleteProvider = ignore
-                  probeProvider = ignore
-                  upsertMcp = fun _ _ -> ()
-                  deleteMcp = ignore
-                  updateGeneration = fun _ _ -> ()
-                  savePrefs = ignore
-                  toast = fun _ _ -> () }
-            let general = SettingsGeneral(OverlayHost(Grid()), actions, ignore)
-            let about = general.BuildAbout("host-1", "ws://127.0.0.1:8765/ws")
+            let actions: Wanxiang2.SettingsScreen.SettingsHooks =
+                { UpsertProvider = fun _ _ -> ()
+                  DeleteProvider = ignore
+                  ProbeProvider = ignore
+                  UpsertMcp = fun _ _ -> ()
+                  DeleteMcp = ignore
+                  UpdateGeneration = fun _ _ -> ()
+                  SavePrefs = ignore }
+            let general = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, OverlayHost(Grid()).Desk, actions, UiPrefsFile.defaults)).General
+            general.SetConnection("host-1", "ws://127.0.0.1:8765/ws")
+            let about = general.AboutView
             let find (id: string) =
                 Avalonia.LogicalTree.LogicalExtensions.GetLogicalDescendants about
                 |> Seq.tryFind (fun c ->
@@ -477,17 +478,16 @@ module ComposerReliabilityTests =
     [<Fact>]
     let ``the appearance page offers the draft switch and a clear action`` () =
         Headless.run (fun () ->
-            let actions: SettingsActions =
-                { upsertProvider = fun _ _ -> ()
-                  deleteProvider = ignore
-                  probeProvider = ignore
-                  upsertMcp = fun _ _ -> ()
-                  deleteMcp = ignore
-                  updateGeneration = fun _ _ -> ()
-                  savePrefs = ignore
-                  toast = fun _ _ -> () }
-            let general = SettingsGeneral(OverlayHost(Grid()), actions, ignore)
-            let page = general.BuildAppearance()
+            let actions: Wanxiang2.SettingsScreen.SettingsHooks =
+                { UpsertProvider = fun _ _ -> ()
+                  DeleteProvider = ignore
+                  ProbeProvider = ignore
+                  UpsertMcp = fun _ _ -> ()
+                  DeleteMcp = ignore
+                  UpdateGeneration = fun _ _ -> ()
+                  SavePrefs = ignore }
+            let general = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, OverlayHost(Grid()).Desk, actions, UiPrefsFile.defaults)).General
+            let page = general.AppearanceView
             let ids =
                 Avalonia.LogicalTree.LogicalExtensions.GetLogicalDescendants page
                 |> Seq.choose (fun c ->

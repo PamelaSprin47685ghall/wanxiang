@@ -1,5 +1,6 @@
 module Wanxiang.Tests.R26PresetsTests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.Text.Json.Nodes
 open Avalonia.Controls
@@ -241,12 +242,12 @@ let ``r26 截图：预设入口、另存、设置管理`` () =
     overlay.CloseDialog()
     // 5 设置 › 对话默认值：预设列表
     typeof<MainView>.GetMethod("ShowSettings", flags).Invoke(view, [||]) |> ignore
-    let settings = typeof<MainView>.GetField("settings", flags).GetValue(view) :?> SettingsView
-    settings.ShowSection SettingsSection.Generation
+    let settings = typeof<MainView>.GetField("settings", flags).GetValue(view) :?> Wanxiang2.SettingsScreen.SettingsScreen
+    settings.ShowSection Wanxiang2.SettingsScreen.SettingsPart.Generation
     Dispatcher.UIThread.RunJobs()
-    settings.PresetsPanel.BringIntoView()
+    settings.General.PresetsPanel.BringIntoView()
     Dispatcher.UIThread.RunJobs()
-    Assert.Equal(3, descendants settings.PresetsPanel |> Seq.filter (function :? Control as c -> c.Name = "preset-row" | _ -> false) |> Seq.length)
+    Assert.Equal(3, descendants settings.General.PresetsPanel |> Seq.filter (function :? Control as c -> c.Name = "preset-row" | _ -> false) |> Seq.length)
     capture w1 "05-settings-presets-list"
     w1.Close()
     // 6 首次使用：没有预设时空态与侧栏不多任何东西

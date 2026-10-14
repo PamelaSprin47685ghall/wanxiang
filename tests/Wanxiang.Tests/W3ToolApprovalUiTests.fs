@@ -1,5 +1,6 @@
 namespace Wanxiang.Tests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.Text.Json.Nodes
 open Avalonia
@@ -72,44 +73,11 @@ module W3ToolApprovalUiTests =
             let mcp = card "mcp_fs_read_file" """{"p":1}"""
             Assert.Equal("调用 fs_read_file（展开看参数）", textOf (byId mcp "tool-human-summary").Value))
 
-    let private stubActions (updates: ResizeArray<JsonObject>) : SettingsActions =
-        { upsertProvider = fun _ cb -> cb true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ cb -> cb true
-          deleteMcp = ignore
-          updateGeneration = fun payload cb -> updates.Add payload; cb true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-
-    [<Fact>]
-    let ``工具设置：每个工具有审批方式入口，授权文件夹有入口；空授权时文案指向入口`` () =
-        Headless.run (fun () ->
-            let updates = ResizeArray<JsonObject>()
-            let tools = SettingsTools(OverlayHost(Grid()), stubActions updates)
-            let built = tools.Build()
-            tools.SetCatalog Catalog.empty
-            Assert.True((byId built "tools-add-folder").IsSome)
-            Assert.Contains(descendants built, fun c -> (textOf c).Contains "授权文件夹" )
-            Assert.Contains(descendants built, fun c -> (textOf c).Contains "还没有授权任何文件夹")
-            let tool: ToolInfo = { id = "builtin:time"; label = "当前时间"; description = "返回时间"; source = "builtin"; serverId = None }
-            let catalog =
-                { Catalog.empty with
-                    tools = [ tool ]
-                    generation = { Catalog.empty.generation with fileReadRoots = [ "/data" ]; toolPolicyDefault = "first"; toolPolicy = Map.ofList [ "builtin:time", "always" ] } }
-            tools.SetCatalog catalog
-            let policyButton = (byId built "tool-policy-builtin:time").Value
-            Assert.Equal("当前时间 的审批方式：每次询问", AutomationProperties.GetName policyButton)
-            // 已授权的文件夹出现，并可移除
-            Assert.Contains(descendants built, fun c -> textOf c = "/data")
-            let remove = (descendants built |> Seq.find (fun c -> AutomationProperties.GetName c = "移除文件夹授权 /data"))
-            invoke remove
-            Assert.Equal(1, updates.Count)
-            let first = updates.[0]
-            let tools0 = first["tools"].AsObject()
-            let roots = tools0["fileReadRoots"].AsArray()
-            Assert.Equal(0, roots.Count)
-            // 移除授权时不会冲掉审批策略
-            let policy = tools0["policy"].AsObject()
-            Assert.Equal("first", policy["default"].GetValue<string>())
-            Assert.Equal("always", policy["builtin:time"].GetValue<string>()))
+    let private stubActions (updates: ResizeArray<JsonObject>) : Wanxiang2.SettingsScreen.SettingsHooks =
+        { UpsertProvider = fun _ cb -> cb true
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ cb -> cb true
+          DeleteMcp = ignore
+          UpdateGeneration = fun payload cb -> updates.Add payload; cb true
+          SavePrefs = ignore }

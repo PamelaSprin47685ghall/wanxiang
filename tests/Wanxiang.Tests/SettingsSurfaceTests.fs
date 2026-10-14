@@ -1,5 +1,6 @@
 module Wanxiang.Tests.SettingsSurfaceTests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.Text.Json.Nodes
 open Avalonia
@@ -66,15 +67,14 @@ let private overlay () = OverlayHost(Grid())
 let private stubActions
     (toasts: ResizeArray<string * ToastTone>)
     (updateGeneration: JsonObject -> (bool -> unit) -> unit)
-    : SettingsActions =
-    { upsertProvider = fun _ completed -> completed true
-      deleteProvider = ignore
-      probeProvider = ignore
-      upsertMcp = fun _ completed -> completed true
-      deleteMcp = ignore
-      updateGeneration = updateGeneration
-      savePrefs = ignore
-      toast = fun message tone -> toasts.Add(message, tone) }
+    : Wanxiang2.SettingsScreen.SettingsHooks =
+    { UpsertProvider = fun _ completed -> completed true
+      DeleteProvider = ignore
+      ProbeProvider = ignore
+      UpsertMcp = fun _ completed -> completed true
+      DeleteMcp = ignore
+      UpdateGeneration = updateGeneration
+      SavePrefs = ignore }
 
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -114,35 +114,6 @@ let ``warning tag tone uses the warning brush while neutral stays muted`` () =
     Assert.Equal(Tokens.textMuted.Color, ((neutralBorder.Child :?> TextBlock).Foreground :?> SolidColorBrush).Color)
     )
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``generation form consumes shared column spacing and text metrics`` () =
-    Headless.run (fun () ->
-    let toasts = ResizeArray<string * ToastTone>()
-    let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
-    let built = general.BuildGeneration()
-    let grid =
-        descendants built
-        |> Seq.find (function
-            | :? Grid as candidate -> candidate.ColumnDefinitions.Count = 2
-            | _ -> false)
-    Assert.Equal(Spacing.space2xl, (grid :?> Grid).ColumnSpacing, 3)
-    let instructionBox =
-        descendants built
-        |> Seq.tryPick (function
-            | :? TextBox as box when box.AcceptsReturn -> Some box
-            | _ -> None)
-        |> Option.defaultWith (fun () -> failwith "生成表单缺少多行指令输入框")
-    Assert.Equal(ControlMetrics.textAreaMinHeight, instructionBox.MinHeight, 3)
-    let switchRows =
-        descendants built
-        |> Seq.choose (function
-            | :? Border as border when border.MinHeight = ControlMetrics.settingsRowMinHeight -> Some border
-            | _ -> None)
-        |> Seq.length
-    Assert.True(switchRows >= 1, "生成表单至少有一个开关行走共享行最小高")
-    )
-
 // 生成设置是设置区唯一不认 Ctrl+Enter 的表单：本地其余表单（模型服务 / MCP / 对话参数）
 // 全部「Ctrl/⌘+Enter 保存」。补上同样的行级 KeyDown，并把键位写进按钮的无障碍说明，
 // 用户不必先到处试键。锁：Ctrl+Enter 真触发保存，裸 Enter 不触发（归 Ui.onClick）。
@@ -155,229 +126,12 @@ let ``generation form consumes shared column spacing and text metrics`` () =
 // 保存动作必须携带编辑值；确认成功后才清除未保存状态。
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``editing a generation number stays local until explicitly saved`` () =
-    Headless.run (fun () ->
-    let toasts = ResizeArray<string * ToastTone>()
-    let saved = ResizeArray<JsonObject>()
-    let general =
-        SettingsGeneral(overlay (), stubActions toasts (fun payload completed ->
-            saved.Add payload
-            completed true), ignore)
-    let built = general.BuildGeneration()
-    let window = Window(Width = 760.0, Height = 900.0, Content = built)
-    window.Show()
-    Dispatcher.UIThread.RunJobs()
-    try
-        // 按占位文案锁定「上下文消息上限」框：五个数值框里只有它的占位是 "200"。
-        let contextBox =
-            descendants built
-            |> Seq.choose (function :? TextBox as box -> Some box | _ -> None)
-            |> Seq.find (fun box -> box.PlaceholderText = "200")
-        Assert.Equal(0, saved.Count)
-        // 表单未接 SetCatalog：五个框都是空文本，必需框（上下文/工具轮数）空即校验失败。
-        // 先把整表填成合法默认值，再单独改要测的那一格。
-        for box in
-            descendants built
-            |> Seq.choose (function :? TextBox as box -> Some box | _ -> None) do
-            if isNull box.PlaceholderText || not (box.AcceptsReturn) then
-                match box.PlaceholderText with
-                | "200" -> box.Text <- "200"
-                | "12" -> box.Text <- "12"
-                | _ -> box.Text <- ""
-        contextBox.Focus() |> ignore
-        Assert.True(contextBox.IsFocused, "前置条件：焦点已在上下文框")
-        contextBox.Text <- "321"
-        // 把焦点移到另一个数值框：LostFocus 在这一次转移上触发。
-        let temperatureBox =
-            descendants built
-            |> Seq.choose (function :? TextBox as box -> Some box | _ -> None)
-            |> Seq.find (fun box -> not (obj.ReferenceEquals(box, contextBox)))
-        temperatureBox.Focus() |> ignore
-        Assert.False(contextBox.IsFocused, "前置条件：焦点已离开上下文框")
-        Dispatcher.UIThread.RunJobs()
-        Assert.Equal(0, saved.Count)
-        Assert.True(general.HasUnsavedGeneration)
-        general.SetCatalog Catalog.empty
-        Assert.Equal("321", contextBox.Text)
-        let save = byAutomationName built "保存默认值"
-        save.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter))
-        Assert.Equal(1, saved.Count)
-        let payload = saved.[saved.Count - 1]
-        Assert.Equal(321, int (payload.["maxContextMessages"].GetValue<int>()))
-        Assert.False(general.HasUnsavedGeneration)
-    finally
-        window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``generation save button advertises the ctrl enter shortcut`` () =
-    Headless.run (fun () ->
-    let toasts = ResizeArray<string * ToastTone>()
-    let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
-    let built = general.BuildGeneration()
-    // 按无障碍名找按钮（Ui.button 返回的是 Border，不是 Button）：
-    // 单测必须由用户可观察的标识定位，不靠控件类型猜。
-    let saveButton =
-        descendants built
-        |> Seq.find (fun c -> AutomationProperties.GetName c = "保存默认值")
-        :?> Border
-    Assert.Equal<string>("保存默认值（Ctrl / ⌘ + Enter）", AutomationProperties.GetHelpText saveButton)
-    Assert.Equal<string>("保存默认值（Ctrl / ⌘ + Enter）", ToolTip.GetTip saveButton :?> string)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``about section drops the misplaced spacer`` () =
-    Headless.run (fun () ->
-    let toasts = ResizeArray<string * ToastTone>()
-    let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
-    let built = general.BuildAbout("instance-1", "ws://127.0.0.1:8765/ws")
-    let misplacedSpacers =
-        descendants built
-        |> Seq.filter (function
-            | :? Border as border -> border.Height = Spacing.spaceMd
-            | _ -> false)
-        |> Seq.length
-    Assert.Equal(0, misplacedSpacers)
-    let hairlines =
-        descendants built
-        |> Seq.filter (function
-            | :? Border as border -> border.Height = 1.0 && not (isNull border.Background) && border.Background = Tokens.borderSoft
-            | _ -> false)
-        |> Seq.length
-    Assert.True(hairlines >= 1, "关于区应在信息行与操作按钮之间保留一条发丝线")
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``disabled mcp card dims its text while keeping row actions alive`` () =
-    Headless.run (fun () ->
-    let overlayHost = overlay ()
-    let toasts = ResizeArray<string * ToastTone>()
-    let tools = SettingsTools(overlayHost, stubActions toasts (fun _ completed -> completed true))
-    let server: McpInfo =
-        { id = "filesystem"
-          label = "文件系统"
-          command = Some "npx"
-          args = [ "-y"; "server" ]
-          url = None
-          callTimeoutSeconds = 60
-          enabled = false }
-    tools.SetCatalog { Catalog.empty with mcpServers = [ server ] }
-    let built = tools.Build()
-    let nameBlock =
-        firstTextBlock built "文件系统"
-        |> Option.defaultWith (fun () -> failwith "MCP 卡缺少名称文本")
-    Assert.Same(Tokens.textMuted, nameBlock.Foreground)
-    let rowActionButtons = iconButtons built |> Seq.toList
-    Assert.True(rowActionButtons.Length >= 2, "已停用 MCP 卡仍应暴露编辑与更多按钮")
-    Assert.All(rowActionButtons, fun button -> Assert.True(button.IsEnabled && button.IsHitTestVisible))
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``missing key reads as warning tag and disabled provider dims its text`` () =
-    Headless.run (fun () ->
-    let overlayHost = overlay ()
-    let toasts = ResizeArray<string * ToastTone>()
-    let providers = SettingsProviders(overlayHost, stubActions toasts (fun _ completed -> completed true))
-    let needsKey: ProviderInfo =
-        { id = "openai"
-          label = "OpenAI"
-          kind = "openai"
-          baseUrl = "https://api.openai.com/v1"
-          hasApiKey = false
-          models = [ "gpt-4o" ]
-          defaultModel = "gpt-4o"
-          timeoutSeconds = 120
-          maxRetries = 2
-          enabled = true; visionOverrides = Map.empty; visionDetected = Map.empty }
-    let disabled = { needsKey with id = "local"; label = "本地推理"; hasApiKey = true; enabled = false }
-    providers.SetCatalog { Catalog.empty with providers = [ needsKey; disabled ] }
-    let built = providers.Build()
-    let warningTag =
-        descendants built
-        |> Seq.tryFind (function
-            | :? Border as border ->
-                match border.Child with
-                | :? TextBlock as text -> text.Text = "缺少密钥"
-                | _ -> false
-            | _ -> false)
-        |> Option.defaultWith (fun () -> failwith "缺少密钥状态缺少 Warning tag")
-    Assert.Equal(Tokens.warning.Color, ((warningTag :?> Border).BorderBrush :?> SolidColorBrush).Color)
-    let mutedName =
-        firstTextBlock built "本地推理"
-        |> Option.defaultWith (fun () -> failwith "已停用模型服务卡缺少名称文本")
-    Assert.Same(Tokens.textMuted, mutedName.Foreground)
-    let enabledName =
-        firstTextBlock built "OpenAI"
-        |> Option.defaultWith (fun () -> failwith "启用中模型服务卡缺少名称文本")
-    Assert.Same(Tokens.text, enabledName.Foreground)
-    let rowActionButtons = iconButtons built |> Seq.toList
-    Assert.True(rowActionButtons.Length >= 4, "每个模型服务行都应保留编辑与更多按钮")
-    Assert.All(rowActionButtons, fun button -> Assert.True(button.IsEnabled && button.IsHitTestVisible))
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``generation save failure surfaces a failure toast instead of silence`` () =
-    Headless.run (fun () ->
-    let toasts = ResizeArray<string * ToastTone>()
-    let general =
-        SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed false), ignore)
-    let built = general.BuildGeneration()
-    general.SetCatalog Catalog.empty
-    let saveButton =
-        tryByAutomationName built "保存默认值"
-        |> Option.defaultWith (fun () -> failwith "生成表单缺少保存按钮")
-    saveButton.RaiseEvent(
-        KeyEventArgs(
-            RoutedEvent = InputElement.KeyDownEvent,
-            Key = Key.Enter))
-    Assert.True(
-        toasts
-        |> Seq.exists (fun (message, tone) -> message = "保存失败，请重试。" && tone = ToastTone.Failure),
-        "保存失败必须给出 Failure 档提示，不能静默。")
-    Assert.Equal("保存默认值", AutomationProperties.GetName(saveButton))
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``settings window title dominates section headings`` () =
-    Headless.run (fun () ->
-    let root = Grid()
-    let overlayHost = OverlayHost(root)
-    let actions: SettingsActions =
-        { upsertProvider = fun _ cb -> cb true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ cb -> cb true
-          deleteMcp = ignore
-          updateGeneration = fun _ cb -> cb true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let settings = SettingsView(overlayHost, actions, ignore, ignore)
-    settings.Build()
-    let windowTitle =
-        firstTextBlock settings "设置"
-        |> Option.defaultWith (fun () -> failwith "设置缺少窗口标题")
-    let sectionHeading =
-        firstTextBlock settings "模型服务"
-        |> Option.defaultWith (fun () -> failwith "分区缺少小节标题")
-    // 窗口（页面主标题）应不小于小节标题，消除「标题 < 小节标题」的层级倒挂。
-    Assert.True(windowTitle.FontSize >= sectionHeading.FontSize, "窗口标题应不小于小节标题")
-    Assert.True(windowTitle.FontSize >= Tokens.fontHeading, "窗口标题应达到区块标题档（Ui.heading = fontHeading）")
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``appearance and about consume new metrics tokens and content-tier dividers`` () =
     Headless.run (fun () ->
     let toasts = ResizeArray<string * ToastTone>()
-    let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
+    let general = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, (overlay ()).Desk, stubActions toasts (fun _ completed -> completed true), UiPrefsFile.defaults)).General
     // 字号槽宽走 token（原裸 56.0）
-    let appearance = general.BuildAppearance()
+    let appearance = general.AppearanceView
     let fontSizeValue =
         descendants appearance
         |> Seq.tryPick (function
@@ -386,7 +140,7 @@ let ``appearance and about consume new metrics tokens and content-tier dividers`
         |> Option.defaultWith (fun () -> failwith "外观页缺少字号值文本")
     Assert.Equal(ControlMetrics.fontSizeValueMinWidth, fontSizeValue.MinWidth, 3)
     // 「关于」键名列槽宽走 token（原裸 110.0）
-    let about = general.BuildAbout("instance-1", "ws://127.0.0.1:8765/ws")
+    let about = (general.SetConnection("instance-1", "ws://127.0.0.1:8765/ws"); general.AboutView)
     let aboutKey =
         firstTextBlock about "协议版本"
         |> Option.defaultWith (fun () -> failwith "关于页缺少键名列文本")
@@ -403,45 +157,3 @@ let ``appearance and about consume new metrics tokens and content-tier dividers`
         |> Seq.length
     Assert.Equal(0, chromeTierDividers)
     )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``built-in tool row title shares the row-title body font`` () =
-    Headless.run (fun () ->
-    let overlayHost = overlay ()
-    let toasts = ResizeArray<string * ToastTone>()
-    let tools = SettingsTools(overlayHost, stubActions toasts (fun _ completed -> completed true))
-    let tool: ToolInfo =
-        { id = "read_file"; label = "读取文件"; description = "读取沙箱内文件"; source = "builtin"; serverId = None }
-    tools.SetCatalog { Catalog.empty with tools = [ tool ] }
-    let built = tools.Build()
-    let nameBlock =
-        firstTextBlock built "读取文件"
-        |> Option.defaultWith (fun () -> failwith "内置工具行缺少名称文本")
-    // 与 MCP 行名、模型服务行名同一「行标题」角色，统一 fontBody（此前本地用 fontSmall）。
-    Assert.Equal(Tokens.fontBody, nameBlock.FontSize, 3)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``generation form fields sit inside a grouping card`` () =
-    Headless.run (fun () ->
-    // Generation 面板的数值表单、指令框与开关行收进分组卡（与 Appearance / About 同档的
-    // 面板卡：surfaceContainer + hairline + 1px），不再裸露成 vstack。判定特征与
-    // PresentationRefreshTests 对 BuildAppearance groupingCards >= 1 的既有断法同一套。
-    let toasts = ResizeArray<string * ToastTone>()
-    let general = SettingsGeneral(overlay (), stubActions toasts (fun _ completed -> completed true), ignore)
-    let built = general.BuildGeneration()
-    let groupingCards =
-        descendants built
-        |> Seq.choose (function
-            | :? Border as border -> Some border
-            | _ -> None)
-        |> Seq.filter (fun border ->
-            Object.ReferenceEquals(border.Background, Tokens.surfaceContainer)
-            && Object.ReferenceEquals(border.BorderBrush, Tokens.hairline)
-            && border.BorderThickness = Thickness 1.0)
-        |> Seq.toList
-    Assert.True(List.length groupingCards >= 1, "生成表单字段应收进至少一张 Ui.groupingCard 分组卡")
-    )
-

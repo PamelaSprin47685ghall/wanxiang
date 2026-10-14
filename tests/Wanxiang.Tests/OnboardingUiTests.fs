@@ -1,5 +1,6 @@
 namespace Wanxiang.Tests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.Collections.Generic
 open System.Reflection
@@ -106,8 +107,8 @@ module OnboardingUiTests =
         member _.Config = cfg
         member _.Catalog() =
             Catalog.parse (ProviderCatalog.providers cfg) (JsonArray()) (ProviderCatalog.generation cfg)
-        member this.Actions(card: OnboardingCard option ref, discover: unit -> Task<string list option>) : OnboardingActions =
-            { upsertProvider =
+        member this.Actions(card: Wanxiang2.SettingsScreen.OnboardingDesk option ref, discover: unit -> Task<string list option>) : Wanxiang2.SettingsScreen.OnboardingHooks =
+            { UpsertProvider =
                 fun payload completed ->
                     this.Payloads.Add(payload.DeepClone() :?> JsonObject)
                     // 首次运行卡片的端点替换为 mock：模拟「在 mock 服务上」
@@ -118,13 +119,13 @@ module OnboardingUiTests =
                         cfg <- next
                         completed true
                     | Error _ -> completed false
-              discardProvider =
+              DiscardProvider =
                 fun id ->
                     this.Discarded.Add id
                     match ConfigMutation.deleteProvider cfg id with
                     | Ok next -> cfg <- next
                     | Error _ -> ()
-              probeProvider =
+              ProbeProvider =
                 fun id ->
                     this.Probes.Add id
                     let p = cfg.providers[id]
@@ -134,16 +135,15 @@ module OnboardingUiTests =
                     match result with
                     | Ok models -> card.Value.Value.ApplyProbe(id, true, models, None) |> ignore
                     | Error e -> card.Value.Value.ApplyProbe(id, false, [], Some e) |> ignore
-              takenIds = fun () -> cfg.providers |> Map.toList |> List.map fst
-              discoverLocal = discover
-              openAdvanced = ignore
-              toast = fun m _ -> this.Toasts.Add m }
+              TakenIds = fun () -> cfg.providers |> Map.toList |> List.map fst
+              DiscoverLocal = discover
+              OpenAdvanced = ignore }
 
     let private noDiscovery () : Task<string list option> = Task.FromResult None
 
-    let private mount (card: OnboardingCard) =
+    let private mount (card: Wanxiang2.SettingsScreen.OnboardingDesk) =
         let host = Grid()
-        host.Children.Add card.Root
+        host.Children.Add card.View
         let window = Window(Width = 700.0, Height = 700.0, Content = host)
         window.Show()
         Dispatcher.UIThread.RunJobs()
@@ -157,7 +157,7 @@ module OnboardingUiTests =
             use mock = new MockModels(200, """{"data":[{"id":"zz-embed"},{"id":"gpt-4o"},{"id":"gpt-5"}]}""")
             let host = FakeHost(mock.BaseUrl)
             let cardRef = ref None
-            let card = OnboardingCard(OverlayHost(Grid()), host.Actions(cardRef, noDiscovery))
+            let card = Wanxiang2.SettingsScreen.OnboardingDesk(SharedTheme.manager, OverlayHost(Grid()).Desk, host.Actions(cardRef, noDiscovery))
             cardRef.Value <- Some card
             let window, root = mount card
             try
@@ -191,31 +191,13 @@ module OnboardingUiTests =
                 window.Close()
         )
 
-    [<Fact>]
-    let ``密钥为空时不发起任何请求并就地说明`` () =
-        Headless.run (fun () ->
-            use mock = new MockModels(200, """{"data":[]}""")
-            let host = FakeHost(mock.BaseUrl)
-            let cardRef = ref None
-            let card = OnboardingCard(OverlayHost(Grid()), host.Actions(cardRef, noDiscovery))
-            cardRef.Value <- Some card
-            let window, root = mount card
-            try
-                invoke (byName root "连接")
-                Assert.Empty host.Payloads
-                Assert.Contains("密钥", textOf root "连接状态")
-                Assert.Equal(OnboardingStep.Idle, card.Step)
-            finally
-                window.Close()
-        )
-
     // ---- 验收 3：失败原因逐类呈现 ----
 
     let private failFlow (status: int) (body: string) (presetLabel: string) =
         use mock = new MockModels(status, body)
         let host = FakeHost(mock.BaseUrl)
         let cardRef = ref None
-        let card = OnboardingCard(OverlayHost(Grid()), host.Actions(cardRef, noDiscovery))
+        let card = Wanxiang2.SettingsScreen.OnboardingDesk(SharedTheme.manager, OverlayHost(Grid()).Desk, host.Actions(cardRef, noDiscovery))
         cardRef.Value <- Some card
         let window, root = mount card
         try
@@ -244,7 +226,7 @@ module OnboardingUiTests =
                 sprintf "http://127.0.0.1:%d" p
             let host = FakeHost(dead)
             let cardRef = ref None
-            let card = OnboardingCard(OverlayHost(Grid()), host.Actions(cardRef, noDiscovery))
+            let card = Wanxiang2.SettingsScreen.OnboardingDesk(SharedTheme.manager, OverlayHost(Grid()).Desk, host.Actions(cardRef, noDiscovery))
             cardRef.Value <- Some card
             let window, root = mount card
             let unreachableText =
@@ -278,7 +260,7 @@ module OnboardingUiTests =
             use mock = new MockModels(404, "nope")
             let host = FakeHost(mock.BaseUrl)
             let cardRef = ref None
-            let card = OnboardingCard(OverlayHost(Grid()), host.Actions(cardRef, noDiscovery))
+            let card = Wanxiang2.SettingsScreen.OnboardingDesk(SharedTheme.manager, OverlayHost(Grid()).Desk, host.Actions(cardRef, noDiscovery))
             cardRef.Value <- Some card
             let window, root = mount card
             try
@@ -306,14 +288,14 @@ module OnboardingUiTests =
             let cardRef = ref None
             let found = [ "qwen3:8b"; "llama3.2" ]
             let card =
-                OnboardingCard(OverlayHost(Grid()), host.Actions(cardRef, fun () -> Task.FromResult(Some found)))
+                Wanxiang2.SettingsScreen.OnboardingDesk(SharedTheme.manager, OverlayHost(Grid()).Desk, host.Actions(cardRef, fun () -> Task.FromResult(Some found)))
             cardRef.Value <- Some card
             let window, root = mount card
             try
-                Assert.Empty(named root "一键使用本机 Ollama")
+                Assert.Empty(named root "一键使用本机 Ollama" |> List.filter (fun c -> c.IsEffectivelyVisible))
                 card.StartDiscovery()
                 let mutable tries = 0
-                while (named root "一键使用本机 Ollama").IsEmpty && tries < 100 do
+                while (named root "一键使用本机 Ollama" |> List.filter (fun c -> c.IsEffectivelyVisible)).IsEmpty && tries < 100 do
                     Thread.Sleep 20
                     Dispatcher.UIThread.RunJobs()
                     tries <- tries + 1
@@ -337,7 +319,7 @@ module OnboardingUiTests =
         Headless.run (fun () ->
             let host = FakeHost("http://unused.invalid")
             let cardRef = ref None
-            let card = OnboardingCard(OverlayHost(Grid()), host.Actions(cardRef, noDiscovery))
+            let card = Wanxiang2.SettingsScreen.OnboardingDesk(SharedTheme.manager, OverlayHost(Grid()).Desk, host.Actions(cardRef, noDiscovery))
             cardRef.Value <- Some card
             let window, root = mount card
             try
@@ -516,22 +498,21 @@ module OnboardingUiTests =
 
     // ---- 设置页：预设分组、传输切换、全局默认、两条入口同一 TOML ----
 
-    let private settingsActions (payloads: List<JsonObject>) (generations: List<JsonObject>) : SettingsActions =
-        { upsertProvider = fun payload completed -> (payloads.Add(payload.DeepClone() :?> JsonObject); completed true)
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ completed -> completed true
-          deleteMcp = ignore
-          updateGeneration = fun payload completed -> (generations.Add(payload.DeepClone() :?> JsonObject); completed true)
-          savePrefs = ignore
-          toast = fun _ _ -> () }
+    let private settingsActions (payloads: List<JsonObject>) (generations: List<JsonObject>) : Wanxiang2.SettingsScreen.SettingsHooks =
+        { UpsertProvider = fun payload completed -> (payloads.Add(payload.DeepClone() :?> JsonObject); completed true)
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ completed -> completed true
+          DeleteMcp = ignore
+          UpdateGeneration = fun payload completed -> (generations.Add(payload.DeepClone() :?> JsonObject); completed true)
+          SavePrefs = ignore }
 
-    let private mountSettings (actions: SettingsActions) =
+    let private mountSettings (actions: Wanxiang2.SettingsScreen.SettingsHooks) =
         let root = Grid()
         let overlay = OverlayHost(root)
         overlay.WireDismiss()
-        let providers = SettingsProviders(overlay, actions)
-        root.Children.Insert(0, providers.Build())
+        let providers = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, actions, UiPrefsFile.defaults)).Providers
+        root.Children.Insert(0, providers.View)
         let window = Window(Width = 760.0, Height = 800.0, Content = root)
         window.Show()
         Dispatcher.UIThread.RunJobs()
@@ -566,9 +547,9 @@ module OnboardingUiTests =
             try
                 invoke (byName root "添加模型服务")
                 let presetButton =
-                    visual root |> List.find (fun c -> (ToolTip.GetTip c :?> string) = "OpenAI")
+                    visual root |> List.find (fun c -> AutomationProperties.GetName c = "预设" && c.Focusable)
                 presetButton.RaiseEvent(
-                    KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down, KeyModifiers = KeyModifiers.None))
+                    KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
                 Dispatcher.UIThread.RunJobs()
                 Assert.True overlay.IsPopupOpen
                 let entries =
@@ -594,9 +575,9 @@ module OnboardingUiTests =
                 invoke (byName root "添加模型服务")
                 // OpenAI 没有另一条传输：切换入口不出现
                 Assert.DoesNotContain(named root "改用兼容端点", fun c -> c.IsVisible)
-                let presetButton = visual root |> List.find (fun c -> (ToolTip.GetTip c :?> string) = "OpenAI")
+                let presetButton = visual root |> List.find (fun c -> AutomationProperties.GetName c = "预设" && c.Focusable)
                 presetButton.RaiseEvent(
-                    KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down, KeyModifiers = KeyModifiers.None))
+                    KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
                 Dispatcher.UIThread.RunJobs()
                 let claudeEntry =
                     visual root

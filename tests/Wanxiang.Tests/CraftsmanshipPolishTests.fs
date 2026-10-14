@@ -1,5 +1,6 @@
 module Wanxiang.Tests.CraftsmanshipPolishTests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.Collections.Generic
 open System.Net
@@ -626,49 +627,51 @@ let ``SettingsView preserves and restores scroll offset across sections`` () =
     Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
-    let actions: SettingsActions =
-        { upsertProvider = fun _ cb -> cb true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ cb -> cb true
-          deleteMcp = ignore
-          updateGeneration = fun _ cb -> cb true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let settings = SettingsView(overlay, actions, ignore, ignore)
-    let control = settings.Build()
-    let window = Window(Width = 800.0, Height = 400.0, Content = settings)
+    let actions: Wanxiang2.SettingsScreen.SettingsHooks =
+        { UpsertProvider = fun _ cb -> cb true
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ cb -> cb true
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ cb -> cb true
+          SavePrefs = ignore }
+    let settings = Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, actions, UiPrefsFile.defaults)
+    let window = Window(Width = 800.0, Height = 400.0, Content = settings.View)
     window.Show()
     try
         Dispatcher.UIThread.RunJobs()
         let navButtons =
-            descendants settings
+            descendants settings.View
             |> Seq.choose (fun d ->
-                if d.Focusable && not (isNull d.Tag) && (d.Tag :? SettingsSection) then Some(d.Tag :?> SettingsSection, d) else None)
+                if d.Focusable && not (isNull d.Tag) && (d.Tag :? string) && (Wanxiang2.SettingsScreen.SettingsPart.all |> Seq.exists (fun p -> Wanxiang2.SettingsScreen.SettingsPart.key p = (d.Tag :?> string))) then Some(Wanxiang2.SettingsScreen.SettingsPart.all |> Seq.find (fun p -> Wanxiang2.SettingsScreen.SettingsPart.key p = (d.Tag :?> string)), d) else None)
             |> dict
 
         let scroller =
-            descendants settings
+            descendants settings.View
             |> Seq.pick (function :? ScrollViewer as s when s.VerticalScrollBarVisibility = ScrollBarVisibility.Auto -> Some s | _ -> None)
 
         // Set scroll offset on Providers
-        settings.SetSectionScrollOffset(SettingsSection.Providers, 150.0)
+        settings.SetSectionScrollOffset(Wanxiang2.SettingsScreen.SettingsPart.Providers, 150.0)
+        Dispatcher.UIThread.RunJobs()
+        // 新组合者真的滚过去，离开时记下的是夹值后的实际偏移
+        let saved = scroller.Offset.Y
+        Assert.True(saved > 0.0)
 
         // Switch to Tools
-        let toolsBtn = navButtons.[SettingsSection.Tools]
+        let toolsBtn = navButtons.[Wanxiang2.SettingsScreen.SettingsPart.Tools]
         toolsBtn.Focus() |> ignore
         let enterArgs = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None)
         toolsBtn.RaiseEvent enterArgs
         Dispatcher.UIThread.RunJobs()
-        Assert.Equal(0.0, settings.GetSectionScrollOffset SettingsSection.Tools)
+        Assert.Equal(0.0, settings.GetSectionScrollOffset Wanxiang2.SettingsScreen.SettingsPart.Tools)
 
         // Switch back to Providers -> offset restored
-        let providersBtn = navButtons.[SettingsSection.Providers]
+        let providersBtn = navButtons.[Wanxiang2.SettingsScreen.SettingsPart.Providers]
         providersBtn.Focus() |> ignore
         let enterArgs2 = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None)
         providersBtn.RaiseEvent enterArgs2
         Dispatcher.UIThread.RunJobs()
-        Assert.Equal(150.0, settings.GetSectionScrollOffset SettingsSection.Providers)
+        Assert.Equal(saved, settings.GetSectionScrollOffset Wanxiang2.SettingsScreen.SettingsPart.Providers)
     finally
         window.Close()
     )
@@ -982,28 +985,26 @@ let ``SettingsView supports Up and Down arrow traversal across navigation sectio
     Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
-    let actions: SettingsActions =
-        { upsertProvider = fun _ cb -> cb true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ cb -> cb true
-          deleteMcp = ignore
-          updateGeneration = fun _ cb -> cb true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let settings = SettingsView(overlay, actions, ignore, ignore)
-    let control = settings.Build()
-    let window = Window(Width = 800.0, Height = 600.0, Content = settings)
+    let actions: Wanxiang2.SettingsScreen.SettingsHooks =
+        { UpsertProvider = fun _ cb -> cb true
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ cb -> cb true
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ cb -> cb true
+          SavePrefs = ignore }
+    let settings = Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, actions, UiPrefsFile.defaults)
+    let window = Window(Width = 800.0, Height = 600.0, Content = settings.View)
     window.Show()
     try
         Dispatcher.UIThread.RunJobs()
         let navButtons =
-            descendants settings
+            descendants settings.View
             |> Seq.choose (fun d ->
-                if d.Focusable && not (isNull d.Tag) && (d.Tag :? SettingsSection) then Some(d.Tag :?> SettingsSection, d) else None)
+                if d.Focusable && not (isNull d.Tag) && (d.Tag :? string) && (Wanxiang2.SettingsScreen.SettingsPart.all |> Seq.exists (fun p -> Wanxiang2.SettingsScreen.SettingsPart.key p = (d.Tag :?> string))) then Some(Wanxiang2.SettingsScreen.SettingsPart.all |> Seq.find (fun p -> Wanxiang2.SettingsScreen.SettingsPart.key p = (d.Tag :?> string)), d) else None)
             |> dict
 
-        let providersBtn = navButtons.[SettingsSection.Providers]
+        let providersBtn = navButtons.[Wanxiang2.SettingsScreen.SettingsPart.Providers]
         providersBtn.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
         Assert.True(providersBtn.IsFocused)
@@ -1013,7 +1014,7 @@ let ``SettingsView supports Up and Down arrow traversal across navigation sectio
         providersBtn.RaiseEvent downArgs
         Dispatcher.UIThread.RunJobs()
         Assert.True(downArgs.Handled)
-        let toolsBtn = navButtons.[SettingsSection.Tools]
+        let toolsBtn = navButtons.[Wanxiang2.SettingsScreen.SettingsPart.Tools]
         Assert.True(toolsBtn.IsFocused)
 
         // Press Up arrow on Tools -> should move focus back to Providers
@@ -1028,7 +1029,7 @@ let ``SettingsView supports Up and Down arrow traversal across navigation sectio
         providersBtn.RaiseEvent upCycleArgs
         Dispatcher.UIThread.RunJobs()
         Assert.True(upCycleArgs.Handled)
-        let aboutBtn = navButtons.[SettingsSection.About]
+        let aboutBtn = navButtons.[Wanxiang2.SettingsScreen.SettingsPart.About]
         Assert.True(aboutBtn.IsFocused)
 
         // Press Down arrow on About -> should cycle to Providers (first section)

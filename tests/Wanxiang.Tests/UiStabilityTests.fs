@@ -1,5 +1,6 @@
 module Wanxiang.Tests.UiStabilityTests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.Diagnostics
 open System.Threading
@@ -1457,30 +1458,25 @@ let ``appearance preference update keeps the same focused control instance`` () 
     let root = Grid()
     let overlay = OverlayHost(root)
     let settingsActions =
-        { upsertProvider = fun _ completed -> completed true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ completed -> completed true
-          deleteMcp = ignore
-          updateGeneration = fun _ completed -> completed true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let mutable settingsRef: SettingsView option = None
-    let onPrefsChanged next = settingsRef |> Option.iter (fun settings -> settings.SetPrefs next)
-    let settings = SettingsView(overlay, settingsActions, onPrefsChanged, ignore)
-    settingsRef <- Some settings
-    settings.Build()
+        { UpsertProvider = fun _ completed -> completed true
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ completed -> completed true
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ completed -> completed true
+          SavePrefs = ignore }
+    let settings = Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, settingsActions, UiPrefsFile.defaults)
     settings.SetPrefs UiPrefsFile.defaults
-    root.Children.Insert(0, settings)
+    root.Children.Insert(0, settings.View)
     let window = show root 900.0 680.0
     try
-        let appearance = byAutomationName settings "外观与操作"
+        let appearance = byAutomationName settings.View "外观与操作"
         ControlAutomationPeer.CreatePeerForElement appearance
         |> Assert.IsAssignableFrom<IInvokeProvider>
         |> fun provider -> provider.Invoke()
         Dispatcher.UIThread.RunJobs()
 
-        let largerBefore = byAutomationName settings "更大"
+        let largerBefore = byAutomationName settings.View "更大"
         largerBefore.Focus NavigationMethod.Tab |> ignore
         Assert.True largerBefore.IsFocused
         ControlAutomationPeer.CreatePeerForElement largerBefore
@@ -1488,7 +1484,7 @@ let ``appearance preference update keeps the same focused control instance`` () 
         |> fun provider -> provider.Invoke()
         Dispatcher.UIThread.RunJobs()
 
-        let largerAfter = byAutomationName settings "更大"
+        let largerAfter = byAutomationName settings.View "更大"
         Assert.True(obj.ReferenceEquals(largerBefore, largerAfter))
         Assert.True largerAfter.IsFocused
     finally
@@ -1502,44 +1498,39 @@ let ``font size stepper disables the direction that hits the scale boundary`` ()
     let root = Grid()
     let overlay = OverlayHost(root)
     let settingsActions =
-        { upsertProvider = fun _ completed -> completed true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ completed -> completed true
-          deleteMcp = ignore
-          updateGeneration = fun _ completed -> completed true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let mutable settingsRef: SettingsView option = None
-    let onPrefsChanged next = settingsRef |> Option.iter (fun settings -> settings.SetPrefs next)
-    let settings = SettingsView(overlay, settingsActions, onPrefsChanged, ignore)
-    settingsRef <- Some settings
-    settings.Build()
+        { UpsertProvider = fun _ completed -> completed true
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ completed -> completed true
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ completed -> completed true
+          SavePrefs = ignore }
+    let settings = Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, settingsActions, UiPrefsFile.defaults)
     settings.SetPrefs UiPrefsFile.defaults
-    root.Children.Insert(0, settings)
+    root.Children.Insert(0, settings.View)
     let window = show root 900.0 680.0
     try
-        let appearance = byAutomationName settings "外观与操作"
+        let appearance = byAutomationName settings.View "外观与操作"
         ControlAutomationPeer.CreatePeerForElement appearance
         |> Assert.IsAssignableFrom<IInvokeProvider>
         |> fun provider -> provider.Invoke()
         Dispatcher.UIThread.RunJobs()
 
         let invoke name =
-            ControlAutomationPeer.CreatePeerForElement(byAutomationName settings name)
+            ControlAutomationPeer.CreatePeerForElement(byAutomationName settings.View name)
             |> Assert.IsAssignableFrom<IInvokeProvider>
             |> fun provider -> provider.Invoke()
             Dispatcher.UIThread.RunJobs()
         let fontCaption () =
-            descendants settings
+            descendants settings.View
             |> Seq.pick (function
                 | :? TextBlock as block when not (isNull block.Text) && block.Text.Contains "pt" -> Some block
                 | _ -> None)
 
         // 默认 14.5 pt：连点更小到下限 12.0，更小必须禁用（可见的边界反馈），更大仍可用。
         for _ in 1 .. 5 do invoke "更小"
-        let smaller = byAutomationName settings "更小"
-        let larger = byAutomationName settings "更大"
+        let smaller = byAutomationName settings.View "更小"
+        let larger = byAutomationName settings.View "更大"
         Assert.False smaller.IsEnabled
         Assert.True larger.IsEnabled
         Assert.Equal("12.0 pt", (fontCaption ()).Text)
@@ -1560,35 +1551,33 @@ let ``settings caps content width and centers it while exposing selected navigat
     let root = Grid()
     let overlay = OverlayHost(root)
     let settingsActions =
-        { upsertProvider = fun _ completed -> completed true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ completed -> completed true
-          deleteMcp = ignore
-          updateGeneration = fun _ completed -> completed true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let settings = SettingsView(overlay, settingsActions, ignore, ignore)
-    settings.Build()
-    root.Children.Insert(0, settings)
+        { UpsertProvider = fun _ completed -> completed true
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ completed -> completed true
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ completed -> completed true
+          SavePrefs = ignore }
+    let settings = Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, settingsActions, UiPrefsFile.defaults)
+    root.Children.Insert(0, settings.View)
     let window = show root 1200.0 720.0
     try
         Dispatcher.UIThread.RunJobs()
         let frame =
-            descendants settings
+            descendants settings.View
             |> Seq.choose (function :? Border as border when abs (border.MaxWidth - ControlMetrics.settingsContentMaxWidth) < 0.1 -> Some border | _ -> None)
             |> Seq.head
         // 封顶关系自洽于实际测量：headless 下 Bounds 由 layout 通道给出，
         // 断言「不超过封顶值」与「不大于父容器可用宽」两条不变式，
         // 而不是写死某个像素魔数（那会在 headless 测量口径下脆弱）。
         Assert.True(frame.Bounds.Width <= ControlMetrics.settingsContentMaxWidth + 0.5)
-        Assert.True(frame.Bounds.Width <= settings.Bounds.Width + 0.5)
+        Assert.True(frame.Bounds.Width <= settings.View.Bounds.Width + 0.5)
         // 拉伸 + 封顶：宽屏封顶后居中，列宽不随分区内容变化（Center 会让列宽跟内容走、切分区时整列跳）。
         Assert.Equal(HorizontalAlignment.Stretch, frame.HorizontalAlignment)
         let widthOnProviders = frame.Bounds.Width
 
-        let providers = byAutomationName settings "模型服务"
-        let appearance = byAutomationName settings "外观与操作"
+        let providers = byAutomationName settings.View "模型服务"
+        let appearance = byAutomationName settings.View "外观与操作"
         Assert.Equal("当前分区", AutomationProperties.GetItemStatus(providers))
         let invokeAppearance = ControlAutomationPeer.CreatePeerForElement appearance |> Assert.IsAssignableFrom<IInvokeProvider>
         invokeAppearance.Invoke()
@@ -1621,16 +1610,15 @@ let ``provider editor opens focus on the primary text field`` () =
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
     let settingsActions =
-        { upsertProvider = fun _ completed -> completed true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ completed -> completed true
-          deleteMcp = ignore
-          updateGeneration = fun _ completed -> completed true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let providers = SettingsProviders(overlay, settingsActions)
-    let view = providers.Build()
+        { UpsertProvider = fun _ completed -> completed true
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ completed -> completed true
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ completed -> completed true
+          SavePrefs = ignore }
+    let providers = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, settingsActions, UiPrefsFile.defaults)).Providers
+    let view = providers.View
     root.Children.Insert(0, view)
     let window = show root 760.0 700.0
     let editableIds () =
@@ -1670,16 +1658,15 @@ let ``provider editor stays pending until authoritative config result`` () =
     overlay.WireDismiss()
     let mutable pendingCallback: (bool -> unit) option = None
     let settingsActions =
-        { upsertProvider = fun _ completed -> pendingCallback <- Some completed
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ completed -> completed true
-          deleteMcp = ignore
-          updateGeneration = fun _ completed -> completed true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let providers = SettingsProviders(overlay, settingsActions)
-    let view = providers.Build()
+        { UpsertProvider = fun _ completed -> pendingCallback <- Some completed
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ completed -> completed true
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ completed -> completed true
+          SavePrefs = ignore }
+    let providers = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, settingsActions, UiPrefsFile.defaults)).Providers
+    let view = providers.View
     root.Children.Insert(0, view)
     let window = show root 760.0 700.0
     // 新建模型服务带默认预设：按钮当前值就是首个预设名。
@@ -1959,16 +1946,15 @@ let ``preset dropdown marks exactly the current preset`` () =
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
     let settingsActions =
-        { upsertProvider = fun _ completed -> completed true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ completed -> completed true
-          deleteMcp = ignore
-          updateGeneration = fun _ completed -> completed true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let providers = SettingsProviders(overlay, settingsActions)
-    let view = providers.Build()
+        { UpsertProvider = fun _ completed -> completed true
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ completed -> completed true
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ completed -> completed true
+          SavePrefs = ignore }
+    let providers = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, settingsActions, UiPrefsFile.defaults)).Providers
+    let view = providers.View
     root.Children.Insert(0, view)
     let window = show root 760.0 700.0
     // 新建模型服务带默认预设：按钮当前值就是首个预设名。
@@ -1989,9 +1975,9 @@ let ``preset dropdown marks exactly the current preset`` () =
         // 选中预设后提示文本随之更新，所以调用方传入当期期望值。
         let presetButton =
             descendants root
-            |> Seq.find (fun c -> (ToolTip.GetTip c :?> string) = expectedLabel)
+            |> Seq.find (fun c -> AutomationProperties.GetName c = "预设" && c.Focusable)
         presetButton.RaiseEvent(
-            KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down, KeyModifiers = KeyModifiers.None))
+            KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
         Dispatcher.UIThread.RunJobs()
         ()
     try
@@ -2049,16 +2035,15 @@ let ``form error summary clears as soon as the user starts fixing a field`` () =
     let overlay = OverlayHost(root)
     overlay.WireDismiss()
     let settingsActions =
-        { upsertProvider = fun _ completed -> completed true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ completed -> completed true
-          deleteMcp = ignore
-          updateGeneration = fun _ completed -> completed true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let providers = SettingsProviders(overlay, settingsActions)
-    let view = providers.Build()
+        { UpsertProvider = fun _ completed -> completed true
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ completed -> completed true
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ completed -> completed true
+          SavePrefs = ignore }
+    let providers = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, settingsActions, UiPrefsFile.defaults)).Providers
+    let view = providers.View
     root.Children.Insert(0, view)
     let window = show root 760.0 700.0
     try

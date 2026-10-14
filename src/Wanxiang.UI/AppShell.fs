@@ -160,9 +160,9 @@ type MainView() as this =
     let mutable sidebar: Sidebar = Unchecked.defaultof<Sidebar>
     let mutable chat: ChatView = Unchecked.defaultof<ChatView>
     let mutable composer: Composer = Unchecked.defaultof<Composer>
-    let mutable settings: SettingsView = Unchecked.defaultof<SettingsView>
+    let mutable settings: Wanxiang2.SettingsScreen.SettingsScreen = Unchecked.defaultof<Wanxiang2.SettingsScreen.SettingsScreen>
     /// 聊天主界面上的「连接一个模型」卡片（W1）：首次运行不进设置页。
-    let mutable onboarding: OnboardingCard = Unchecked.defaultof<OnboardingCard>
+    let mutable onboarding: Wanxiang2.SettingsScreen.OnboardingDesk = Unchecked.defaultof<Wanxiang2.SettingsScreen.OnboardingDesk>
     let mutable sidebarSplitter: GridSplitter = Unchecked.defaultof<GridSplitter>
     let mutable shellDesk: Wanxiang2.ShellDesk.ShellDesk = Unchecked.defaultof<Wanxiang2.ShellDesk.ShellDesk>
     let workspace = Grid()
@@ -338,7 +338,7 @@ type MainView() as this =
             | IdleEmpty.NotConnected -> chat.ShowEmpty(ChatEmptyState.NotConnected, primary)
             | IdleEmpty.Onboarding ->
                 // 首次运行：卡片就在聊天界面里，不必先进设置页。
-                chat.ShowEmbeddedEmpty this.Onboarding.Root
+                chat.ShowEmbeddedEmpty this.Onboarding.View
                 this.Onboarding.StartDiscovery()
             | IdleEmpty.NoConversation -> chat.ShowEmpty(ChatEmptyState.NoConversation, None)
             composer.SetEnabled(idle.composerEnabled, idle.composerReason)
@@ -1137,24 +1137,7 @@ type MainView() as this =
         this.ShowSettings()
         ui.Post(
             (fun () ->
-                let rec findAddButton (control: Control) : ActionBorder option =
-                    match control with
-                    | :? ActionBorder as ab when
-                        (match ab.Child with
-                         | :? TextBlock as tb -> tb.Text = "添加模型服务"
-                         | _ -> false) -> Some ab
-                    | :? Panel as panel ->
-                        panel.Children |> Seq.tryPick findAddButton
-                    | :? ContentControl as cc ->
-                        match cc.Content with
-                        | :? Control as c -> findAddButton c
-                        | _ -> None
-                    | :? Border as b ->
-                        if not (isNull b.Child) then findAddButton b.Child else None
-                    | _ -> None
-                match findAddButton settings with
-                | Some btn -> btn.InvokeFromAutomation()
-                | None -> ()),
+                settings.OpenAddProvider()),
             DispatcherPriority.Render)
 
     member private this.ShowSettings() =
@@ -1493,7 +1476,7 @@ type MainView() as this =
               supportsPresets = HostFeatures.supports hostFeatures HostFeatures.Presets
               supportsImport = HostFeatures.supports hostFeatures HostFeatures.ConversationImport
               themeLabel = ThemePreference.label prefs.theme
-              sections = [ for s in SettingsSection.all -> string s, SettingsSection.label s, SettingsSection.scope s ]
+              sections = [ for s in Wanxiang2.SettingsScreen.SettingsPart.all -> string s, Wanxiang2.SettingsScreen.SettingsPart.label s, Wanxiang2.SettingsScreen.SettingsPart.scope s ]
               conversations = summaries
               showArchived = prefs.showArchived }
 
@@ -1503,7 +1486,7 @@ type MainView() as this =
         let closeDrawer () =
             if this.Navigation.compactMode && this.Navigation.compactNavigationOpen then this.SetCompactNavigation false
         let sectionOf (key: string) =
-            SettingsSection.all |> List.tryFind (fun s -> (string s).ToLowerInvariant() = key)
+            Wanxiang2.SettingsScreen.SettingsPart.all |> List.tryFind (fun s -> (string s).ToLowerInvariant() = key)
         let command = ShellPalette.commandOf item.id
         // 预设已不存在：只 toast，不收抽屉（旧分派先查预设）。
         let preset =
@@ -2061,7 +2044,7 @@ type MainView() as this =
         let recover (recovery: ErrorRecovery) =
             match recovery with
             | OpenProviderSettings ->
-                settings.ShowSection SettingsSection.Providers
+                settings.ShowSection Wanxiang2.SettingsScreen.SettingsPart.Providers
                 this.ShowSettings()
             | OpenConversationSettings -> this.ShowSessionContext()
             | SwitchModel -> this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
@@ -2206,43 +2189,43 @@ type MainView() as this =
         composer.SetEnterSends prefs.enterSends
 
     member private this.BuildSettings() =
-        let actions =
-            { upsertProvider =
+        let actions: Wanxiang2.SettingsScreen.SettingsHooks =
+            { UpsertProvider =
                 fun payload onCompleted ->
                     sendConfigWithFeedback
                         "模型服务设置已保存"
                         (fun requestId -> ConfigUpsertProvider {| requestId = requestId; provider = payload |})
                         onCompleted
-              deleteProvider =
+              DeleteProvider =
                 fun id ->
                     Dialogs.confirm overlay "删除模型服务" (sprintf "「%s」将从配置中移除，使用它的对话需要重新选择模型。" id) "删除" (fun () ->
                         sendConfigWithFeedback
                             "模型服务已删除"
                             (fun requestId -> ConfigDeleteProvider {| requestId = requestId; providerId = id |})
                             ignore)
-              probeProvider = fun id -> this.ProbeProvider id
-              upsertMcp =
+              ProbeProvider = fun id -> this.ProbeProvider id
+              UpsertMcp =
                 fun payload onCompleted ->
                     sendConfigWithFeedback
                         "MCP 设置已保存"
                         (fun requestId -> ConfigUpsertMcp {| requestId = requestId; server = payload |})
                         onCompleted
-              deleteMcp =
+              DeleteMcp =
                 fun id ->
                     Dialogs.confirm overlay "删除 MCP 服务" (sprintf "「%s」提供的工具将不再可用。" id) "删除" (fun () ->
                         sendConfigWithFeedback
                             "MCP 服务已删除"
                             (fun requestId -> ConfigDeleteMcp {| requestId = requestId; serverId = id |})
                             ignore)
-              updateGeneration =
+              UpdateGeneration =
                 fun payload onCompleted ->
                     sendConfigWithFeedback
                         "生成设置已保存"
                         (fun requestId -> ConfigUpdateGeneration {| requestId = requestId; generation = payload |})
                         onCompleted
-              savePrefs = fun next -> this.SavePrefs next
-              toast = fun message tone -> toast message tone }
-        settings <- SettingsView(overlay, actions, (fun next -> this.SavePrefs next), (fun () -> this.CloseSettings()))
+              SavePrefs = fun next -> this.SavePrefs next }
+        settings <- Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, actions, prefs)
+        settings.CloseRequested.Add(fun () -> this.CloseSettings())
         // 检查主机：只读请求；旧主机不认识这个事件会直接忽略，所以要有超时说明。
         settings.Health.CheckRequested.Add(fun () ->
                 if authenticated && client.IsConnected then
@@ -2265,61 +2248,55 @@ type MainView() as this =
                     "这台设备上保存的未发送文字、附件名称和未确认的消息会被删除，无法恢复。已发送并保存的对话不受影响。"
                     "清除"
                     (fun () -> this.ClearLocalDrafts()))
-        settings.Build()
         this.UpdateDraftSummary()
-        settings.Devices.Bind
-            { request = fun () -> send DevicesRequest
-              invite = fun () -> send PairingInvite
-              rename =
-                fun deviceId name ->
+        settings.Devices.ListRequested.Add(fun () -> send DevicesRequest)
+        settings.Devices.InviteRequested.Add(fun () -> send PairingInvite)
+        settings.Devices.RenameRequested.Add(fun (deviceId, name) ->
+            sendConfigWithFeedback
+                "设备已重命名"
+                (fun requestId -> DeviceRename {| requestId = requestId; deviceId = deviceId; name = name |})
+                ignore)
+        settings.Devices.RevokeRequested.Add(fun device ->
+            Dialogs.confirm
+                overlay
+                "吊销设备"
+                (sprintf "「%s」会立即断开，之后需要重新配对才能再连这台主机。" device.name)
+                "吊销"
+                (fun () ->
                     sendConfigWithFeedback
-                        "设备已重命名"
-                        (fun requestId -> DeviceRename {| requestId = requestId; deviceId = deviceId; name = name |})
-                        ignore
-              revoke =
-                fun device ->
-                    Dialogs.confirm
-                        overlay
-                        "吊销设备"
-                        (sprintf "「%s」会立即断开，之后需要重新配对才能再连这台主机。" device.name)
-                        "吊销"
-                        (fun () ->
-                            sendConfigWithFeedback
-                                "设备已吊销"
-                                (fun requestId -> DeviceRevoke {| requestId = requestId; deviceId = device.id |})
-                                ignore)
-              toast = fun message tone -> toast message tone }
+                        "设备已吊销"
+                        (fun requestId -> DeviceRevoke {| requestId = requestId; deviceId = device.id |})
+                        ignore))
 
     /// 卡片按需构建：局部构建视图的调用方（只 Build 了部分区域）也不会撞上空引用。
-    member private this.Onboarding: OnboardingCard =
+    member private this.Onboarding: Wanxiang2.SettingsScreen.OnboardingDesk =
         if isNull (box onboarding) then this.BuildOnboarding()
         onboarding
 
     member private this.BuildOnboarding() =
-        let actions: OnboardingActions =
-            { upsertProvider =
+        let actions: Wanxiang2.SettingsScreen.OnboardingHooks =
+            { UpsertProvider =
                 fun payload onCompleted ->
                     sendConfigWithFeedback
                         ""
                         (fun requestId -> ConfigUpsertProvider {| requestId = requestId; provider = payload |})
                         onCompleted
-              discardProvider =
+              DiscardProvider =
                 fun id ->
                     sendConfigWithFeedback
                         ""
                         (fun requestId -> ConfigDeleteProvider {| requestId = requestId; providerId = id |})
                         ignore
-              probeProvider = fun id -> this.ProbeProvider id
-              takenIds = fun () -> catalog.providers |> List.map (fun p -> p.id)
-              discoverLocal =
+              ProbeProvider = fun id -> this.ProbeProvider id
+              TakenIds = fun () -> catalog.providers |> List.map (fun p -> p.id)
+              DiscoverLocal =
                 fun () ->
                     if OnboardingRules.canDiscoverLocal lastUrl then
                         OnboardingRules.discoverOllamaAt ProviderPresets.OllamaProbeUrl
                     else
                         System.Threading.Tasks.Task.FromResult None
-              openAdvanced = fun () -> this.ShowAddProvider()
-              toast = fun message tone -> toast message tone }
-        onboarding <- OnboardingCard(overlay, actions)
+              OpenAdvanced = fun () -> this.ShowAddProvider() }
+        onboarding <- Wanxiang2.SettingsScreen.OnboardingDesk(SharedTheme.manager, overlay.Desk, actions)
 
     member this.Build() =
         this.FontFamily <- Tokens.fontFamily
@@ -2394,7 +2371,7 @@ type MainView() as this =
                 shellHooks, initialNavigation.sidebarCollapsed, (fun () -> prefs.sidebarWidth))
         workspace.Children.Add shellGrid
 
-        settingsHost.Children.Add settings
+        settingsHost.Children.Add settings.View
 
         root.Children.Insert(0, workspace)
         root.Children.Insert(1, settingsHost)

@@ -36,13 +36,7 @@
     <Compile Include="CredentialStore.fs" />
     <Compile Include="Views/ChatView.fs" />
     <Compile Include="Views/Composer.fs" />
-    <Compile Include="Views/OnboardingCard.fs" />
     <Compile Include="Views/Sidebar.fs" />
-    <Compile Include="Views/SettingsProviders.fs" />
-    <Compile Include="Views/SettingsTools.fs" />
-    <Compile Include="Views/SettingsGeneral.fs" />
-    <Compile Include="Views/SettingsDevices.fs" />
-    <Compile Include="Views/SettingsView.fs" />
     <Compile Include="Views/Dialogs.fs" />
     <Compile Include="AppShell.fs" />
     <Compile Include="Views/MainWindow.fs" />
@@ -157,6 +151,7 @@
     <PackageReference Include="Wanxiang2.TransferDesk" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ShellDesk" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MessageCardView" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SettingsScreen" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProgressThrottle" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.HighlightQueue" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.DeferredReveal" Version="0.0.0-local" />

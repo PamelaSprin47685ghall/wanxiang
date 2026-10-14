@@ -1,5 +1,6 @@
 module Wanxiang.Tests.KeyConvergenceTests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.Threading
 open Avalonia
@@ -236,9 +237,9 @@ let ``no neighbor when the list becomes empty`` () =
 
 // ── 打开设置即有焦点归宿 ────────────────────────────────────────────────────
 
-// 分区导航按钮的无障碍名即分区标签（SettingsSection.label）。
+// 分区导航按钮的无障碍名即分区标签（Wanxiang2.SettingsScreen.SettingsPart.label）。
 let private navSectionNames =
-    SettingsSection.all |> List.map SettingsSection.label |> Set.ofList
+    Wanxiang2.SettingsScreen.SettingsPart.all |> List.map Wanxiang2.SettingsScreen.SettingsPart.label |> Set.ofList
 
 let private isNavFocused (control: Control) =
     not (isNull control) && navSectionNames.Contains(AutomationProperties.GetName control)
@@ -258,26 +259,24 @@ let ``focus initial lands on a settings section nav button`` () =
     Headless.run (fun () ->
     let overlayRoot = Grid()
     let overlayHost = OverlayHost(overlayRoot)
-    let actions: SettingsActions =
-        { upsertProvider = fun _ cb -> cb true
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ cb -> cb true
-          deleteMcp = ignore
-          updateGeneration = fun _ cb -> cb true
-          savePrefs = ignore
-          toast = fun _ _ -> () }
-    let settings = SettingsView(overlayHost, actions, ignore, ignore)
-    settings.Build()
-    overlayRoot.Children.Add(settings :> Control)
+    let actions: Wanxiang2.SettingsScreen.SettingsHooks =
+        { UpsertProvider = fun _ cb -> cb true
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ cb -> cb true
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ cb -> cb true
+          SavePrefs = ignore }
+    let settings = Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlayHost.Desk, actions, UiPrefsFile.defaults)
+    overlayRoot.Children.Add(settings.View)
     let window = show overlayRoot 900.0 700.0
     try
         // 先把焦点放到别处：初始焦点必须能「把焦点搬过来」，
         // 空焦点管理器下任何断言都会假阳性。
         let other =
-            descendants settings
-            |> Seq.tryFind (fun control -> control.Focusable && control <> settings)
-            |> Option.defaultValue (settings :> Control)
+            descendants settings.View
+            |> Seq.tryFind (fun control -> control.Focusable && control <> settings.View)
+            |> Option.defaultValue settings.View
         other.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
         Assert.False(isNavFocused (focusedControl window), "\u524d\u7f6e\u6761\u4ef6\uff1a\u7126\u70b9\u4e0d\u5728\u5bfc\u822a\u5e26\u4e0a")

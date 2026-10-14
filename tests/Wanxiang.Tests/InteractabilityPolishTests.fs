@@ -1,5 +1,6 @@
 module Wanxiang.Tests.InteractabilityPolishTests
 
+open Wanxiang2.SettingsScreen
 open System
 open Avalonia
 open Avalonia.Automation
@@ -26,15 +27,14 @@ let private toasts = ResizeArray<string * ToastTone>()
 
 let private pending = ResizeArray<JsonObject>()
 
-let private settingsActions () : SettingsActions =
-    { upsertProvider = fun body completed -> pending.Add body; completed true
-      deleteProvider = ignore
-      probeProvider = ignore
-      upsertMcp = fun _ completed -> completed true
-      deleteMcp = ignore
-      updateGeneration = fun _ completed -> completed true
-      savePrefs = ignore
-      toast = fun message tone -> toasts.Add((message, tone)) }
+let private settingsActions () : Wanxiang2.SettingsScreen.SettingsHooks =
+    { UpsertProvider = fun body completed -> pending.Add body; completed true
+      DeleteProvider = ignore
+      ProbeProvider = ignore
+      UpsertMcp = fun _ completed -> completed true
+      DeleteMcp = ignore
+      UpdateGeneration = fun _ completed -> completed true
+      SavePrefs = ignore }
 
 let rec private descendants (control: Control) = seq {
     match control with
@@ -232,7 +232,7 @@ let ``provider form consumes enter from a single line field`` () =
     Headless.run (fun () ->
     let root = Grid()
     let overlay = OverlayHost(root)
-    let providers = SettingsProviders(overlay, settingsActions ())
+    let providers = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, settingsActions (), UiPrefsFile.defaults)).Providers
     providers.SetCatalog
         { Catalog.empty with
             providers =
@@ -246,7 +246,7 @@ let ``provider form consumes enter from a single line field`` () =
                     timeoutSeconds = 120
                     maxRetries = 2
                     enabled = true; visionOverrides = Map.empty; visionDetected = Map.empty } ] }
-    let built = providers.Build()
+    let built = providers.View
     root.Children.Add built
     let window = show root 520.0 640.0
     try

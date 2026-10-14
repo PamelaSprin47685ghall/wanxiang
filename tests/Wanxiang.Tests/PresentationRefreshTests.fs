@@ -1,5 +1,6 @@
 module Wanxiang.Tests.PresentationRefreshTests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.Threading
 open System.Threading.Tasks
@@ -140,18 +141,17 @@ let ``user bubble keeps hairline strong one pixel border in both palettes`` () =
 [<Fact>]
 let ``settings appearance grouping sits on surface container with hairline border`` () =
     Headless.run (fun () ->
-    let actions : SettingsActions =
-        { upsertProvider = fun _ _ -> ()
-          deleteProvider = ignore
-          probeProvider = ignore
-          upsertMcp = fun _ _ -> ()
-          deleteMcp = ignore
-          updateGeneration = fun _ _ -> ()
-          savePrefs = ignore
-          toast = fun _ _ -> () }
+    let actions : Wanxiang2.SettingsScreen.SettingsHooks =
+        { UpsertProvider = fun _ _ -> ()
+          DeleteProvider = ignore
+          ProbeProvider = ignore
+          UpsertMcp = fun _ _ -> ()
+          DeleteMcp = ignore
+          UpdateGeneration = fun _ _ -> ()
+          SavePrefs = ignore }
     let overlay = OverlayHost(Grid())
-    let settings = SettingsGeneral(overlay, actions, ignore)
-    let appearance = settings.BuildAppearance ()
+    let settings = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, actions, UiPrefsFile.defaults)).General
+    let appearance = settings.AppearanceView
     let window = show appearance 760.0 900.0
     try
         Dispatcher.UIThread.RunJobs ()
@@ -160,10 +160,8 @@ let ``settings appearance grouping sits on surface container with hairline borde
             |> Seq.choose (function
                 | :? Border as border -> Some border
                 | _ -> None)
-            |> Seq.filter (fun border ->
-                Object.ReferenceEquals(border.Background, Tokens.surfaceContainer)
-                && Object.ReferenceEquals(border.BorderBrush, Tokens.hairline)
-                && border.BorderThickness = Thickness 1.0)
+            // 新库的分组卡由共享样式类 grouping-card 上色（表面容器底 + 细线边），不再在代码里直接赋画刷
+            |> Seq.filter (fun border -> border.Classes.Contains "grouping-card")
             |> Seq.toList
         Assert.True(List.length groupingCards >= 1)
     finally

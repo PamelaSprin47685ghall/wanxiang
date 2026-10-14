@@ -1,5 +1,6 @@
 module Wanxiang.Tests.R16ImageVisionTests
 
+open Wanxiang2.SettingsScreen
 open System
 open System.Text.Json.Nodes
 open Avalonia
@@ -321,22 +322,20 @@ let ``r16 截图：自动缩小提示、深色输入框聚焦、看图能力设�
         Tokens.apply theme
         let root = Grid(Background = Tokens.canvas)
         let overlay = OverlayHost(root)
-        let settingsActions: SettingsActions =
-            { upsertProvider = fun _ completed -> completed true
-              deleteProvider = ignore
-              probeProvider = ignore
-              upsertMcp = fun _ completed -> completed true
-              deleteMcp = ignore
-              updateGeneration = fun _ completed -> completed true
-              savePrefs = ignore
-              toast = fun _ _ -> () }
-        let providers = SettingsProviders(overlay, settingsActions)
+        let settingsActions: Wanxiang2.SettingsScreen.SettingsHooks =
+            { UpsertProvider = fun _ completed -> completed true
+              DeleteProvider = ignore
+              ProbeProvider = ignore
+              UpsertMcp = fun _ completed -> completed true
+              DeleteMcp = ignore
+              UpdateGeneration = fun _ completed -> completed true
+              SavePrefs = ignore }
+        let providers = (Wanxiang2.SettingsScreen.SettingsScreen(SharedTheme.manager, overlay.Desk, settingsActions, UiPrefsFile.defaults)).Providers
         let info = providerInfo (Map.ofList [ "my-vl", true ]) (Map.ofList [ "llava:13b", true ])
         providers.SetCatalog { Catalog.empty with providers = [ info ] }
         let window = show root 760.0 1100.0
         try
-            let m = typeof<SettingsProviders>.GetMethod("ShowEditor", Reflection.BindingFlags.Instance ||| Reflection.BindingFlags.NonPublic)
-            m.Invoke(providers, [| box (Some info) |]) |> ignore
+            providers.OpenEditor info.id
             Dispatcher.UIThread.RunJobs()
             let yesBox = descendantsOf root |> Seq.find (fun c -> AutomationProperties.GetAutomationId c = "provider-vision-yes") :?> TextBox
             Assert.Equal("my-vl", yesBox.Text)
