@@ -84,7 +84,6 @@ type MainView() as this =
     let attachmentDraft () = (drafts.Get(instanceId, activeConvId)).attachments
     // 附件下载在途缓冲：容量上限 + 断连整体丢弃，替代此前无上限的裸字典（R1）。
     let downloads = DownloadBuffers()
-    let mutable downloadCappedNotified = false
     let mutable missingAttachments: Set<string> = Set.empty
 
     let mutable lastUrl = CredentialStore.defaultServerUrl ()
@@ -600,7 +599,6 @@ type MainView() as this =
         this.FailUploadingAttachments()
         // 断连后底层下载流已死，不会有 Complete 事件；缓冲必须整体丢弃（R1）。
         downloads.Clear()
-        downloadCappedNotified <- false
         this.Render()
         let url = lastUrl
         let token = lastToken
@@ -1750,17 +1748,16 @@ type MainView() as this =
         | PairingStarted _ ->
             connectionError <- None
             connectionIssue <- None
-            setConnectStatus "配对码已生成，请输入后提交。"
+            setConnectStatus ConnectionIssue.pairingStartedStatus
         | PairingSucceeded d ->
             lastToken <- Some d.token
             hasSavedCredentials <- true
             connectionError <- None
             connectionIssue <- None
-            setConnectStatus "配对成功，正在认证…"
+            setConnectStatus ConnectionIssue.pairingSucceededStatus
             send (AuthPresent {| token = d.token |})
         | PairingFailed d ->
-            this.ReportConnectionIssue(
-                if d.frozen then ConnectionIssue.PairingFrozen d.freezeMinutes else ConnectionIssue.PairingRejected d.reason)
+            this.ReportConnectionIssue(ConnectionIssue.ofPairingFailure d.frozen d.freezeMinutes d.reason)
             this.Render()
         | CatalogSnapshot d ->
             catalog <- Catalog.parse d.providers d.tools d.generation
@@ -1775,17 +1772,20 @@ type MainView() as this =
         | ConfigChanged _ ->
             send CatalogRequest
             // 配置重新加载成功：之前的「配置有误」随之消失。只在从有误恢复时提示一次。
-            if settings.Health.ClearConfigIssue() then
+            match ConfigIssueNotice.recovered (settings.Health.ClearConfigIssue()) with
+            | Some text ->
                 this.UpdateHostStatusLine()
-                toast "主机配置已恢复正常。" Success
+                toast text Success
+            | None -> ()
             // 设备列表可见时跟着刷新（别的设备被吊销、重命名）
             if settings.Devices.IsShown then send DevicesRequest
         | HostConfigRejected d ->
             // 主机拒绝了一份配置并继续用上一份有效的；客户端必须看得见（决策 82）。
-            let first = settings.Health.ConfigIssue.IsNone
+            // 先算是否首次有误，再写入。
+            let notice = ConfigIssueNotice.rejected settings.Health.ConfigIssue.IsSome d.summary
             settings.Health.SetConfigIssue(d.summary, d.errors)
             this.UpdateHostStatusLine()
-            if first then toast d.summary Warning
+            notice |> Option.iter (fun text -> toast text Warning)
         | DoctorReport d ->
             settings.Health.SetReport(d.ok, DoctorCheck.parseChecks d.checks)
         | DoctorRequest _ -> ()
@@ -1801,7 +1801,7 @@ type MainView() as this =
                   summary = d.summary
                   argumentsJson = (if isNull d.arguments then "" else d.arguments.ToJsonString())
                   policy = d.policy }
-            if activeConvId <> Some d.conversationId then toast "另一个对话里有工具调用在等你批准。" Info
+            if activeConvId <> Some d.conversationId then toast ApprovalCardText.otherConversationWaitingText Info
             this.SyncAwaitingApproval()
         | ToolApprovalResolved d ->
             approvalPanel.Remove d.approvalId
@@ -1810,9 +1810,7 @@ type MainView() as this =
         | ToolApprovalCapability _ | ToolApprovalDecision _ | ConfigUpdateTools _ -> ()
         | ProviderProbeResult d ->
             probes.Resolve d.requestId
-            let models =
-                [ for item in d.models do
-                      if not (isNull item) && item.GetValueKind() = JsonValueKind.String then item.GetValue<string>() ]
+            let models = ProbeModels.ofJson d.models
             // 首次运行卡片自己发起的探测由它处理；其余交给设置页。
             if not (this.Onboarding.ApplyProbe(d.providerId, d.ok, models, d.error)) then
                 settings.ApplyProbe(d.providerId, d.ok, models, d.error)
@@ -1949,16 +1947,8 @@ type MainView() as this =
         | AttachmentDownloadBegin d ->
             // 重试同键 Begin 会重置缓冲；新下载开始时也解除一次性的超限提示记忆。
             downloads.Begin(d.sha256, d.fileName)
-            downloadCappedNotified <- false
         | AttachmentDownloadChunk d ->
-            try
-                let bytes = Convert.FromBase64String d.dataBase64
-                match downloads.Append(d.sha256, bytes) with
-                | DownloadChunkResult.Capped when not downloadCappedNotified ->
-                    downloadCappedNotified <- true
-                    toast UploadPlan.downloadCappedText Warning
-                | _ -> ()
-            with _ -> ()
+            if downloads.AppendBase64(d.sha256, d.dataBase64) then toast UploadPlan.downloadCappedText Warning
         | AttachmentDownloadComplete d ->
             match downloads.Take(d.sha256) with
             | Some(fileName, bytes) -> this.SaveDownload(fileName, bytes)
@@ -2486,7 +2476,6 @@ type MainView() as this =
                     settings.Devices.NotifyDisconnected()
                     // 与主动断开同路径：连接死了，在途下载缓冲一并丢弃（R1）。
                     downloads.Clear()
-                    downloadCappedNotified <- false
                     let detail = match error with Some e -> e.Message | None -> ""
                     sidebar.SetConnection(false, "连接已断开")
                     if not (String.IsNullOrWhiteSpace detail) then toast (sprintf "连接已断开：%s" detail) Warning
