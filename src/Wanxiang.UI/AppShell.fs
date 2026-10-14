@@ -96,10 +96,9 @@ type MainView() as this =
     /// 类型化的连接失败原因：连接对话框的重试动作由它决定，不由 connectionError 的文案推断。
     let mutable connectionIssue: ConnectionIssue option = None
     let mutable enteredSettingsForFirstProvider = false
-    let mutable reconnectCts: CancellationTokenSource option = None
-    let mutable reconnectDelayMs = ReconnectBackoff.baseDelayMs
+    /// 连接尝试编号、挂起的重连与退避时长归 ReconnectLoop；计时与真正的连接在这里。
+    let reconnect = ReconnectLoop(ReconnectBackoff.baseDelayMs, ReconnectBackoff.next)
     let mutable pairingRequested = false
-    let mutable connectAttempt = 0
     let mutable setConnectStatus: string -> unit = ignore
     let mutable failConnectStatus: ConnectionIssue -> unit = ignore
     let mutable pageLoading = false
@@ -588,7 +587,7 @@ type MainView() as this =
                     lastToken <- request.token
                     pairingRequested <- request.usePairing
                     // 用户手动发起：从最短等待重新开始
-                    reconnectDelayMs <- ReconnectBackoff.baseDelayMs
+                    reconnect.ResetDelay()
                     this.Connect())
                 (fun code -> send (PairingAttempted {| code = code; clientName = Some CredentialStore.clientName |}))
                 (fun () ->
@@ -611,8 +610,8 @@ type MainView() as this =
         failConnectStatus issue
 
     member private this.Connect() =
-        connectAttempt <- connectAttempt + 1
-        let attempt = connectAttempt
+        // 新的连接让挂起的重连作废（票据随之失效）。
+        let attempt = reconnect.Connect()
         authenticated <- false
         connectionError <- None
         settings.Health.Disconnected()
@@ -628,10 +627,6 @@ type MainView() as this =
         downloads.Clear()
         downloadCappedNotified <- false
         this.Render()
-        match reconnectCts with
-        | Some cts -> cts.Cancel()
-        | None -> ()
-        reconnectCts <- None
         let url = lastUrl
         let token = lastToken
         let usePairing = pairingRequested
@@ -657,10 +652,10 @@ type MainView() as this =
                         let! _ = client.TrySendAtGenerationAsync(epoch, PairingRequested {| clientName = Some CredentialStore.clientName |}) |> Async.AwaitTask
                         ()
                 ui.Post(fun () ->
-                    if attempt = connectAttempt && not authenticated then sidebar.SetConnection(false, "正在连接"))
+                    if reconnect.IsCurrent attempt && not authenticated then sidebar.SetConnection(false, "正在连接"))
             with ex ->
                 ui.Post(fun () ->
-                    if attempt = connectAttempt then
+                    if reconnect.IsCurrent attempt then
                         this.ReportConnectionIssue(ConnectionIssue.ofException ex)
                         sidebar.SetConnection(false, "连接已断开")
                         this.ScheduleReconnect()
@@ -671,34 +666,22 @@ type MainView() as this =
     /// 网络恢复或页面回到前台（第 213 节）：正在退避等待的重连立刻执行，并把退避归零；
     /// 没有挂起的重连（已连接，或从未拿到令牌）时什么也不做，不另起第二条连接。
     member private this.ResumeReconnectNow() =
-        match reconnectCts with
-        | Some cts ->
-            cts.Cancel()
-            reconnectCts <- None
-            reconnectDelayMs <- ReconnectBackoff.baseDelayMs
+        if reconnect.ResumeNow() then
             pairingRequested <- false
             this.Connect()
-        | None -> ()
 
     member private this.ScheduleReconnect() =
-        match reconnectCts, lastToken with
-        | Some _, _ -> ()
-        | None, None -> ()
-        | None, Some _ ->
-            let cts = new CancellationTokenSource()
-            reconnectCts <- Some cts
-            let delay = reconnectDelayMs
-            reconnectDelayMs <- ReconnectBackoff.next reconnectDelayMs
+        match reconnect.Schedule lastToken.IsSome with
+        | None -> ()
+        | Some(ticket, delay) ->
             // 连接状态一个词：倒计时不进壳状态栏，重连中只报“正在重连”。
             sidebar.SetConnection(false, "正在重连")
             async {
                 do! Async.Sleep delay
-                if not cts.IsCancellationRequested then
-                    ui.Post(fun () ->
-                        if not cts.IsCancellationRequested then
-                            reconnectCts <- None
-                            pairingRequested <- false
-                            this.Connect())
+                ui.Post(fun () ->
+                    if reconnect.Fire ticket then
+                        pairingRequested <- false
+                        this.Connect())
             }
             |> Async.Start
 
@@ -1837,7 +1820,7 @@ type MainView() as this =
             connectionIssue <- None
             instanceId <- d.instanceId
             // 连接真的成功了，退避归零
-            reconnectDelayMs <- ReconnectBackoff.baseDelayMs
+            reconnect.ResetDelay()
             pairingRequested <- false
             // 重连成功：上一代连接残留的失败卡片已过期，清掉免得误导。
             for s in summaries do

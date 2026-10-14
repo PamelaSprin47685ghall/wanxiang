@@ -282,7 +282,7 @@ module AppShellTests =
 
             let authenticated: bool = getField view "authenticated"
             let actualInstId: string = getField view "instanceId"
-            let reconnectDelayMs: int = getField view "reconnectDelayMs"
+            let reconnectDelayMs = (getField<Wanxiang.Client.ReconnectLoop> view "reconnect").DelayMs
 
             Assert.True(authenticated)
             Assert.Equal(instId, actualInstId)
