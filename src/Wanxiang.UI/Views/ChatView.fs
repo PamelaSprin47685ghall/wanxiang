@@ -130,10 +130,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable highlightTimer: (DispatcherTimer * (unit -> unit)) option = None
     let mutable canJumpPrevious = false
     /// 决策 300：主机上还有更早的历史页（AppShell 按 pageHasMore 同步）。
-    let mutable olderOnHost = false
     /// 决策 300：「上一轮」越过已加载历史时挂起的跳转，下一页渲染完再续跳。
-    let mutable pendingJumpPrevious = false
-    let mutable pendingJumpFirst: uint64 option = None
     let mutable canJumpNext = false
     let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl / ⌘ + B）"
 
@@ -312,26 +309,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         panel.Children.Add scrollToBottomIcon
         panel.Children.Add scrollToBottomLabel
         panel
-    let mutable unreadSinceScrolledUp: int = 0
-    /// 上一帧是否挂着流式卡。流式卡转正（streamingMessage 从 Some 变 None，
-    /// 已提交消息进列表）时 desired 条数不变，delta 计未读那条路看不见这次新增：
-    /// 用户划上去等生成，回复落定那一刻计数仍是 0，「回到最新」不带任何提示。
-    /// kelivo 在 scroll_controller.dart:520 用 stickToBottomAfterGeneration 记同一件事。
-    let mutable wasStreaming = false
-    let mutable previousRenderedMessageCount: int = 0
+    /// 贴底跟随、「回到最新」意图、未读数、上一帧条数与流式、定位钉住归 ScrollFollow。
+    let follow = ScrollFollow()
     let mutable smoothScrollTimer: DispatcherTimer option = None
 
-    let mutable atBottom = true
-    /// “回到最新”是一次明确的用户意图：滚动动画尚未完成时，ScrollChanged
-    /// 看到的中途偏移不能把刚隐藏的按钮重新点亮。到达底部或用户重新滚动后解除。
-    let mutable returningToLatest = false
     /// 当前「上一条 / 下一条」跳转锚点：用户消息卡的身份。
     /// None 表示还没跳转过，此时以当前所在的那一轮问答为基准（kelivo 的
     /// jump-to-question 语义；见 currentExchangeIndex）。
-    let mutable exchangeAnchor: CardKey option = None
-    /// 搜索命中跳转（W4）：目标消息已定位后，“贴底自动滚到末尾”的延迟重试不得把它拽走。
-    /// 用户滚轮、回到最新、换对话时解除。
-    let mutable revealPinned = false
+    let jump = ExchangeJump<CardKey>()
     /// 决策 460：定位钉住的目标卡。钉住期间布局再变（分页前置、卡片晚量高、重绘）都按它的当前位置重新对齐，
     /// 而不是只在发起时量一次 Bounds——满载 CI 上量早了就会停在旧底部。
     let mutable revealTarget: Control option = None
@@ -343,11 +328,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 决策 293：打开长对话只挂尾部一个窗口的卡片（首屏只排这几十张），
     /// 往上滚到窗口顶再把已在本机的更早消息挂上来（与分页同一套 prepend 锚点），本机挂完了才向主机要更早一页。
     /// 搜索命中 / 消息链接指向窗口外的消息时，窗口直接扩到那条。
-    let mutable mountWindow = ChatView.InitialMountWindow
-    /// 本帧被窗口隐藏（已加载但未挂载）的消息：按顺序的 commitId
-    let mutable hiddenCommits: uint64[] = [||]
-    let mutable lastFirstCommit: uint64 option = None
-    let mutable lastMergedCount = 0
+    /// 窗口大小、本帧隐藏（已加载但未挂载）的提交与上一帧首条归 MountWindow。
+    let mountWindow = MountWindow(MountWindow.Initial, MountWindow.Step)
     let mutable rerenderLast: unit -> unit = ignore
     let mutable compactMode = false
     let mutable hasConversationChrome = false
@@ -362,14 +344,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 当前面板上每张卡的「用户消息」身份，按挂载顺序。
     /// mountedKeys 与 messagePanel.Children 逐一对齐（渲染循环一帧一卡），
     /// 所以这里是用户卡的下标表，不必给卡打 Tag。
-    let exchangeIndices () : int list =
-        mountedKeys
-        |> Array.mapi (fun index key ->
-            match key with
-            | Some k when k.role = "user" -> Some index
-            | _ -> None)
-        |> Array.choose id
-        |> Array.toList
+    let exchangeIndices () : int list = ExchangeJump<CardKey>.Cards(mountedKeys, fun k -> k.role = "user")
 
     /// 当前所在的那一轮问答 = 第一张「结尾已经越过视口顶端」的用户卡。
     /// 取视口顶端的第一张：用户在屏幕上方读第 1 轮时「下一条」就该送第 2 轮，
@@ -428,20 +403,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 阅读导航的端点状态。菜单与快捷键共用锚点，不再为不可用动作预留顶栏按钮。
     let syncExchangeNavState () =
         let cards = exchangeIndices ()
-        let anchorIndex =
-            match exchangeAnchor with
-            | Some key -> mountedKeys |> Array.tryFindIndex ((=) (Some key)) |> Option.defaultValue -1
-            | None -> currentExchangeIndex ()
-        let hasPrev = cards |> List.exists (fun index -> index < anchorIndex)
-        let hasNext = cards |> List.exists (fun index -> index > anchorIndex)
-        // 贴底时没有「下一条」可去：锚点改取视口顶端第一张后，锚点本身可能
-        // 不是最后一张（大屏一次露出数轮），端点禁用必须显式叠这条，否则贴底
-        // 「下一条」仍可点，按下去只是原地跳一格再被自动跟随拽回底部。
-        // 与 kelivo 的 hasNext 端点规则同向：target 越界即不可跳。
-        let hasNext = hasNext && not atBottom
-        // 决策 300：窗口外还有未挂载 / 主机上还有更早的消息时，「上一轮」永远可用——
-        // 按下去先按需加载，再跳到真正的上一轮。
-        let hasPrev = hasPrev || (not (List.isEmpty cards) && (hiddenCommits.Length > 0 || olderOnHost))
+        // 贴底时没有「下一条」；窗口外或主机上还有更早消息时「上一轮」永远可用（决策 300）。规则见 ExchangeJump。
+        let hasPrev, hasNext = jump.NavState(mountedKeys, cards, currentExchangeIndex (), follow.AtBottom, mountWindow.HiddenCount > 0)
         canJumpPrevious <- hasPrev
         canJumpNext <- hasNext
 
@@ -783,7 +746,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         else false
 
     /// 视口是否被定位钉住（搜索命中 / 版本切换后，直到用户滚动或回到底部）。
-    member _.RevealPinned = revealPinned
+    member _.RevealPinned = follow.RevealPinned
 
     /// 当前正高亮着的消息（高亮结束后为 None）。
     member _.HighlightedCommit = flash.Highlighted
@@ -798,8 +761,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             mountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
         match indexOf () with
         | Some _ ->
-            revealPinned <- true
-            atBottom <- false
+            follow.Pin()
             // 分页前置的锚点恢复会把偏移写回旧位置，这里的目标位置优先
             pendingHistoryAnchor <- None
             this.UpdateScrollToBottomAppearance()
@@ -809,7 +771,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                     match indexOf () with
                     | Some index when index < messagePanel.Children.Count ->
                         let child = messagePanel.Children.[index]
-                        if revealPinned then revealTarget <- Some child
+                        if follow.RevealPinned then revealTarget <- Some child
                         smoothScrollToCard child
                     | _ -> ()),
                 DispatcherPriority.Background)
@@ -912,30 +874,29 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         currentPrimaryAction <- ignore
         emptyActionButton.IsVisible <- false
         // 每次重绘都会经过这里：定位（搜索命中 / 版本切换）刚把视口钉在目标消息上时不能复位，
-        // 否则紧随其后的重绘把 atBottom 改回 true、停掉滚动动画，视口又被拉回底部（v4 走查）。
+        // 否则紧随其后的重绘把 follow.AtBottom 改回 true、停掉滚动动画，视口又被拉回底部（v4 走查）。
         // 换对话由 AppShell.SelectConversation 显式复位。
-        if not revealPinned then this.ResetScrollState()
+        if not follow.RevealPinned then this.ResetScrollState()
         emptyPanel.IsVisible <- false
         scroller.IsVisible <- true
         messagePanel.IsVisible <- true
 
     /// 重置滚动到底状态与未读计数（换对话、加载骨架或切换视图时调用）。
     /// 决策 293：首屏挂载窗口与每次向上扩展的步长
-    static member InitialMountWindow = 40
-    static member MountWindowStep = 60
+    static member InitialMountWindow = MountWindow.Initial
+    static member MountWindowStep = MountWindow.Step
 
     /// 决策 300：主机上是否还有更早的历史页。没有了就撤掉挂起的「上一轮」。
     member _.SetOlderAvailable(value: bool) =
-        olderOnHost <- value
-        if not value then pendingJumpPrevious <- false
+        jump.SetOlderAvailable value
         syncExchangeNavState ()
 
-    member _.PendingJumpPrevious = pendingJumpPrevious
+    member _.PendingJumpPrevious = jump.PendingPrevious
 
     /// 决策 310：更早一页取失败（超时 / 断线 / 主机拒绝）。挂起的「上一轮」撤掉，
     /// 消息区顶部给一句原因和「重试」；重试由调用方重新发页请求。
     member _.ShowOlderPageFailure(message: string, retry: unit -> unit) =
-        pendingJumpPrevious <- false
+        jump.OlderFailed()
         olderRetry <- (fun () ->
             olderFailureBanner.IsVisible <- false
             retry ())
@@ -950,39 +911,30 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member _.OlderPageRetryButton = olderRetryButton
 
     /// 当前因窗口未挂载的已加载消息数（测试 / 诊断用）
-    member _.HiddenMessageCount = hiddenCommits.Length
+    member _.HiddenMessageCount = mountWindow.HiddenCount
 
     /// 把窗口向上扩一步（已加载、未挂载的消息先挂）；返回是否真的扩了。
     member this.ExpandMountWindow() : bool =
-        if hiddenCommits.Length = 0 then false
+        if mountWindow.HiddenCount = 0 then false
         else
             this.BeginHistoryPrependAnchor()
-            mountWindow <- mountWindow + ChatView.MountWindowStep
+            mountWindow.Expand() |> ignore
             rerenderLast ()
             this.RestoreHistoryPrependAnchorDeferred()
             true
 
     /// 确保某条消息已挂载（窗口外则扩到它）。
     member private this.EnsureMounted(commitId: uint64) =
-        match Array.tryFindIndex ((=) commitId) hiddenCommits with
-        | Some index ->
-            mountWindow <- mountWindow + (hiddenCommits.Length - index) + 4
-            rerenderLast ()
-        | None -> ()
+        if mountWindow.EnsureMounted commitId then rerenderLast ()
 
     member this.ResetScrollState() =
-        mountWindow <- ChatView.InitialMountWindow
-        revealPinned <- false
+        mountWindow.Reset()
+        follow.Reset()
         revealTarget <- None
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
-        atBottom <- true
-        returningToLatest <- false
-        unreadSinceScrolledUp <- 0
-        previousRenderedMessageCount <- 0
         // 锚点跟着对话一起丢：换对话后旧锚引用的卡片已不在面板上。
-        exchangeAnchor <- None
-        pendingJumpPrevious <- false
+        jump.Reset()
         olderFailureBanner.IsVisible <- false
         this.UpdateScrollToBottomAppearance()
         syncExchangeNavState ()
@@ -1166,12 +1118,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             missingAttachments: Set<string>
         ) =
         this.HideSkeletonLoading()
-        let wasAtBottom = atBottom
-        // 流式收尾：卡数没变（流式卡原位换成已提交卡），delta 路抓不到，
-        // 但只要用户不在底部，这就是一条刚落地的新消息。kelivo scroll_controller.dart:520
-        // 的 stickToBottomAfterGeneration 记同一件事。
-        let streamingJustEnded = wasStreaming && streamingMessage.IsNone
-        wasStreaming <- streamingMessage.IsSome
         let merged = MessageView.mergeToolResults messages
         let lastAssistantIndex =
             merged
@@ -1211,14 +1157,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
         // 决策 293：只挂尾部窗口。分页回来的更早一页（prepend 锚点在途、首条变了）整页挂上——
         // 那是用户滚到顶要看的内容。
-        let mergedCount = List.length merged
-        let firstCommit = merged |> List.tryHead |> Option.bind (fun m -> m.commitId)
-        if pendingHistoryAnchor.IsSome && firstCommit <> lastFirstCommit && mergedCount > lastMergedCount && lastMergedCount > 0 then
-            mountWindow <- max mountWindow (min mergedCount (lastMergedCount - hiddenCommits.Length + (mergedCount - lastMergedCount)))
-        lastFirstCommit <- firstCommit
-        lastMergedCount <- mergedCount
-        let firstMounted = max 0 (mergedCount - mountWindow)
-        hiddenCommits <- merged |> List.truncate firstMounted |> List.choose (fun m -> m.commitId) |> Array.ofList
+        let firstMounted = mountWindow.Plan(merged |> List.map (fun m -> m.commitId), pendingHistoryAnchor.IsSome)
         rerenderLast <- fun () ->
             this.RenderMessages(messages, streamingMessage, error, fontSize, autoCollapseReasoning, usage, missingAttachments)
         merged
@@ -1332,12 +1271,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         mountedKeys <- desired |> Seq.map fst |> Array.ofSeq
         // 锚点指向的卡可能已经不在了（流式卡换代、错误卡消失）：丢掉锚点，
         // 下一次跳转重新用视口位置起算，不会指向一张不存在的卡。
-        match exchangeAnchor with
-        | Some key when not (Array.contains (Some key) mountedKeys) -> exchangeAnchor <- None
-        | _ -> ()
+        let resume = jump.Mounted(mountedKeys, mountWindow.LastFirstCommit)
         syncExchangeNavState ()
-        if pendingJumpPrevious && lastFirstCommit <> pendingJumpFirst then
-            pendingJumpPrevious <- false
+        if resume then
             // 等分页锚点恢复（Background）之后再跳，免得被写回旧偏移。
             Dispatcher.UIThread.Post((fun () -> this.JumpExchange -1), DispatcherPriority.ContextIdle)
 
@@ -1352,59 +1288,27 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             for stale in cardCache.Keys |> Seq.filter (live.Contains >> not) |> Array.ofSeq do
                 cardCache.Remove stale |> ignore
 
-        if wasAtBottom then this.ScrollToEndDeferred()
-        else
-            // 窗口外未挂载的消息也算条数：否则超过挂载窗口后尾部新增 delta 恒为 0（决策 293）。
-            let newCount = desired.Count + firstMounted
-            let delta = newCount - previousRenderedMessageCount
-            // 分页加载更早历史也是正的 delta，但那批消息在历史上就已经读过了，
-            // 不是「新来的」：划上去翻旧账时冒出「N 条新消息」纯属误导。
-            // 判据用已有信号 pendingHistoryAnchor：BeginHistoryPrependAnchor 在派发
-            // 分页前置位，RestoreHistoryPrependAnchorDeferred 在本次渲染之后清位，
-            // 因此这次渲染内它正好是 Some。不再另建一个 isLoadingHistory 字段。
-            // 借 kelivo message_list_view.dart 的 layout 定位请求：内容从上方增长
-            // 与尾部新增由两条不同通路处理，从不相混。
-            // 流式子卡不进 delta 记账：它是占位，正文还没落定。用户划上去时
-            // 看到进度不该记「新消息」——落定那次才记一次（见下方 streamingJustEnded）。
-            let countDelta = if streamingMessage.IsSome then 0 else delta
-            if pendingHistoryAnchor.IsNone then
-                // 流式 delta 替换同一张卡（delta = 0）时绝不记未读：
-                // 用户正看着的那条卡在原地刷新，不是“新消息”。
-                if countDelta > 0 && previousRenderedMessageCount > 0 then
-                    unreadSinceScrolledUp <- unreadSinceScrolledUp + countDelta
-                elif unreadSinceScrolledUp = 0 && not wasAtBottom && countDelta > 0 then
-                    unreadSinceScrolledUp <- max 1 countDelta
-            // 上面两条只数「条数变化」，流式收尾是条数不变的一次新增，
-            // 单独在分页判据之外补记：同一次渲染既有分页又有流式收尾不可能同时成立。
-            if streamingJustEnded && not wasAtBottom && pendingHistoryAnchor.IsNone then
-                unreadSinceScrolledUp <- max 1 (unreadSinceScrolledUp + 1)
-            // 分页这一帧也要刷新按钮外观：未读计数不动，但按钮可见性/文案
-            // 与「是否在底部」相关，同一处刷新不能漏掉这条路。
-            this.UpdateScrollToBottomAppearance()
-        previousRenderedMessageCount <- desired.Count + firstMounted
+        // 窗口外未挂载的消息也算条数（决策 293）；分页前置与流式占位不记未读，流式收尾补记一条。规则见 ScrollFollow。
+        match follow.Rendered(streamingMessage.IsSome, desired.Count + firstMounted, pendingHistoryAnchor.IsSome) with
+        | RenderFollow.ScrollToEnd -> this.ScrollToEndDeferred()
+        | RenderFollow.Keep -> this.UpdateScrollToBottomAppearance()
 
     member private this.UpdateScrollToBottomAppearance() =
         let extent = scroller.Extent.Height
         let viewport = scroller.Viewport.Height
         scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Spacing.space3xl, Spacing.space2xl)
-        if atBottom then
-            unreadSinceScrolledUp <- 0
-            scrollToBottomButton.IsVisible <- false
-            scrollToBottomLabel.Text <- "回到最新"
-            scrollToBottomLabel.IsVisible <- false
-            ToolTip.SetTip(scrollToBottomButton, "回到最新")
-            Avalonia.Automation.AutomationProperties.SetName(scrollToBottomButton, "回到最新")
+        let view = follow.Button(extent > viewport + ContentMetrics.scrollBottomRevealThreshold, compactMode)
+        scrollToBottomButton.IsVisible <- view.visible
+        scrollToBottomLabel.Text <- view.text
+        scrollToBottomLabel.IsVisible <- view.showLabel
+        ToolTip.SetTip(scrollToBottomButton, view.text)
+        Avalonia.Automation.AutomationProperties.SetName(scrollToBottomButton, view.text)
+        if follow.AtBottom then
             let size = if compactMode then LayoutPolicy.compactActionTarget else Tokens.iconButton
             Ui.setSquareTarget scrollToBottomButton size
             scrollToBottomButton.Padding <- Thickness 0.0
         else
-            scrollToBottomButton.IsVisible <- extent > viewport + ContentMetrics.scrollBottomRevealThreshold
-            if unreadSinceScrolledUp > 0 then
-                let text = sprintf "%d 条新消息" unreadSinceScrolledUp
-                scrollToBottomLabel.Text <- text
-                scrollToBottomLabel.IsVisible <- not compactMode
-                ToolTip.SetTip(scrollToBottomButton, text)
-                Avalonia.Automation.AutomationProperties.SetName(scrollToBottomButton, text)
+            if follow.Unread > 0 then
                 if compactMode then
                     let size = LayoutPolicy.compactActionTarget
                     Ui.setSquareTarget scrollToBottomButton size
@@ -1417,10 +1321,6 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                     scrollToBottomButton.MinHeight <- height
                     scrollToBottomButton.Padding <- Thickness(Spacing.spaceXl, 0.0, Spacing.space2xl, 0.0)
             else
-                scrollToBottomLabel.Text <- "回到最新"
-                scrollToBottomLabel.IsVisible <- false
-                ToolTip.SetTip(scrollToBottomButton, "回到最新")
-                Avalonia.Automation.AutomationProperties.SetName(scrollToBottomButton, "回到最新")
                 let size = if compactMode then LayoutPolicy.compactActionTarget else Tokens.iconButton
                 Ui.setSquareTarget scrollToBottomButton size
                 scrollToBottomButton.Padding <- Thickness 0.0
@@ -1439,7 +1339,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         let rec attempt (remaining: int) =
             Dispatcher.UIThread.Post(
                 (fun () ->
-                    if not revealPinned then scroller.ScrollToEnd()
+                    if not follow.RevealPinned then scroller.ScrollToEnd()
                     if remaining > 0 then attempt (remaining - 1)),
                 DispatcherPriority.Background)
         attempt 3
@@ -1455,11 +1355,10 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 锚点同样在这里作废：这条路径也是用户意图入口（快捷键走的就是它），
     /// 理由见 ScrollToBeginning。
     member this.SmoothScrollToBeginning() =
-        exchangeAnchor <- None
-        returningToLatest <- false
+        jump.ClearAnchor()
         // 一离开底部就不再是「贴底」：否则整个上滚过程里「回到最新」一直藏着，
         // 用户中途改主意只能继续滚。与 ScrollChanged 里 nowAtBottom 同一个判据的方向。
-        atBottom <- false
+        follow.LeaveForBeginning()
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
         if MotionPolicy.isReduced () then
@@ -1511,18 +1410,15 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 锚点只能在这一层清：Deferred 那层被自动跟随（每个流式 delta）反复调用，
     /// 在那里清等于每次接收都丢锚点。
     member this.ScrollToBeginning() =
-        exchangeAnchor <- None
+        jump.ClearAnchor()
         this.ScrollToBeginningDeferred()
 
     /// 平滑滚动到底部
     member this.SmoothScrollToEnd() =
-        revealPinned <- false
+        follow.ReturnToLatest()
         revealTarget <- None
         smoothScrollTimer |> Option.iter (fun t -> t.Stop())
         smoothScrollTimer <- None
-        returningToLatest <- true
-        atBottom <- true
-        unreadSinceScrolledUp <- 0
         this.UpdateScrollToBottomAppearance()
         if MotionPolicy.isReduced () then
             this.ScrollToEndDeferred()
@@ -1531,8 +1427,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let maxTarget = max 0.0 (scroller.Extent.Height - scroller.Viewport.Height)
             let distance = maxTarget - startOffset
             if distance < 5.0 then
-                atBottom <- true
-                unreadSinceScrolledUp <- 0
+                follow.Arrived()
                 this.ScrollToEndDeferred()
                 this.UpdateScrollToBottomAppearance()
             else
@@ -1547,8 +1442,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                     if elapsed >= durationMs || target <= 0.0 then
                         timer.Stop()
                         smoothScrollTimer <- None
-                        atBottom <- true
-                        unreadSinceScrolledUp <- 0
+                        follow.Arrived()
                         scroller.ScrollToEnd()
                         this.UpdateScrollToBottomAppearance()
                     else
@@ -1588,43 +1482,18 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 连续按「上一条」能一排排往回翻。
     member this.JumpExchange(direction: int) =
         let cards = exchangeIndices ()
-        if not (List.isEmpty cards) then
-            let current =
-                match exchangeAnchor with
-                | Some key ->
-                    mountedKeys
-                    |> Array.tryFindIndex ((=) (Some key))
-                    |> Option.defaultValue -1
-                | None -> currentExchangeIndex ()
-            let target =
-                if direction < 0 then
-                    cards
-                    |> List.filter (fun index -> index < current)
-                    |> List.tryLast
-                else
-                    cards |> List.tryFind (fun index -> index > current)
-            match target with
-            | None when direction < 0 && hiddenCommits.Length > 0 ->
-                // 决策 300：本机已加载、只是没挂载——先挂上一步再续跳（锚点不变，索引随之后移）。
-                if exchangeAnchor.IsNone && current >= 0 then exchangeAnchor <- mountedKeys.[current]
-                if this.ExpandMountWindow() then this.JumpExchange direction
-            | None when direction < 0 && olderOnHost ->
-                if exchangeAnchor.IsNone && current >= 0 then exchangeAnchor <- mountedKeys.[current]
-                pendingJumpPrevious <- true
-                pendingJumpFirst <- lastFirstCommit
-                actions.requestOlderHistory ()
-            | Some index ->
-                match mountedKeys.[index] with
-                | Some key -> exchangeAnchor <- Some key
-                | None -> ()
-                if index < messagePanel.Children.Count then
-                    smoothScrollToCard messagePanel.Children.[index]
-                // 跳转离开底部：新回复不该把用户从正在看的历史里拽走。
-                // atBottom 只在目标真的是底部时才保持，否则置假让「回到最新」接管。
-                atBottom <- index = List.max cards
-                unreadSinceScrolledUp <- 0
-                this.UpdateScrollToBottomAppearance()
-            | None -> ()
+        match jump.Jump(direction, mountedKeys, cards, currentExchangeIndex (), mountWindow.HiddenCount > 0, mountWindow.LastFirstCommit) with
+        | JumpStep.ExpandAndRetry ->
+            // 决策 300：本机已加载、只是没挂载——先挂上一步再续跳（锚点不变，索引随之后移）。
+            if this.ExpandMountWindow() then this.JumpExchange direction
+        | JumpStep.RequestOlder -> actions.requestOlderHistory ()
+        | JumpStep.ScrollTo(index, toBottom) ->
+            if index < messagePanel.Children.Count then
+                smoothScrollToCard messagePanel.Children.[index]
+            // 跳转离开底部：新回复不该把用户从正在看的历史里拽走。
+            follow.JumpedTo toBottom
+            this.UpdateScrollToBottomAppearance()
+        | JumpStep.Stay -> ()
         // 顶按钮的可用态随时跟着收敛：跳转后可能已经到了端点。
         syncExchangeNavState ()
 
@@ -1731,7 +1600,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             // 决策 460：钉住期间内容高度变了（不是用户在滚）→ 把目标卡重新对齐到顶部。
             // 动画进行中由动画每帧自己对齐，这里只管动画结束之后的布局漂移。
             match revealTarget with
-            | Some child when revealPinned && smoothScrollTimer.IsNone && abs e.ExtentDelta.Y > 0.1 ->
+            | Some child when follow.RevealPinned && smoothScrollTimer.IsNone && abs e.ExtentDelta.Y > 0.1 ->
                 if isNull child.Parent then revealTarget <- None
                 else
                     let target = max 0.0 (child.Bounds.Y - Spacing.space3xl)
@@ -1744,16 +1613,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             let offset = scroller.Offset.Y
             // 用户手动向上滚动（或滚轮/触控向上拉），立即打断平滑自动滚动，不与用户手势冲突
             let fromAnimation = abs (offset - lastAnimatedOffset) < 1.0
-            if e.OffsetDelta.Y < -0.1 && not fromAnimation then
-                returningToLatest <- false
+            let nowAtBottom = extent - viewport - offset < ContentMetrics.scrollBottomThreshold
+            // 中途帧仍按用户已发出的“回到底”意图处理，不重新显示按钮。
+            if follow.Scrolled(e.OffsetDelta.Y < -0.1 && not fromAnimation, nowAtBottom) then
                 smoothScrollTimer |> Option.iter (fun t -> t.Stop())
                 smoothScrollTimer <- None
-            let nowAtBottom = extent - viewport - offset < ContentMetrics.scrollBottomThreshold
-            if nowAtBottom then returningToLatest <- false
-            // 中途帧仍按用户已发出的“回到底”意图处理，不重新显示按钮。
-            atBottom <- nowAtBottom || returningToLatest
             if nowAtBottom then
-                unreadSinceScrolledUp <- 0
                 scrollToBottomButton.IsVisible <- false
             // 手动滚动会改变「当前是哪一轮」：没有锚点时锚点由视口定，
             // 所以端点禁用态必须跟着滚动走，只在渲染时刷一次会停在旧状态。
@@ -1764,7 +1629,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             if offset <= 0.5 && extent > viewport && not skeletonPanel.IsVisible then
                 // 决策 293：本机还有没挂的更早消息时先挂它们；只认「用户把视口往上推到了顶」
                 // （本帧偏移在减小），首屏布局时偏移本来就是 0，不能因此把整段历史一次挂满。
-                if hiddenCommits.Length > 0 then
+                if mountWindow.HiddenCount > 0 then
                     if e.OffsetDelta.Y < -0.1 then this.ExpandMountWindow() |> ignore
                 // 决策 310：上一页刚失败时不靠滚动静默重发——由行内「重试」显式触发。
                 elif not olderFailureBanner.IsVisible then actions.requestOlderHistory ())
@@ -1773,9 +1638,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         // 变成两个动画争抢 Offset——手势输了。
         scroller.PointerWheelChanged.Add(fun e ->
             if abs e.Delta.Y > 0.0 then
-                revealPinned <- false
+                follow.Wheel()
                 revealTarget <- None
-                returningToLatest <- false
                 smoothScrollTimer |> Option.iter (fun t -> t.Stop())
                 smoothScrollTimer <- None)
 
@@ -1787,13 +1651,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         scrollToBottomButton.VerticalAlignment <- VerticalAlignment.Bottom
         scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Spacing.space3xl, Spacing.space2xl)
         let doScrollToBottom () =
-            // 键盘激活这条路径：按钮随即因 atBottom 隐藏，而 Avalonia 不会自动
+            // 键盘激活这条路径：按钮随即因 follow.AtBottom 隐藏，而 Avalonia 不会自动
             // 迁走焦点——停在按钮上的焦点直接被清成 null（探针实测），用户接着
             // 按 Tab 会从窗口根部重新走。归宿取消息面板：用户刚才是在读消息，
             // 视线要落回内容而不是被拽到输入区（与停止键 focusHome 分场景）。
             let focusWasOnButton = scrollToBottomButton.IsFocused
-            atBottom <- true
-            unreadSinceScrolledUp <- 0
+            follow.Arrived()
             this.UpdateScrollToBottomAppearance()
             this.SmoothScrollToEnd()
             if focusWasOnButton then actions.focusHome ()

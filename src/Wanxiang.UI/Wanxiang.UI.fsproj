@@ -155,6 +155,12 @@
     <PackageReference Include="Wanxiang2.LinkChunks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MarkdownBlocks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MathTypeset" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ExchangeJump" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MountWindow" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ScrollFollow" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SidebarRowState" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SearchRequery" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ToolOverview" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ImageFit" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProbeCounter" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.StartupTrace" Version="0.0.0-local" />
