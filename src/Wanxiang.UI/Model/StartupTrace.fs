@@ -12,9 +12,9 @@ open System.Diagnostics
 module StartupTrace =
     let private mode =
         try Environment.GetEnvironmentVariable "WANXIANG_STARTUP_TRACE" with _ -> null
-    let enabled = not (String.IsNullOrEmpty mode)
-    let exitAfter = mode = "exit"
-    let private seen = Collections.Generic.HashSet<string>()
+    // 模式解析、去重与输出行归包；环境变量、进程启动时间与 stderr 留在宿主。
+    let enabled, exitAfter = StartupTrace.modeOf mode
+    let private milestones = StartupMilestones()
     let private origin =
         lazy
             (try Process.GetCurrentProcess().StartTime.ToUniversalTime()
@@ -23,13 +23,10 @@ module StartupTrace =
     /// 记录里程碑；返回是否首次记录。
     let mark (name: string) : bool =
         if not enabled then false
-        else
-            lock seen (fun () ->
-                if seen.Add name then
-                    let ms = (DateTime.UtcNow - origin.Force()).TotalMilliseconds
-                    eprintfn "startup.%s uptime_ms=%.0f" name ms
-                    true
-                else false)
+        elif milestones.Mark name then
+            eprintfn "%s" (StartupTrace.line name (DateTime.UtcNow - origin.Force()).TotalMilliseconds)
+            true
+        else false
 
     /// 退出回调由宿主（桌面窗口）安装。
     let mutable requestExit: unit -> unit = ignore

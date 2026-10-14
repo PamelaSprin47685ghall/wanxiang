@@ -30,18 +30,7 @@ module CredentialStore =
             try
                 let path = Path.Combine(configHome (), "client.toml")
                 if File.Exists path then
-                    let lines = File.ReadAllLines path
-                    let get (key: string) =
-                        lines
-                        |> Array.tryPick (fun line ->
-                            let t = line.Trim()
-                            if t.StartsWith(key + " =") || t.StartsWith(key + "=") then
-                                let v = t.Substring(t.IndexOf '=' + 1).Trim().Trim('"')
-                                if String.IsNullOrWhiteSpace v then None else Some v
-                            else None)
-                    match get "url", get "token" with
-                    | Some url, Some token -> Some(url, token)
-                    | _ -> None
+                    CredentialStore.parseClientToml (File.ReadAllLines path)
                 else None
             with _ -> None
 
@@ -53,25 +42,7 @@ module CredentialStore =
             else
                 try
                     let! json = BrowserCredentials.List()
-                    let results = System.Collections.Generic.List<string * string * string>()
-                    if not (String.IsNullOrWhiteSpace json) then
-                        match JsonNode.Parse json with
-                        | null -> ()
-                        | node when node.GetValueKind() = JsonValueKind.Array ->
-                            let arr = node.AsArray()
-                            for item in arr do
-                                if not (isNull item) && item.GetValueKind() = JsonValueKind.Object then
-                                    let o = item.AsObject()
-                                    let getStr (k: string) =
-                                        let mutable n: JsonNode = null
-                                        if o.TryGetPropertyValue(k, &n) && not (isNull n) then n.GetValue<string>() else ""
-                                    let instanceId = getStr "instanceId"
-                                    let url = getStr "url"
-                                    let token = getStr "token"
-                                    if not (String.IsNullOrWhiteSpace url) && not (String.IsNullOrWhiteSpace token) then
-                                        results.Add(url, token, instanceId)
-                        | _ -> ()
-                    return List.ofSeq results
+                    return CredentialStore.parseConnections json
                 with _ ->
                     return []
         }
@@ -103,18 +74,7 @@ module CredentialStore =
 
     /// 浏览器默认连接地址：与页面同源（https → wss，http → ws）；非浏览器回退桌面默认值。
     let defaultServerUrl () : string =
-        if not (OperatingSystem.IsBrowser()) then
-            "ws://127.0.0.1:8765/ws"
+        if not (OperatingSystem.IsBrowser()) then CredentialStore.desktopServerUrl
         else
-            try
-                let href = BrowserPage.Url()
-                let scheme =
-                    if href.StartsWith "https://" then "wss://"
-                    elif href.StartsWith "http://" then "ws://"
-                    else "ws://"
-                // 用实际前缀长度切割（http:// 7 字符 / https:// 8 字符），避免 Substring 错位
-                let rest = href.Substring(href.IndexOf("://", StringComparison.Ordinal) + 3)
-                let host = rest.Split('/').[0]
-                scheme + host + Constants.WsPath
-            with _ ->
-                "ws://127.0.0.1:8765/ws"
+            try CredentialStore.serverUrlOfPage Constants.WsPath (BrowserPage.Url())
+            with _ -> CredentialStore.desktopServerUrl

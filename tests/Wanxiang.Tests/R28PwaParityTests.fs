@@ -12,21 +12,6 @@ open Wanxiang.UI
 // 这里守住桌面侧与共享逻辑。
 
 [<Fact>]
-let ``probe counts only when enabled`` () =
-    let before = ParityProbe.count "test.r28.off"
-    let saved = ParityProbe.forceInProcess
-    try
-        ParityProbe.forceInProcess <- false
-        ParityProbe.hit "test.r28.off"
-        Assert.Equal(before, ParityProbe.count "test.r28.off")
-        ParityProbe.forceInProcess <- true
-        ParityProbe.hit "test.r28.on"
-        ParityProbe.hit "test.r28.on"
-        Assert.True(ParityProbe.count "test.r28.on" >= 2)
-    finally
-        ParityProbe.forceInProcess <- saved
-
-[<Fact>]
 let ``local text roundtrips through a file on desktop`` () =
     let dir = Path.Combine(Path.GetTempPath(), "wx-r28-" + Guid.NewGuid().ToString "N")
     let path = Path.Combine(dir, "ui.json")

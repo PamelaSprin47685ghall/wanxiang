@@ -23,7 +23,6 @@
     <Compile Include="Rich/MathLayout.fs" />
     <Compile Include="Rich/MathVisual.fs" />
     <Compile Include="Model/ImageShrink.fs" />
-    <Compile Include="Model/ConversationExport.fs" />
     <Compile Include="Model/DesktopLinks.fs" />
     <Compile Include="Model/CommandPalette.fs" />
     <Compile Include="Model/DraftStore.fs" />
@@ -156,6 +155,12 @@
     <PackageReference Include="Wanxiang2.LinkChunks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MarkdownBlocks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MathTypeset" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ImageFit" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ProbeCounter" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.StartupTrace" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ClientConnections" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ConversationExport" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ImageShrink" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ConversationTransfer" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ErrorRecovery" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.UrlSchemeRegistration" Version="0.0.0-local" />

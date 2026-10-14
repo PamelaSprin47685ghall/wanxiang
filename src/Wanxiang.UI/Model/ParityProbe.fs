@@ -21,33 +21,23 @@ module ParityProbe =
     let private external = lazy (browserEnabled () || desktopEnabled ())
     let enabled () = forceInProcess || external.Force()
 
-    let private counts = Dictionary<string, int>()
+    /// 计数归 ProbeCounter；开关条件与输出（stderr / JS）碰平台，留在宿主。
+    let private counter = ProbeCounter()
 
     /// 记录一次命中。
     let hit (name: string) =
         if enabled () then
-            let first =
-                lock counts (fun () ->
-                    match counts.TryGetValue name with
-                    | true, n ->
-                        counts[name] <- n + 1
-                        false
-                    | _ ->
-                        counts[name] <- 1
-                        true)
+            counter.Enabled <- true
+            let first = counter.Hit name
             if external.Force() then
                 if OperatingSystem.IsBrowser() then
                     try BrowserProbe.Hit name with _ -> ()
                 elif first then
                     eprintfn "parity.%s" name
 
-    let count (name: string) =
-        lock counts (fun () ->
-            match counts.TryGetValue name with
-            | true, n -> n
-            | _ -> 0)
+    let count (name: string) = counter.Count name
 
-    let reset () = lock counts (fun () -> counts.Clear())
+    let reset () = counter.Reset()
 
 /// 决策 452：小型本机文本（界面偏好、命令面板最近使用）的存取。
 /// 桌面写文件；PWA 的 System.IO 只是内存文件系统，刷新即丢——改写 localStorage（键 `wanxiang.local:<文件名>`）。
