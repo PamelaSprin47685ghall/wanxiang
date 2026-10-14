@@ -229,8 +229,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     let mutable pendingFocusId: Guid option = None
     /// 批量选择模式：行点击改为切换选中，底部换成批量操作条。
     /// 桌面端从行的右键菜单进入；触屏没有右键与 Shift+F10，行的更多菜单同样提供入口。
-    let mutable selectionMode = false
-    let selectedIds = System.Collections.Generic.Dictionary<Guid, unit>()
+    /// 多选状态与批量条文案归 SidebarSelection。
+    let selection = SidebarSelection()
     /// 选择模式头 / 底部操作条只在模式翻转时换控件：同模式内的选中变化只刷计数与按钮态，
     /// 不重建这棵树，按钮与计数文本的焦点保持连续。
     let selectionHeader =
@@ -338,7 +338,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let isActive = activeId = Some summary.id
         // 选择模式下选中行与「当前对话」共用同一套选中语言（selected 底 + accent 左缘 +
         // 半粗体），不引入第二套选中色：批量操作是同一语义的复数形式。
-        let highlighted = isActive || (selectionMode && selectedIds.ContainsKey summary.id)
+        let highlighted = isActive || (selection.IsSelected summary.id)
         host.Background <- if highlighted then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
         // 键盘焦点环由 ActionBorder 统一绘制（outline 语义、零位移）；
         // 这里只管选中底与左缘，悬停由事件处理补，避免两套阴影互相覆盖。
@@ -362,7 +362,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             | :? ConversationSummary as summary -> this.ApplyRowState(summary, host)
             | _ ->
                 let isActive = activeId = Some id
-                let highlighted = isActive || (selectionMode && selectedIds.ContainsKey id)
+                let highlighted = isActive || (selection.IsSelected id)
                 host.Background <- if highlighted then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
                 // 焦点环同上：归 ActionBorder，避免与选中态阴影打架。
                 host.BorderBrush <- if highlighted then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
@@ -692,7 +692,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 if not (String.IsNullOrEmpty searchBox.Text) then
                     e.Handled <- true
                     this.ResetSearch true
-                elif selectionMode then
+                elif selection.Active then
                     // 多选期内 Esc 一律先退多选，不因焦点落在归档开关上而失效：
                     // 对话行（Sidebar.fs:860）与搜索框（Sidebar.fs:1383）都这么办。
                     // kelivo interactive_drawer.dart:399-407 同序——抽屉级返回先问
@@ -774,7 +774,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 多选模式下整行都可勾选，行内「更多操作」单条菜单被 openMenu 拒绝，
         // 留着可见只会诱导用户去点一个必然空转的按钮：同批下线可见性/命中/焦点/读屏。
         // kelivo 同款：side_drawer.dart:4414-4435 选择模式下前导区换成勾选框、无单条菜单按钮。
-        if selectionMode then
+        if selection.Active then
             moreButton.IsVisible <- false
             moreButton.IsHitTestVisible <- false
             moreButton.Focusable <- false
@@ -874,9 +874,9 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         let openMenu (target: Control) (alignRight: bool) =
             // 多选模式下行右键 / 更多按钮不再开单条菜单：里面的重命名、删除都是单条语义，
             // 与底部批量操作条并列只会让用户误判作用范围。kelivo 同款约定：
-            // side_drawer.dart:261 `if (_selectionMode) return;`
-            // 与 :4373-4375 `if (_isDesktop && !widget.selectionMode)`。
-            if selectionMode then () else
+            // side_drawer.dart:261 `if (_selection.Active) return;`
+            // 与 :4373-4375 `if (_isDesktop && !widget.selection.Active)`。
+            if selection.Active then () else
             // 菜单打开瞬间按 id 取最新快照：行渲染时的 summary 可能已被覆盖（如置顶切换后），
             // 标签与动作绝不用渲染期闭包里的旧值。
             let live =
@@ -911,7 +911,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         host.PointerEntered.Add(fun _ ->
             // 悬停只动背景：选中行的强调左缘不动；悬停在已选项上层叠高亮，绝不比已选项更暗。
             let isActive = activeId = Some summary.id
-            let isSelected = selectionMode && selectedIds.ContainsKey summary.id
+            let isSelected = selection.IsSelected summary.id
             host.Background <-
                 // 悬停叠层与按钮/菜单 hover 同一混合实现（Ui.blendOverlay，Primitives 唯一来源）。
                 if isActive || isSelected then Ui.blendOverlay Tokens.selected Tokens.hover
@@ -935,7 +935,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             this.ApplyRowState(summary.id, host)
             if not moreButton.IsFocused then this.ApplyRowActionVisibility moreButton false)
         Ui.onClick host (fun () ->
-            if selectionMode then this.ToggleSelected summary.id
+            if selection.Active then this.ToggleSelected summary.id
             else actions.openConversation summary.id)
         // Enter/Space 由 Ui.onClick 统一接管（同一按键只打开一次）；
         // 这里只处理行内导航与行级快捷键。
@@ -947,7 +947,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 | _ -> actions.renameConversation summary
             elif e.Key = Key.Delete then
                 // 选择模式下 Delete 走批量删除，与底部操作条同一动作。
-                if selectionMode then
+                if selection.Active then
                     e.Handled <- true
                     this.DeleteSelected()
                 else
@@ -963,14 +963,14 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 match summaryById.TryGetValue summary.id with
                 | true, live -> actions.setPinned live (not live.pinned)
                 | _ -> actions.setPinned summary (not summary.pinned)
-            elif selectionMode && e.Key = Key.A && (e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta) then
+            elif selection.Active && e.Key = Key.A && (e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta) then
                 // 多选模式下 Ctrl+A / ⌘+A 即全选：此前键盘用户必须 Tab 走到顶部
                 // 操作条才能全选，行内键位链（F2/P/Delete/Esc）到这里就断了。
                 // 语义与顶栏「全选 / 取消全选」键同一入口（ToggleSelectAllVisible），
                 // 也是桌面端列表的标准按键。kelivo 同款：side_drawer.dart:727-735。
                 e.Handled <- true
                 this.ToggleSelectAllVisible()
-            elif selectionMode && e.Key = Key.Escape then
+            elif selection.Active && e.Key = Key.Escape then
                 // 批量模式里 Escape 只做退出：焦点留在当前行，选择立刻清零。
                 // 不分搜索框有没有词——在搜索结果中进入多选的用户，Esc 的意图是
                 // 离开批量态，而不是被清掉筛选用词。清词是普通态的第 2 顺位动作。
@@ -1265,7 +1265,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 多选期间列表内容可能整体换掉（换筛选 / 搜索结果 / 外部刷新）：已选项
         // 未必还在新列表里，批量操作条的按键启用态必须跟着重算，否则计数与按键
         // 状态会停留在旧列表上（计数说「已选 N 项」，按键按下去静默无反应）。
-        if selectionMode then this.RefreshSelectionChrome()
+        if selection.Active then this.RefreshSelectionChrome()
 
     member this.SetActive(id: Guid option) =
         if activeId <> id then
@@ -1402,80 +1402,43 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
     /// 进入批量选择模式：以 seedId 为第一项选中，底部换成批量操作条。
     /// 已在模式内则只把 seedId 并入选择（菜单入口可重复点）。
     member this.EnterSelection(seedId: Guid) =
-        if not selectionMode then
-            selectionMode <- true
-            selectedIds.Clear()
-            selectedIds.[seedId] <- ()
-            this.RefreshSelectionChrome()
-        elif not (selectedIds.ContainsKey seedId) then
-            selectedIds.[seedId] <- ()
-            this.RefreshSelectionChrome()
+        selection.Enter seedId
+        this.RefreshSelectionChrome()
 
     /// 切换某一行的选中态。清空最后一项时退出模式——空选择留着操作条没有意义。
     member this.ToggleSelected(id: Guid) =
-        if selectedIds.ContainsKey id then selectedIds.Remove id |> ignore
-        else selectedIds.[id] <- ()
-        if selectedIds.Count = 0 then this.ExitSelection()
-        else this.RefreshSelectionChrome()
+        selection.Toggle id
+        this.RefreshSelectionChrome()
 
     /// 退出批量选择模式并清空选择。焦点不抢：留在当前行，操作条收起不动布局。
     member this.ExitSelection() =
-        selectionMode <- false
-        selectedIds.Clear()
+        selection.Exit()
         this.RefreshSelectionChrome()
 
     /// 全选 / 取消全选当前可见行。
     member this.ToggleSelectAllVisible() =
-        let allSelected =
-            visibleRowIds.Length > 0
-            && visibleRowIds |> Array.forall selectedIds.ContainsKey
-        if allSelected then this.ExitSelection()
-        else
-            if not selectionMode then selectionMode <- true
-            selectedIds.Clear()
-            for id in visibleRowIds do selectedIds.[id] <- ()
-            this.RefreshSelectionChrome()
+        selection.ToggleAllVisible(List.ofArray visibleRowIds)
+        this.RefreshSelectionChrome()
 
     /// 供 AppShell 读取当前选择（顺序与可见行一致，删除后可预期邻位行为）。
-    member _.SelectedIds() : Guid list =
-        visibleRowIds
-        |> Array.filter selectedIds.ContainsKey
-        |> Array.toList
+    member _.SelectedIds() : Guid list = selection.SelectedIds(List.ofArray visibleRowIds)
 
-    member _.IsSelectionMode = selectionMode
+    member _.IsSelectionMode = selection.Active
 
     /// 刷新批量操作条与计数文本；行视觉由各行事件里的 ApplyRowState 同步。
     member private this.RefreshSelectionChrome() =
-        let count = selectedIds.Count
-        selectionCountText.Text <- sprintf "已选 %d 项" count
-        // 两个键的文案是当前选择的状态，不是固定标签：全选后同一键变成「取消全选」、
-        // 全已置顶后变成「取消置顶」。此前两者只在 Build 时算一次，用户勾选/反选
-        // 之后看到的仍是旧文案，再点会得到与预期相反的动作。
-        Ui.setButtonText selectAllButton
-            (if visibleRowIds.Length > 0 && visibleRowIds |> Array.forall selectedIds.ContainsKey then "取消全选" else "全选")
-        // 只按「已选项是否全部置顶」判定：选中项非空且全置顶即报「取消置顶」。
-        // 此前混入 `Array.forall selectedIds.ContainsKey`（必须全选可见行才肯换文案），
-        // 于是只挑两个对话点时文案停在「置顶」，点下去发出的却是取消置顶——文案与动作相反。
-        Ui.setButtonText pinButton
-            (if actions.selectionAllPinned(this.SelectedIds()) then "取消置顶" else "置顶")
-        // 批量条三个动作键随选中数翻面：0 项时禁用（不可点、不可聚焦、Tab 跳过、
-        // 读屏播报不可用），语义上就不是空选可执行的动作。既有守卫只挡住点击，
-        // 键盘用户仍能 Tab 上去按 Enter 得到静默无反应——按钮的启用态才是承诺。
-        // 判定用「可见的」已选项（SelectedIds）而不是 selectedIds 原始计数：多选期间
-        // 换筛选/搜索会让已选项整批离开列表，计数仍在但批量载荷为空。
-        let usableCount = this.SelectedIds().Length
-        Ui.setEnabled selectAllButton (visibleRowIds.Length > 0)
-        Ui.setEnabled pinButton (usableCount > 0)
-        Ui.setEnabled archiveButton (usableCount > 0)
-        Ui.setEnabled deleteButton (usableCount > 0)
-        // 读屏与悬停提示跟着同一份状态走：文案换了，自动化名还是旧的话等于报错。
-        Avalonia.Automation.AutomationProperties.SetHelpText(
-            selectAllButton,
-            if visibleRowIds.Length > 0 && visibleRowIds |> Array.forall selectedIds.ContainsKey then
-                "取消全选（保留多选状态）"
-            else "全选当前可见对话")
-        selectionHeader.IsVisible <- selectionMode
-        selectionActionBar.IsVisible <- selectionMode
+        let chrome = selection.Chrome(List.ofArray visibleRowIds, actions.selectionAllPinned)
+        selectionCountText.Text <- chrome.countText
+        // 文案、启用态与读屏说明都跟当前选择走（规则见 SidebarSelection）。
+        Ui.setButtonText selectAllButton chrome.selectAllText
+        Ui.setButtonText pinButton chrome.pinText
+        Ui.setEnabled selectAllButton chrome.selectAllEnabled
+        Ui.setEnabled pinButton chrome.batchEnabled
+        Ui.setEnabled archiveButton chrome.batchEnabled
+        Ui.setEnabled deleteButton chrome.batchEnabled
+        Avalonia.Automation.AutomationProperties.SetHelpText(selectAllButton, chrome.selectAllHelp)
+        selectionHeader.IsVisible <- chrome.barsVisible
+        selectionActionBar.IsVisible <- chrome.barsVisible
         // 已渲染的行必须立刻重绘：选中/取消选中如果只改集合不改行视觉，
         // 用户点了行却看不出任何变化（ hover / 焦点事件不会为纯数据变化补刷）。
         for row in rowHosts do this.ApplyRowState(row.Key, row.Value)
@@ -1483,8 +1446,8 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         for button in moreButtons.Values do this.ApplyRowActionVisibility button false
         // 选择模式只留「取消 / 全选 / 计数」与底部批量条：品牌行与页脚让位，
         // 侧栏本来只有 232–420pt 宽，再叠两条常驻条会把列表压成几条。
-        brandHeader.IsVisible <- not selectionMode
-        sidebarFooter.IsVisible <- not selectionMode
+        brandHeader.IsVisible <- not selection.Active
+        sidebarFooter.IsVisible <- not selection.Active
 
     /// 批量删除：AppShell 负责逐个发命令与确认；这里只把选择交出去。
     member private this.DeleteSelected() =
@@ -1571,7 +1534,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 e.Handled <- true
                 if not (String.IsNullOrEmpty searchBox.Text) then
                     this.ResetSearch true
-                elif selectionMode then
+                elif selection.Active then
                     // 从列表首行按 Up 会落进搜索框，此时 Esc 只清搜索是断的：
                     // 多选模式下先退出多选，与行内 Esc（Sidebar.fs:838）同语义。
                     this.ExitSelection()

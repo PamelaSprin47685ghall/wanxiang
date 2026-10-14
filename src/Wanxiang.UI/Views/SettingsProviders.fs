@@ -147,20 +147,16 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
         let visionAutoText =
             match existing with
             | Some p ->
-                let describe m =
+                ProviderProbeText.visionSummary p.models (fun m ->
                     let support, source = Catalog.visionOf p.id m catalog
-                    let verdict =
-                        match support with
-                        | VisionYes -> "能看图"
-                        | VisionNo -> "只吃文字"
-                        | VisionUnknown -> "未知（放行，由模型服务决定）"
-                    let why =
-                        match source with
-                        | VisionFromUser -> "你的指定"
-                        | VisionFromProvider -> "模型服务提供"
-                        | VisionFromName -> "按名字推断"
-                    sprintf "%s：%s（%s）" m verdict why
-                p.models |> List.truncate 12 |> List.map describe |> String.concat "\n"
+                    (match support with
+                     | VisionYes -> VisionVerdict.Yes
+                     | VisionNo -> VisionVerdict.No
+                     | VisionUnknown -> VisionVerdict.Unknown),
+                    (match source with
+                     | VisionFromUser -> VisionWhy.User
+                     | VisionFromProvider -> VisionWhy.Provider
+                     | VisionFromName -> VisionWhy.Name))
             | None -> ""
         let visionYesField =
             Ui.inputFieldGroup "指定能看图的模型" "每行一个，必须在模型列表中。自动判断错了才需要填。" visionYesBox
@@ -638,33 +634,27 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
     /// 探活结果回填：把模型服务的模型列表回填到草稿中，不自动提交保存（W2.5）。
     member this.ApplyProbe(providerId: string, ok: bool, models: string list, error: string option) =
-        match activeProbe with
-        | Some (pid, setPending, applyModels, setStatus) when pid = providerId ->
+        // 主机下发 `[code] 说明`：类型决定下一步，说明本身是「发生了什么 / 为什么 / 下一步」。
+        let errMsg = if ok then "" else snd (ProbeFailureKind.parse (error |> Option.defaultValue ProviderProbeText.unknownReason))
+        let editor =
+            match activeProbe with
+            | Some (pid, setPending, applyModels, setStatus) when pid = providerId -> Some(setPending, applyModels, setStatus)
+            | _ -> None
+        // 编辑器未打开或不是当前模型服务时：仅缓存结果和给出反馈，绝不后台自动 upsert。
+        let fb = ProviderProbeText.feedback editor.IsSome ok (List.length models) errMsg
+        match editor with
+        | Some(setPending, applyModels, setStatus) ->
             activeProbe <- None
             setPending false
-            if ok && not (List.isEmpty models) then
-                setStatus ""
-                applyModels models
-                actions.toast (sprintf "已获取 %d 个模型，已填入草稿，请确认后保存。" (List.length models)) Info
-            elif ok then
-                setStatus "模型服务返回了空模型列表，模型框未改动。"
-                actions.toast "模型服务返回了空模型列表。" Warning
-            else
-                // 主机下发 `[code] 说明`：类型决定下一步，说明本身是「发生了什么 / 为什么 / 下一步」。
-                let _, errMsg = ProbeFailureKind.parse (error |> Option.defaultValue "未知原因")
-                setStatus errMsg
-                actions.toast errMsg Failure
-        | _ ->
-            // 编辑器未打开或不是当前模型服务时的探活回调：仅缓存结果和给出反馈，绝不后台自动 upsert
-            if ok then
-                probeResults[providerId] <- models
-                if not (List.isEmpty models) then
-                    actions.toast (sprintf "已获取 %d 个模型。可在编辑模型服务中确认后保存。" (List.length models)) Info
-                else
-                    actions.toast "模型服务返回了空模型列表。" Warning
-            else
-                let _, errMsg = ProbeFailureKind.parse (error |> Option.defaultValue "未知原因")
-                actions.toast errMsg Failure
+            fb.editorStatus |> Option.iter setStatus
+            if fb.fillModels then applyModels models
+        | None -> ()
+        if fb.cacheModels then probeResults[providerId] <- models
+        actions.toast fb.toast
+            (match fb.tone with
+             | ProbeTone.Info -> Info
+             | ProbeTone.Warning -> Warning
+             | ProbeTone.Failure -> Failure)
 
     member private this.RenderRow(provider: ProviderInfo) : Control =
         // 点只反映配置完整度：没探活过就没资格显示「健康」。

@@ -1569,31 +1569,22 @@ module MessageCard =
         // 门控与脚注行 hover 按钮逐项同源（见 actionButtons 的同一批 if）：hover 看得见的，
         // 菜单里也点得到；反过来一样。不新增任何后端能力，只是换个入口。
         // 生成期间没有可提交的东西：暂停回复、取消一条不存在回复都是假入口，整体不出现。
-        if ctx.streaming then []
-        else
-            [ if not (String.IsNullOrWhiteSpace message.text) then
-                MenuEntry.create "复制消息" (fun () -> actions.copyText message.text)
-                |> MenuEntry.withIcon Icons.copy
-                // 最新回复有全局快捷键：菜单里标出来，才有人发现（决策 220）。
-                |> (if not (MessageView.isUser message) && ctx.isLastAssistant then MenuEntry.withHint "Ctrl+Shift+C" else id)
-              if MessageView.isUser message then
-                MenuEntry.create "编辑并分叉" (fun () -> actions.editAndFork message)
-                |> MenuEntry.withIcon Icons.pencil
-              if not (MessageView.isUser message) && ctx.isLastAssistant then
-                MenuEntry.create "重新生成" (fun () -> actions.regenerate ())
-                |> MenuEntry.withIcon Icons.refresh
-                |> MenuEntry.withHint "Ctrl+Shift+G"
-              match message.commitId, linkSink with
-              | Some commitId, Some copyLink ->
-                MenuEntry.create "复制消息链接" (fun () -> copyLink commitId)
-                |> MenuEntry.withIcon Icons.link
-              | _ -> ()
-              match message.commitId with
-              | Some commitId ->
-                MenuEntry.create "删除这条消息" (fun () -> actions.deleteMessage commitId)
-                |> MenuEntry.withIcon Icons.trash
-                |> MenuEntry.asDanger
-              | None -> () ]
+        let isUser = MessageView.isUser message
+        MessageMenu.entries ctx.streaming isUser ctx.isLastAssistant message.text message.commitId linkSink.IsSome
+        |> List.map (fun item ->
+            let action, icon =
+                match item with
+                | MessageMenuItem.Copy -> (fun () -> actions.copyText message.text), Icons.copy
+                | MessageMenuItem.EditAndFork -> (fun () -> actions.editAndFork message), Icons.pencil
+                | MessageMenuItem.Regenerate -> (fun () -> actions.regenerate ()), Icons.refresh
+                | MessageMenuItem.CopyLink commitId -> (fun () -> linkSink |> Option.iter (fun copy -> copy commitId)), Icons.link
+                | MessageMenuItem.Delete commitId -> (fun () -> actions.deleteMessage commitId), Icons.trash
+            let entry = MenuEntry.create (MessageMenu.label item) action |> MenuEntry.withIcon icon
+            let entry =
+                match MessageMenu.hint isUser ctx.isLastAssistant item with
+                | "" -> entry
+                | h -> MenuEntry.withHint h entry
+            if MessageMenu.isDanger item then MenuEntry.asDanger entry else entry)
 
     /// 右键 / 键盘（Apps、Shift+F10）菜单，挂在卡自身：桌面端「对某条消息发动作」的
     /// 原生入口。hover 操作条在触屏上不存在、键盘也要 Tab 半天；右键一次抵达。

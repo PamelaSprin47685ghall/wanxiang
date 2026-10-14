@@ -73,48 +73,40 @@ type ConversationExportDialog(
         throttlePending <- false
         throttleTimer.Stop()
         lastProgressRefresh <- DateTimeOffset.UtcNow
-        let reading, ready, failed, isEmpty =
+        let phase =
             match controller.Status with
-            | ExportReading(received, total) ->
-                // 读取中是等待态：文字退一档（textMuted），终态再切回前景色。
-                status.Foreground <- Tokens.textMuted
-                status.Text <- match total with None -> "正在读取完整历史…" | Some total -> sprintf "已读取 %d / %d 条消息…" received total
-                // 未知总分才需要不确定态；减弱动效时同样退为确定态静态条。
-                progress.IsIndeterminate <- total.IsNone && not (MotionPolicy.isReduced ())
-                progress.Value <- total |> Option.filter ((<) 0) |> Option.map (fun total -> float received / float total * 100.0) |> Option.defaultValue 0.0
-                true, false, false, false
-            | ExportReady count ->
-                let empty = count = 0
-                status.Text <-
-                    if empty then "当前对话没有已保存的消息，无需导出"
-                    elif saving then "正在保存…"
-                    elif saved then sprintf "已保存完整记录（%d 条消息，%s）。可以再保存另一种格式。" count savedKind
-                    else saveError |> Option.defaultValue (sprintf "已完整读取 %d 条消息，可以保存。" count)
-                // 终态文字色分级：
-                // 状态只切文字色：已保存=success，保存出错=danger，其余=正文 text。空态同样经过这里：按钮保持可见但禁用。
-                status.Foreground <-
-                    if saved then Tokens.success
-                    elif saveError.IsSome then Tokens.danger
-                    else Tokens.text
-                false, output.IsSome, output.IsNone, empty
-            | ExportFailed message -> status.Text <- message; status.Foreground <- Tokens.danger; false, false, true, false
-            // 取消是终态之一：重试入口与失败态同列可见（与失败只差文字语气：textMuted 而非 danger）。
-            | ExportCancelled -> status.Text <- "导出已取消。"; status.Foreground <- Tokens.textMuted; false, false, true, false
-            | ExportIdle -> status.Text <- "正在准备导出…"; status.Foreground <- Tokens.text; false, false, false, false
-        progress.IsVisible <- reading
-        retryButton.IsVisible <- failed
+            | ExportReading(received, total) -> ExportPhase.Reading(received, total)
+            | ExportReady count -> ExportPhase.Ready count
+            | ExportFailed message -> ExportPhase.Failed message
+            | ExportCancelled -> ExportPhase.Cancelled
+            | ExportIdle -> ExportPhase.Idle
+        let view =
+            ExportView.decide phase
+                { saving = saving; saved = saved; savedKind = savedKind; error = saveError }
+                output.IsSome outputJson.IsSome (MotionPolicy.isReduced ())
+        status.Text <- view.statusText
+        // 读取中文字退一档（textMuted）；终态按 已保存=success / 出错=danger / 其余=正文。
+        status.Foreground <-
+            match view.tone with
+            | ExportTone.Muted -> Tokens.textMuted
+            | ExportTone.Success -> Tokens.success
+            | ExportTone.Danger -> Tokens.danger
+            | ExportTone.Text -> Tokens.text
+        if view.progressVisible then
+            progress.IsIndeterminate <- view.indeterminate
+            progress.Value <- view.progressValue
+        progress.IsVisible <- view.progressVisible
+        retryButton.IsVisible <- view.retryVisible
         // 保存后两种格式都仍可再存一份（决策 312）：用户常常两种都要。
-        let saveShown = ready
-        saveButton.IsVisible <- saveShown
-        saveJsonButton.IsVisible <- saveShown && outputJson.IsSome
-        let saveUsable = ready && not saving && not isEmpty
-        Ui.setEnabled saveButton saveUsable
-        Ui.setEnabled saveJsonButton (saveUsable && outputJson.IsSome)
-        Ui.setButtonText closeButton (if reading then "取消导出" else "关闭")
+        saveButton.IsVisible <- view.saveVisible
+        saveJsonButton.IsVisible <- view.saveJsonVisible
+        Ui.setEnabled saveButton view.saveEnabled
+        Ui.setEnabled saveJsonButton view.saveJsonEnabled
+        Ui.setButtonText closeButton view.closeText
         // 焦点宿主被禁用/藏掉时焦点直接掉 null（实测：Avalonia 不会自动迁到相邻键），
         // 键盘用户随后 Tab/Esc 无处可去。与方向键「落点必须同时可用」同一纪律
         // （见 Show 内 rowButtons 注释）：宿主不可用且全局焦点已空，补到始终可用的关闭。
-        if not (saveShown && saveUsable) then
+        if not (view.saveVisible && view.saveEnabled) then
             match box (topLevel ()) with
             | :? TopLevel as top when not (isNull top) && not (isNull top.FocusManager) ->
                 match top.FocusManager.GetFocusedElement() with
@@ -131,18 +123,18 @@ type ConversationExportDialog(
     // 补渲染一次（throttleTimer 尾巴），让最终计数也落地；非高频态（含全部终态）始终立即呈现。
     member private this.Refresh(?forceImmediate: bool) =
         let force = defaultArg forceImmediate false
-        let now = DateTimeOffset.UtcNow
-        let elapsed = now - lastProgressRefresh
-        let highFrequency =
+        let phase =
             match controller.Status with
-            | ExportReading _ -> true
-            | _ -> false
-        if force || not highFrequency || elapsed >= MotionLedger.progressTextThrottle then
-            this.RenderProgress()
-        elif not throttlePending then
+            | ExportReading(received, total) -> ExportPhase.Reading(received, total)
+            | _ -> ExportPhase.Idle
+        let elapsedMs = (DateTimeOffset.UtcNow - lastProgressRefresh).TotalMilliseconds
+        match ExportView.refresh force phase elapsedMs MotionLedger.progressTextThrottle.TotalMilliseconds throttlePending with
+        | ExportRefresh.Now -> this.RenderProgress()
+        | ExportRefresh.Schedule delayMs ->
             throttlePending <- true
-            throttleTimer.Interval <- MotionLedger.progressTextThrottle - elapsed
+            throttleTimer.Interval <- TimeSpan.FromMilliseconds delayMs
             throttleTimer.Start()
+        | ExportRefresh.Skip -> ()
 
     member private this.Dispatch(query: ConversationExportQuery) =
         let sending = sendQuery query

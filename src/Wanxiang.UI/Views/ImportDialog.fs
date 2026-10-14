@@ -27,18 +27,19 @@ type ConversationImportDialog(
     let details = TextBlock(TextWrapping = TextWrapping.Wrap, FontSize = Tokens.fontSmall, Foreground = Tokens.textMuted, IsVisible = false, Name = "import-details")
     let privacy = Ui.caption ConversationTransfer.privacyNote
     let mutable preview: ImportPreview option = None
-    let mutable busy = false
+    /// 忙标记与「只认最新一次提交的回执」归 ImportAttempt。
+    let attempts = ImportAttempt()
     let mutable active = false
-    let mutable currentAttempt = Guid.Empty
     let closeButton = Ui.button Ui.Ghost "取消" (fun () -> overlay.CloseDialog())
     let pickButton = Ui.button Ui.Secondary "选择 JSON 文件…" (fun () -> this.Pick())
     let importButton = Ui.button Ui.Primary "导入为新对话" (fun () -> this.Confirm())
 
     member private this.Refresh() =
-        importButton.IsVisible <- preview.IsSome
-        Ui.setEnabled importButton (preview.IsSome && not busy)
-        Ui.setEnabled pickButton (not busy)
-        Ui.setButtonText pickButton (if preview.IsSome then "换一个文件…" else "选择 JSON 文件…")
+        let chrome = ImportView.chrome preview.IsSome attempts.Busy
+        importButton.IsVisible <- chrome.importVisible
+        Ui.setEnabled importButton chrome.importEnabled
+        Ui.setEnabled pickButton chrome.pickEnabled
+        Ui.setButtonText pickButton chrome.pickText
 
     member _.IsOpen = active
     member _.Preview = preview
@@ -49,7 +50,7 @@ type ConversationImportDialog(
 
     member this.Show() =
         privacy.Name <- "import-privacy-note"
-        status.Text <- "还没有选择文件。"
+        status.Text <- ImportView.noFile
         status.Foreground <- Tokens.textMuted
         AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite)
         AutomationProperties.SetName(pickButton, "选择要导入的 JSON 文件")
@@ -64,7 +65,7 @@ type ConversationImportDialog(
                   privacy :> Control; buttons :> Control ]
         active <- true
         preview <- None
-        busy <- false
+        attempts.Reset()
         this.Refresh()
         overlay.ShowDialog(content :> Control, 480.0, onClosed = (fun () -> active <- false; preview <- None))
         ui.Post(fun () -> if pickButton.IsEffectivelyVisible then pickButton.Focus() |> ignore)
@@ -75,7 +76,7 @@ type ConversationImportDialog(
             match ConversationTransfer.parseImport byteCount text with
             | Ok p ->
                 preview <- Some p
-                status.Text <- sprintf "「%s」· %d 条消息" p.title p.messages.Length
+                status.Text <- ImportView.previewStatus p.title p.messages.Length
                 status.Foreground <- Tokens.text
                 let lines =
                     [ yield sprintf "文件：%s" fileName
@@ -87,7 +88,9 @@ type ConversationImportDialog(
                       | Some note -> yield note
                       | None -> ()
                       if p.hasAttachments then yield "文件里提到的附件只有名称，文件本体不在导出里，导入后无法打开。"
-                      if p.skipped > 0 then yield sprintf "有 %d 条无法识别的记录会被跳过。" p.skipped
+                      match ImportView.skippedNote p.skipped with
+                      | Some note -> yield note
+                      | None -> ()
                       yield "模型使用这台主机的对话默认值，导入后可以在对话顶部更换。" ]
                 details.Text <- String.Join("\n", lines)
                 details.IsVisible <- true
@@ -130,32 +133,29 @@ type ConversationImportDialog(
                     with ex ->
                         ui.Post(fun () ->
                             if active then
-                                status.Text <- "读取文件失败：" + ex.Message
+                                status.Text <- ImportView.readFailed ex.Message
                                 status.Foreground <- Tokens.danger)
                 } |> Async.Start
             with ex ->
-                status.Text <- "无法打开文件选择窗口：" + ex.Message
+                status.Text <- ImportView.pickerFailed ex.Message
                 status.Foreground <- Tokens.danger
 
     member private this.Confirm() =
         match preview with
-        | Some p when not busy ->
-            busy <- true
-            status.Text <- "正在导入…"
-            this.Refresh()
-            let attempt = Guid.NewGuid()
-            currentAttempt <- attempt
-            let finish ok (message: string) =
-                if busy && currentAttempt = attempt then
-                    busy <- false
-                    if ok then overlay.CloseDialog()
-                    elif active then
-                        status.Text <- message
-                        status.Foreground <- Tokens.danger
-                        this.Refresh()
-            // 旧主机不认识 conversation.import 时不会回应：等待有上限，不让对话框永远停在「正在导入…」。
-            DispatcherTimer.RunOnce(
-                (fun () -> finish false "主机没有回应导入请求，可能是主机版本过旧。升级主机后再试。"),
-                MotionLedger.importResponseTimeout) |> ignore
-            submit p (fun ok -> finish ok "导入没有完成，主机拒绝了这份内容或连接已断开。可以再试一次。")
-        | _ -> ()
+        | Some p ->
+            match attempts.Begin() with
+            | None -> ()
+            | Some attempt ->
+                status.Text <- ImportView.importing
+                this.Refresh()
+                let finish ok (message: string) =
+                    if attempts.Finish attempt then
+                        if ok then overlay.CloseDialog()
+                        elif active then
+                            status.Text <- message
+                            status.Foreground <- Tokens.danger
+                            this.Refresh()
+                // 旧主机不认识 conversation.import 时不会回应：等待有上限，不让对话框永远停在「正在导入…」。
+                DispatcherTimer.RunOnce((fun () -> finish false ImportView.timedOut), MotionLedger.importResponseTimeout) |> ignore
+                submit p (fun ok -> finish ok ImportView.rejected)
+        | None -> ()

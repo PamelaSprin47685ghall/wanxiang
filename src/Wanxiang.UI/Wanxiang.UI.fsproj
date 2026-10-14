@@ -158,6 +158,15 @@
     <PackageReference Include="Wanxiang2.LinkChunks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MarkdownBlocks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MathTypeset" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MessageMenu" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SidebarSelection" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ProviderProbeText" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ExportView" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ImportView" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.RovingIndex" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.StartLayout" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PairingCodeInput" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ConversationSurface" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.McpForm" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolsPolicy" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProviderForm" Version="0.0.0-local" />
