@@ -65,36 +65,14 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
         syncShellVisual box
 
     let mcpPayload (id: string) (label: string) (command: string) (args: string list) (url: string) (timeout: int) (enabled: bool) =
-        let o = JsonObject()
-        o["id"] <- id
-        o["label"] <- label
-        if not (String.IsNullOrWhiteSpace command) then o["command"] <- command
-        if not (List.isEmpty args) then
-            o["args"] <- JsonArray([| for a in args -> JsonNode.op_Implicit a |])
-        if not (String.IsNullOrWhiteSpace url) then o["url"] <- url
-        o["callTimeoutSeconds"] <- timeout
-        o["enabled"] <- enabled
-        o
+        McpForm.payload { id = id; label = label; command = command; args = args; url = url; timeout = timeout } enabled
 
     /// 工具设置的写入载荷（走既有的 updateGeneration，主机缺省字段保持原值；第 70 节）。
     let toolsPayload (roots: string list) (policyDefault: string) (policy: Map<string, string>) (exposeDebug: bool) : JsonObject =
-        let tools = JsonObject()
-        tools["fileReadRoots"] <- JsonArray([| for r in roots -> JsonNode.op_Implicit r |])
-        let pol = JsonObject()
-        pol["default"] <- policyDefault
-        for KeyValue(id, p) in policy do pol[id] <- p
-        tools["policy"] <- pol
-        tools["exposeDebug"] <- exposeDebug
-        let root = JsonObject()
-        root["tools"] <- tools
-        root
+        ToolsPolicy.payload roots policyDefault policy exposeDebug
 
     /// 策略的界面文案。
-    let policyLabel (policy: string) =
-        match policy with
-        | "first" -> "首次询问"
-        | "always" -> "每次询问"
-        | _ -> "自动执行"
+    let policyLabel (policy: string) = ToolsPolicy.label policy
 
     let foldersPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
     let debugHost = Border()
@@ -177,65 +155,29 @@ type SettingsTools(overlay: OverlayHost, actions: SettingsActions) =
             for box in allBoxes do clearFieldError box
             errorSummary.IsVisible <- false
             errorSummary.Text <- ""
-            let id = if isNull idBox.Text then "" else idBox.Text.Trim()
-            let label = if isNull labelBox.Text then "" else labelBox.Text.Trim()
-            let command = if isNull commandBox.Text then "" else commandBox.Text.Trim()
-            let url = if isNull urlBox.Text then "" else urlBox.Text.Trim()
-            let args =
-                (if isNull argsBox.Text then "" else argsBox.Text)
-                    .Split([| '\n'; '\r' |], StringSplitOptions.RemoveEmptyEntries)
-                |> Array.map (fun s -> s.Trim())
-                |> Array.filter (String.IsNullOrWhiteSpace >> not)
-                |> List.ofArray
-            let rawTimeout = if isNull timeoutBox.Text then "" else timeoutBox.Text.Trim()
-            let errors = ResizeArray<TextBox * string>()
-            let fail (box: TextBox) msg =
-                applyFieldError box msg
-                errors.Add(box, msg)
+            let text (box: TextBox) = if isNull box.Text then "" else box.Text
+            let v, fieldErrors =
+                McpForm.validate existing.IsNone takenIds (text idBox) (text labelBox) (text commandBox) (text argsBox) (text urlBox) (text timeoutBox)
+            let boxOf field =
+                match field with
+                | McpField.Id -> idBox
+                | McpField.Label -> labelBox
+                | McpField.Command -> commandBox
+                | McpField.Url -> urlBox
+                | McpField.Timeout -> timeoutBox
+            let errors = fieldErrors |> List.map (fun (f, m) -> boxOf f, m)
+            for box, m in errors do applyFieldError box m
 
-            if String.IsNullOrWhiteSpace id then
-                fail idBox "稳定标识不能为空。"
-            elif existing.IsNone && List.contains id takenIds then
-                fail idBox "该标识已存在，请换一个。"
-            elif not (Regex.IsMatch(id, "^[a-zA-Z0-9_-]+$")) then
-                fail idBox "稳定标识仅支持英文字母、数字、下划线(_)与连字符(-)。"
-
-            if String.IsNullOrWhiteSpace label then
-                fail labelBox "显示名称不能为空。"
-
-            if String.IsNullOrWhiteSpace command && String.IsNullOrWhiteSpace url then
-                fail commandBox "本地命令与远程端点至少填一个。"
-                fail urlBox "本地命令与远程端点至少填一个。"
-            elif not (String.IsNullOrWhiteSpace command) && not (String.IsNullOrWhiteSpace url) then
-                fail commandBox "与远程端点只能填写一个。"
-                fail urlBox "与本地命令只能填写一个。"
-            elif not (String.IsNullOrWhiteSpace url) then
-                if not (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) then
-                    fail urlBox "远程端点地址必须以 http:// 或 https:// 开头。"
-                else
-                    match Uri.TryCreate(url, UriKind.Absolute) with
-                    | true, uri when uri.Scheme = "http" || uri.Scheme = "https" -> ()
-                    | _ -> fail urlBox "请输入合法的 HTTP/HTTPS 远程端点地址。"
-
-            if String.IsNullOrWhiteSpace rawTimeout then
-                fail timeoutBox "调用超时时间不能为空。"
-            else
-                match Int32.TryParse rawTimeout with
-                | true, t when t >= 1 && t <= 3600 -> ()
-                | true, _ -> fail timeoutBox "请输入 1 到 3600 之间的秒数。"
-                | false, _ -> fail timeoutBox "请输入有效的正整数秒数（1–3600）。"
-
-            if List.isEmpty (List.ofSeq errors) then
-                let timeout = match Int32.TryParse rawTimeout with true, t -> t | _ -> 60
+            if List.isEmpty errors then
                 setPending true
                 actions.upsertMcp
-                    (mcpPayload id label command args url timeout (readEnabled ()))
+                    (McpForm.payload v (readEnabled ()))
                     (fun ok ->
                         setPending false
                         if ok && editorActive then overlay.CloseDialog()
                         elif not ok then actions.toast "保存失败，请重试。" Failure)
             else
-                Ui.applyValidationFeedback (List.ofSeq errors) (Some errorSummary) (fun message -> actions.toast message Warning)
+                Ui.applyValidationFeedback errors (Some errorSummary) (fun message -> actions.toast message Warning)
 
         /// pending 中的 save 直接返回，不做二次提交。
         let save () =

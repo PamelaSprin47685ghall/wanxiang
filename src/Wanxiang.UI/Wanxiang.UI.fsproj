@@ -158,6 +158,9 @@
     <PackageReference Include="Wanxiang2.LinkChunks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MarkdownBlocks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MathTypeset" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.McpForm" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ToolsPolicy" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ProviderForm" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.CaretBreath" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ComposerSendState" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.DraftSummaryText" Version="0.0.0-local" />

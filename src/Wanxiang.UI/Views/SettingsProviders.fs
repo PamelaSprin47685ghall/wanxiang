@@ -81,14 +81,7 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
 
     /// 所有 loopback 写法都算本机：127.0.0.1、localhost、::1（含括号写法）。
     /// Uri.IsLoopback 覆盖标准解析；子串回退覆盖非常规输入。
-    let isLoopbackUrl (baseUrl: string) =
-        if String.IsNullOrWhiteSpace baseUrl then false
-        else
-            match Uri.TryCreate(baseUrl.Trim(), UriKind.Absolute) with
-            | true, uri when uri.IsLoopback -> true
-            | _ ->
-                let lower = baseUrl.Trim().ToLowerInvariant()
-                lower.Contains("127.0.0.1") || lower.Contains("localhost") || lower.Contains("[::1]") || lower.Contains("::1")
+    let isLoopbackUrl (baseUrl: string) = ProviderForm.isLoopbackUrl baseUrl
 
     /// 载荷构造与首次运行卡片共用同一个函数（ProviderPresets.payload）。
     let providerPayload (id: string) (label: string) (kind: string) (baseUrl: string) (apiKey: string option) (models: string list) (defaultModel: string) (enabled: bool) (timeout: int) (retries: int) =
@@ -424,96 +417,42 @@ type SettingsProviders(overlay: OverlayHost, actions: SettingsActions) =
             for box in allBoxes do clearFieldError box
             errorSummary.IsVisible <- false
             errorSummary.Text <- ""
-            let id = if isNull idBox.Text then "" else idBox.Text.Trim()
-            let label = if isNull labelBox.Text then "" else labelBox.Text.Trim()
+            let text (box: TextBox) = if isNull box.Text then "" else box.Text
             // 同一端点只有一个身份：末尾斜杠在入库前归一，预设连续性不断。
-            let url = ProviderPresets.normalizeBaseUrl (if isNull urlBox.Text then "" else urlBox.Text)
-            let models =
-                (if isNull modelsBox.Text then "" else modelsBox.Text)
-                    .Split([| '\n'; '\r'; ',' |], StringSplitOptions.RemoveEmptyEntries)
-                |> Array.map (fun s -> s.Trim())
-                |> Array.filter (String.IsNullOrWhiteSpace >> not)
-                |> Array.distinct
-                |> List.ofArray
-            let errors = ResizeArray<TextBox * string>()
-            let fail (box: TextBox) msg =
-                applyFieldError box msg
-                errors.Add(box, msg)
-
-            if String.IsNullOrWhiteSpace id then
-                fail idBox "稳定标识不能为空。"
-            elif existing.IsNone && List.contains id takenIds then
-                fail idBox "该标识已存在，请换一个。"
-            elif not (Regex.IsMatch(id, "^[a-zA-Z0-9_-]+$")) then
-                fail idBox "稳定标识仅支持英文字母、数字、下划线(_)与连字符(-)。"
-
-            if String.IsNullOrWhiteSpace label then
-                fail labelBox "显示名称不能为空。"
-
-            if String.IsNullOrWhiteSpace url then
-                fail urlBox "端点地址不能为空。"
-            elif not (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) then
-                fail urlBox "端点地址必须以 http:// 或 https:// 开头。"
-            else
-                match Uri.TryCreate(url, UriKind.Absolute) with
-                | true, uri when uri.Scheme = "http" || uri.Scheme = "https" -> ()
-                | _ -> fail urlBox "请输入合法的 HTTP/HTTPS 地址（例如 https://api.openai.com/v1）。"
-
-            if List.isEmpty models then
-                fail modelsBox "至少填写一个模型名（每行一个）。"
-
-            let rawDefaultModel = if isNull defaultModelBox.Text then "" else defaultModelBox.Text.Trim()
-            let defaultModel =
-                if String.IsNullOrWhiteSpace rawDefaultModel then
-                    match models with
-                    | head :: _ ->
-                        defaultModelBox.Text <- head
-                        actions.toast (sprintf "未指定默认模型，已自动选用“%s”。" head) Info
-                        head
-                    | [] -> ""
-                elif not (List.isEmpty models) && not (List.contains rawDefaultModel models) then
-                    fail defaultModelBox (sprintf "默认模型“%s”不在模型列表中，请从列表中选择或留空自动选用。" rawDefaultModel)
-                    rawDefaultModel
-                else
-                    rawDefaultModel
-
-            let timeout =
-                let rawTimeout = if isNull timeoutBox.Text then "" else timeoutBox.Text.Trim()
-                if String.IsNullOrWhiteSpace rawTimeout then
-                    existing |> Option.map (fun p -> p.timeoutSeconds) |> Option.defaultValue 120
-                else
-                    match Int32.TryParse rawTimeout with
-                    | true, v when v > 0 -> v
-                    | _ ->
-                        fail timeoutBox "超时时间必须是大于 0 的整秒数。"
-                        120
-
-            let retries =
-                let rawRetries = if isNull retriesBox.Text then "" else retriesBox.Text.Trim()
-                if String.IsNullOrWhiteSpace rawRetries then
-                    existing |> Option.map (fun p -> p.maxRetries) |> Option.defaultValue 2
-                else
-                    match Int32.TryParse rawRetries with
-                    | true, v when v >= 0 && v <= 10 -> v
-                    | _ ->
-                        fail retriesBox "重试次数必须是 0 到 10 之间的整数。"
-                        2
-
-            let lines (box: TextBox) =
-                (if isNull box.Text then "" else box.Text)
-                    .Split([| '\n'; '\r'; ',' |], StringSplitOptions.RemoveEmptyEntries)
-                |> Array.map (fun s -> s.Trim())
-                |> Array.filter (String.IsNullOrWhiteSpace >> not)
-                |> Array.distinct
-                |> List.ofArray
-            let visionYes = lines visionYesBox
-            let visionNo = lines visionNoBox
-            match visionYes @ visionNo |> List.filter (fun m -> not (List.contains m models)) with
-            | m :: _ -> fail (if List.contains m visionYes then visionYesBox else visionNoBox) (sprintf "“%s”不在模型列表中，请先把它加到模型列表，或删掉这一行。" m)
-            | [] ->
-                match visionYes |> List.filter (fun m -> List.contains m visionNo) with
-                | m :: _ -> fail visionNoBox (sprintf "“%s”同时写在两栏里，请只保留一栏。" m)
-                | [] -> ()
+            let r =
+                ProviderForm.validate
+                    { isNew = existing.IsNone
+                      takenIds = takenIds
+                      existing = existing |> Option.map (fun p -> p.timeoutSeconds, p.maxRetries)
+                      id = text idBox
+                      label = text labelBox
+                      url = ProviderPresets.normalizeBaseUrl (text urlBox)
+                      models = text modelsBox
+                      defaultModel = text defaultModelBox
+                      timeout = text timeoutBox
+                      retries = text retriesBox
+                      visionYes = text visionYesBox
+                      visionNo = text visionNoBox }
+            match r.autoPicked with
+            | Some m ->
+                defaultModelBox.Text <- m
+                actions.toast (ProviderForm.autoPickedNote m) Info
+            | None -> ()
+            let boxOf field =
+                match field with
+                | ProviderField.Id -> idBox
+                | ProviderField.Label -> labelBox
+                | ProviderField.Url -> urlBox
+                | ProviderField.Models -> modelsBox
+                | ProviderField.DefaultModel -> defaultModelBox
+                | ProviderField.Timeout -> timeoutBox
+                | ProviderField.Retries -> retriesBox
+                | ProviderField.VisionYes -> visionYesBox
+                | ProviderField.VisionNo -> visionNoBox
+            let errors = r.errors |> List.map (fun (f, m) -> boxOf f, m)
+            for box, m in errors do applyFieldError box m
+            let id, label, url, models, defaultModel, timeout, retries = r.id, r.label, r.url, r.models, r.defaultModel, r.timeout, r.retries
+            let visionYes, visionNo = r.visionYes, r.visionNo
 
             if List.isEmpty (List.ofSeq errors) then
                 let payload =
