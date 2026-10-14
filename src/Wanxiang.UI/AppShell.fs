@@ -2,7 +2,6 @@ namespace Wanxiang.UI
 
 open System
 open System.IO
-open System.Security.Cryptography
 open System.Text.Json
 open System.Text.Json.Nodes
 open System.Threading
@@ -1341,6 +1340,9 @@ type MainView() as this =
                             } |> Async.Start
                             true
                         | UploadPlan.PasteSource.Bitmap ->
+                            let ownerInstance = instanceId
+                            let ownerConnection = client.ConnectionGeneration
+                            let owner = attachmentDraft ()
                             async {
                                 try
                                     let! bitmap = clipboard.TryGetBitmapAsync() |> Async.AwaitTask
@@ -1350,9 +1352,10 @@ type MainView() as this =
                                         bitmap.Save(buffer, options)
                                         let bytes = buffer.ToArray()
                                         let name = UploadPlan.pasteFileName DateTime.Now
-                                        let owner = attachmentDraft ()
                                         ui.Post(fun () ->
-                                            if authenticated then this.BeginUpload(owner, name, bytes)
+                                            // 与选文件、拖入同一归属判断：读完位图时已换主机或重连就不上传。
+                                            if UploadPlan.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then
+                                                this.BeginUpload(owner, name, bytes)
                                             else toast UploadPlan.disconnectedText Warning
                                             composer.Focus())
                                 with ex ->
