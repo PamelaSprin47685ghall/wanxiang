@@ -20,6 +20,7 @@ open Wanxiang.Core
 open Wanxiang.Protocol
 open Wanxiang.Server
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 open Wanxiang.Tests.Helpers
 
@@ -460,12 +461,12 @@ let private chatActions : ChatActions =
       toggleSidebar = ignore
       focusHome = ignore
       message =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore } }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None } }
 
 let private view (role: string) (text: string) (commit: uint64) : MessageView =
     let payload = if role = "user" then userMessageJson text else assistantMessageJson text

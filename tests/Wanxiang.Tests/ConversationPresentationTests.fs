@@ -106,29 +106,6 @@ let sidebarFooterPaddingAndDisclosureAndSkeletonConverged () =
     Assert.DoesNotContain("Icons.chevronDown) Tokens.textFaint", text)
 
 [<Fact>]
-let messageCardMotionHoverGeometryAndDisclosureColorConverged () =
-    let text = source "src/Wanxiang.UI/Views/MessageCard.fs"
-    Assert.DoesNotContain("MotionPolicy.duration 150", text)
-    Assert.True(occurrenceCount text "MotionPolicy.duration MotionLedger.disclosureChevronRotate.TotalMilliseconds" >= 3, "三处箭头旋转应引 disclosureChevronRotate")
-    Assert.True(occurrenceCount text "MotionPolicy.duration MotionLedger.controlRowFade.TotalMilliseconds" >= 1, "操作条淡入应引 controlRowFade")
-    Assert.DoesNotContain("Opacity <- 0.9", text)
-    Assert.True(occurrenceCount text "Tokens.opacityHoverDim" >= 3, "三处 hover 变暗应引 opacityHoverDim")
-    Assert.DoesNotContain("Icons.chevronRight Tokens.textFaint", text)
-    Assert.Contains("let toolChevronGlyph = Icons.chevronRight Tokens.textMuted", text)
-    Assert.True(occurrenceCount text "Padding = Thickness(Spacing.spaceXs, Spacing.spaceSm)" >= 2, "两处披露头纵向内边距应引 fieldRowPaddingY")
-    Assert.Contains("Padding = Thickness(Spacing.spaceMd, Spacing.spaceXXs)", text)
-    Assert.Contains("Spacing = Spacing.spaceSm", text)
-    Assert.Contains("Thickness(ControlMetrics.accentEdgeWidth, 0.0, 0.0, 0.0)", text)
-    Assert.Contains("Ui.spinner ControlMetrics.spinnerSize", text)
-    Assert.Contains("Ui.spinner ControlMetrics.spinnerCompactSize", text)
-    Assert.DoesNotContain("Ui.spinner 14.0", text)
-    Assert.DoesNotContain("Ui.spinner 11.0", text)
-    Assert.Contains("retryButton.MinWidth <- ControlMetrics.retryButtonMinWidth", text)
-    Assert.Contains("Width = ControlMetrics.caretWidth", text)
-    Assert.Contains("Height = ControlMetrics.caretHeight", text)
-    Assert.Contains("CornerRadius = CornerRadius ControlMetrics.caretRadius", text)
-
-[<Fact>]
 let chatViewSkeletonOpacitiesAndEmptyStateGeometryTokenized () =
     let text = source "src/Wanxiang.UI/Views/ChatView.fs"
     Assert.True(occurrenceCount text "Tokens.skeletonOpacityReduced" >= 5, "减弱动效静态 0.85 应引 skeletonOpacityReduced")

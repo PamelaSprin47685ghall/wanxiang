@@ -142,7 +142,7 @@ module StateConvergenceTests =
             "model chip 的聚焦描边是值路径：ActionBorder 已有外环阴影，这里补的是\
              与 hover 底色正交的**描边色**，表达「键盘焦点在此」而非表面状态"
 
-            "Wanxiang.UI/Views/MessageCard.fs", 2,
+            "Wanxiang.UI/Rich/Cards.fs", 2,
             "附件行内联文字的 hover 变色改的是 `Run.Foreground`——Markdown 内联渲染\
              的产物，不是控件表面；伪类无法按内联片段选择"
 

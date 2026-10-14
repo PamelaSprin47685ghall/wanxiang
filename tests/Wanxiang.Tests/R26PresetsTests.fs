@@ -10,6 +10,7 @@ open Wanxiang.Config
 open Wanxiang.Server
 open Wanxiang.Protocol
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 
 // 决策 431–436：对话预设——主机落盘、目录同步、套用回落、入口只在有预设时出现。
 
@@ -119,12 +120,12 @@ let private chatActions : ChatActions =
       toggleSidebar = ignore
       focusHome = ignore
       message =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore } }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None } }
 
 let private presetChips (root: Avalonia.Visual) =
     descendants root |> Seq.choose (function :? Control as b when b.Name = "preset-chip" -> Some b | _ -> None) |> List.ofSeq

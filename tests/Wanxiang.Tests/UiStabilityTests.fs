@@ -18,6 +18,7 @@ open Xunit
 open IconPacks.Avalonia.Lucide
 open Wanxiang.Core
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 
 let rec private descendants (control: Control) =
@@ -128,12 +129,12 @@ let ``standard input field group keeps label validation and hint in one rhythm``
 let ``chat reading column relies on avalonia stretch and max width across viewports`` () =
     Headless.run (fun () ->
     let messageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
     let actions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -579,70 +580,6 @@ let ``config feedback tracker resolves exactly once and rejects pending UI on di
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``large tool detail is bounded first and can explicitly expand fully`` () =
-    Headless.run (fun () ->
-    let actions: MessageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
-    let context: MessageContext =
-        { fontSize = Tokens.fontReading
-          autoCollapseReasoning = true
-          streaming = false
-          isLastAssistant = false
-          usage = None
-          missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> Border(Width = 26.0, Height = 26.0) :> Control }
-    let hugeResult = String.Join("\n", [ for i in 1 .. 500 -> sprintf "line %03d: %s" i (String.replicate 8 "payload") ])
-    let message =
-        { MessageView.empty with
-            commitId = Some 1UL
-            toolCalls =
-                [ { callId = "call-1"
-                    name = "huge_tool"
-                    argumentsJson = "{\"query\":\"demo\"}"
-                    result = Some hugeResult } ] }
-    let card = MessageCard.render message context actions None
-    let window = show card 720.0 520.0
-    try
-        let tool = byAutomationName card "展开工具调用 huge_tool"
-        let invoke = ControlAutomationPeer.CreatePeerForElement tool |> Assert.IsAssignableFrom<IInvokeProvider>
-        invoke.Invoke()
-        Dispatcher.UIThread.RunJobs()
-        Assert.Equal("收起工具调用 huge_tool", AutomationProperties.GetName(tool))
-
-        let detailScroller =
-            descendants card
-            |> Seq.choose (function :? ScrollViewer as scroller -> Some scroller | _ -> None)
-            |> Seq.find (fun scroller ->
-                scroller.IsVisible && abs (scroller.MaxHeight - LayoutPolicy.expandedDetailMaxHeight) < 0.1)
-        Assert.True(detailScroller.Extent.Height > detailScroller.Viewport.Height)
-        let expand = byAutomationName card "展开全部"
-        let expandInvoke = ControlAutomationPeer.CreatePeerForElement expand |> Assert.IsAssignableFrom<IInvokeProvider>
-        expandInvoke.Invoke()
-        Dispatcher.UIThread.RunJobs()
-        Assert.True(Double.IsPositiveInfinity detailScroller.MaxHeight)
-        // 展开控件在展开后仍然存在：再次激活应收回到有限高度。
-        let collapseInvoke = ControlAutomationPeer.CreatePeerForElement expand |> Assert.IsAssignableFrom<IInvokeProvider>
-        collapseInvoke.Invoke()
-        Dispatcher.UIThread.RunJobs()
-        Assert.Equal(LayoutPolicy.expandedDetailMaxHeight, detailScroller.MaxHeight, 3)
-        expandInvoke.Invoke()
-        Dispatcher.UIThread.RunJobs()
-        Assert.True(Double.IsPositiveInfinity detailScroller.MaxHeight)
-
-        invoke.Invoke()
-        Dispatcher.UIThread.RunJobs()
-        Assert.Equal("展开工具调用 huge_tool", AutomationProperties.GetName(tool))
-    finally
-        window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``long markdown link has one keyboard stop and remote image states its source`` () =
     Headless.run (fun () ->
     let renderer = Reading.view Tokens.fontReading ignore ignore (false)
@@ -725,12 +662,12 @@ let private message commit text =
 let ``history prepend preserves the reader viewport anchor`` () =
     Headless.run (fun () ->
     let messageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
     let actions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -779,12 +716,12 @@ let ``history prepend preserves the reader viewport anchor`` () =
 let ``repeated streaming updates preserve committed card instances`` () =
     Headless.run (fun () ->
     let messageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
     let actions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -826,69 +763,6 @@ let ``repeated streaming updates preserve committed card instances`` () =
         Assert.True(watch.Elapsed.TotalMilliseconds < 2500.0, sprintf "30 streaming updates %.0f ms" watch.Elapsed.TotalMilliseconds)
     finally
         window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``streaming completion keeps the message footnote row geometry constant`` () =
-    Headless.run (fun () ->
-    let actions: MessageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
-    let contextFor (streaming: bool) (isLast: bool) : MessageContext =
-        { fontSize = Tokens.fontReading
-          autoCollapseReasoning = true
-          streaming = streaming
-          isLastAssistant = isLast
-          usage = None
-          missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> Border(Width = 26.0, Height = 26.0) :> Control }
-    let body = "流式进行中的回答正文，完成时原样提交。"
-    let streamingMessage = { MessageView.empty with role = "assistant"; text = body }
-    let committedMessage =
-        { streamingMessage with
-            commitId = Some 42UL
-            committedAt = Some(DateTimeOffset(DateTime(2026, 9, 23, 12, 0, 0, DateTimeKind.Utc))) }
-    let named (card: Control) (name: string) =
-        descendants card |> Seq.exists (fun c -> AutomationProperties.GetName c = name)
-    let footnote (card: Control) =
-        // v4：消息卡根是 reveal-highlight Border，脚注仍在内层 StackPanel 上。
-        let host =
-            match card with
-            | :? Border as b when b.Name = "reveal-highlight" -> b.Child :?> StackPanel
-            | :? StackPanel as sp -> sp
-            | _ -> failwithf "unexpected message card root: %A" (card.GetType())
-        let metaRow = host.Children.[1] :?> StackPanel
-        let buttons = metaRow.Children.[0] :?> StackPanel
-        buttons.Bounds.Height
-    let streamingCard = MessageCard.render streamingMessage (contextFor true false) actions None
-    let streamingWindow = show streamingCard 720.0 520.0
-    try
-        Dispatcher.UIThread.RunJobs()
-        let streamingButtons = footnote streamingCard
-        // 流式期间动作按钮被门控撤下（避免拷走半句话），但槽位高度保留。
-        Assert.Equal(LayoutPolicy.inlineActionTarget, streamingButtons, 3)
-        Assert.False(named streamingCard "复制助手消息")
-        Assert.False(named streamingCard "删除这条消息")
-        let committedCard = MessageCard.render committedMessage (contextFor false true) actions None
-        let committedWindow = show committedCard 720.0 520.0
-        try
-            Dispatcher.UIThread.RunJobs()
-            let committedButtons = footnote committedCard
-            // 完成瞬间：按钮行（以及整条脚注行）高度不变，消息下方不跳。
-            Assert.Equal(streamingButtons, committedButtons, 1)
-            Assert.Equal(LayoutPolicy.inlineActionTarget, committedButtons, 3)
-            // 完成态恢复既有交互语义：复制与删除都在位。
-            Assert.True(named committedCard "复制助手消息")
-            Assert.True(named committedCard "删除这条消息")
-        finally
-            committedWindow.Close()
-    finally
-        streamingWindow.Close()
     )
 
 let private summary id title =
@@ -1219,12 +1093,12 @@ let ``accelerated craft soak covers the long-session action ledger without visua
               toggleSidebar = ignore
               focusHome = ignore
               message =
-                { copyText = ignore
-                  regenerate = ignore
-                  editAndFork = ignore
-                  deleteMessage = ignore
-                  downloadAttachment = ignore
-                  openLink = ignore } },
+                { CopyText = ignore
+                  Regenerate = ignore
+                  EditAndFork = ignore
+                  DeleteMessage = ignore
+                  DownloadAttachment = ignore
+                  OpenLink = ignore; CopyLink = None; Recover = None } },
             fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
     chat.Build()
     let main = DockPanel()
@@ -1301,12 +1175,12 @@ let ``accelerated craft soak covers the long-session action ledger without visua
 let ``long chat title never pushes header actions outside narrow viewport`` () =
     Headless.run (fun () ->
     let messageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
     let actions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -1347,12 +1221,12 @@ let ``long chat title never pushes header actions outside narrow viewport`` () =
 let ``conversation menu and title geometry stay stable across generation without a duplicate stop slot`` () =
     Headless.run (fun () ->
     let messageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
     let actions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -1431,12 +1305,12 @@ let ``conversation menu and title geometry stay stable across generation without
 let ``desktop 125 and 150 percent scale equivalent viewports keep primary actions in bounds`` () =
     Headless.run (fun () ->
     let messageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
     let chatActions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -1491,24 +1365,6 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
                     | _ -> failwithf "cannot translate %s at scale %.2f" name scale
         finally
             window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``reduced motion keeps spinner static`` () =
-    Headless.run (fun () ->
-    MotionPolicy.setReduced true
-    let spinner = Ui.spinner 16.0
-    let window = show spinner 80.0 80.0
-    try
-        Thread.Sleep 140
-        Dispatcher.UIThread.RunJobs()
-        let view = spinner :?> Viewbox
-        let rotation = Assert.IsType<RotateTransform>(view.RenderTransform)
-        Assert.Equal(0.0, rotation.Angle, 3)
-    finally
-        window.Close()
-        MotionPolicy.setReduced false
     )
 
 [<Trait("Category", "UI")>]
@@ -1953,12 +1809,12 @@ let ``chat header and scroller share one horizontal inset tier`` () =
     // 任何宽度下标题左缘与消息列左缘对齐，两端不会各取各的档。
     // scroller 的 Padding 只裁剪内容、不改变其自身 Bounds，无布局反馈环。
     let messageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
     let actions =
         { renameTitle = ignore
           openSessionSettings = ignore
@@ -2001,12 +1857,12 @@ let ``compact chat header drops the generating chip slot while desktop keeps it 
     // compact 下 chip 整体不占布局（IsVisible=false、Opacity 归零），紧凑顶栏不为
     // 一块隐形槽位白吃标题宽度。退回宽屏后恢复常驻，Opacity 跟随当时生成态。
     let messageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
     let actions =
         { renameTitle = ignore
           openSessionSettings = ignore

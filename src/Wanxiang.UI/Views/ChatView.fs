@@ -25,7 +25,7 @@ type ChatActions = {
     /// 焦点归宿：瞬态控件（回到最新 / 停止键 / 生成收尾）隐藏后键盘用户的落点，
     /// 由 AppShell 注入输入区。Avalonia 隐藏控件会直接清焦点成 null，不会自动迁移。
     focusHome: unit -> unit
-    message: MessageActions
+    message: Wanxiang2.MessageCardView.CardActions
 }
 
 /// 一张消息卡的身份。
@@ -288,8 +288,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     ///
     /// 不加这层缓存的话，流式期间每批 delta 都要把整表拆掉重建：
     /// 200 条消息实测约 100ms 一次，越聊越卡，而其中只有最后一张卡真的变了。
-    /// 缓存与当前挂在面板上的卡片身份（算最长公共前缀用）归 Reconciler。
-    let reconciler = Reconciler<CardKey, Control>()
+    /// 复用归 Wanxiang2.MessageCardView.CardDeck（CardReconcile）；身份仍是这里的 CardKey
+    /// （比 CardDeck.key 多记工具结果、版本条与审批），挂载顺序另记一份给跳转与导航。
+    let deck = Wanxiang2.MessageCardView.CardDeck(messagePanel)
+    let mutable mounted: CardKey option[] = [||]
+    let keyText (k: CardKey) =
+        sprintf "%d|%s|%d|%d|%d|%g|%b|%b|%d|%d|%d|%b|%d"
+            k.commit k.role k.toolCalls k.toolResults k.attachments k.fontSize k.collapse k.lastAssistant
+            k.usageTag k.missingTag k.siblingTag k.awaitingTools k.approvalTag
     /// 决策 292：流式卡原位更新。外形（除正文外的一切：思考、工具调用、附件、字号、审批）不变时，
     /// 同一张卡留在面板上，只把新文字交给它的 StreamingMarkdown；外形变了才换代（streamGeneration + 1）。
     let mutable streamSlot: (obj * CardKey * Wanxiang2.MarkdownView.MarkdownStream) option = None
@@ -342,9 +348,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     // ---------- 问答跳转（上一条 / 下一条） ----------
 
     /// 当前面板上每张卡的「用户消息」身份，按挂载顺序。
-    /// reconciler.MountedKeys 与 messagePanel.Children 逐一对齐（渲染循环一帧一卡），
+    /// mounted 与 messagePanel.Children 逐一对齐（渲染循环一帧一卡），
     /// 所以这里是用户卡的下标表，不必给卡打 Tag。
-    let exchangeIndices () : int list = ExchangeJump<CardKey>.Cards(reconciler.MountedKeys, fun k -> k.role = "user")
+    let exchangeIndices () : int list = ExchangeJump<CardKey>.Cards(mounted, fun k -> k.role = "user")
 
     /// 当前所在的那一轮问答 = 第一张「结尾已经越过视口顶端」的用户卡。
     /// 取视口顶端的第一张：用户在屏幕上方读第 1 轮时「下一条」就该送第 2 轮，
@@ -394,7 +400,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let syncExchangeNavState () =
         let cards = exchangeIndices ()
         // 贴底时没有「下一条」；窗口外或主机上还有更早消息时「上一轮」永远可用（决策 300）。规则见 ExchangeJump。
-        let hasPrev, hasNext = jump.NavState(reconciler.MountedKeys, cards, currentExchangeIndex (), follow.AtBottom, mountWindow.HiddenCount > 0)
+        let hasPrev, hasNext = jump.NavState(mounted, cards, currentExchangeIndex (), follow.AtBottom, mountWindow.HiddenCount > 0)
         canJumpPrevious <- hasPrev
         canJumpNext <- hasNext
 
@@ -696,23 +702,23 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             flash.Revealed commitId
             Dispatcher.UIThread.Post(
                 (fun () ->
-                    let index = reconciler.MountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
+                    let index = mounted |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
                     match index with
                     | Some i when i < messagePanel.Children.Count ->
                         // 卡片本身是 StackPanel（或带版本条的竖排），背景刷不出圆角面：
                         // 找 MessageCard 外包的高亮承载面（第 211 节）。
                         let surface =
                             match messagePanel.Children.[i] with
-                            | :? Border as b when b.Name = MessageCard.revealHighlightName -> Some b
+                            | :? Border as b when b.Name = Cards.highlightName -> Some b
                             | card ->
                                 card.GetVisualDescendants()
                                 |> Seq.tryPick (function
-                                    | :? Border as b when b.Name = MessageCard.revealHighlightName -> Some b
+                                    | :? Border as b when b.Name = Cards.highlightName -> Some b
                                     | _ -> None)
                                 |> Option.orElse (
                                     card.GetLogicalDescendants()
                                     |> Seq.tryPick (function
-                                        | :? Border as b when b.Name = MessageCard.revealHighlightName -> Some b
+                                        | :? Border as b when b.Name = Cards.highlightName -> Some b
                                         | _ -> None))
                         match surface with
                         | Some b ->
@@ -748,7 +754,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.ScrollToMessage(commitId: uint64) : bool =
         this.EnsureMounted commitId
         let indexOf () =
-            reconciler.MountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
+            mounted |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
         match indexOf () with
         | Some _ ->
             follow.Pin()
@@ -1113,13 +1119,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             |> List.tryLast
             |> Option.map fst
         let ctxFor (index: int) (isStreaming: bool) =
-            { fontSize = fontSize
-              autoCollapseReasoning = autoCollapseReasoning
-              streaming = isStreaming
-              isLastAssistant = (streamingMessage.IsNone && lastAssistantIndex = Some index)
-              usage = usage
-              missingAttachments = missingAttachments
-              awaitingApproval = awaitingApproval; brandAvatar = fun () -> brandLogo Tokens.logoAvatar }
+            ({ FontSize = fontSize
+               AutoCollapseReasoning = autoCollapseReasoning
+               Streaming = isStreaming
+               IsLastAssistant = (streamingMessage.IsNone && lastAssistantIndex = Some index)
+               Usage = usage
+               MissingAttachments = missingAttachments
+               AwaitingApproval = awaitingApproval
+               BrandAvatar = fun () -> brandLogo Tokens.logoAvatar }: Wanxiang2.MessageCardView.CardContext)
         // 先列出这一帧想要的卡片：已提交的带身份（可复用），
         // 流式卡与错误卡没有身份（每帧必然变，本来就该重建）
         let desired = ResizeArray<CardKey option * (unit -> Control)>()
@@ -1167,19 +1174,19 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                           toolCalls = List.length message.toolCalls
                           toolResults = List.length message.toolResults
                           attachments = List.length message.attachments
-                          fontSize = ctx.fontSize
-                          collapse = ctx.autoCollapseReasoning
-                          lastAssistant = ctx.isLastAssistant
-                          usageTag = (if ctx.isLastAssistant then hash ctx.usage else 0)
+                          fontSize = ctx.FontSize
+                          collapse = ctx.AutoCollapseReasoning
+                          lastAssistant = ctx.IsLastAssistant
+                          usageTag = (if ctx.IsLastAssistant then hash ctx.Usage else 0)
                           missingTag =
-                            (if List.isEmpty message.attachments then 0 else hash ctx.missingAttachments)
+                            (if List.isEmpty message.attachments then 0 else hash ctx.MissingAttachments)
                           siblingTag = (match siblings with Some s -> hash (s.index, s.count, s.targets) | None -> 0)
                           awaitingTools = awaitingTools
                           approvalTag = (if awaitingTools then hash awaitingApproval else 0) })
                 desired.Add(
                     key,
                     fun () ->
-                        let card = MessageCard.render message ctx actions.message (Some index)
+                        let card = Cards.render message ctx actions.message (Some index)
                         match siblings with
                         | Some s -> this.WithSiblingBar(card, s)
                         | None -> card))
@@ -1192,7 +1199,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             match streamSlot with
             | Some(prevShape, key, live) when prevShape = shape ->
                 live.Update streaming.text
-                desired.Add(Some key, fun () -> MessageCard.render streaming ctx actions.message None)
+                desired.Add(Some key, fun () -> Cards.render streaming ctx actions.message None)
             | _ ->
                 streamGeneration <- streamGeneration + 1
                 let key =
@@ -1209,7 +1216,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                       siblingTag = streamGeneration
                       awaitingTools = false
                       approvalTag = 0 }
-                let card, live = MessageCard.renderWithStream streaming ctx actions.message None
+                let card, live = Cards.renderWithStream streaming ctx actions.message None
                 streamSlot <- live |> Option.map (fun l -> shape, key, l)
                 desired.Add(Some key, fun () -> card)
         | _ -> streamSlot <- None
@@ -1220,24 +1227,21 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         match partialNow with
         | Some(partial, _) ->
             desired.Add(None, fun () ->
-                let card = MessageCard.render partial (ctxFor -1 false) actions.message None
-                Ui.vstack Spacing.spaceXs [ card; MessageCard.incompleteMarker () ] :> Control)
+                let card = Cards.render partial (ctxFor -1 false) actions.message None
+                Ui.vstack Spacing.spaceXs [ card; Cards.incompleteMarker () ] :> Control)
         | None -> ()
         match error with
         | Some(err, retry) ->
-            desired.Add(None, fun () -> MessageCard.errorCardWith err retry None (partialNow |> Option.map snd))
+            desired.Add(None, fun () -> Cards.errorCard err retry actions.message (partialNow |> Option.map snd))
         | None -> ()
 
         // 只动前缀之后的部分。追加一条消息或刷新流式卡时，前面几十上百张卡不动。
         // 缓存只保留这一帧用到的身份：换对话、改字号都会让旧身份失效，留着只是占内存（Reconciler 每帧清）。
-        let plan = reconciler.Reconcile(List.ofSeq desired)
-        if messagePanel.Children.Count > plan.Keep then
-            messagePanel.Children.RemoveRange(plan.Keep, messagePanel.Children.Count - plan.Keep)
-        for control in plan.Append do
-            messagePanel.Children.Add control
+        deck.Show [ for key, factory in desired -> key |> Option.map keyText, factory ] |> ignore
+        mounted <- [| for key, _ in desired -> key |]
         // 锚点指向的卡可能已经不在了（流式卡换代、错误卡消失）：丢掉锚点，
         // 下一次跳转重新用视口位置起算，不会指向一张不存在的卡。
-        let resume = jump.Mounted(reconciler.MountedKeys, mountWindow.LastFirstCommit)
+        let resume = jump.Mounted(mounted, mountWindow.LastFirstCommit)
         syncExchangeNavState ()
         if resume then
             // 等分页锚点恢复（Background）之后再跳，免得被写回旧偏移。
@@ -1285,7 +1289,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 后台着色算完时要用：着色结果缓存在 `Highlight` 里，
     /// 但卡片身份没变，不清缓存的话屏幕上会一直挂着没着色的那一版。
     member _.InvalidateCards() =
-        reconciler.Clear()
+        deck.Clear()
+        mounted <- [||]
 
     /// 滚到底必须等布局把新内容的高度算进 Extent，否则会停在旧的底部，
     /// 末条消息（例如带「重试」按钮的错误卡片）就被输入区挡住。
@@ -1418,7 +1423,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 连续按「上一条」能一排排往回翻。
     member this.JumpExchange(direction: int) =
         let cards = exchangeIndices ()
-        match jump.Jump(direction, reconciler.MountedKeys, cards, currentExchangeIndex (), mountWindow.HiddenCount > 0, mountWindow.LastFirstCommit) with
+        match jump.Jump(direction, mounted, cards, currentExchangeIndex (), mountWindow.HiddenCount > 0, mountWindow.LastFirstCommit) with
         | JumpStep.ExpandAndRetry ->
             // 决策 300：本机已加载、只是没挂载——先挂上一步再续跳（锚点不变，索引随之后移）。
             if this.ExpandMountWindow() then this.JumpExchange direction

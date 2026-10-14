@@ -1,19 +1,19 @@
 namespace Wanxiang.Tests
 
-open System
-open System.Reflection
 open Xunit
 open Wanxiang.UI
 
 module ToolCallStatusTests =
 
-    /// 走 MessageCard 的公开入口（无审批中的调用）。
+    /// 旧 MessageCard.resolveStatus：ToolErrorSummary + ToolCallState，再映到 MessageView.ToolCallStatus。
     let private resolveStatus (isStreaming: bool) (call: ToolCallView) : ToolCallStatus =
-        MessageCard.resolveStatus
-            { fontSize = 14.0; autoCollapseReasoning = false; streaming = isStreaming; isLastAssistant = false
-              usage = None; missingAttachments = Set.empty; awaitingApproval = Set.empty
-              brandAvatar = fun () -> null }
-            call
+        let outcome = call.result |> Option.map (fun r -> ToolErrorSummary.tryExtract (Some r))
+        match ToolCallState.resolve Set.empty isStreaming call.callId outcome with
+        | ToolCallState.Failed e -> ToolCallStatus.Failed e
+        | ToolCallState.Success -> ToolCallStatus.Success
+        | ToolCallState.AwaitingApproval -> ToolCallStatus.AwaitingApproval
+        | ToolCallState.Running -> ToolCallStatus.Running
+        | ToolCallState.Unknown -> ToolCallStatus.Unknown
 
     let private makeCall (result: string option) : ToolCallView =
         { callId = "call_test_001"

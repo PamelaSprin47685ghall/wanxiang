@@ -11,6 +11,7 @@ open Avalonia.VisualTree
 open Xunit
 open Wanxiang.Core
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 
 /// 菜单与快捷键共用的问答跳转。不依赖动作是否常驻顶栏。
 /// 这里锁三条可观察契约：
@@ -35,12 +36,12 @@ module ExchangeNavTests =
               toggleSidebar = ignore
               focusHome = ignore
               message =
-                { copyText = ignore
-                  regenerate = ignore
-                  editAndFork = ignore
-                  deleteMessage = ignore
-                  downloadAttachment = ignore
-                  openLink = ignore } }
+                { CopyText = ignore
+                  Regenerate = ignore
+                  EditAndFork = ignore
+                  DeleteMessage = ignore
+                  DownloadAttachment = ignore
+                  OpenLink = ignore; CopyLink = None; Recover = None } }
         let chat = ChatView(chatActions, SharedTheme.logo)
         chat.Build()
         let window = Window(Width = 900.0, Height = 700.0, Content = chat)
@@ -279,21 +280,21 @@ module ExchangeNavTests =
                 commitId = Some 1UL
                 committedAt = Some(DateTimeOffset(2026, 9, 23, 10, 0, 0, TimeSpan.Zero)) }
         let actions =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None }
         let ctx =
-            { fontSize = Tokens.fontReading
-              autoCollapseReasoning = true
-              streaming = false
-              isLastAssistant = true
-              usage = Some { GenerationUsage.empty with promptTokens = Some 1200; completionTokens = Some 380; cachedTokens = Some 900; totalTokens = Some 1580 }
-              missingAttachments = Set.empty
-              awaitingApproval = Set.empty; brandAvatar = fun () -> SharedTheme.logo Tokens.logoAvatar }
-        let card = MessageCard.render message ctx actions (Some 0)
+            { FontSize = Tokens.fontReading
+              AutoCollapseReasoning = true
+              Streaming = false
+              IsLastAssistant = true
+              Usage = Some { GenerationUsage.empty with promptTokens = Some 1200; completionTokens = Some 380; cachedTokens = Some 900; totalTokens = Some 1580 }
+              MissingAttachments = Set.empty
+              AwaitingApproval = Set.empty; BrandAvatar = fun () -> SharedTheme.logo Tokens.logoAvatar }
+        let card = Cards.render message ctx actions (Some 0)
         let window = Window(Width = 700.0, Height = 400.0, Content = card)
         window.Show()
         try
@@ -330,21 +331,21 @@ module ExchangeNavTests =
                 text = "回复内容"
                 commitId = Some 1UL }
         let actions =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None }
         let ctx =
-            { fontSize = Tokens.fontReading
-              autoCollapseReasoning = true
-              streaming = false
-              isLastAssistant = true
-              usage = Some { GenerationUsage.empty with promptTokens = Some 1200; completionTokens = Some 380 }
-              missingAttachments = Set.empty
-              awaitingApproval = Set.empty; brandAvatar = fun () -> SharedTheme.logo Tokens.logoAvatar }
-        let card = MessageCard.render message ctx actions (Some 0)
+            { FontSize = Tokens.fontReading
+              AutoCollapseReasoning = true
+              Streaming = false
+              IsLastAssistant = true
+              Usage = Some { GenerationUsage.empty with promptTokens = Some 1200; completionTokens = Some 380 }
+              MissingAttachments = Set.empty
+              AwaitingApproval = Set.empty; BrandAvatar = fun () -> SharedTheme.logo Tokens.logoAvatar }
+        let card = Cards.render message ctx actions (Some 0)
         let window = Window(Width = 700.0, Height = 400.0, Content = card)
         window.Show()
         try

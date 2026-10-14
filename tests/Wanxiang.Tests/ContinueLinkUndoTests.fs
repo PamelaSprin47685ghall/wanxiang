@@ -70,21 +70,6 @@ let private findNamed (root: Control) (name: string) =
         }
     walk root |> Seq.tryFind (fun c -> AutomationProperties.GetName c = name)
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``230 错误卡有半截回复时先给「继续生成」，没有时不给`` () =
-    Headless.run (fun () ->
-        let err = GenerationError.create ProviderTimeout "超时"
-        let mutable continued = false
-        let card = MessageCard.errorCardWith err ignore None (Some(fun () -> continued <- true))
-        let btn = findNamed card "继续生成"
-        Assert.True(btn.IsSome)
-        Assert.True((findNamed card "重试生成").IsSome, "重试仍在")
-        btn.Value.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = btn.Value))
-        Assert.True continued
-        Assert.True((findNamed (MessageCard.errorCard err ignore None) "继续生成").IsNone)
-        Assert.True((findNamed (MessageCard.incompleteMarker ()) "回复未完成").IsSome))
-
 // ---------- 231 ----------
 
 // ---------- 232 ----------

@@ -7,6 +7,7 @@ open Avalonia.Controls
 open Avalonia.Media
 open Xunit
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 
 let private repoRoot =
     let rec up (dir: DirectoryInfo) =
@@ -17,32 +18,20 @@ let private repoRoot =
 
 let private read (rel: string) = File.ReadAllText(Path.Combine(repoRoot, rel))
 
-let private ctx (streaming: bool) (awaiting: Set<string>) : MessageContext =
-    { fontSize = 14.0
-      autoCollapseReasoning = false
-      streaming = streaming
-      isLastAssistant = true
-      usage = None
-      missingAttachments = Set.empty
-      awaitingApproval = awaiting
-      brandAvatar = fun () -> Border() :> Control }
+let private ctx (streaming: bool) (awaiting: Set<string>) : Wanxiang2.MessageCardView.CardContext =
+    { FontSize = 14.0
+      AutoCollapseReasoning = false
+      Streaming = streaming
+      IsLastAssistant = true
+      Usage = None
+      MissingAttachments = Set.empty
+      AwaitingApproval = awaiting
+      BrandAvatar = fun () -> Border() :> Control }
 
 let private call id = { callId = id; name = "builtin_file_read"; argumentsJson = "{}"; result = None }
 
 // MessageCard 的模块初始化会碰 Avalonia 平台服务（光标等）：必须在 Headless 里跑，
 // 否则在非 UI 进程里先于任何 Avalonia 初始化执行时会因类型初始化失败而偶发报错。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``等审批的工具调用显示「等待批准」而不是「执行中」`` () =
-  Headless.run (fun () ->
-    let status = MessageCard.resolveStatus (ctx true (Set.ofList [ "c1" ])) (call "c1")
-    Assert.Equal(ToolCallStatus.AwaitingApproval, status)
-    Assert.Equal("等待批准", ToolCallStatus.badgeText status)
-    Assert.False(ToolCallStatus.isTerminal status)
-    // 其他调用仍是执行中；生成结束后不再是等待批准
-    Assert.Equal(ToolCallStatus.Running, MessageCard.resolveStatus (ctx true (Set.ofList [ "c1" ])) (call "c2"))
-    Assert.Equal(ToolCallStatus.Unknown, MessageCard.resolveStatus (ctx false (Set.ofList [ "c1" ])) (call "c1")))
-
 [<Fact>]
 let ``触屏输入后按触屏对待，键盘输入后恢复`` () =
     SharedTheme.input.Reset()

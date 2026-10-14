@@ -12,6 +12,7 @@ open Xunit
 
 open Wanxiang.Core
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 
 /// Round8 收敛补缺的可观察契约（焦点环部分并入 FocusRingTests）。
 ///
@@ -192,12 +193,12 @@ let private buildChat (messages: MessageView list) =
           toggleSidebar = ignore
           focusHome = ignore
           message =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore } }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None } }
     let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
     let window = Window(Width = 900.0, Height = 700.0, Content = chat)

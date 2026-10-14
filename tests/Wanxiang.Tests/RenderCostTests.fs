@@ -5,6 +5,7 @@ open System.Diagnostics
 open Avalonia.Controls
 open Xunit
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 
 /// 量一次「整表重建」的代价。
@@ -30,35 +31,35 @@ type Cost(output: ITestOutputHelper) =
             commitId = Some(uint64 index)
             committedAt = Some DateTimeOffset.UtcNow }
 
-    let actions: MessageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+    let actions: Wanxiang2.MessageCardView.CardActions =
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
 
-    let context: MessageContext =
-        { fontSize = Tokens.fontReading
-          autoCollapseReasoning = true
-          streaming = false
-          isLastAssistant = false
-          usage = None
-          missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
+    let context: Wanxiang2.MessageCardView.CardContext =
+        { FontSize = Tokens.fontReading
+          AutoCollapseReasoning = true
+          Streaming = false
+          IsLastAssistant = false
+          Usage = None
+          MissingAttachments = Set.empty
+          AwaitingApproval = Set.empty; BrandAvatar = fun () -> Border() :> Control }
 
     [<Trait("Category", "UI")>]
     [<Fact>]
     member _.``报告整表重建的代价``() =
         Headless.run (fun () ->
         // 预热：首次要付 Markdig / 字体 / 主题的一次性成本
-        MessageCard.render (messageAt 0) context actions |> ignore
+        Cards.render (messageAt 0) context actions None |> ignore
 
         for count in [ 20; 60; 200 ] do
             let messages = [ for i in 1 .. count -> messageAt i ]
             let watch = Stopwatch.StartNew()
             for message in messages do
-                MessageCard.render message context actions |> ignore
+                Cards.render message context actions None |> ignore
             watch.Stop()
             output.WriteLine(
                 sprintf "%3d 条消息重建一次 = %6.1f ms（每条 %.2f ms）"

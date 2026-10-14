@@ -14,6 +14,7 @@ open Xunit
 open Wanxiang.Core
 open Wanxiang.Protocol
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Avalonia.VisualTree
 
 let private flags = BindingFlags.Instance ||| BindingFlags.Public ||| BindingFlags.NonPublic
@@ -431,12 +432,12 @@ let ``the sole primary stop returns keyboard focus to input when a run finishes`
               toggleSidebar = ignore
               focusHome = ignore
               message =
-                { copyText = ignore
-                  regenerate = ignore
-                  editAndFork = ignore
-                  deleteMessage = ignore
-                  downloadAttachment = ignore
-                  openLink = ignore } },
+                { CopyText = ignore
+                  Regenerate = ignore
+                  EditAndFork = ignore
+                  DeleteMessage = ignore
+                  DownloadAttachment = ignore
+                  OpenLink = ignore; CopyLink = None; Recover = None } },
             SharedTheme.logo)
     chat.Build()
     let composer = Composer(

@@ -14,6 +14,7 @@ open Xunit
 open Wanxiang.Core
 open Wanxiang.Tests.Helpers
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open System.Text.Json.Nodes
 
 /// 与 Kelivo 桌面端取长补短的收敛批次（round 6）：三条「边界上不好用」的路径。
@@ -42,12 +43,12 @@ module InteractabilityConvergenceTests =
               toggleSidebar = ignore
               focusHome = ignore
               message =
-                { copyText = ignore
-                  regenerate = ignore
-                  editAndFork = ignore
-                  deleteMessage = ignore
-                  downloadAttachment = ignore
-                  openLink = ignore } }
+                { CopyText = ignore
+                  Regenerate = ignore
+                  EditAndFork = ignore
+                  DeleteMessage = ignore
+                  DownloadAttachment = ignore
+                  OpenLink = ignore; CopyLink = None; Recover = None } }
         let chat = ChatView(chatActions, SharedTheme.logo)
         chat.Build()
         let window = Window(Width = 900.0, Height = 700.0, Content = chat)
@@ -136,21 +137,21 @@ module InteractabilityConvergenceTests =
                 text = "这是助手回复：可复制、可重新生成、可删除。"
                 commitId = Some 42UL }
         let ctx =
-            { fontSize = Tokens.fontReading
-              autoCollapseReasoning = true
-              streaming = false
-              isLastAssistant = true
-              usage = None
-              missingAttachments = Set.empty
-              awaitingApproval = Set.empty; brandAvatar = fun () -> Border(Width = Tokens.logoAvatar, Height = Tokens.logoAvatar, CornerRadius = CornerRadius(Tokens.logoAvatar / 2.0)) }
+            { FontSize = Tokens.fontReading
+              AutoCollapseReasoning = true
+              Streaming = false
+              IsLastAssistant = true
+              Usage = None
+              MissingAttachments = Set.empty
+              AwaitingApproval = Set.empty; BrandAvatar = fun () -> Border(Width = Tokens.logoAvatar, Height = Tokens.logoAvatar, CornerRadius = CornerRadius(Tokens.logoAvatar / 2.0)) }
         let actions =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore }
-        let card = MessageCard.render message ctx actions (Some 0)
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None }
+        let card = Cards.render message ctx actions (Some 0)
         let window = Window(Width = 420.0, Height = 360.0, Content = card)
         window.Show()
         try

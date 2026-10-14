@@ -7,6 +7,7 @@ open Avalonia.Threading
 open Avalonia.VisualTree
 open Xunit
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 
 /// 流式期间每批 delta 都会重绘一次消息列表。这一组测的是「只有真变了的卡才重建」。
@@ -28,13 +29,13 @@ type Incremental(output: ITestOutputHelper) =
             commitId = Some(uint64 index)
             committedAt = Some DateTimeOffset.UtcNow }
 
-    let noopMessageActions: MessageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+    let noopMessageActions: Wanxiang2.MessageCardView.CardActions =
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
 
     let noopActions: ChatActions =
         { renameTitle = ignore

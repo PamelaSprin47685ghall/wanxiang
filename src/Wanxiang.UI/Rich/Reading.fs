@@ -26,9 +26,9 @@ module Reading =
     /// 代码块折行偏好（旧 MarkdownRenderer.DefaultCodeWrap）。
     let wrap = CodeWrapMemory(false)
 
-    let private mathHtml (tex: string, display: bool) = backend () |> Option.bind (fun b -> b.MathHtml(tex, display))
+    let mathHtml (tex: string, display: bool) = backend () |> Option.bind (fun b -> b.MathHtml(tex, display))
 
-    let private look =
+    let look =
         lazy
             // 正文里的图标按钮在触屏上不弹悬停提示（输入方式判断属于宿主）。
             let sync (spot: ActionSpot) (pointer: PointerType) =

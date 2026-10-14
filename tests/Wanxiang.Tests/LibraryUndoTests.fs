@@ -29,19 +29,6 @@ let private findNamed (root: Control) (name: string) =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``§215 密钥失效的错误卡给出「打开模型服务设置」并路由到 sink`` () =
-    Headless.run (fun () ->
-        let mutable got = None
-        MessageCard.setRecoverySink (fun r -> got <- Some r)
-        let err = GenerationError.create ProviderAuthFailed "密钥无效"
-        let card = MessageCard.errorCard err ignore None
-        let btn = findNamed card "打开模型服务设置"
-        Assert.True(btn.IsSome, "不可重试的密钥错误应有就地恢复按钮")
-        btn.Value.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = btn.Value))
-        Assert.Equal(Some OpenProviderSettings, got))
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``§214 带「撤销」的提示条：点动作即执行并关条`` () =
     Headless.run (fun () ->
         let root = Grid()

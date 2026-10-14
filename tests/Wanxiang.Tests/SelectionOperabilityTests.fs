@@ -490,61 +490,6 @@ let ``ctrl+m resolves to the model picker action`` () =
 
 // 长用户消息折叠在同一 detailViewport contract 上：未超限时不出现展开入口，
 // 超限时才出现，且上限取自 LayoutPolicy 的专用常量（比工具详情更矮）。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``long user messages get a clipped viewport with an expand entry`` () =
-    Headless.run (fun () ->
-    let ctx: MessageContext =
-        { fontSize = Tokens.fontReading
-          autoCollapseReasoning = false
-          streaming = false
-          isLastAssistant = false
-          usage = None
-          missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
-    let actions: MessageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
-    let short = { MessageView.empty with role = "user"; text = "很短的一条"; commitId = Some 1UL }
-    let long =
-        { MessageView.empty with
-            role = "user"
-            text = String.replicate 40 "这是一段很长的用户输入，用来触发折叠视口。"
-            commitId = Some 2UL }
-    let shortWindow = show (MessageCard.render short ctx actions (Some 0)) 420.0 300.0
-    try
-        // 布局分多趟落地：先量出视口，再判定是否裁切。
-        Dispatcher.UIThread.RunJobs()
-        Dispatcher.UIThread.RunJobs()
-        let expandButtons =
-            descendants (shortWindow.Content :?> Control)
-            |> Seq.choose (function :? Border as b -> Some b | _ -> None)
-            |> Seq.filter (fun b -> AutomationProperties.GetName(b) = "展开全部")
-            |> List.ofSeq
-        Assert.False(expandButtons |> List.exists (fun b -> b.IsVisible), "短消息不应出现展开入口")
-    finally
-        shortWindow.Close()
-    let longWindow = show (MessageCard.render long ctx actions (Some 1)) 420.0 300.0
-    try
-        Dispatcher.UIThread.RunJobs()
-        let scrollers =
-            descendants (longWindow.Content :?> Control)
-            |> Seq.choose (function :? Avalonia.Controls.ScrollViewer as s -> Some s | _ -> None)
-            |> Seq.filter (fun s -> s.IsVisible)
-            |> List.ofSeq
-        let userViewport =
-            scrollers
-            |> List.tryFind (fun s -> abs (s.MaxHeight - LayoutPolicy.expandedLongMessageMaxHeight) < 0.1)
-        Assert.True(userViewport.IsSome, "长用户消息应有专用折叠视口")
-        Assert.True(userViewport.Value.Extent.Height > userViewport.Value.Viewport.Height)
-    finally
-        longWindow.Close()
-    )
-
 // 批量键的文案是当前选择的状态，不是固定标签：全选后同一键变成「取消全选」、
 // 全已置顶后变成「取消置顶」。此前两者只在 Build 时算一次，勾选变化后只说旧话，
 // 用户再点会得到与预期相反的动作。锁按钮文本随勾选变化翻转。

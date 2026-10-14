@@ -11,6 +11,7 @@ open Avalonia.VisualTree
 open Xunit
 open Wanxiang.Core
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 
 /// 锁两条「桌面该有、此前没有」的可操作契约：
 ///
@@ -29,31 +30,33 @@ module OperabilityTests =
     let private makeMessage (role: string) (text: string) (commitId: uint64 option) : MessageView =
         { MessageView.empty with role = role; text = text; commitId = commitId }
 
-    /// 记录调用顺序的 MessageActions：每个字段捕获「这项被触发过」。
+    /// 记录调用顺序的 Wanxiang2.MessageCardView.CardActions：每个字段捕获「这项被触发过」。
     /// 用列表而非布尔：删除之后不能再复制，先后顺序本身也是契约。
     type SpyActions() =
         let mutable log: string list = []
         member _.Log = log
         member private self.Record(name: string) = log <- log @ [ name ]
-        member this.AsMessageActions : MessageActions =
-            { copyText = fun _ -> this.Record "copy"
-              regenerate = fun () -> this.Record "regenerate"
-              editAndFork = fun _ -> this.Record "editAndFork"
-              deleteMessage = fun _ -> this.Record "delete"
-              downloadAttachment = fun _ -> this.Record "download"
-              openLink = fun _ -> this.Record "openLink" }
+        member this.AsCardActions : Wanxiang2.MessageCardView.CardActions =
+            { CopyText = fun _ -> this.Record "copy"
+              Regenerate = fun () -> this.Record "regenerate"
+              EditAndFork = fun _ -> this.Record "editAndFork"
+              DeleteMessage = fun _ -> this.Record "delete"
+              DownloadAttachment = fun _ -> this.Record "download"
+              OpenLink = fun _ -> this.Record "openLink"
+              CopyLink = None
+              Recover = None }
 
-    let private makeContext (isLastAssistant: bool) (streaming: bool) : MessageContext =
-        { fontSize = Tokens.fontReading
-          autoCollapseReasoning = true
-          streaming = streaming
-          isLastAssistant = isLastAssistant
-          usage = None
-          missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
+    let private makeContext (isLastAssistant: bool) (streaming: bool) : Wanxiang2.MessageCardView.CardContext =
+        { FontSize = Tokens.fontReading
+          AutoCollapseReasoning = true
+          Streaming = streaming
+          IsLastAssistant = isLastAssistant
+          Usage = None
+          MissingAttachments = Set.empty
+          AwaitingApproval = Set.empty; BrandAvatar = fun () -> Border() :> Control }
 
-    let private render (message: MessageView) (ctx: MessageContext) (spy: SpyActions) =
-        MessageCard.render message ctx spy.AsMessageActions (Some 0)
+    let private render (message: MessageView) (ctx: Wanxiang2.MessageCardView.CardContext) (spy: SpyActions) =
+        Cards.render message ctx spy.AsCardActions (Some 0)
 
     /// 卡上的右键菜单。没有挂 ContextMenu（或挂了空菜单）时返回空表。
     let private menuLabels (control: Control) : string list =
@@ -264,7 +267,7 @@ module OperabilityTests =
               mediaType = "text/plain"
               fileName = "notes.txt" }
         let message = { makeMessage "assistant" "见图" (Some 1UL) with attachments = [ image; file ] }
-        let ctx = { makeContext false false with missingAttachments = Set.ofList [ "doc" ] }
+        let ctx = { makeContext false false with MissingAttachments = Set.ofList [ "doc" ] }
         let control = render message ctx spy
         let card = Window(Width = 600.0, Height = 400.0, Content = control)
         card.Show()
@@ -296,7 +299,7 @@ module OperabilityTests =
               mediaType = "image/png"
               fileName = "photo.png" }
         let message = { makeMessage "assistant" "见图" (Some 1UL) with attachments = [ lost ] }
-        let ctx = { makeContext false false with missingAttachments = Set.ofList [ "gone" ] }
+        let ctx = { makeContext false false with MissingAttachments = Set.ofList [ "gone" ] }
         let control = render message ctx spy
         let card = Window(Width = 600.0, Height = 400.0, Content = control)
         card.Show()
@@ -332,7 +335,7 @@ module OperabilityTests =
             // isLastAssistant 为真时 footer 才带上用量：这是「时间 · 用量」分支的前提
             // （footer 的第二个参数由 if ctx.isLastAssistant then ctx.usage else None 决定）。
             { makeContext true false with
-                usage = Some { promptTokens = Some 6; completionTokens = Some 4; cachedTokens = None; totalTokens = Some 10; durationMs = Some 1200L } }
+                Usage = Some { promptTokens = Some 6; completionTokens = Some 4; cachedTokens = None; totalTokens = Some 10; durationMs = Some 1200L } }
         let control = render message ctx spy
         let card = Window(Width = 600.0, Height = 400.0, Content = control)
         card.Show()

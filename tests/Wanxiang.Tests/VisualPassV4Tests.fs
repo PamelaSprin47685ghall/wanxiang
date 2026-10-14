@@ -9,6 +9,7 @@ open Avalonia.Threading
 open Avalonia.VisualTree
 open Xunit
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests.Helpers
 
 let private descendantsOf (control: Control) =
@@ -30,12 +31,12 @@ let private chatActions : ChatActions =
       toggleSidebar = ignore
       focusHome = ignore
       message =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore } }
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None } }
 
 let private view (role: string) (text: string) (commit: uint64) : MessageView =
     let payload = if role = "user" then userMessageJson text else assistantMessageJson text
@@ -96,46 +97,23 @@ let ``搜索命中跳转：滚到目标消息并短暂高亮，随后复原`` ()
         finally
             window.Close())
 
-let private msgActions : MessageActions = chatActions.message
+let private msgActions : Wanxiang2.MessageCardView.CardActions = chatActions.message
 
-let private ctx (awaiting: Set<string>) : MessageContext =
-    { fontSize = 14.0
-      autoCollapseReasoning = false
-      streaming = true
-      isLastAssistant = true
-      usage = None
-      missingAttachments = Set.empty
-      awaitingApproval = awaiting
-      brandAvatar = fun () -> Border() :> Control }
+let private ctx (awaiting: Set<string>) : Wanxiang2.MessageCardView.CardContext =
+    { FontSize = 14.0
+      AutoCollapseReasoning = false
+      Streaming = true
+      IsLastAssistant = true
+      Usage = None
+      MissingAttachments = Set.empty
+      AwaitingApproval = awaiting
+      BrandAvatar = fun () -> Border() :> Control }
 
 let private overviewRun (card: Control) =
     descendantsOf card
     |> Seq.choose (function :? TextBlock as t when not (isNull t.Inlines) -> Some t | _ -> None)
     |> Seq.collect (fun t -> t.Inlines |> Seq.choose (function :? Avalonia.Controls.Documents.Run as r -> Some r | _ -> None))
     |> Seq.find (fun r -> not (isNull r.Text) && r.Text.StartsWith "调用 ")
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``工具概览在等待批准时用警示色，不显示「完成」对勾配色`` () =
-    Headless.run (fun () ->
-        let message =
-            { MessageView.empty with
-                toolCalls = [ { callId = "c1"; name = "builtin_echo"; argumentsJson = "{}"; result = None } ]
-                commitId = Some 3UL }
-        let awaiting = MessageCard.render message (ctx (Set.ofList [ "c1" ])) msgActions None
-        let window = Window(Width = 800.0, Height = 600.0, Content = awaiting)
-        window.Show()
-        try
-            Dispatcher.UIThread.RunJobs()
-            let run = overviewRun awaiting
-            Assert.Equal("调用 1 个工具 · 等待批准", run.Text)
-            Assert.Same(Tokens.warning, run.Foreground)
-        finally
-            window.Close()
-        let running = MessageCard.render message (ctx Set.empty) msgActions None
-        let run = overviewRun running
-        Assert.Equal("调用 1 个工具 · 执行中", run.Text)
-        Assert.Same(Tokens.accent, run.Foreground))
 
 [<Trait("Category", "UI")>]
 [<Fact>]

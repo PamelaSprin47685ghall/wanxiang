@@ -5,6 +5,7 @@ open Avalonia.Input
 open Avalonia.Threading
 open Xunit
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 
 /// 核心对话旅程（决策 220–222）：最新回复的键盘动作、失败后重试不再多问、空对话起手式。
 module ConversationJourneyTests =
@@ -53,12 +54,12 @@ module ConversationJourneyTests =
               toggleSidebar = ignore
               focusHome = ignore
               message =
-                { copyText = ignore
-                  regenerate = ignore
-                  editAndFork = ignore
-                  deleteMessage = ignore
-                  downloadAttachment = ignore
-                  openLink = ignore } }
+                { CopyText = ignore
+                  Regenerate = ignore
+                  EditAndFork = ignore
+                  DeleteMessage = ignore
+                  DownloadAttachment = ignore
+                  OpenLink = ignore; CopyLink = None; Recover = None } }
         let chat = ChatView(actions, SharedTheme.logo)
         chat.Build()
         chat

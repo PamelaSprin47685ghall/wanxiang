@@ -5,6 +5,7 @@ open Avalonia.Controls
 open Avalonia.Threading
 open Xunit
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 
 /// 决策 300：挂载窗口（尾部 40 条）下，「上一轮」按需挂载 / 向主机要更早的页，总能走到对话开头。
@@ -17,8 +18,8 @@ type Nav() =
             commitId = Some(uint64 i)
             committedAt = Some DateTimeOffset.UtcNow }
 
-    let noopMessageActions: MessageActions =
-        { copyText = ignore; regenerate = ignore; editAndFork = ignore; deleteMessage = ignore; downloadAttachment = ignore; openLink = ignore }
+    let noopMessageActions: Wanxiang2.MessageCardView.CardActions =
+        { CopyText = ignore; Regenerate = ignore; EditAndFork = ignore; DeleteMessage = ignore; DownloadAttachment = ignore; OpenLink = ignore; CopyLink = None; Recover = None }
 
     let mount (requestOlder: unit -> unit) =
         let actions: ChatActions =

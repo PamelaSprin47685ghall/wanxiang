@@ -2052,25 +2052,27 @@ type MainView() as this =
         | _ -> toast "连接并选择对话后，可以调整上下文。" Warning
 
     member private this.BuildChat() =
-        MessageCard.setLinkSink (fun commitId ->
+        let copyMessageLink (commitId: uint64) =
             match activeConvId with
             | Some convId ->
                 let pageUrl = if OperatingSystem.IsBrowser() then (try Some(BrowserPage.Url()) with _ -> None) else None
                 copyToClipboard (MessageLink.format pageUrl convId commitId)
-            | None -> ())
-        MessageCard.setRecoverySink (fun recovery ->
+            | None -> ()
+        let recover (recovery: ErrorRecovery) =
             match recovery with
             | OpenProviderSettings ->
                 settings.ShowSection SettingsSection.Providers
                 this.ShowSettings()
             | OpenConversationSettings -> this.ShowSessionContext()
             | SwitchModel -> this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
-            | StartNewConversation -> this.CreateConversation() |> ignore)
-        let messageActions =
-            { copyText = copyToClipboard
-              regenerate = fun () -> this.Regenerate()
-              editAndFork = fun message -> this.ForkFrom(message.commitId, message.text)
-              deleteMessage =
+            | StartNewConversation -> this.CreateConversation() |> ignore
+        let messageActions: Wanxiang2.MessageCardView.CardActions =
+            { CopyText = copyToClipboard
+              Regenerate = fun () -> this.Regenerate()
+              EditAndFork = fun message -> this.ForkFrom(message.commitId, message.text)
+              CopyLink = Some copyMessageLink
+              Recover = Some recover
+              DeleteMessage =
                 fun commitId ->
                     match activeConvId with
                     | Some convId ->
@@ -2082,9 +2084,9 @@ type MainView() as this =
                                        messageCommitId = commitId |}
                             sendCommandWithFeedback command (Some "消息已删除") ignore)
                     | None -> ()
-              downloadAttachment = fun sha -> send (AttachmentDownloadRequest {| sha256 = sha |})
+              DownloadAttachment = fun sha -> send (AttachmentDownloadRequest {| sha256 = sha |})
               // 决策 231：消息里的消息链接在应用内打开，不交给系统浏览器。
-              openLink = fun url -> match MessageLink.tryParse url with Some link -> this.OpenMessageLink link | None -> openLink url }
+              OpenLink = fun url -> match MessageLink.tryParse url with Some link -> this.OpenMessageLink link | None -> openLink url }
         let chatActions =
             { renameTitle =
                 fun title ->

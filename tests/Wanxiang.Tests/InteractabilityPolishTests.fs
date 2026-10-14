@@ -13,6 +13,7 @@ open System.Text.Json.Nodes
 
 open Wanxiang.Core
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 
 /// 第七轮收敛测试：键盘节律与多选模式下的单条入口收敛。
 ///
@@ -145,12 +146,12 @@ let private buildChat (messages: MessageView list) =
           toggleSidebar = ignore
           focusHome = ignore
           message =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore } }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None } }
     let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
     let window = Window(Width = 900.0, Height = 700.0, Content = chat)

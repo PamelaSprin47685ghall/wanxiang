@@ -5,36 +5,34 @@ open System.Diagnostics
 open Avalonia.Controls
 open Xunit
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 
 /// 病态输入下的渲染代价。模型完全可能吐出这些东西，界面不能因此卡住。
 [<Trait("Category", "UI")>]
 type Pathological(output: ITestOutputHelper) =
 
-    let actions: MessageActions =
-        { copyText = ignore; regenerate = ignore; editAndFork = ignore
-          deleteMessage = ignore; downloadAttachment = ignore; openLink = ignore }
+    let actions: CardActions = Cards.noActions
 
-    let context: MessageContext =
-        { fontSize = Tokens.fontReading
-          autoCollapseReasoning = true
-          streaming = false
-          isLastAssistant = false
-          usage = None
-          missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
+    let context: CardContext =
+        { FontSize = Tokens.fontReading
+          AutoCollapseReasoning = true
+          Streaming = false
+          IsLastAssistant = false
+          Usage = None
+          MissingAttachments = Set.empty
+          AwaitingApproval = Set.empty
+          BrandAvatar = fun () -> Border() :> Control }
 
     let timeRender (label: string) (text: string) =
         let message = { MessageView.empty with role = "assistant"; text = text; commitId = Some 1UL }
         let watch = Stopwatch.StartNew()
-        let control = MessageCard.render message context actions
+        let control = Cards.render message context actions None
         watch.Stop()
         output.WriteLine(sprintf "%-26s 输入 %7d 字 → 渲染 %8.1f ms" label text.Length watch.Elapsed.TotalMilliseconds)
         Assert.NotNull control
         watch.Elapsed.TotalMilliseconds
 
-    [<Trait("Category", "UI")>]
-    [<Fact>]
     member _.``报告病态输入的渲染代价``() =
         Headless.run (fun () ->
         timeRender "预热" "hello" |> ignore

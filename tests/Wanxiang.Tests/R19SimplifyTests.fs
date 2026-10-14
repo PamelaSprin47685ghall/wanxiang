@@ -10,6 +10,7 @@ open Avalonia.VisualTree
 open Xunit
 open Wanxiang.Core
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 
 module R19SimplifyTests =
 
@@ -33,22 +34,22 @@ module R19SimplifyTests =
         Assert.Equal("对话默认值", SettingsSection.label SettingsSection.Generation)
         Assert.NotEqual<string>(SettingsSection.label SettingsSection.Generation, SettingsSection.label SettingsSection.Appearance)
 
-    let private ctx (isLastAssistant: bool) : MessageContext =
-        { fontSize = Tokens.fontReading
-          autoCollapseReasoning = true
-          streaming = false
-          isLastAssistant = isLastAssistant
-          usage = None
-          missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
+    let private ctx (isLastAssistant: bool) : Wanxiang2.MessageCardView.CardContext =
+        { FontSize = Tokens.fontReading
+          AutoCollapseReasoning = true
+          Streaming = false
+          IsLastAssistant = isLastAssistant
+          Usage = None
+          MissingAttachments = Set.empty
+          AwaitingApproval = Set.empty; BrandAvatar = fun () -> Border() :> Control }
 
-    let private actions : MessageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
+    let private actions : Wanxiang2.MessageCardView.CardActions =
+        { CopyText = ignore
+          Regenerate = ignore
+          EditAndFork = ignore
+          DeleteMessage = ignore
+          DownloadAttachment = ignore
+          OpenLink = ignore; CopyLink = None; Recover = None }
 
     let private actionRow (control: Control) =
         control.GetVisualDescendants()
@@ -66,9 +67,9 @@ module R19SimplifyTests =
             let latest = { MessageView.empty with role = "assistant"; text = "新回复"; commitId = Some 3UL }
             let host = StackPanel()
             let cards =
-                [ MessageCard.render user (ctx false) actions (Some 0)
-                  MessageCard.render older (ctx false) actions (Some 1)
-                  MessageCard.render latest (ctx true) actions (Some 2) ]
+                [ Cards.render user (ctx false) actions (Some 0)
+                  Cards.render older (ctx false) actions (Some 1)
+                  Cards.render latest (ctx true) actions (Some 2) ]
             for c in cards do host.Children.Add c
             let window = Window(Content = host, Width = 800.0, Height = 600.0)
             window.Show()

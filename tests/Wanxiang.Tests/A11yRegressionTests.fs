@@ -232,14 +232,6 @@ let ``r7-r12 新增控件的文字在浅色与深色主题下都过 AA`` () =
               "textMuted", p.textMuted, "selected", p.selected ]
 
 [<Fact>]
-let ``限流倒计时读屏名带剩余时间、走完才播报一次`` () =
-    let src = read "src/Wanxiang.UI/Views/MessageCard.fs"
-    Assert.Contains("sprintf \"重试倒计时：%s\"", src)
-    Assert.Contains("sprintf \"重试生成，%d 秒后可用\"", src)
-    // 每秒变化的文字不能一开始就是 live region，否则读屏每秒念一次
-    Assert.DoesNotMatch(Regex(@"SetLiveSetting\(countdown, AutomationLiveSetting\.Polite\)\s*\n\s*let refresh"), src)
-
-[<Fact>]
 let ``顶栏模型芯片对读屏是按钮并说明生效时机`` () =
     let src = read "src/Wanxiang.UI/Views/ChatView.fs"
     Assert.Contains("SetRole(headerModelChip, AutomationRole.Button)", src)

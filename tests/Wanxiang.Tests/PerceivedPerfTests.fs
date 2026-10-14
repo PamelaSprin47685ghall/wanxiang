@@ -6,6 +6,7 @@ open Avalonia.Controls
 open Avalonia.Threading
 open Xunit
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 
 /// 决策 290：感知性能基准（r12）。数字写进测试输出（`PERF ...` 行），上界只防大幅回归。
@@ -23,8 +24,8 @@ type Bench(output: ITestOutputHelper) =
             commitId = Some(uint64 i)
             committedAt = Some DateTimeOffset.UtcNow }
 
-    let noopMessageActions: MessageActions =
-        { copyText = ignore; regenerate = ignore; editAndFork = ignore; deleteMessage = ignore; downloadAttachment = ignore; openLink = ignore }
+    let noopMessageActions: Wanxiang2.MessageCardView.CardActions =
+        { CopyText = ignore; Regenerate = ignore; EditAndFork = ignore; DeleteMessage = ignore; DownloadAttachment = ignore; OpenLink = ignore; CopyLink = None; Recover = None }
 
     let noopActions: ChatActions =
         { renameTitle = ignore; openSessionSettings = ignore; forkFromHere = ignore; stopGeneration = ignore
@@ -94,14 +95,14 @@ type Bench(output: ITestOutputHelper) =
                     let streaming =
                         { MessageView.empty with role = "assistant"; text = full.Substring(0, len) }
                     costs.Add(timed (fun () -> render view history (Some streaming)))
-                let ctx: MessageContext =
-                    { fontSize = Tokens.fontReading; autoCollapseReasoning = true; streaming = true; isLastAssistant = true
-                      usage = None; missingAttachments = Set.empty; awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
+                let ctx: Wanxiang2.MessageCardView.CardContext =
+                    { FontSize = Tokens.fontReading; AutoCollapseReasoning = true; Streaming = true; IsLastAssistant = true
+                      Usage = None; MissingAttachments = Set.empty; AwaitingApproval = Set.empty; BrandAvatar = fun () -> Border() :> Control }
                 let w = Stopwatch.StartNew()
                 for _ in 1 .. 10 do Markdown.parse full |> ignore
                 report "probe-parse-20k" (w.Elapsed.TotalMilliseconds / 10.0)
                 let w = Stopwatch.StartNew()
-                for _ in 1 .. 10 do MessageCard.render { MessageView.empty with role = "assistant"; text = full } ctx noopMessageActions None |> ignore
+                for _ in 1 .. 10 do Cards.render { MessageView.empty with role = "assistant"; text = full } ctx noopMessageActions None |> ignore
                 report "probe-card-build-20k" (w.Elapsed.TotalMilliseconds / 10.0)
                 let st = Some { MessageView.empty with role = "assistant"; text = full + " 尾" }
                 let w = Stopwatch.StartNew()

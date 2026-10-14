@@ -10,6 +10,7 @@ open Avalonia.Controls
 open Avalonia.Threading
 open Xunit
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 
 /// W3 界面层：审批卡片、人话摘要、工具设置页（第 70–72 节）。
@@ -52,13 +53,13 @@ module W3ToolApprovalUiTests =
             { role = "assistant"; text = ""; reasoning = ""
               toolCalls = [ { callId = "c1"; name = name; argumentsJson = args; result = Some "ok" } ]
               toolResults = []; attachments = []; commitId = Some 1UL; committedAt = Some DateTimeOffset.UtcNow }
-        let ctx: MessageContext =
-            { fontSize = 14.0; autoCollapseReasoning = false; streaming = false; isLastAssistant = false
-              usage = None; missingAttachments = Set.empty; awaitingApproval = Set.empty; brandAvatar = fun () -> TextBlock() :> Control }
-        let actions: MessageActions =
-            { copyText = ignore; regenerate = ignore; editAndFork = ignore; deleteMessage = ignore
-              downloadAttachment = ignore; openLink = ignore }
-        MessageCard.render msg ctx actions (Some 0)
+        let ctx: Wanxiang2.MessageCardView.CardContext =
+            { FontSize = 14.0; AutoCollapseReasoning = false; Streaming = false; IsLastAssistant = false
+              Usage = None; MissingAttachments = Set.empty; AwaitingApproval = Set.empty; BrandAvatar = fun () -> TextBlock() :> Control }
+        let actions: Wanxiang2.MessageCardView.CardActions =
+            { CopyText = ignore; Regenerate = ignore; EditAndFork = ignore; DeleteMessage = ignore
+              DownloadAttachment = ignore; OpenLink = ignore; CopyLink = None; Recover = None }
+        Cards.render msg ctx actions (Some 0)
 
     [<Fact>]
     let ``工具调用卡：先给人话摘要，原始参数仍保留`` () =

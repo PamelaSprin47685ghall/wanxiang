@@ -32,8 +32,8 @@
     <Compile Include="Controls/OverlayHost.fs" />
     <Compile Include="Controls/Menu.fs" />
     <Compile Include="Rich/Reading.fs" />
+    <Compile Include="Rich/Cards.fs" />
     <Compile Include="CredentialStore.fs" />
-    <Compile Include="Views/MessageCard.fs" />
     <Compile Include="Views/ChatView.fs" />
     <Compile Include="Views/Composer.fs" />
     <Compile Include="Views/OnboardingCard.fs" />
@@ -156,6 +156,7 @@
     <PackageReference Include="Wanxiang2.ModelSwitchDesk" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.TransferDesk" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ShellDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MessageCardView" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProgressThrottle" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.HighlightQueue" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.DeferredReveal" Version="0.0.0-local" />

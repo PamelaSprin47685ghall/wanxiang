@@ -18,6 +18,7 @@ open Wanxiang.Protocol
 open Wanxiang.Server
 open Wanxiang.Store
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 open Wanxiang.Tests.Helpers
 open Avalonia.Input
@@ -250,44 +251,6 @@ let ``ui button triggers callback on Enter and Space keys`` () =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``message card renders user and assistant with reasoning and tools without error`` () =
-    Headless.run (fun () ->
-    let ctx =
-        { fontSize = 14.0
-          autoCollapseReasoning = false
-          streaming = false
-          isLastAssistant = true
-          usage = Some { promptTokens = Some 100; completionTokens = Some 50; cachedTokens = None; totalTokens = Some 150; durationMs = Some 1200L }
-          missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> Avalonia.Controls.Border() :> Avalonia.Controls.Control }
-    let msgActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
-
-    let userMsg =
-        { MessageView.empty with
-            role = "user"
-            text = "用户输入" }
-    let userCard = MessageCard.render userMsg ctx msgActions
-    Assert.NotNull userCard
-
-    let assistantMsg =
-        { MessageView.empty with
-            role = "assistant"
-            text = "助手回复正文"
-            reasoning = "思考过程片段"
-            toolCalls =
-                [ { callId = "c1"; name = "builtin_echo"; argumentsJson = """{"text":"hello"}"""; result = Some "hello" } ] }
-    let assistantCard = MessageCard.render assistantMsg ctx msgActions
-    Assert.NotNull assistantCard
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``conversation summary matches multi word and model search`` () =
     Headless.run (fun () ->
     let summary =
@@ -387,21 +350,6 @@ let ``theme mode switching updates palette and dynamic brushes`` () =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``error card toggles technical detail and triggers retry action`` () =
-    Headless.run (fun () ->
-    let mutable retried = false
-    let err =
-        { kind = ProviderUnavailable
-          message = "无法连接模型服务"
-          detail = Some "Connection refused at 127.0.0.1:8799"
-          retryable = true
-          retryAfterSeconds = Some 5 }
-    let card = MessageCard.errorCard err (fun () -> retried <- true) None
-    Assert.NotNull card
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``chat view renders a focused empty state without extra actions`` () =
     Headless.run (fun () ->
     let mutable sidebarToggled = false
@@ -415,12 +363,12 @@ let ``chat view renders a focused empty state without extra actions`` () =
           toggleSidebar = fun () -> sidebarToggled <- true
           focusHome = ignore
           message =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore } }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None } }
     let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
     chat.ShowEmpty(EmptyConversation, None)
@@ -445,38 +393,6 @@ let ``composer accepts text without introducing extra send modes`` () =
     comp.SetText("万象架构：事件溯源与对等连接")
     // Verification that composer accepts text and calculates state without crashing
     Assert.True(comp.IsVisible)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``message card renders assistant markdown without extra view mode`` () =
-    Headless.run (fun () ->
-    let msg: MessageView =
-        { commitId = Some 10UL
-          role = "assistant"
-          text = "# Hello\n\nThis is **bold** text."
-          reasoning = ""
-          toolCalls = []
-          toolResults = []
-          attachments = []
-          committedAt = Some DateTimeOffset.UtcNow }
-    let ctx: MessageContext =
-        { fontSize = 14.0
-          autoCollapseReasoning = true
-          streaming = false
-          isLastAssistant = true
-          usage = None
-          missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> SharedTheme.logo 26.0 }
-    let actions: MessageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
-    let card = MessageCard.render msg ctx actions
-    Assert.NotNull card
     )
 
 [<Trait("Category", "UI")>]

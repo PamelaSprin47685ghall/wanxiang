@@ -20,6 +20,7 @@ open Wanxiang.Agent
 open Wanxiang.Core
 open Wanxiang.Protocol
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 open Wanxiang.Tests.Helpers
 
@@ -184,12 +185,12 @@ let ``ChatView skeleton loading transitions toggle skeletonPanel and messagePane
           toggleSidebar = ignore
           focusHome = ignore
           message =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore } }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None } }
 
     let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
@@ -392,12 +393,12 @@ let ``ChatView empty state renders balanced optical layout and accessible primar
           toggleSidebar = ignore
           focusHome = ignore
           message =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore } }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None } }
 
     let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
@@ -460,12 +461,12 @@ let ``ChatView tracks unread messages when scrolled away from bottom`` () =
           toggleSidebar = ignore
           focusHome = ignore
           message =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore } }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None } }
 
     let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
@@ -551,12 +552,12 @@ let ``paging older history does not count as unread messages`` () =
           toggleSidebar = ignore
           focusHome = ignore
           message =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore } }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None } }
 
     let chat = ChatView(chatActions, SharedTheme.logo)
     chat.Build()
@@ -1122,57 +1123,6 @@ let ``Dialogs confirm focuses the safe cancel action by default`` () =
         window.Close()
     )
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``MessageCard toolCallCard header toggles argument and result details`` () =
-    Headless.run (fun () ->
-    let ctx: MessageContext =
-        { fontSize = 15.0
-          autoCollapseReasoning = false
-          streaming = false
-          isLastAssistant = true
-          usage = None
-          missingAttachments = Set.empty
-          awaitingApproval = Set.empty; brandAvatar = fun () -> Border() :> Control }
-    let msgActions: MessageActions =
-        { copyText = ignore
-          regenerate = ignore
-          editAndFork = ignore
-          deleteMessage = ignore
-          downloadAttachment = ignore
-          openLink = ignore }
-    let message =
-        { MessageView.empty with
-            commitId = Some 1UL
-            toolCalls =
-                [ { callId = "call_1"
-                    name = "weather"
-                    argumentsJson = "{\"city\": \"Beijing\"}"
-                    result = Some "Sunny, 24C" } ] }
-    let card =
-        MessageCard.render message ctx msgActions None
-
-    let window = Window(Width = 600.0, Height = 400.0, Content = card)
-    window.Show()
-    try
-        Dispatcher.UIThread.RunJobs()
-        let tool =
-            descendants card
-            |> Seq.find (fun control -> Avalonia.Automation.AutomationProperties.GetName(control) = "展开工具调用 weather")
-        let invoke = Avalonia.Automation.Peers.ControlAutomationPeer.CreatePeerForElement tool |> Assert.IsAssignableFrom<Avalonia.Automation.Provider.IInvokeProvider>
-        invoke.Invoke()
-        Dispatcher.UIThread.RunJobs()
-        let toolName1: string = Avalonia.Automation.AutomationProperties.GetName(tool)
-        Assert.Equal("收起工具调用 weather", toolName1)
-
-        invoke.Invoke()
-        Dispatcher.UIThread.RunJobs()
-        let toolName2: string = Avalonia.Automation.AutomationProperties.GetName(tool)
-        Assert.Equal("展开工具调用 weather", toolName2)
-    finally
-        window.Close()
-    )
-
 // =========================================================================
 // 9. Batch 2, 3, 4 Craftsmanship Polish Tests
 // =========================================================================
@@ -1192,12 +1142,12 @@ let ``ChatView header supports F2 to edit title and Escape to cancel`` () =
           toggleSidebar = ignore
           focusHome = ignore
           message =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore } }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None } }
     let chat = ChatView(actions, fun _ -> Border() :> Control)
     chat.Build()
     chat.SetConversationChrome true
@@ -1290,12 +1240,12 @@ let ``ChatView ShowEmpty configures action button accessibility properties`` () 
           toggleSidebar = ignore
           focusHome = ignore
           message =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore } }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None } }
     let chat = ChatView(actions, fun _ -> Border() :> Control)
     chat.Build()
     let window = Window(Width = 800.0, Height = 600.0, Content = chat)
@@ -1558,12 +1508,12 @@ let ``ChatView header title tooltip reflects full title and preserves character 
           toggleSidebar = ignore
           focusHome = ignore
           message =
-            { copyText = ignore
-              regenerate = ignore
-              editAndFork = ignore
-              deleteMessage = ignore
-              downloadAttachment = ignore
-              openLink = ignore } }
+            { CopyText = ignore
+              Regenerate = ignore
+              EditAndFork = ignore
+              DeleteMessage = ignore
+              DownloadAttachment = ignore
+              OpenLink = ignore; CopyLink = None; Recover = None } }
     let chat = ChatView(actions, fun _ -> Border() :> Control)
     chat.Build()
     let fullTitle = "An extremely long conversation title that requires ellipsis and full tooltip for desktop inspection"

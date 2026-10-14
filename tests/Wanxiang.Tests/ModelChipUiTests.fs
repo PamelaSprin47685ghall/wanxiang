@@ -9,6 +9,7 @@ open Avalonia.Threading
 open Xunit
 open Wanxiang.Core
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 
 /// 决策 240 / 242 界面：快速切换浮层、错误卡倒计时。
 [<Trait("Category", "UI")>]
@@ -45,7 +46,7 @@ module ModelChipUiTests =
     let ``rate limited error card shows a live countdown instead of a static hint`` () =
         Headless.run (fun () ->
             let err = { GenerationError.create ProviderRateLimited "「OpenAI」限流了这次请求。" with retryAfterSeconds = Some 90 }
-            let card = MessageCard.errorCard err ignore None
+            let card = Cards.errorCard err ignore Cards.noActions None
             let countdown =
                 descendants card
                 |> Seq.tryPick (function :? TextBlock as t when (string (AutomationProperties.GetName t)).StartsWith "重试倒计时" -> Some t | _ -> None)
@@ -57,7 +58,7 @@ module ModelChipUiTests =
                 Assert.False t.IsVisible
             | None -> Assert.Fail "countdown missing"
             // 同一错误实例重建卡片：截止时刻不变（不会从头数）
-            let again = MessageCard.errorCard err ignore None
+            let again = Cards.errorCard err ignore Cards.noActions None
             Assert.True(descendants again |> Seq.exists (function :? TextBlock as t -> (string (AutomationProperties.GetName t)).StartsWith "重试倒计时" | _ -> false)))
 
     [<Fact>]
@@ -73,12 +74,12 @@ module ModelChipUiTests =
                   toggleSidebar = ignore
                   focusHome = ignore
                   message =
-                    { copyText = ignore
-                      regenerate = ignore
-                      editAndFork = ignore
-                      deleteMessage = ignore
-                      downloadAttachment = ignore
-                      openLink = ignore } }
+                    { CopyText = ignore
+                      Regenerate = ignore
+                      EditAndFork = ignore
+                      DeleteMessage = ignore
+                      DownloadAttachment = ignore
+                      OpenLink = ignore; CopyLink = None; Recover = None } }
             let chat = ChatView(actions, fun _ -> Border() :> Control)
             chat.Build()
             chat.SetConversationChrome true

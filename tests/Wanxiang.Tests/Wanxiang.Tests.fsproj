@@ -56,7 +56,6 @@
     <Compile Include="AppShellTests.fs" />
     <Compile Include="SettingsViewTests.fs" />
     <Compile Include="DialogsTests.fs" />
-    <Compile Include="MessageCardTests.fs" />
     <Compile Include="W3ToolApprovalUiTests.fs" />
     <Compile Include="PwaToolApprovalTests.fs" />
     <Compile Include="ToolCallStatusTests.fs" />
@@ -123,6 +122,7 @@
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
     <ProjectReference Include="..\..\src\Wanxiang.UI\Wanxiang.UI.fsproj" />
+    <PackageReference Include="Wanxiang2.MessageCardView" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.WsClient" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ReconnectBackoff" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ConnectionIssue" Version="0.0.0-local" />

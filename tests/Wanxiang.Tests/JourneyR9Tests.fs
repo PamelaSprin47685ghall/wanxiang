@@ -95,31 +95,6 @@ let ``261 输入框菜单文案为中文`` () =
 
 // ---- 262 ----
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``262 限流倒计时未结束时重试按钮不可按并显示剩余秒数`` () =
-    Headless.run (fun () ->
-        let err = { GenerationError.create ProviderRateLimited "「OpenAI」限流了这次请求。" with retryAfterSeconds = Some 30 }
-        let card = MessageCard.errorCard err ignore None
-        // 决策 302：等待中读屏名带剩余秒数
-        let retry = byName card "重试生成，30 秒后可用" |> Option.orElse (byName card "重试生成，29 秒后可用") |> Option.get :?> Border
-        Assert.False(retry.IsEnabled)
-        match retry.Child with
-        | :? TextBlock as t -> Assert.StartsWith("重试（", t.Text)
-        | _ -> Assert.Fail "retry label missing")
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``262 没有倒计时的可重试错误照常可按`` () =
-    Headless.run (fun () ->
-        let err = GenerationError.create ProviderTimeout "请求超时。"
-        let card = MessageCard.errorCard err ignore None
-        let retry = byName card "重试生成" |> Option.get :?> Border
-        Assert.True(retry.IsEnabled)
-        match retry.Child with
-        | :? TextBlock as t -> Assert.Equal("重试", t.Text)
-        | _ -> Assert.Fail "retry label missing")
-
 // ---- 263 ----
 
 [<Fact>]

@@ -17,6 +17,7 @@ open Avalonia.VisualTree
 open Xunit
 open Wanxiang.Core
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 open Wanxiang.Tests
 
 let rec private descendants (control: Control) = seq {
@@ -50,8 +51,8 @@ let private chat () =
         { renameTitle = ignore; openSessionSettings = ignore; forkFromHere = ignore
           stopGeneration = ignore; requestOlderHistory = ignore; retryLast = ignore
           toggleSidebar = ignore; focusHome = ignore
-          message = { copyText = ignore; regenerate = ignore; editAndFork = ignore
-                      deleteMessage = ignore; downloadAttachment = ignore; openLink = ignore } }, SharedTheme.logo)
+          message = { CopyText = ignore; Regenerate = ignore; EditAndFork = ignore
+                      DeleteMessage = ignore; DownloadAttachment = ignore; OpenLink = ignore; CopyLink = None; Recover = None } }, SharedTheme.logo)
     view.Build()
     view.SetConversationChrome true
     view.SetTitle("讨论一个问题", true)

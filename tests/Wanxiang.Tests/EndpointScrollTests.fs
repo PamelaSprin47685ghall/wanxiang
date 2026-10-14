@@ -10,6 +10,7 @@ open Avalonia.VisualTree
 open Xunit
 open Wanxiang.Core
 open Wanxiang.UI
+open Wanxiang2.MessageCardView
 
 /// 端点滚动：回到开头 / 回到最新。
 ///
@@ -39,12 +40,12 @@ module EndpointScrollTests =
               toggleSidebar = ignore
               focusHome = fun () -> incr homeFocus
               message =
-                { copyText = ignore
-                  regenerate = ignore
-                  editAndFork = ignore
-                  deleteMessage = ignore
-                  downloadAttachment = ignore
-                  openLink = ignore } }
+                { CopyText = ignore
+                  Regenerate = ignore
+                  EditAndFork = ignore
+                  DeleteMessage = ignore
+                  DownloadAttachment = ignore
+                  OpenLink = ignore; CopyLink = None; Recover = None } }
         let chat = ChatView(chatActions, SharedTheme.logo)
         chat.Build()
         let window = Window(Width = 900.0, Height = 700.0, Content = chat)
