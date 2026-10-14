@@ -24,6 +24,14 @@
 
   <ItemGroup>
     <PackageReference Include="Wanxiang2.ServerApp" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.LaunchPlan" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.CliArgs" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.RunModes" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.StoreLaunch" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DesktopPairing" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ClientTomlFile" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PwaAssets" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ShutdownSignals" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AgentRuntime" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProviderFailure" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.AgentContent" Version="0.0.0-local" />
