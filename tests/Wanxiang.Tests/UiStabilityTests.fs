@@ -1791,15 +1791,15 @@ let ``composer inset adapts to width outside compact and stays tight inside comp
         try
             Dispatcher.UIThread.RunJobs()
             // 非 compact：水平留白随宽度取档。
-            Assert.Equal(expected, composer.Padding.Left, 3)
-            Assert.Equal(expected, composer.Padding.Right, 3)
+            Assert.Equal(expected, (composer.Desk.Host :?> Border).Padding.Left, 3)
+            Assert.Equal(expected, (composer.Desk.Host :?> Border).Padding.Right, 3)
             // compact：切到固定收紧边距；切回后恢复宽度档，两条路径不争抢。
             composer.SetCompactMode true
             Dispatcher.UIThread.RunJobs()
-            Assert.Equal(Spacing.spaceXl, composer.Padding.Left, 3)
+            Assert.Equal(Spacing.spaceXl, (composer.Desk.Host :?> Border).Padding.Left, 3)
             composer.SetCompactMode false
             Dispatcher.UIThread.RunJobs()
-            Assert.Equal(expected, composer.Padding.Left, 3)
+            Assert.Equal(expected, (composer.Desk.Host :?> Border).Padding.Left, 3)
         finally
             window.Close()
     )

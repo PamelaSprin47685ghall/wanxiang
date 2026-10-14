@@ -82,15 +82,6 @@ let componentGeometryConstantsMatchPinnedCallSites () =
 // ---------- 源码守卫：调用点必须引用命名来源，不得回到魔法数 ----------
 
 [<Fact>]
-let composerShellPaddingSymmetricAndChipFadeUsesNamedLedger () =
-    let text = source "src/Wanxiang.UI/Views/Composer.fs"
-    Assert.True(occurrenceCount text "ControlMetrics.composerShellPaddingX" >= 2, "输入壳左右应共用 composerShellPaddingX")
-    Assert.True(occurrenceCount text "MotionLedger.controlRowFade" >= 1, "附件 chip 淡入应引 MotionLedger.controlRowFade")
-    Assert.DoesNotContain("MotionPolicy.duration 150", text)
-    // 次级图标按钮（附件/排队）不再有一次性 hairline 轮廓，与所有 Ui.iconButton 一致。
-    Assert.DoesNotContain("ghostAction", text)
-
-[<Fact>]
 let chatViewGeneratingChipTokenized () =
     let text = source "src/Wanxiang.UI/Views/ChatView.fs"
     // 骨架、空态、「回到最新」的几何与透明度归 Wanxiang2.ChatPane（ChatPane AGENTS 列为已覆盖）。

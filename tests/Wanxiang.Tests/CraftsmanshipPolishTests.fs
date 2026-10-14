@@ -295,11 +295,11 @@ let ``Composer handles dropFiles hook when files are dropped`` () =
     let dropArgs = DragEventArgs(
         DragDrop.DropEvent,
         dataTransfer,
-        composer,
+        composer.Desk.Host,
         Point(10.0, 10.0),
         KeyModifiers.None)
 
-    composer.RaiseEvent dropArgs
+    composer.Desk.Host.RaiseEvent dropArgs
     Assert.NotEmpty dropped
     Assert.Equal("test.png", dropped[0].Name)
     Assert.True(dropArgs.Handled)
@@ -352,20 +352,20 @@ let ``Composer drag over and drag leave updates visual affordance and resets cle
     let dragOverArgs = DragEventArgs(
         DragDrop.DragOverEvent,
         dataTransfer,
-        composer,
+        composer.Desk.Host,
         Point(10.0, 10.0),
         KeyModifiers.None)
-    composer.RaiseEvent dragOverArgs
+    composer.Desk.Host.RaiseEvent dragOverArgs
     Assert.Equal(DragDropEffects.Copy, dragOverArgs.DragEffects)
     Assert.Equal("释放文件以添加到当前对话附件", input.PlaceholderText)
 
     let dragLeaveArgs = DragEventArgs(
         DragDrop.DragLeaveEvent,
         dataTransfer,
-        composer,
+        composer.Desk.Host,
         Point(-100.0, -100.0),
         KeyModifiers.None)
-    composer.RaiseEvent dragLeaveArgs
+    composer.Desk.Host.RaiseEvent dragLeaveArgs
     Assert.Equal("输入消息…", input.PlaceholderText)
 
     // When disabled with a disabledReason
