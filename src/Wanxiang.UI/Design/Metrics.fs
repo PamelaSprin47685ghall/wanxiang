@@ -25,22 +25,14 @@ module ControlMetrics =
     let sidebarRowMinHeight = rowMinHeight
     /// 设置页开关行的最小高度：与侧栏行同一语义，引用 rowMinHeight。
     let settingsRowMinHeight = rowMinHeight
-    let sidebarRowPaddingY = Spacing.spaceSm
-    let sidebarStatusLineHeight = ReadingRhythm.helperLineHeight
     /// 行内状态槽宽度：与菜单图标槽同一档（此前 19 与 18 分叉 1px）。
     let sidebarStateSlotWidth = Spacing.Slot.icon
-    let sidebarStateGlyphSize = 11.0
     let sidebarRunningDotSize = 6.0
-    /// 行内/分节状态点直径：侧栏运行点、分节状态点同一语义的唯一真源
-    ///（此前只有侧栏一处命名，其它位置各写裸 6.0）。
-    let statusDotSize = 6.0
     /// chip 内部小圆点直径：比状态点小一档，标记 chip 的附属语义。
     let chipDotSize = 5.0
     /// 左缘强调条统一档：侧栏选中行、toast、思考竖线共用同一 2.0。
     /// 引用块用更宽的 quoteEdgeWidth（印刷引用条的视觉重量，两档有意保留）。
     let accentEdgeWidth = Spacing.Stroke.thick
-    /// 选中行左缘强调条宽：非色线索，与悬停态区分；统一档见 accentEdgeWidth。
-    let sidebarSelectedEdgeWidth = accentEdgeWidth
     /// 引用块左缘强调条：比通用 accentEdgeWidth 宽一档，Markdown 引用的既有意图。
     let quoteEdgeWidth = Spacing.Stroke.quote
     /// 侧栏外框/页脚分隔线宽：唯一来源，避免各处自发明 1.0。
@@ -48,19 +40,9 @@ module ControlMetrics =
     /// 控件/发丝线描边宽的全应用唯一档：tag、输入壳、按钮、chip、分组卡的 1px
     /// 边框都引用它；此前这些位置各自写 Thickness 1.0 / Height = 1.0。
     let borderWidth = Spacing.Stroke.thin
-    /// 行内标题+预览垂直间距：紧凑堆叠是语义，不是“顺手写 0”。
-    let sidebarRowContentSpacing = 0.0
 
-    let composerInputMinHeight = 30.0
-    let composerMaxHeight = 240.0
-    let composerInputMaxHeight = 240.0
-    let composerShellPaddingX = Spacing.spaceXl
-    let composerShellPaddingY = Spacing.spaceMd
-    let composerAttachmentNameMaxWidth = 160.0
     let composerAttachmentStateWidth = Spacing.Slot.wide
     let composerAttachmentIconSlot = Tokens.iconGlyph
-    let composerModelMaxWidth = 240.0
-    let composerModelCompactMaxWidth = 150.0
 
     /// chip 内边距的唯一真源（横向 8 = space2、纵向 2 = compactRowPaddingY）。
     /// 此前只有 Composer 的 chip 写着 padding、没有语义名；现收敛为一对语义名，
@@ -75,15 +57,12 @@ module ControlMetrics =
     /// DesignConvergenceTests.ChipDensityHasSingleSourceUnderBothNames 钉住的是
     /// compactChipPaddingX/Y 与 chipPaddingX/Y 的相等关系（别名必须跟真源走）。
     let compactChipPaddingX = chipPaddingX
-    let compactChipPaddingY = chipPaddingY
 
     /// tag（小标签）的横向内边距：7.0 是它的既有外观值，DesignConvergence
     /// 测试钉住 Padding(7.0, tightRowPaddingY)。chip 横向用更宽的 space2，
     /// tag 纵向仍是 Spacing.spaceXXs：tag/chip 横向差一档是有意的两档。
     let tagPaddingX = Spacing.spaceSm
 
-    let attachmentRowPaddingY = Spacing.spaceSm
-    let attachmentNameMaxWidth = 260.0
 
     let menuItemMinHeight = 34.0
     let menuItemPaddingY = Spacing.spaceSm
@@ -92,8 +71,6 @@ module ControlMetrics =
 
     let toastAccentWidth = accentEdgeWidth
 
-    let settingsNavWidth = 196.0
-    let settingsNavMinHeight = 38.0
     let settingsContentMaxWidth = 980.0
 
     /// Menu.selectButton 的垂直内边距：只读按钮比菜单项（7）再紧一档的手感。
@@ -144,16 +121,10 @@ module ControlMetrics =
     let taskBoxBorderWidth = 1.4
     let taskCheckGlyphSize = 10.0
 
-    /// 骨架屏头像边长：与真实列表头像同一 28 见方，骨架换成真卡时轮廓不变、
-    /// 不产生跳变。此前 ChatView 骨架屏的头像在两处各写裸 28.0，无语义名。
-    let skeletonAvatarSize = 28.0
 
 module ContentMetrics =
 
     let messageGap = Spacing.space4xl
     let messageEndBreathing = 48.0
-    let scrollBottomThreshold = 48.0
-    let scrollBottomRevealThreshold = 120.0
-    let emptyStateMaxWidth = 480.0
     let toastMaxWidth = 560.0
 

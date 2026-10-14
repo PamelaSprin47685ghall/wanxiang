@@ -194,10 +194,6 @@ module Ui =
         Interaction.surface host hoverVariant |> ignore
         Interaction.reportFocusOrigin host
 
-    /// 把半透明 overlay 笔拂按 alpha 叠到 base 笔拂上。
-    /// 实现收敛到 `Interaction.blendOver`（hover 底色属于状态体系的一部分）。
-    let blendOverlay (baseBrush: IBrush) (overlayBrush: IBrush) : IBrush =
-        Interaction.blendOver baseBrush overlayBrush
 
     // ---------- 文字 ----------
 
@@ -240,29 +236,8 @@ module Ui =
             column.Children.Add note
         column :> Control
 
-    /// 区块小标题（侧栏分组、设置分节）。
-    let sectionLabel (text: string) : TextBlock =
-        TextBlock(
-            Text = text,
-            FontSize = Tokens.fontMicro,
-            FontWeight = FontWeight.Medium,
-            Foreground = Tokens.textFaint,
-            LetterSpacing = Spacing.Tracking.section)
 
-    /// 分节标签的宽字距档：Sidebar 的分组表头此前在本地把 Ui.sectionLabel 的返回
-    /// 实例覆盖成 textMuted + letterSpacingDisplay（两处手改同一型文本）。该外观
-    /// （弱化一档 + 最宽字距）是侧栏分组的既有意图，收进共享原语后调用方不再本地
-    /// 改色/改字距；设置与菜单分组仍用默认 sectionLabel，两档有意分层。
-    let sectionLabelWide (text: string) : TextBlock =
-        TextBlock(
-            Text = text,
-            FontSize = Tokens.fontMicro,
-            FontWeight = FontWeight.Medium,
-            Foreground = Tokens.textMuted,
-            LetterSpacing = Spacing.Tracking.display)
 
-    let heading (text: string) : TextBlock =
-        TextBlock(Text = text, FontSize = Tokens.fontHeading, FontWeight = FontWeight.Medium, Foreground = Tokens.text)
 
     let title (text: string) : TextBlock =
         TextBlock(Text = text, FontSize = Tokens.fontTitle, FontWeight = FontWeight.Medium, Foreground = Tokens.text)
@@ -344,38 +319,6 @@ module Ui =
     let emptyState (logo: Control) (title: string option) (hint: string) (extra: Control option) (action: Border option) : Control =
         emptyStateWith false logo title hint extra action
 
-    /// 正常的对话起点不是错误面板。输入区已经是主动作，不再重复品牌卡和按钮。
-    /// 连接与模型服务不可用仍使用上面的可操作空态。
-    let conversationPrompt (title: string) (hint: string) (action: Border option) : Control =
-        let heading =
-            TextBlock(
-                Text = title,
-                FontSize = Tokens.fontDisplay,
-                FontWeight = FontWeight.Medium,
-                Foreground = Tokens.text,
-                TextAlignment = TextAlignment.Center,
-                TextWrapping = TextWrapping.Wrap)
-        let caption =
-            TextBlock(
-                Text = hint,
-                FontSize = Tokens.fontBody,
-                Foreground = Tokens.textMuted,
-                TextAlignment = TextAlignment.Center,
-                TextWrapping = TextWrapping.Wrap,
-                LineHeight = ReadingRhythm.uiBodyLineHeight)
-        let column =
-            StackPanel(
-                Orientation = Orientation.Vertical,
-                Spacing = Spacing.spaceMd,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                MaxWidth = ContentMetrics.emptyStateMaxWidth)
-        column.Children.Add heading
-        column.Children.Add caption
-        // 平时没有重复按钮；调用方若明确提供一个恢复动作，则仍须完整呈现。
-        action |> Option.iter (fun button ->
-            button.HorizontalAlignment <- HorizontalAlignment.Center
-            column.Children.Add button)
-        column :> Control
 
     // ---------- 徽标 / 状态 ----------
 
@@ -418,8 +361,6 @@ module Ui =
     /// 中性小标签（不抢强调色配额）。
     let tag (text: string) : Border = tagWith Neutral text
 
-    let statusDot (size: float) : Ellipse =
-        Ellipse(Width = size, Height = size, Fill = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center)
 
     /// 旋转指示器：只在真正等待时出现。
     let spinner (size: float) : Control =
@@ -562,12 +503,6 @@ module Ui =
 
 
 
-    /// 替换图标按钮的图形（发送 ↔ 停止等状态切换）。
-    let setIcon (host: Border) (icon: IBrush -> Control) (brush: IBrush) =
-        let glyph = icon brush
-        glyph.HorizontalAlignment <- HorizontalAlignment.Center
-        glyph.VerticalAlignment <- VerticalAlignment.Center
-        host.Child <- glyph
 
     // ---------- 文字按钮 ----------
 
@@ -613,21 +548,8 @@ module Ui =
         Avalonia.Automation.AutomationProperties.SetName(host, text)
         host
 
-    let setButtonText (host: Border) (text: string) =
-        match host.Child with
-        | :? TextBlock as tb ->
-            tb.Text <- text
-            Avalonia.Automation.AutomationProperties.SetName(host, text)
-        | _ -> ()
 
-    let preparePendingButton (host: Border) =
-        host.MinWidth <- max host.MinWidth ControlMetrics.pendingActionMinWidth
 
-    /// 异步提交按钮保持同一几何，只切换文案和 enabled state。
-    let setButtonPending (host: Border) (pending: bool) (idleText: string) (pendingText: string) =
-        setButtonText host (if pending then pendingText else idleText)
-        setEnabled host (not pending)
-        Avalonia.Automation.AutomationProperties.SetHelpText(host, if pending then pendingText else "")
 
     // ---------- 输入 ----------
 
@@ -684,33 +606,14 @@ module Ui =
 
     let setFieldError (box: TextBox) (message: string) = fieldCheck.SetError(box, message)
 
-    let clearFieldError (box: TextBox) = fieldCheck.Clear box
 
-    /// 用户一旦动手修正任一字段，表单级摘要立刻收起并清空。
-    let bindValidationSummaryReset (summary: TextBlock option) (boxes: TextBox seq) =
-        Wanxiang2.FieldCheck.FieldCheck.BindSummaryReset(summary, boxes)
 
-    /// 带标签的输入行。
-    let labeledField (labelText: string) (placeholder: string) : Control * TextBox =
-        let shell, box = textField placeholder
-        fieldGroup labelText "" shell (Some(fieldValidationMessage box :> Control)), box
 
     /// 带 label / hint / validation 的标准输入组。
     let inputFieldGroup (labelText: string) (hint: string) (box: TextBox) : Control =
         fieldGroup labelText hint (box.Parent :?> Control) (Some(fieldValidationMessage box :> Control))
 
-    /// 非 TextBox 控件（select、textarea 外壳、只读值等）的标准字段组。
-    let controlFieldGroup (labelText: string) (hint: string) (control: Control) : Control =
-        fieldGroup labelText hint control None
 
-    /// 多行输入。
-    let textArea (placeholder: string) (minHeight: float) : Border * TextBox =
-        let shell, box = textField placeholder
-        box.AcceptsReturn <- true
-        box.TextWrapping <- TextWrapping.Wrap
-        box.MinHeight <- minHeight
-        box.VerticalContentAlignment <- VerticalAlignment.Top
-        shell, box
 
     /// 开关。返回容器与「读取/设置」访问器。
     let toggle (initial: bool) (onChanged: bool -> unit) : Control * (unit -> bool) * (bool -> unit) * (unit -> unit) =
@@ -762,41 +665,6 @@ module Ui =
             render ()),
         flip
 
-    /// 双列表单网格：宽时两列并排，窄时（< formSingleColumnBreakpoint）退化为单列。
-    /// 返回网格本身与「按当前宽度重新投影」的函数；调用方把后者挂到
-    /// PropertyChanged(Bounds) 上并在构建末尾调用一次。
-    ///
-    /// 两个调用点（Dialogs 参数表单、SettingsGeneral 生成表单）此前各写了一份
-    /// 几乎相同的 apply*Layout 闭包（R5）：列宽写入与行/列放置是同一份契约，
-    /// 提取到这里后，两处共享唯一实现，断点只出自 LayoutPolicy。
-    let twoColumnForm
-        (columnSpacing: float)
-        (rowSpacing: float)
-        (rowCount: int)
-        (fields: Control list)
-        : Grid * (unit -> unit) =
-        let grid = Grid(ColumnSpacing = columnSpacing, RowSpacing = rowSpacing)
-        grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-        grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
-        for _ in 1 .. rowCount do grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-        for field in fields do grid.Children.Add field
-        let apply () =
-            let width = grid.Bounds.Width
-            let single = width > 0.0 && width < LayoutPolicy.formSingleColumnBreakpoint
-            grid.ColumnDefinitions[1].Width <-
-                if single then GridLength(0.0) else GridLength(1.0, GridUnitType.Star)
-            let place (control: Control) row column =
-                Grid.SetRow(control, row)
-                Grid.SetColumn(control, column)
-            if single then
-                fields |> List.iteri (fun row control -> place control row 0)
-            else
-                // 双列：奇数个字段时最后一个字段占左列，右列留空。
-                fields
-                |> List.iteri (fun index control -> place control (index / 2) (index % 2))
-        grid.PropertyChanged.Add(fun args ->
-            if args.Property = Visual.BoundsProperty then apply ())
-        grid, apply
 
     /// 设置行内容：左文（label + caption 竖列）右控件（Dock 右停靠、末子填充）的
     /// DockPanel 行内容。开关行与自定义右侧控件的设置行共用这同一结构；
@@ -863,23 +731,6 @@ module Ui =
             Avalonia.Automation.AutomationProperties.SetItemStatus(row, if v then "开启" else "关闭")
         row :> Control, read, syncWrite
 
-    /// 表单校验反馈的统一节律（SettingsGeneral / SettingsTools / SettingsProviders /
-    /// Dialogs 共用）：多错 → 顶部摘要 live region + 「有 N 处需要修正」toast +
-    /// 聚焦摘要（Dispatcher 二次稳焦）；单错 → 该字段消息 toast + 聚焦字段。
-    /// errors 按字段提交顺序给出，首元素即首个失败字段；summary 可为 None
-    /// （无摘要位时多错退化为单错节律）；toast 通道由调用方传入
-    ///（各视图固定 Warning 档），本辅助不拥有 OverlayHost。
-    /// 复制确认（Wanxiang2.CopyButton）：按钮在确认期间保持 ✓，非减弱动效时先淡出一档。
-    /// 返回「刚复制」触发器；show 在每次状态推进时被调用。
-    let attachCopyConfirm (button: Control) (show: Wanxiang2.CopyButton.CopyState -> unit) : unit -> unit =
-        let copy =
-            Wanxiang2.CopyButton.CopyButton(
-                button,
-                { FadeOpacity = SharedTheme.manager.Metric Wanxiang2.ThemeMetrics.Metric.OpacityCopyConfirmFade
-                  Hold = Wanxiang2.Theme.LiveValue MotionLedger.copyConfirmationHold
-                  Fade = Wanxiang2.Theme.LiveValue MotionLedger.copyConfirmationFade })
-        copy.StateChanged.Add show
-        fun () -> copy.Copied(MotionPolicy.isReduced ())
 
     let applyValidationFeedback (errors: (TextBox * string) list) (summary: TextBlock option) (toast: string -> unit) : unit =
         Wanxiang2.FieldCheck.FieldCheck.Apply(errors, summary) |> Option.iter toast

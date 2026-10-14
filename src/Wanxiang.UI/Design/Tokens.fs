@@ -27,23 +27,13 @@ module Tokens =
     let fontReading = 14.5
     /// 小标题
     let fontTitle = 16.0
-    /// 区块标题
-    let fontHeading = 19.0
     /// 页面主标题
     let fontDisplay = 25.0
 
     /// 不透明度阶梯：状态表达只切透明度，不改尺寸，避免布局跳动。
     let opacityDisabled = 0.5
     let opacitySubtle = 0.62
-    let opacityComposerDisabled = 0.72
     let opacityPressed = 0.78
-    /// 流式光标呼吸的不透明度区间：只改 opacity、不改尺寸；
-    /// 节奏由 MotionLedger.caretBreathPhase + caretBreathFrame 驱动（MessageCard 已消费）
-    let opacityCaretBreathMin = 0.55
-    let opacityCaretBreathMax = 1.0
-    /// 复制确认反馈淡出时经过的中间不透明度（随后回到 1.0），
-    /// 节奏消费 MotionLedger.copyConfirmationFade（MessageCard 复制确认已消费）
-    let opacityCopyConfirmFade = 0.6
 
     /// hover 微暗：整条可点内容（消息头、操作条）hover 时从 1.0 压到 0.9。
     /// 有意不并入上面的状态阶梯：那几档服务禁用/按压/输入态，这一档服务 hover 提
@@ -58,10 +48,6 @@ module Tokens =
     let skeletonOpacityBreathMin = 0.55
     let skeletonOpacityReduced = 0.85
 
-    /// 带框块（代码块、表格）的统一内边距。两者常在同一段回答里前后出现，
-    /// 各自取值会让左缘差几个像素，读起来像没对齐的两张卡片。
-    let blockPaddingX = Spacing.spaceXl
-    let blockPaddingY = Spacing.spaceMd
 
     // ---- 结构尺寸 ----
     let sidebarWidth = 284.0
@@ -72,13 +58,9 @@ module Tokens =
     let barHeight = 52.0
     let iconButton = 30.0
     let iconGlyph = Spacing.Glyph.md
-    let iconStroke = 1.6
     let shellInset = Spacing.space2xl
 
     // ---- 品牌 ----
-    let logoSplash = 76.0
-    let logoRadiusRatio = 22.0 / 76.0
-    let logoSidebar = 26.0
     let logoEmpty = 68.0
     let logoAvatar = 26.0
 
@@ -105,8 +87,6 @@ module Tokens =
     /// rail 与 surface 之间的暖纸中间容器（分组容器、行条）：
     /// 比卡片轻、比侧栏亮，仍是暖纸层，不抢卡片层级
     let surfaceContainer = track Wanxiang2.ThemePalette.PaletteKey.SurfaceContainer
-    /// 柔和表面微底色（思考过程、次级容器背景）
-    let surfaceSoft = track Wanxiang2.ThemePalette.PaletteKey.SurfaceSoft
     let border = track Wanxiang2.ThemePalette.PaletteKey.Border
     let borderSoft = track Wanxiang2.ThemePalette.PaletteKey.BorderSoft
     /// 发丝线：最轻的分割/描边，比 borderSoft 再退一档；
@@ -145,7 +125,6 @@ module Tokens =
 
     // ---- 代码 ----
     let codeBg = track Wanxiang2.ThemePalette.PaletteKey.CodeBg
-    let codeBlockBackground = codeBg
     let codeHeaderBg = track Wanxiang2.ThemePalette.PaletteKey.CodeHeaderBg
     let codeBorder = track Wanxiang2.ThemePalette.PaletteKey.CodeBorder
     let codeText = track Wanxiang2.ThemePalette.PaletteKey.CodeText
@@ -167,7 +146,6 @@ module Tokens =
     let hover = track Wanxiang2.ThemePalette.PaletteKey.Hover
     let pressed = track Wanxiang2.ThemePalette.PaletteKey.Pressed
 
-    let inlineCodeBg = track Wanxiang2.ThemePalette.PaletteKey.InlineCode
     let tableStripe = track Wanxiang2.ThemePalette.PaletteKey.TableStripe
     let tableHeader = track Wanxiang2.ThemePalette.PaletteKey.TableHeader
 
@@ -198,9 +176,5 @@ module Tokens =
     /// 于是中文段落里的拉丁词全部被拉成等宽，观感像日志而非文章。
     let fontFamily = SharedTheme.manager.FontFamily.Value
 
-    /// 代码与等宽场景。等宽子集只含拉丁与符号，因此把正文字体列为回落，
-    /// 否则代码或工具参数里出现中文会渲染成豆腐块。
-    let monoFontFamily = SharedTheme.manager.MonoFontFamily.Value
 
     let thickness (all: float) = Thickness all
-    let corner (all: float) = CornerRadius all

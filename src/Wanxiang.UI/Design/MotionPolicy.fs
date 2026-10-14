@@ -36,9 +36,6 @@ module MotionLedger =
     let searchInputDebounce = TimeSpan.FromMilliseconds 160.0
     /// 骨架屏呼吸帧：50ms 一级，在 0.55~0.95 之间平滑起伏。
     let skeletonBreathFrame = TimeSpan.FromMilliseconds 50.0
-    /// 流式光标呼吸帧：50ms 一级，驱动 opacity 在呼吸区间内起伏。
-    /// 与 skeletonBreathFrame 数值相同但语义不同（光标不是骨架加载态），分记。
-    let caretBreathFrame = TimeSpan.FromMilliseconds 50.0
     /// 对话切换骨架延迟：对话快照 300ms 内到达就不挂任何 loading chrome。
     let conversationSkeletonDelay = TimeSpan.FromMilliseconds 300.0
     /// 平滑滚动帧节奏：约 60fps 的 16ms tick。
@@ -66,8 +63,6 @@ module MotionLedger =
     let hostRequestTimeout = TimeSpan.FromMilliseconds 12000.0
     /// 更早一页历史的超时检查 tick。
     let olderPageCheckTick = TimeSpan.FromMilliseconds 500.0
-    /// 决策 313：导入命令的等待上限（旧主机不认识命令时会静默忽略）。
-    let importResponseTimeout = TimeSpan.FromMilliseconds 30000.0
     /// 进度文字节流时长（预留）：传输事件可远快于人眼阅读，100ms 约每秒 10 次，既顺滑又可读。
     let progressTextThrottle = TimeSpan.FromMilliseconds 100.0
     /// 主题颜色过渡时长（预留）：200ms 约 60fps 下 12 帧，落在常见 150~300ms 状态色过渡区间，可感知而不拖沓。
@@ -82,26 +77,14 @@ module MotionLedger =
     let controlStateDuration () =
         MotionPolicy.duration controlStateTransition.TotalMilliseconds
 
-    /// 流式光标呼吸单程时长（下限→上限→下限约 1.8s 一周期）。
-    /// 呼吸只改 opacity，不改尺寸，几何契约不变。
-    let caretBreathPhase = TimeSpan.FromMilliseconds 900.0
 
-    /// 复制确认反馈的淡入淡出时长：copy → ✓ → 复原之间的过渡只改 opacity。
-    let copyConfirmationFade = TimeSpan.FromMilliseconds 150.0
 
     /// scrim（compact 抽屉遮罩与对话框遮罩共用一层）的不透明度淡入淡出时长：
     /// 只改 opacity、不碰任何几何/位移动画；150ms 与复制确认同一手感区间。
     /// 生效时长由消费点经 MotionPolicy 降级（减弱动效归零，瞬时切换）。
     let scrimFade = TimeSpan.FromMilliseconds 150.0
 
-    /// 披露箭头（chevron）旋转过渡：150ms，只改 RotateTransform.Angle，
-    /// 不碰布局几何（MessageCard 三处披露箭头）。
-    /// 与 controlRowFade 同为 150ms 但语义不同（transform vs opacity），分记。
-    let disclosureChevronRotate = TimeSpan.FromMilliseconds 150.0
 
-    /// 控件行/条级反馈淡入淡出：150ms，只补间 Opacity
-    ///（MessageCard 操作条、Composer 附件 chip），与复制确认同一手感区间。
-    let controlRowFade = TimeSpan.FromMilliseconds 150.0
 
     /// toast 进出场淡入淡出时长：约 300ms（200~300ms 状态过渡区间的舒缓档），
     /// 只补间 Opacity，不做任何位移/尺寸动画；经 MotionPolicy 门控，减弱动效归零即时切换。
