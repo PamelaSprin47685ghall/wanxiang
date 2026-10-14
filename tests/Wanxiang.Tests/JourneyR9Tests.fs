@@ -130,7 +130,7 @@ let ``263 未回复卡可重试`` () =
 let ``263 AppShell 只在空闲且没有失败卡时补出未回复卡`` () =
     let shell = read "src/Wanxiang.UI/AppShell.fs"
     Assert.Contains("ReplyTail.isUnanswered DateTimeOffset.UtcNow messages", shell)
-    Assert.Contains("None when not generating && streaming.IsNone && run.partial.IsNone", shell)
+    Assert.Contains("ConversationSurface.decide", shell)
 
 // ---- 264 ----
 

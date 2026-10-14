@@ -162,9 +162,7 @@ type SettingsView(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged
         let sections = SettingsSection.all
         let count = sections.Length
         let idx = sections |> List.tryFindIndex ((=) current) |> Option.defaultValue 0
-        let nextIdx =
-            let raw = (idx + direction) % count
-            if raw < 0 then raw + count else raw
+        let nextIdx = RovingIndex.wrap idx direction count
         let target = sections[nextIdx]
         this.Select target
         match navButtons.TryGetValue target with

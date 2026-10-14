@@ -394,7 +394,11 @@ type MainView() as this =
                 ModelSwitcher.chipText view.config.provider view.config.model catalog,
                 (Catalog.tryProvider view.config.provider catalog |> Option.map _.label |> Option.defaultValue ""),
                 authenticated)
-            if List.isEmpty messages && streaming.IsNone && run.error.IsNone then
+            let surface =
+                ConversationSurface.decide
+                    (List.isEmpty messages) streaming.IsSome run.error.IsSome run.partial.IsSome generating
+                    (ReplyTail.isUnanswered DateTimeOffset.UtcNow messages) authenticated run.generationId.IsSome
+            if surface.showEmpty then
                 chat.HideSkeletonLoading()
                 chat.ShowEmpty(EmptyConversation, None)
             else
@@ -404,23 +408,21 @@ type MainView() as this =
                 chat.SetOlderAvailable view.pageHasMore
                 let retry () = this.Regenerate()
                 // 先同步生成状态：渲染时要据此区分工具调用「执行中」与「结果未知」
-                chat.SetGenerating(generating, (if generating then "生成中" else ""))
+                chat.SetGenerating(generating, surface.generatingText)
                 chat.SetPartialReply(run.partial |> Option.map (fun p -> p, fun () -> this.ContinueGeneration(convId, p)))
                 chat.RenderMessages(
                     messages,
                     streaming,
-                    (match run.error with
-                     | Some e -> Some(e, retry)
-                     | None when not generating && streaming.IsNone && run.partial.IsNone
-                                 && ReplyTail.isUnanswered DateTimeOffset.UtcNow messages ->
-                         Some(UnansweredReply.error, retry)
-                     | None -> None),
+                    (match surface.tailError, run.error with
+                     | TailError.RunError, Some e -> Some(e, retry)
+                     | TailError.Unanswered, _ -> Some(UnansweredReply.error, retry)
+                     | _ -> None),
                     prefs.fontScale,
                     prefs.autoCollapseReasoning,
                     run.usage,
                     missingAttachments)
                 this.TryReveal(convId, view, messages)
-            composer.SetEnabled(authenticated, (if authenticated then "" else "连接已断开，重新连接后可继续发送。"))
+            composer.SetEnabled(surface.composerEnabled, surface.composerReason)
         composer.SetGenerating generating
         composer.SetCanStop(authenticated && run.generationId.IsSome)
         composer.SetAttachments((attachmentDraft ()).Items)
@@ -552,8 +554,7 @@ type MainView() as this =
     member private this.UpdateHostStatusLine() =
         if authenticated then
             // 主机地址已在上一行（serverCaption）显示，状态行只说状态，不重复主机名
-            let suffix = if settings.Health.ConfigIssue.IsSome then " · 配置有误" else ""
-            sidebar.SetConnection(true, "已连接" + suffix)
+            sidebar.SetConnection(true, ConversationSurface.hostStatusLine settings.Health.ConfigIssue.IsSome)
 
     member private this.SavePrefs(next: UiPrefs) =
         let themeChanged = next.theme <> prefs.theme

@@ -126,17 +126,20 @@ module Menu =
                     |> Array.ofSeq
                 if items.Length > 0 then
                     let current = items |> Array.tryFindIndex _.IsFocused |> Option.defaultValue -1
-                    let next =
+                    let key =
                         match e.Key with
-                        | Key.Home
-                        | Key.PageUp -> 0
-                        | Key.End
-                        | Key.PageDown -> items.Length - 1
-                        | Key.Up -> if current <= 0 then items.Length - 1 else current - 1
-                        | _ -> if current < 0 || current >= items.Length - 1 then 0 else current + 1
-                    e.Handled <- true
-                    items[next].Focus(NavigationMethod.Directional) |> ignore
-                    items[next].BringIntoView())
+                        | Key.Home -> RovingKey.Home
+                        | Key.PageUp -> RovingKey.PageUp
+                        | Key.End -> RovingKey.End
+                        | Key.PageDown -> RovingKey.PageDown
+                        | Key.Up -> RovingKey.Up
+                        | _ -> RovingKey.Down
+                    match RovingIndex.menu key current items.Length with
+                    | Some next ->
+                        e.Handled <- true
+                        items[next].Focus(NavigationMethod.Directional) |> ignore
+                        items[next].BringIntoView()
+                    | None -> ())
 
     /// 打开一个菜单。`entries` 为空时不打开。
     let show (overlay: OverlayHost) (anchor: Control) (alignRight: bool) (entries: MenuEntry list) =

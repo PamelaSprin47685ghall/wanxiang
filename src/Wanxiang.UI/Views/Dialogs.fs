@@ -366,7 +366,7 @@ module Dialogs =
         let submitCode () =
             let code = if isNull codeBox.Text then "" else codeBox.Text.Trim()
             if code.Length = 6 then onSubmitCode code
-            else announce "请输入 6 位配对码。"
+            else announce PairingCodeInput.incomplete
         submitCodeRef <- submitCode
         codeBox.KeyDown.Add(fun e ->
             if e.Key = Key.Enter then
@@ -376,29 +376,18 @@ module Dialogs =
         // 凑满 6 位即自动提交，手机上不必再去够“提交配对码”按钮。
         let mutable normalizingCode = false
         // TextChanged 会在布局重排时重放同一文本：同一串 6 位码只自动提交一次，改动后才可再次触发。
-        let mutable autoSubmitted = ""
+        let autoSubmit = PairingAutoSubmit()
         codeBox.TextChanged.Add(fun _ ->
             if not normalizingCode then
                 let raw = if isNull codeBox.Text then "" else codeBox.Text
-                let digits =
-                    raw
-                    |> Seq.filter Char.IsDigit
-                    |> Seq.map (fun ch -> char (int '0' + int (Char.GetNumericValue ch)))
-                    |> Seq.truncate 6
-                    |> Seq.toArray
-                    |> String
+                let digits = PairingCodeInput.normalize raw
                 if digits <> raw then
                     normalizingCode <- true
                     codeBox.Text <- digits
                     codeBox.CaretIndex <- digits.Length
                     normalizingCode <- false
-                codeBox.LetterSpacing <- (if digits.Length = 0 then 0.0 else 8.0)
-                if digits.Length = 6 then
-                    if digits <> autoSubmitted then
-                        autoSubmitted <- digits
-                        submitCode ()
-                else
-                    autoSubmitted <- "")
+                codeBox.LetterSpacing <- PairingCodeInput.letterSpacing digits
+                if autoSubmit.Changed digits then submitCode ())
 
         // 决策 273：配对模式下「提交配对码」是唯一主按钮，页脚「连接」退场，避免两个主次不清的按钮并存。
         let codeButton = Ui.button Ui.Primary "提交配对码" submitCode
