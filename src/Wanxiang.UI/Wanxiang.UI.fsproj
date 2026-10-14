@@ -158,6 +158,17 @@
     <PackageReference Include="Wanxiang2.LinkChunks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MarkdownBlocks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MathTypeset" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.CaretBreath" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ComposerSendState" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DraftSummaryText" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.GenerationDraft" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.GenerationForm" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.IdleSurface" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SidebarEmpty" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.StartReady" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ToastDwell" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ToastQueue" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ToolCallState" Version="0.0.0-local" />
   </ItemGroup>
 
 </Project>

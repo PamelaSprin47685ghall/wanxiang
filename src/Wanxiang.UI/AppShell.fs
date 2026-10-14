@@ -332,11 +332,11 @@ type MainView() as this =
         sidebar.SetServerUrl lastUrl
         approvalPanel.SetConversation activeConvId
         let startReady =
-            authenticated && Catalog.isReady catalog && not generating && run.error.IsNone
-            && (match activeConvId, activeConversation () with
-                | None, _ -> true
-                | Some _, Some view -> view.messages.Count = 0
-                | _ -> false)
+            StartReady.isReady authenticated (Catalog.isReady catalog) generating run.error.IsSome
+                (match activeConvId, activeConversation () with
+                 | None, _ -> ActiveConversation.None
+                 | Some _, Some view -> ActiveConversation.Loaded view.messages.Count
+                 | Some _, None -> ActiveConversation.Loading)
         match chatColumn with
         | :? ConversationWorkspace as surface -> surface.SetStarting startReady
         | _ -> ()
@@ -347,49 +347,39 @@ type MainView() as this =
             chat.SetConversationChrome false
             chat.SetBreadcrumb(None, ignore)
             chat.SetTitle("新对话", false)
-            if not authenticated then
-                match connectionError with
-                | Some err ->
-                    // 令牌失效时入口直接叫“重新配对”，而不是泛泛的“重新连接”
-                    let entryLabel =
-                        match connectionIssue |> Option.bind ConnectionIssue.retry with
-                        | Some RePair -> "重新配对"
-                        | _ -> "重新连接"
-                    chat.ShowEmpty(ChatEmptyState.ConnectionFailed err, Some(entryLabel, fun () -> this.ShowConnectDialog()))
-                    composer.SetEnabled(false, sprintf "连接失败：%s" err)
-                    composer.SetModelLabel "未连接"
-                | None ->
-                    if not hasSavedCredentials then
-                        chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接主机", fun () -> this.ShowConnectDialog()))
-                        composer.SetEnabled(false, "可以先写草稿，连上主机后再发送。")
-                        composer.SetModelLabel "未连接"
-                    else
-                        chat.ShowEmpty(ChatEmptyState.NotConnected, Some("连接主机", fun () -> this.ShowConnectDialog()))
-                        composer.SetEnabled(false, "正在连接主机…草稿已保留。")
-                        composer.SetModelLabel "正在连接"
-            elif not (Catalog.isReady catalog) || this.Onboarding.IsBusy then
-                // 首次运行：卡片就在聊天界面里，不必先进设置页。连接进行中即使目录暂时就绪
-                // 也保留卡片，免得探测失败要撤销时它已被收起。
+            let rePair =
+                match connectionIssue |> Option.bind ConnectionIssue.retry with
+                | Some RePair -> true
+                | _ -> false
+            let idle =
+                IdleSurface.decide authenticated connectionError rePair hasSavedCredentials
+                    (Catalog.isReady catalog) this.Onboarding.IsBusy
+            let primary = idle.primary |> Option.map (fun label -> label, fun () -> this.ShowConnectDialog())
+            match idle.empty with
+            | IdleEmpty.ConnectionFailed err -> chat.ShowEmpty(ChatEmptyState.ConnectionFailed err, primary)
+            | IdleEmpty.NotConnected -> chat.ShowEmpty(ChatEmptyState.NotConnected, primary)
+            | IdleEmpty.Onboarding ->
+                // 首次运行：卡片就在聊天界面里，不必先进设置页。
                 chat.ShowEmbeddedEmpty this.Onboarding.Root
                 this.Onboarding.StartDiscovery()
-                composer.SetEnabled(false, "先在上方添加一个模型服务，就能在这里输入。")
-                composer.SetModelLabel "未配置模型"
-            else
-                chat.ShowEmpty(ChatEmptyState.NoConversation, None)
-                composer.SetEnabled(true, "")
-                match draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog) with
-                | Some(providerId, model) ->
-                    composer.SetModelLabel(Catalog.describeModel providerId model catalog)
-                    composer.SetModelVision(fst (Catalog.visionOf providerId model catalog), Catalog.describeModel providerId model catalog)
-                | None ->
-                    composer.SetModelLabel "未选择模型"
-                    composer.SetModelVision(VisionUnknown, "")
+            | IdleEmpty.NoConversation -> chat.ShowEmpty(ChatEmptyState.NoConversation, None)
+            composer.SetEnabled(idle.composerEnabled, idle.composerReason)
+            match idle.modelLabel with
+            | Some label -> composer.SetModelLabel label
+            | None ->
+                    match draftModelSelection |> Option.orElse (Catalog.defaultSelection catalog) with
+                    | Some(providerId, model) ->
+                        composer.SetModelLabel(Catalog.describeModel providerId model catalog)
+                        composer.SetModelVision(fst (Catalog.visionOf providerId model catalog), Catalog.describeModel providerId model catalog)
+                    | None ->
+                        composer.SetModelLabel "未选择模型"
+                        composer.SetModelVision(VisionUnknown, "")
         | Some convId, None ->
             chat.SetConversationChrome true
             // Loading 分级：快照 300ms 内到达就不闪任何 loading chrome，超时才在本地挂骨架；
             // 流式文本本身就是进度，这里不叠加任何页级 loading。
             this.ShowConversationLoadingDeferred convId
-            composer.SetEnabled(false, "正在加载对话…")
+            composer.SetEnabled(false, IdleSurface.LoadingReason)
         | Some convId, Some view ->
             this.DisarmSkeletonLoading()
             let messages = messagesOf view
@@ -486,9 +476,7 @@ type MainView() as this =
             let texts = snapshot.drafts |> List.filter (fun d -> not (String.IsNullOrWhiteSpace d.text) || not (List.isEmpty d.attachments)) |> List.length
             let unsent = snapshot.unsent |> List.length
             settings.LocalDrafts.Summary <-
-                if not prefs.persistDrafts then "已关闭：不会在本机保存草稿。"
-                elif texts = 0 && unsent = 0 then "当前没有保存的草稿。"
-                else sprintf "已保存 %d 份草稿、%d 条未确认的消息。" texts unsent
+                DraftSummaryText.text prefs.persistDrafts texts unsent
 
     /// 保存到本机。关闭保存、尚未读完磁盘、或内容没变时什么也不做。
     member this.FlushDrafts() =

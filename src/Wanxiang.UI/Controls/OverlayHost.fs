@@ -106,8 +106,9 @@ type OverlayHost(root: Grid) =
         | None -> ()
     // 同时可见的提示条上限与去重登记：提示条只配给跨上下文确认与短暂系统状态，
     // 堆叠盖住内容或重复刷屏就违背了它存在的理由，因此新条挤掉最旧的、同文只留最新一条。
-    let toastCap = 3
-    let toastEntries = ResizeArray<string * (unit -> unit)>()
+    // 去重、上限与先后顺序在 ToastQueue；这里按文本记住每条的关闭动作。
+    let toastQueue = ToastQueue()
+    let toastRemovers = Collections.Generic.Dictionary<string, bool -> unit>()
     /// 可见提示条上的行内动作（按出现顺序）：Ctrl/⌘+Z 触发最新一条「撤销」（决策 232）。
     let toastActions = ResizeArray<string * string * (unit -> unit)>()
     /// 决策 311：可见提示条的动作按钮（按出现顺序），供 Tab / F6 到达。
@@ -482,7 +483,14 @@ type OverlayHost(root: Grid) =
             row.Children.Add bar
             row.Children.Add bodyScroller
             let mutable removeRef: unit -> unit = ignore
-            let mutable paused = false
+            // 停留时长按语气取 MotionLedger；有动作时至少 8 秒、暂停规则都在 ToastDwell。
+            let dwell =
+                ToastDwell(
+                    (match tone with
+                     | Failure -> MotionLedger.toastDwellFailure.TotalMilliseconds
+                     | Warning -> MotionLedger.toastDwellWarning.TotalMilliseconds
+                     | _ -> MotionLedger.toastDwellDefault.TotalMilliseconds),
+                    action.IsSome)
             let mutable focusedAction: Control option = None
             match action with
             | Some(actionLabel, onAction) ->
@@ -503,8 +511,8 @@ type OverlayHost(root: Grid) =
                     AutomationProperties.SetHelpText(actionButton, "按 Ctrl / ⌘ + Z 直接撤销；按 F6 或 Tab 可移到这里")
                 toastButtons.Add(message, actionButton :> Control)
                 // 键盘用户正停在按钮上：倒计时暂停，读完再决定，不会在 Tab 到达后眨眼消失。
-                actionButton.GotFocus.Add(fun _ -> paused <- true)
-                actionButton.LostFocus.Add(fun _ -> paused <- false)
+                actionButton.GotFocus.Add(fun _ -> dwell.ActionFocused())
+                actionButton.LostFocus.Add(fun _ -> dwell.ActionUnfocused())
                 focusedAction <- Some(actionButton :> Control)
                 Grid.SetColumn(actionButton, 2)
                 row.Children.Add actionButton
@@ -542,21 +550,17 @@ type OverlayHost(root: Grid) =
                 | Warning -> AutomationLiveSetting.Assertive
                 | _ -> AutomationLiveSetting.Polite)
             let mutable removed = false
-            // 默认停留时长按语气取 MotionLedger：毫秒唯一来源是 toastDwell{Failure,Warning,Default}；
-            // 时间跨度转毫秒沿用既有 remainingMs 的浮点递减算法，不再写 9000.0/6500.0/4000.0 字面量。
-            let mutable remainingMs =
-                match tone with
-                | Failure -> MotionLedger.toastDwellFailure.TotalMilliseconds
-                | Warning -> MotionLedger.toastDwellWarning.TotalMilliseconds
-                | _ -> MotionLedger.toastDwellDefault.TotalMilliseconds
-            if action.IsSome then remainingMs <- max remainingMs (TimeSpan.FromSeconds 8.0).TotalMilliseconds
+            // 被 ToastQueue 挤出或同文替换时，队列里已经没有它（新的同文条目不能被误删）。
+            let mutable evicted = false
             let expire = new DispatcherTimer(Interval = MotionLedger.toastDismissTick)
             let remove () =
                 if not removed then
                     removed <- true
                     expire.Stop()
                     // 去重/计数立即释放：同文再出或后续入条不再受本条约限。
-                    toastEntries.RemoveAll(fun (text, _) -> text = message) |> ignore
+                    if not evicted then
+                        toastQueue.Remove message
+                        toastRemovers.Remove message |> ignore
                     toastActions.RemoveAll(fun (text, _, _) -> text = message) |> ignore
                     toastButtons.RemoveAll(fun (text, _) -> text = message) |> ignore
                     let hadFocus = focusedAction |> Option.exists (fun b -> b.IsFocused)
@@ -565,18 +569,15 @@ type OverlayHost(root: Grid) =
                     // Escape / 点击 / 超时 / 上限挤出四条路径行为一致。
                     toastStack.Children.Remove toast |> ignore
                     if hadFocus then toastFocusHome ()
-            // 同文只留最新一条：先清掉旧的，计数里也不再占位。
-            toastEntries
-            |> Seq.filter (fun (text, _) -> text = message)
-            |> Seq.map snd
-            |> Array.ofSeq
-            |> Array.iter (fun dismiss -> dismiss ())
-            // 新条挤掉最旧的：提示条永远是少数派，不盖住内容。
-            while toastEntries.Count >= toastCap do
-                let _, dismissOldest = toastEntries[0]
-                dismissOldest ()
+            // 同文只留最新一条、新条挤掉最旧的：被撤下的由 ToastQueue 给出。
+            for dismissed in toastQueue.Admit message do
+                match toastRemovers.TryGetValue dismissed with
+                | true, dismiss ->
+                    toastRemovers.Remove dismissed |> ignore
+                    dismiss true
+                | _ -> ()
             removeRef <- remove
-            toastEntries.Add(message, remove)
+            toastRemovers[message] <- (fun byQueue -> (if byQueue then evicted <- true); remove ())
             match action with
             | Some(actionLabel, onAction) ->
                 toastActions.Add(message, actionLabel, fun () -> remove (); onAction ())
@@ -585,16 +586,14 @@ type OverlayHost(root: Grid) =
             // Escape 唯一归属 HandleEscape（topmost-first）：这里不再自带局部 Esc 处理。
             // 提示条外框 Focusable=false；暂停计时由 hover 与动作按钮的焦点共同驱动（决策 311）：
             // 指针离开时若键盘焦点仍在按钮上，继续暂停。
-            toast.PointerEntered.Add(fun _ -> paused <- true)
-            toast.PointerExited.Add(fun _ -> paused <- focusedAction |> Option.exists (fun b -> b.IsFocused))
+            toast.PointerEntered.Add(fun _ -> dwell.PointerEntered())
+            toast.PointerExited.Add(fun _ -> dwell.PointerExited(focusedAction |> Option.exists (fun b -> b.IsFocused)))
             toastStack.Children.Add toast
             // 触发进场淡入（0→1）；减弱动效时 transition 时长为零，等同瞬时全显。
             toast.Opacity <- 1.0
             fitToastsToViewport ()
             expire.Tick.Add(fun _ ->
-                if not paused then
-                    remainingMs <- remainingMs - expire.Interval.TotalMilliseconds
-                    if remainingMs <= 0.0 then remove ())
+                if dwell.Tick expire.Interval.TotalMilliseconds then remove ())
             expire.Start()
 
     /// Esc / 点击层外的统一关闭入口，由 AppShell 在根视图上转发按键。
@@ -627,9 +626,10 @@ type OverlayHost(root: Grid) =
             if dialogGuard () then this.CloseDialog()
             // 守卫拦截（提交 pending 中）也不透出：不关闭但已消费。
             true
-        elif toastEntries.Count > 0 then
-            let _, dismissNewest = toastEntries[toastEntries.Count - 1]
-            dismissNewest ()
+        elif not (List.isEmpty toastQueue.Showing) then
+            match toastRemovers.TryGetValue(List.last toastQueue.Showing) with
+            | true, dismissNewest -> dismissNewest false
+            | _ -> ()
             true
         else
             false

@@ -290,61 +290,42 @@ type Composer(actions: ComposerActions) as this =
         input.VerticalContentAlignment <-
             if isMultiLine then VerticalAlignment.Top else VerticalAlignment.Center
 
-        let hasText = not (String.IsNullOrWhiteSpace input.Text)
-        let hasAttachment = attachments |> List.exists (fun a -> a.ready)
-        let uploading = attachments |> List.exists (fun a -> not a.ready && not a.failed)
-        let hasFailed = attachments |> List.exists _.failed
-        let hasImage = attachments |> List.exists (fun a -> MediaTypes.isImage a.mediaType)
-        let visionBlocked = hasImage && visionSupport = VisionNo
-        visionNoticeText.Text <- if visionBlocked then ModelVision.blockedMessage visionModelLabel else ""
-        visionNotice.IsVisible <- visionBlocked
+        let view =
+            ComposerSendState.decide
+                { enabled = enabled
+                  generating = generating
+                  canStop = canStop
+                  disabledReason = disabledReason
+                  hasText = not (String.IsNullOrWhiteSpace input.Text)
+                  attachments = attachments |> List.map (fun a -> { ready = a.ready; failed = a.failed; isImage = MediaTypes.isImage a.mediaType })
+                  visionNo = (visionSupport = VisionNo)
+                  visionBlockedMessage = ModelVision.blockedMessage visionModelLabel
+                  enterSends = enterSends }
+        visionNoticeText.Text <- if view.visionBlocked then ModelVision.blockedMessage visionModelLabel else ""
+        visionNotice.IsVisible <- view.visionBlocked
         Avalonia.Automation.AutomationProperties.SetName(visionNotice, visionNoticeText.Text)
-        // 失败残留同样挡住发送：TryConsumeReady 只认全 ready；用户移除或重加后即恢复，不楔死。
-        let canSend = enabled && not uploading && not hasFailed && not visionBlocked && (hasText || hasAttachment)
-        Ui.setEnabled sendButton (if generating then canStop else canSend)
-        Ui.setEnabled queueButton canSend
+        Ui.setEnabled sendButton view.sendEnabled
+        Ui.setEnabled queueButton view.queueEnabled
         // 排队只在生成时成立。闲置时把它从布局中收起，发送键仍靠右不移动。
-        queueButton.IsVisible <- generating
-        if generating && not canSend then
+        queueButton.IsVisible <- view.queueVisible
+        if generating && not view.canSend then
             queueButton.Opacity <- Tokens.opacityDisabled
             queueButton.IsHitTestVisible <- false
             queueButton.Focusable <- false
-        let sendTip =
-            if generating then
-                if canStop then "停止生成 (Escape)" else "等待主机确认…"
-            elif not enabled then
-                if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
-            elif uploading then
-                "附件上传中，请稍候…"
-            elif hasFailed then
-                "有附件上传失败，移除或重新添加后发送"
-            elif visionBlocked then
-                ModelVision.blockedMessage visionModelLabel
-            elif not hasText && not hasAttachment then
-                "请输入消息或添加附件"
-            else
-                if enterSends then "发送（Enter）" else "发送（Ctrl / ⌘ + Enter）"
-        ToolTip.SetTip(sendButton, sendTip)
-        let sendLabel = if generating then "停止生成" else "发送"
-        Avalonia.Automation.AutomationProperties.SetName(sendButton, sendLabel)
-        Avalonia.Automation.AutomationProperties.SetHelpText(sendButton, sendTip)
+        ToolTip.SetTip(sendButton, view.sendTip)
+        Avalonia.Automation.AutomationProperties.SetName(sendButton, view.sendLabel)
+        Avalonia.Automation.AutomationProperties.SetHelpText(sendButton, view.sendTip)
         if not (isNull sendButton.Child) then
-            Avalonia.Automation.AutomationProperties.SetName(sendButton.Child, sendLabel)
+            Avalonia.Automation.AutomationProperties.SetName(sendButton.Child, view.sendLabel)
 
-        if generating then
-            let queueTip =
-                if not enabled then
-                    if not (String.IsNullOrWhiteSpace disabledReason) then disabledReason else "连接已断开"
-                elif uploading then "附件上传中，请稍候…"
-                elif hasFailed then "有附件上传失败，移除或重新添加后发送"
-                elif not hasText && not hasAttachment then "请输入消息或添加附件"
-                else
-                    if enterSends then "排队发送（Enter）" else "排队发送（Ctrl / ⌘ + Enter）"
+        match view.queueTip with
+        | Some queueTip ->
             ToolTip.SetTip(queueButton, queueTip)
             Avalonia.Automation.AutomationProperties.SetName(queueButton, "排队发送")
             Avalonia.Automation.AutomationProperties.SetHelpText(queueButton, queueTip)
             if not (isNull queueButton.Child) then
                 Avalonia.Automation.AutomationProperties.SetName(queueButton.Child, "排队发送")
+        | None -> ()
 
     do
         contextButton.IsVisible <- false
@@ -460,18 +441,17 @@ type Composer(actions: ComposerActions) as this =
         transitions
 
     member private this.Submit() =
-        let uploading = attachments |> List.exists (fun a -> not a.ready)
-        if enabled && not uploading then
-            let text = if isNull input.Text then "" else input.Text
-            if not (String.IsNullOrWhiteSpace text) || attachments |> List.exists (fun a -> a.ready) then
-                if actions.submit text then
-                    history.Record text
-                    // 所有权已经移交；回调若切到了另一份草稿，不清它的内容。
-                    if input.Text = text then
-                        input.Text <- ""
-                        input.CaretIndex <- 0
-                    refreshSendState ()
-                    tryFocusInput ()
+        let text = if isNull input.Text then "" else input.Text
+        let gate = attachments |> List.map (fun a -> { ready = a.ready; failed = a.failed; isImage = MediaTypes.isImage a.mediaType })
+        if ComposerSendState.canSubmit enabled text gate then
+            if actions.submit text then
+                history.Record text
+                // 所有权已经移交；回调若切到了另一份草稿，不清它的内容。
+                if input.Text = text then
+                    input.Text <- ""
+                    input.CaretIndex <- 0
+                refreshSendState ()
+                tryFocusInput ()
 
     /// 附件滚动窗按“整行”取高：用已渲染 chip 的实测高度对默认上限取整行倍数，避免半行露出。
     member private _.SnapAttachmentScroller() =
@@ -543,12 +523,12 @@ type Composer(actions: ComposerActions) as this =
                     TextTrimming = TextTrimming.CharacterEllipsis,
                     MaxWidth = ControlMetrics.composerAttachmentNameMaxWidth,
                     VerticalAlignment = VerticalAlignment.Center)
+            let restored = RestoredAttachments.isRestored attachment.attachmentId
+            let chipFacts = { ready = attachment.ready; failed = attachment.failed; isImage = MediaTypes.isImage attachment.mediaType }
+            let sizeText = AttachmentRef.formatSize attachment.size
             let size =
                 TextBlock(
-                    Text =
-                        (if RestoredAttachments.isRestored attachment.attachmentId then "需重选"
-                         elif attachment.ready || attachment.failed then AttachmentRef.formatSize attachment.size
-                         else "上传中"),
+                    Text = ComposerSendState.chipState restored chipFacts sizeText,
                     FontSize = Tokens.fontMicro,
                     Foreground = (if attachment.failed then Tokens.danger else Tokens.textFaint),
                     Width = ControlMetrics.composerAttachmentStateWidth,
@@ -573,13 +553,7 @@ type Composer(actions: ComposerActions) as this =
                 Avalonia.Automation.AutomationProperties.SetAutomationId(badge, "attachment-shrink-note")
                 Some badge
               | None -> None
-            let formattedSize =
-                if attachment.ready || attachment.failed then AttachmentRef.formatSize attachment.size else "上传中"
-            ToolTip.SetTip(
-                size,
-                if RestoredAttachments.isRestored attachment.attachmentId then "附件需重新选择：重新打开后无法确认文件还在。可移除，或重新添加这个文件。"
-                elif attachment.failed then sprintf "上传失败：%s，可移除或重新添加" formattedSize
-                else sprintf "文件大小：%s" formattedSize)
+            ToolTip.SetTip(size, ComposerSendState.chipTip restored chipFacts sizeText)
             let removeLabel = sprintf "移除附件 %s" attachment.fileName
             let remove = Ui.iconButton Icons.close removeLabel
             ToolTip.SetTip(remove, removeLabel)

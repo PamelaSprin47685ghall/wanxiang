@@ -49,26 +49,15 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
     let mutable importHandler: (unit -> unit) option = None
     let mutable setAutoTitle: bool -> unit = ignore
     let mutable setGenerationPending: bool -> unit = ignore
-    /// 生成保存往返中的重入 guard：按钮已禁用，但重复调用仍能进 Save。
-    let mutable generationSaving = false
-    let mutable generationDirty = false
-    let mutable generationSyncing = false
-    let mutable generationRevision = 0
-    let mutable generationBaseline = catalog.generation
-    let mutable generationScope = ""
-    let mutable draftScope = ""
-    let mutable scopeEpoch = 0
-    let generationStatus = Ui.caption "修改后保存，仅用于新对话。"
+    /// 草稿状态机（脏标记、修订号、主机作用域、保存往返）全部在 GenerationDraft 里。
+    let draft = GenerationDraft(catalog.generation)
+    let generationStatus = Ui.caption draft.Status
+    let syncStatus () = generationStatus.Text <- draft.Status
     let mutable syncAppearance: UiPrefs -> unit = ignore
 
     let markGenerationDirty () =
-        if not generationSyncing then
-            if not generationDirty then draftScope <- generationScope
-            generationRevision <- generationRevision + 1
-            generationDirty <- true
-            generationStatus.Text <-
-                if draftScope <> generationScope then "主机已切换。旧草稿仍在，但不能保存到另一台主机。请返回原主机，或放弃修改。"
-                else "有未保存的修改。离开设置后，草稿仍留在当前窗口。"
+        draft.Edited()
+        syncStatus ()
 
     do
         Avalonia.Automation.AutomationProperties.SetName(generationStatus, "生成设置保存状态")
@@ -78,10 +67,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
             box.PropertyChanged.Add(fun e ->
                 if e.Property = TextBox.TextProperty then markGenerationDirty ())
 
-    let floatText (value: float option) =
-        match value with
-        | Some v -> v.ToString("0.##", CultureInfo.InvariantCulture)
-        | None -> ""
+    let floatText (value: float option) = GenerationForm.floatText value
 
     let parseFloatOpt (raw: string) =
         if String.IsNullOrWhiteSpace raw then None
@@ -137,51 +123,40 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         catalog <- next
         renderPresets ()
         // 目录更新也会由其它设置操作触发；不能用它覆盖尚未提交的表单。
-        if not generationDirty && not generationSaving then
-            generationSyncing <- true
-            try
-                let g = next.generation
-                temperatureBox.Text <- floatText g.temperature
-                topPBox.Text <- floatText g.topP
-                maxTokensBox.Text <- (match g.maxTokens with Some v -> string v | None -> "")
-                contextBox.Text <- string g.maxContextMessages
-                toolRoundsBox.Text <- string g.maxToolRounds
-                instructionsBox.Text <- g.instructions |> Option.defaultValue ""
-                setAutoTitle g.autoTitle
-                generationBaseline <- g
-            finally
-                generationSyncing <- false
-        elif not generationSaving && draftScope = generationScope && next.generation <> generationBaseline then
-            generationStatus.Text <- "主机默认值已变化。草稿已保留；请核对后保存，或放弃修改。"
+        draft.CatalogArrived(next.generation, fun () -> this.FillGeneration next.generation)
+        syncStatus ()
+
+    member private _.FillGeneration(g: GenerationInfo) =
+        temperatureBox.Text <- floatText g.temperature
+        topPBox.Text <- floatText g.topP
+        maxTokensBox.Text <- (match g.maxTokens with Some v -> string v | None -> "")
+        contextBox.Text <- string g.maxContextMessages
+        toolRoundsBox.Text <- string g.maxToolRounds
+        instructionsBox.Text <- g.instructions |> Option.defaultValue ""
+        setAutoTitle g.autoTitle
+
+        syncStatus ()
 
     /// 只保留一份可见草稿；切换目标后阻止把旧主机的表单误写给新主机。
     member _.SetGenerationScope(instance: string) =
-        if generationScope <> instance then
-            scopeEpoch <- scopeEpoch + 1
-            generationScope <- instance
-            generationSaving <- false
-            setGenerationPending false
-            if generationDirty then
-                generationStatus.Text <-
-                    if draftScope = instance then "已回到草稿所属的主机。修改尚未保存。"
-                    else "主机已切换。旧草稿仍在，但不能保存到另一台主机。请返回原主机，或放弃修改。"
+        draft.SetScope instance
+        setGenerationPending draft.Saving
+        syncStatus ()
 
     member _.SetImportHandler(handler: unit -> unit) = importHandler <- Some handler
     member _.SetPresetHandlers(rename: PresetInfo -> unit, delete: PresetInfo -> unit) =
         presetRename <- rename
         presetDelete <- delete
     member _.PresetsPanel = presetsPanel
-    member _.HasUnsavedGeneration = generationDirty
+    member _.HasUnsavedGeneration = draft.Dirty
 
     member this.DiscardGenerationChanges() =
-        if not generationSaving then
-            generationDirty <- false
-            draftScope <- generationScope
-            generationRevision <- generationRevision + 1
-            this.SetCatalog catalog
+        if not draft.Saving then
+            renderPresets ()
+            draft.Discard(catalog.generation, fun () -> this.FillGeneration catalog.generation) |> ignore
             for box in [ temperatureBox; topPBox; maxTokensBox; contextBox; toolRoundsBox ] do Ui.clearFieldError box
             generationErrorSummary.IsVisible <- false
-            generationStatus.Text <- "已恢复当前主机的默认值。"
+            syncStatus ()
             setGenerationPending false
 
     member this.SetPrefs(next: UiPrefs) =
@@ -193,89 +168,47 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         for box in fields do Ui.clearFieldError box
         generationErrorSummary.IsVisible <- false
         generationErrorSummary.Text <- ""
-        let errors = ResizeArray<TextBox * string>()
-        let fail box message =
-            Ui.setFieldError box message
-            errors.Add(box, message)
-        let raw (box: TextBox) = if isNull box.Text then "" else box.Text.Trim()
-        let parseOptionalFloat box valid message =
-            let text = raw box
-            if String.IsNullOrWhiteSpace text then None
-            else
-                match Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
-                | true, value when valid value -> Some value
-                | _ ->
-                    fail box message
-                    None
-        let parseOptionalPositiveInt box =
-            let text = raw box
-            if String.IsNullOrWhiteSpace text then None
-            else
-                match Int32.TryParse text with
-                | true, value when value > 0 -> Some value
-                | _ ->
-                    fail box "请输入大于 0 的整数，或留空。"
-                    None
-        let parseRequiredInt box valid message =
-            match Int32.TryParse(raw box) with
-            | true, value when valid value -> Some value
-            | _ ->
-                fail box message
-                None
-
-        let temperature =
-            parseOptionalFloat temperatureBox (fun value -> value >= 0.0 && value <= 2.0) "请输入 0–2 之间的数字，或留空。"
-        let topP =
-            parseOptionalFloat topPBox (fun value -> value >= 0.0 && value <= 1.0) "请输入 0 到 1 之间的数字，或留空。"
-        let maxTokens = parseOptionalPositiveInt maxTokensBox
-        let contextMessages = parseRequiredInt contextBox (fun value -> value >= 0) "请输入 0 或正整数。"
-        let toolRounds = parseRequiredInt toolRoundsBox (fun value -> value > 0) "请输入大于 0 的整数。"
-
-        if List.isEmpty (List.ofSeq errors) then
-            let payload = JsonObject()
-            match temperature with Some v -> payload["temperature"] <- v | None -> payload["temperature"] <- null
-            match topP with Some v -> payload["topP"] <- v | None -> payload["topP"] <- null
-            match maxTokens with Some v -> payload["maxTokens"] <- v | None -> payload["maxTokens"] <- null
-            let instructions = if isNull instructionsBox.Text then "" else instructionsBox.Text.Trim()
-            payload["instructions"] <- if String.IsNullOrWhiteSpace instructions then null else JsonNode.op_Implicit instructions
-            payload["maxContextMessages"] <- contextMessages.Value
-            payload["maxToolRounds"] <- toolRounds.Value
-            payload["autoTitle"] <- readAutoTitle ()
+        let text (box: TextBox) = if isNull box.Text then "" else box.Text
+        let boxOf field =
+            match field with
+            | GenerationField.Temperature -> temperatureBox
+            | GenerationField.TopP -> topPBox
+            | GenerationField.MaxTokens -> maxTokensBox
+            | GenerationField.ContextMessages -> contextBox
+            | GenerationField.ToolRounds -> toolRoundsBox
+        match GenerationForm.validate (text temperatureBox) (text topPBox) (text maxTokensBox) (text contextBox) (text toolRoundsBox) with
+        | Ok values ->
+            let instructions = GenerationForm.instructions instructionsBox.Text
+            let autoTitle = readAutoTitle ()
+            let payload = GenerationForm.payload values instructions autoTitle
             let submitted =
                 { catalog.generation with
-                    temperature = temperature
-                    topP = topP
-                    maxTokens = maxTokens
-                    instructions = if String.IsNullOrWhiteSpace instructions then None else Some instructions
-                    maxContextMessages = contextMessages.Value
-                    maxToolRounds = toolRounds.Value
-                    autoTitle = readAutoTitle () }
-            let submittedRevision = generationRevision
-            let submittedEpoch = scopeEpoch
+                    temperature = values.temperature
+                    topP = values.topP
+                    maxTokens = values.maxTokens
+                    instructions = instructions
+                    maxContextMessages = values.maxContextMessages
+                    maxToolRounds = values.maxToolRounds
+                    autoTitle = autoTitle }
+            let save = draft.BeginSave submitted
             setGenerationPending true
-            generationStatus.Text <- "正在保存到主机…"
+            syncStatus ()
             actions.updateGeneration payload (fun ok ->
-                if submittedEpoch <> scopeEpoch then ()
-                elif ok then
-                    setGenerationPending false
-                    generationBaseline <- submitted
+                let failed = draft.Finish(save, ok)
+                // 成功且未过期时 Baseline 就是这次提交的那份。
+                if ok && obj.ReferenceEquals(draft.Baseline, save.submitted) then
                     catalog <- { catalog with generation = submitted }
-                    // 往返期间仍可编辑。较早提交的确认不能把后续编辑标成已保存。
-                    generationDirty <- generationRevision <> submittedRevision
-                    generationStatus.Text <-
-                        if generationDirty then "上一版已保存，后续修改尚未保存。"
-                        else "已保存。之后新建的对话将使用这些默认值。"
-                else
-                    setGenerationPending false
-                    generationDirty <- true
-                    generationStatus.Text <- "保存失败。修改仍在当前窗口，可以重试。"
-                    actions.toast "保存失败，请重试。" Failure)
-        else
-            Ui.applyValidationFeedback (List.ofSeq errors) (Some generationErrorSummary) (fun message -> actions.toast message Warning)
+                setGenerationPending draft.Saving
+                syncStatus ()
+                if failed then actions.toast "保存失败，请重试。" Failure)
+        | Error errs ->
+            let errors = errs |> List.map (fun (field, message) -> boxOf field, message)
+            for box, message in errors do Ui.setFieldError box message
+            Ui.applyValidationFeedback errors (Some generationErrorSummary) (fun message -> actions.toast message Warning)
 
     /// pending 中的保存直接返回，不做二次提交。
     member private this.SaveGeneration() =
-        if generationSaving || (generationDirty && draftScope <> generationScope) then ()
+        if not draft.CanSave then ()
         else this.SaveGenerationCore()
 
     member this.BuildGeneration() : Control =
@@ -292,9 +225,8 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         saveButton.HorizontalAlignment <- HorizontalAlignment.Left
         let discardButton = Ui.button Ui.Ghost "放弃修改" (fun () -> this.DiscardGenerationChanges())
         setGenerationPending <- fun pending ->
-            generationSaving <- pending
             Ui.setButtonPending saveButton pending "保存默认值" "正在保存…"
-            if not pending then Ui.setEnabled saveButton (not generationDirty || draftScope = generationScope)
+            if not pending then Ui.setEnabled saveButton draft.CanSave
             Ui.setEnabled discardButton (not pending)
         let temperatureField = Ui.inputFieldGroup "Temperature" "越高越发散。留空则用模型服务默认值。" temperatureBox
         let topPField = Ui.inputFieldGroup "Top P" "核采样阈值，0–1。" topPBox

@@ -58,12 +58,6 @@ type private RowToolTip(text: string) as this =
         this.FontFamily <- Tokens.fontFamily
     override _.ToString() = text
 
-/// 侧栏空态三态互斥的种类标记：卡只在种类翻转时重建。
-type private EmptyVariant =
-    | NotConnected
-    | ListLoading
-    | NoConversations
-
 /// 对话侧栏。
 ///
 /// 旧版是一个平铺 ListBox：没有分组、没有置顶、没有空态、右键只有两项。
@@ -121,7 +115,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             Margin = Thickness(Spacing.space3xl, Spacing.space6xl, Spacing.space3xl, Spacing.space6xl),
             VerticalAlignment = VerticalAlignment.Center)
     /// 当前空态种类：只在种类翻转时换卡，同种类内的列表刷新不重建这棵树。
-    let mutable currentEmptyVariant: EmptyVariant option = None
+    let mutable currentEmptyVariant: SidebarEmptyKind option = None
     /// 列表加载中骨架：与 ChatView 骨架同一视觉语言（borderSoft 圆角条、错落宽度）。
     /// 只在「已连接 + 已请求列表 + 快照未达」时出现，绝不与确认空态同时呈现。
     let emptySkeleton =
@@ -1198,12 +1192,13 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     | _ -> ()),
                 DispatcherPriority.Input)
         | None -> ()
-        let isSearchEmpty = not (String.IsNullOrWhiteSpace query) && List.isEmpty visible && not hitSection
-        searchEmptyHint.IsVisible <- isSearchEmpty
-        emptyStateHost.IsVisible <- List.isEmpty visible && not isSearchEmpty && not hitSection
-        if List.isEmpty visible && not hitSection then
-            // 空态三态互斥：未连接 / 列表加载中 / 确认无对话。
-            // 「加载中」只在快照未达时出现——没有快照就没有资格宣判「还没有对话」。
+        let empty = SidebarEmpty.decide query (List.isEmpty visible) hitSection connected listLoading compactMode
+        searchEmptyHint.IsVisible <- empty.searchEmpty
+        emptyStateHost.IsVisible <- empty.hostVisible
+        match empty.kind with
+        | None -> ()
+        | Some variant ->
+            // 空态三态互斥：未连接 / 列表加载中 / 确认无对话（判定在 SidebarEmpty）。
             let setEmptyAction (label: string) (action: unit -> unit) =
                 emptyPrimaryAction <- action
                 Ui.setButtonText emptyActionButton label
@@ -1211,10 +1206,6 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 Avalonia.Automation.AutomationProperties.SetName(emptyActionButton, label)
                 Avalonia.Automation.AutomationProperties.SetHelpText(emptyActionButton, label)
                 emptyActionButton.IsVisible <- true
-            let variant =
-                if not connected then EmptyVariant.NotConnected
-                elif listLoading then EmptyVariant.ListLoading
-                else EmptyVariant.NoConversations
             if currentEmptyVariant <> Some variant then
                 // 种类翻转才换卡：同种类内的数据刷新不重建空态树，按钮焦点与读屏名
                 // 跨刷新保持连续（Ui.emptyState 内按卡新建 logo/标题/说明文本）。
@@ -1228,16 +1219,16 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                 detachShared emptySkeleton
                 detachShared emptyActionButton
                 match variant with
-                | EmptyVariant.NotConnected ->
+                | SidebarEmptyKind.NotConnected ->
                     emptySkeleton.IsVisible <- false
                     // V20: 与 ChatView NotConnected 同句式，不在 Sidebar 另造术语。
                     // 内嵌入口与底部状态行重连是同一动作，不新造连接路径。
-                    setEmptyAction "连接主机" actions.reconnect
+                    setEmptyAction SidebarEmpty.actionLabel actions.reconnect
                     // 决策 270：桌面首屏正文已有唯一的「连接主机」主卡；侧栏只留一句说明，
                     // 不再摆第二张品牌卡和同义按钮（按钮保持挂载但隐藏，读屏树连续）。
                     // 窄屏抽屉里正文被遮住，侧栏才是唯一入口，这时按钮照常出现。
-                    emptyActionButton.IsVisible <- compactMode
-                    let note = Ui.caption "连接主机后，对话记录会显示在这里。"
+                    emptyActionButton.IsVisible <- empty.actionVisible
+                    let note = Ui.caption (defaultArg empty.note "")
                     note.HorizontalAlignment <- HorizontalAlignment.Center
                     note.TextAlignment <- TextAlignment.Center
                     let stack = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd)
@@ -1246,20 +1237,20 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
                     stack.Children.Add emptyActionButton
                     stack.Margin <- Thickness(Spacing.spaceXl)
                     emptyStateHost.Child <- stack
-                | EmptyVariant.ListLoading ->
-                    emptySkeleton.IsVisible <- true
+                | SidebarEmptyKind.ListLoading ->
+                    emptySkeleton.IsVisible <- empty.skeletonVisible
                     // 行动按钮保持挂载但隐藏：读屏与自动化树里它始终在场（跨空态
                     // 种类焦点连续），只是加载中没有可执行动作。
                     emptyActionButton.IsVisible <- false
                     emptyStateHost.Child <-
-                        Ui.emptyState (brandLogo Tokens.logoEmpty) (Some "正在加载对话…") "" (Some(emptySkeleton :> Control)) (Some emptyActionButton)
-                | EmptyVariant.NoConversations ->
+                        Ui.emptyState (brandLogo Tokens.logoEmpty) empty.title "" (Some(emptySkeleton :> Control)) (Some emptyActionButton)
+                | SidebarEmptyKind.NoConversations ->
                     emptySkeleton.IsVisible <- false
                     // 顶部已有“新建对话”，这里只说明列表为何空，不再放第二个按钮和品牌卡。
                     emptyActionButton.IsVisible <- false
-                    let title = Ui.label "还没有对话"
+                    let title = Ui.label (defaultArg empty.title "")
                     title.HorizontalAlignment <- HorizontalAlignment.Center
-                    let hint = Ui.caption "发送第一条消息后，对话会显示在这里。"
+                    let hint = Ui.caption (defaultArg empty.note "")
                     hint.TextWrapping <- TextWrapping.Wrap
                     hint.TextAlignment <- TextAlignment.Center
                     emptyStateHost.Child <-
@@ -1328,7 +1319,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
 
     member this.SetCompactMode(value: bool) =
         compactMode <- value
-        if currentEmptyVariant = Some EmptyVariant.NotConnected then emptyActionButton.IsVisible <- value
+        if currentEmptyVariant = Some SidebarEmptyKind.NotConnected then emptyActionButton.IsVisible <- value
         compactBackButton.IsVisible <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
         for button in [ compactBackButton; settingsButton; paletteButton; clearSearchButton; presetMenuButton ] do

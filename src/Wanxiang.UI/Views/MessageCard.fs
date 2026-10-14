@@ -378,15 +378,13 @@ module MessageCard =
         card :> Control
 
     let private resolveToolCallStatusWith (awaiting: Set<string>) (isStreaming: bool) (call: ToolCallView) : ToolCallStatus =
-        match call.result with
-        | Some res ->
-            match ToolErrorSummary.tryExtract (Some res) with
-            | Some err -> ToolCallStatus.Failed(Some err)
-            | None -> ToolCallStatus.Success
-        | None ->
-            if isStreaming && awaiting.Contains call.callId then ToolCallStatus.AwaitingApproval
-            elif isStreaming then ToolCallStatus.Running
-            else ToolCallStatus.Unknown
+        let outcome = call.result |> Option.map (fun res -> ToolErrorSummary.tryExtract (Some res))
+        match ToolCallState.resolve awaiting isStreaming call.callId outcome with
+        | ToolCallState.Failed err -> ToolCallStatus.Failed err
+        | ToolCallState.Success -> ToolCallStatus.Success
+        | ToolCallState.AwaitingApproval -> ToolCallStatus.AwaitingApproval
+        | ToolCallState.Running -> ToolCallStatus.Running
+        | ToolCallState.Unknown -> ToolCallStatus.Unknown
 
     /// 测试入口：按上下文解析一条工具调用的状态。
     let resolveStatus (ctx: MessageContext) (call: ToolCallView) =
@@ -1551,21 +1549,17 @@ module MessageCard =
     /// 呼吸相位：纯函数，只取决于「自运行原点逝去的时间」。
     /// 一周期 = 2 × MotionLedger.caretBreathPhase（峰值→下限→峰值）；t=0 落在峰值 π/2。
     let caretBreathPhase (elapsed: TimeSpan) =
-        Math.PI / 2.0
-        + 2.0 * Math.PI * elapsed.TotalMilliseconds
-          / (2.0 * MotionLedger.caretBreathPhase.TotalMilliseconds)
+        CaretBreath.phase MotionLedger.caretBreathPhase.TotalMilliseconds elapsed.TotalMilliseconds
 
-    /// 呼吸波：0..1，1 = 峰值。纯函数，供无头测试直接断定性。
+    /// 呼吸波：0..1，1 = 峰值。
     let caretBreathWave (elapsed: TimeSpan) =
-        (1.0 + Math.Sin(caretBreathPhase elapsed)) / 2.0
+        CaretBreath.wave MotionLedger.caretBreathPhase.TotalMilliseconds elapsed.TotalMilliseconds
 
-    /// 呼吸不透明度：把波映射进 Tokens.opacityCaretBreathMin~Max 闭区间；
-    /// 末端裁剪保证即使输入异常（负流逝等）也不越出区间不变式。
+    /// 呼吸不透明度：落在 Tokens.opacityCaretBreathMin~Max 闭区间（CaretBreath 负责裁剪）。
     let caretBreathOpacity (elapsed: TimeSpan) =
-        let raw =
-            Tokens.opacityCaretBreathMin
-            + (Tokens.opacityCaretBreathMax - Tokens.opacityCaretBreathMin) * caretBreathWave elapsed
-        min Tokens.opacityCaretBreathMax (max Tokens.opacityCaretBreathMin raw)
+        CaretBreath.opacity
+            Tokens.opacityCaretBreathMin Tokens.opacityCaretBreathMax
+            MotionLedger.caretBreathPhase.TotalMilliseconds elapsed.TotalMilliseconds
 
     /// 消息动作清单：脚注行 hover 按钮与右键菜单唯一的共源。
     ///
