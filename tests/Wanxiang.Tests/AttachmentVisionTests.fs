@@ -41,47 +41,6 @@ let private actions submitted =
 let private image id ready =
     { attachmentId = id; sha256 = "s"; size = 2048L; mediaType = "image/png"; fileName = "shot.png"; ready = ready; failed = false }
 
-[<Theory>]
-[<InlineData("gpt-4o-mini", "yes")>]
-[<InlineData("gpt-4.1", "yes")>]
-[<InlineData("claude-sonnet-4-5", "yes")>]
-[<InlineData("claude-3-5-haiku-latest", "yes")>]
-[<InlineData("gemini-2.5-flash", "yes")>]
-[<InlineData("llama3.2-vision:11b", "yes")>]
-[<InlineData("qwen2.5-vl:7b", "yes")>]
-[<InlineData("llava:13b", "yes")>]
-[<InlineData("gemma3:4b", "yes")>]
-[<InlineData("gpt-3.5-turbo", "no")>]
-[<InlineData("o3-mini", "no")>]
-[<InlineData("deepseek-chat", "no")>]
-[<InlineData("llama3.1:8b", "no")>]
-[<InlineData("qwen2.5:7b", "no")>]
-[<InlineData("my-finetune", "unknown")>]
-[<InlineData("", "unknown")>]
-let ``model vision classification by name`` (model: string, expected: string) =
-    let actual =
-        match ModelVision.classify model with
-        | VisionYes -> "yes"
-        | VisionNo -> "no"
-        | VisionUnknown -> "unknown"
-    Assert.Equal(expected, actual)
-
-[<Fact>]
-let ``validate rejects unsupported image formats and oversize images with guidance`` () =
-    match MediaTypes.validate "IMG_0001.HEIC" 1024L with
-    | Error m -> Assert.Contains("PNG、JPG、GIF、WebP", m)
-    | Ok() -> failwith "heic should be rejected"
-    match MediaTypes.validate "big.jpg" (9L * 1024L * 1024L) with
-    | Error m -> Assert.Contains("8 MiB", m); Assert.Contains("压缩", m)
-    | Ok() -> failwith "oversize image should be rejected"
-    match MediaTypes.validate "empty.txt" 0L with
-    | Error m -> Assert.Contains("空", m)
-    | Ok() -> failwith "empty should be rejected"
-    Assert.Equal(Ok(), MediaTypes.validate "notes.md" 1024L)
-    Assert.Equal(Ok(), MediaTypes.validate "photo.jpeg" (7L * 1024L * 1024L))
-    // 大 PDF / 文本仍走 64 MiB 总上限，不受图片上限影响。
-    Assert.Equal(Ok(), MediaTypes.validate "paper.pdf" (20L * 1024L * 1024L))
-
 [<Trait("Category", "UI")>]
 [<Fact>]
 let ``image on text-only model blocks send with a clear notice`` () =

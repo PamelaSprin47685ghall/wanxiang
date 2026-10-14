@@ -64,7 +64,7 @@ type MainView() as this =
     let pendingProbes = System.Collections.Generic.Dictionary<Guid, string * DateTimeOffset>()
     let runs = ConversationRuns()
     let mutable summaries: ConversationSummary list = []
-    let mutable paletteRecent: string list = CommandPalette.loadRecent ()
+    let mutable paletteRecent: string list = PaletteRecent.loadRecent ()
     /// §214：宽限期内的待删批次——列表里隐去，过期才提交删除命令。
     let mutable pendingDeletes = PendingDeletion.empty
     /// W4：分叉谱系（随列表快照更新）、最近一次搜索的 queryId、待滚动到的消息。
@@ -1664,7 +1664,7 @@ type MainView() as this =
 
     member private this.RunPaletteItem(item: PaletteItem, query: string) =
         paletteRecent <- CommandPalette.pushRecent item.id paletteRecent
-        CommandPalette.saveRecent paletteRecent
+        PaletteRecent.saveRecent paletteRecent
         let closeDrawer () =
             if navigation.State.compactMode && navigation.State.compactNavigationOpen then this.SetCompactNavigation false
         let sectionOf (key: string) =

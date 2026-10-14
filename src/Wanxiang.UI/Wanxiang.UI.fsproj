@@ -20,8 +20,6 @@
     <Compile Include="Model/StartupTrace.fs" />
     <Compile Include="Model/ParityProbe.fs" />
     <Compile Include="Model/UiPrefs.fs" />
-    <Compile Include="Model/MediaTypes.fs" />
-    <Compile Include="Model/ModelVision.fs" />
     <Compile Include="Rich/RichBackend.fs" />
     <Compile Include="Rich/Highlight.fs" />
     <Compile Include="Rich/KatexHtml.fs" />
@@ -34,7 +32,6 @@
     <Compile Include="Model/ConversationSummary.fs" />
     <Compile Include="Model/ConversationTransfer.fs" />
     <Compile Include="Model/PendingDeletion.fs" />
-    <Compile Include="Model/MessageLink.fs" />
     <Compile Include="Model/DesktopLinks.fs" />
     <Compile Include="Model/ErrorRecovery.fs" />
     <Compile Include="Model/Catalog.fs" />
@@ -112,6 +109,12 @@
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.WsClient" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.CommandPalette" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PinyinInitials" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.FuzzyMatch" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MessageLink" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ModelVision" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MediaTypes" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ReconnectBackoff" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ConnectionIssue" Version="0.0.0-local" />
   </ItemGroup>

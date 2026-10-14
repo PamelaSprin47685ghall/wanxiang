@@ -23,35 +23,6 @@ module R20PaletteTests =
           item "conv:1" PaletteConversation "周报草稿" []
           item "conv:2" PaletteConversation "Rust 学习笔记" [] ]
 
-    [<Fact>]
-    let ``373 拼音首字母覆盖常用字`` () =
-        Assert.Equal("zbcg", PinyinInitials.initials "周报草稿")
-        Assert.Equal("xjdh", PinyinInitials.initials "新建对话")
-        Assert.Equal("rustxxbj", PinyinInitials.initials "Rust 学习笔记")
-
-    [<Fact>]
-    let ``373 拼音首字母与子序列都能命中`` () =
-        let ranked = CommandPalette.rank "zb" [] sample
-        Assert.Equal("conv:1", ranked.Head.id)
-        Assert.Equal("act:theme", (CommandPalette.rank "qhzt" [] sample).Head.id)
-        Assert.Equal("conv:2", (CommandPalette.rank "rsxx" [] sample).Head.id)
-        Assert.Equal("act:new", (CommandPalette.rank "新建" [] sample).Head.id)
-        Assert.Empty(CommandPalette.rank "zzzzq" [] sample)
-
-    [<Fact>]
-    let ``375 空查询先列最近使用，再列操作，不铺全部对话`` () =
-        let ranked = CommandPalette.rank "" [ "conv:2"; "act:theme" ] sample
-        Assert.Equal<string list>([ "conv:2"; "act:theme"; "act:new" ], ranked |> List.map _.id)
-
-    [<Fact>]
-    let ``375 最近使用去重、新的在前、有上限`` () =
-        let r = [ 1 .. 12 ] |> List.fold (fun acc i -> CommandPalette.pushRecent (string i) acc) []
-        Assert.Equal(CommandPalette.maxRecent, r.Length)
-        Assert.Equal("12", r.Head)
-        let r2 = CommandPalette.pushRecent "5" r
-        Assert.Equal("5", r2.Head)
-        Assert.Equal(1, r2 |> List.filter ((=) "5") |> List.length)
-
     [<Trait("Category", "UI")>]
     [<Fact>]
     let ``372 Ctrl+K 打开面板，Ctrl+Shift+F 归侧栏搜索，其他键不变`` () =
