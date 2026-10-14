@@ -27,18 +27,6 @@ module private Fixture =
         | Ok box -> box
         | Error reason -> failwith $"{name} 排不出来：{reason}"
 
-    let glyphs (box: MathDrawing) =
-        box.items
-        |> List.choose (function
-            | MathGlyph(text, shaped, typeface, at) -> Some(text, typeface, at, shaped.Width)
-            | _ -> None)
-
-    let rules (box: MathDrawing) =
-        box.items |> List.choose (function MathRule rect -> Some rect | _ -> None)
-
-    let paths (box: MathDrawing) =
-        box.items |> List.choose (function MathPath(g, _, clip) -> Some(g, clip) | _ -> None)
-
     /// 横向中心。居中是否正确只能靠数值判断——截图里几个像素的偏差看不出来。
     let centerOf (from: float) (width: float) = from + width / 2.0
 
