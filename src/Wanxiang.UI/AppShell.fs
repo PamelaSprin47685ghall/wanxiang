@@ -83,6 +83,8 @@ type MainView() as this =
     let attachmentDraft () = (drafts.Get(instanceId, activeConvId)).attachments
     // 附件下载在途缓冲：容量上限 + 断连整体丢弃，替代此前无上限的裸字典（R1）。
     let downloads = DownloadBuffers()
+    let mutable protocolDispatch: ProtocolDispatch option = None
+    let mutable shellCommands: ShellCommands option = None
     let mutable missingAttachments: Set<string> = Set.empty
 
     let mutable lastUrl = CredentialStore.defaultServerUrl ()
@@ -1454,11 +1456,7 @@ type MainView() as this =
             exportDialog <- Some dialog
             dialog.Show()
 
-    member private this.CycleTheme() =
-        // 主题三态轮转：跟随系统 → 浅色 → 深色 → 回到跟随系统。
-        let nextTheme = ThemePreference.next prefs.theme
-        this.SavePrefs { prefs with theme = nextTheme }
-        toast (ThemePreference.switchedText nextTheme) Info
+    member private this.CycleTheme() = this.Commands.CycleTheme()
 
     member private this.FocusSidebarSearch(query: string option) =
         let state = shellDesk.EnsureSearchVisible()
@@ -1468,70 +1466,98 @@ type MainView() as this =
         query |> Option.iter sidebar.SetSearchText
         sidebar.FocusSearch()
 
-    /// 决策 370–379：命令面板条目。每次输入现取，对话列表与当前对话状态永远是新的。
-    member private this.PaletteItems() : PaletteItem list =
-        ShellPalette.items
-            { hasConversation = activeConvId.IsSome
-              presets = [ for p in catalog.presets -> p.id, p.name, Presets.describe catalog p ]
-              supportsPresets = HostFeatures.supports hostFeatures HostFeatures.Presets
-              supportsImport = HostFeatures.supports hostFeatures HostFeatures.ConversationImport
-              themeLabel = ThemePreference.label prefs.theme
-              sections = [ for s in Wanxiang2.SettingsScreen.SettingsPart.all -> string s, Wanxiang2.SettingsScreen.SettingsPart.label s, Wanxiang2.SettingsScreen.SettingsPart.scope s ]
-              conversations = summaries
-              showArchived = prefs.showArchived }
+    /// 决策 370–379：命令面板条目的输入。每次输入现取，对话列表与当前对话状态永远是新的。
+    member private this.PaletteInput() : ShellPaletteInput =
+        { hasConversation = activeConvId.IsSome
+          presets = [ for p in catalog.presets -> p.id, p.name, Presets.describe catalog p ]
+          supportsPresets = HostFeatures.supports hostFeatures HostFeatures.Presets
+          supportsImport = HostFeatures.supports hostFeatures HostFeatures.ConversationImport
+          themeLabel = ThemePreference.label prefs.theme
+          sections = [ for s in Wanxiang2.SettingsScreen.SettingsPart.all -> string s, Wanxiang2.SettingsScreen.SettingsPart.label s, Wanxiang2.SettingsScreen.SettingsPart.scope s ]
+          conversations = summaries
+          showArchived = prefs.showArchived }
 
-    member private this.RunPaletteItem(item: PaletteItem, query: string) =
-        paletteRecent <- CommandPalette.pushRecent item.id paletteRecent
-        PaletteRecent.saveRecent paletteRecent
-        let closeDrawer () =
-            if this.Navigation.compactMode && this.Navigation.compactNavigationOpen then this.SetCompactNavigation false
-        let sectionOf (key: string) =
-            Wanxiang2.SettingsScreen.SettingsPart.all |> List.tryFind (fun s -> (string s).ToLowerInvariant() = key)
-        let command = ShellPalette.commandOf item.id
-        // 预设已不存在：只 toast，不收抽屉（旧分派先查预设）。
-        let preset =
-            match command with
-            | PaletteCommand.ApplyPreset presetId -> catalog.presets |> List.tryFind (fun p -> p.id = presetId)
-            | _ -> None
-        let missingPreset = (match command with PaletteCommand.ApplyPreset _ -> preset.IsNone | _ -> false)
-        if ShellPalette.closesDrawer command && not missingPreset then closeDrawer ()
-        match command with
-        | PaletteCommand.SearchMessages -> this.FocusSidebarSearch(Some(query.Trim()))
-        | PaletteCommand.OpenConversation convId -> this.OpenConversation convId
-        | PaletteCommand.OpenSettings key ->
-            // 找不到分区时只打开设置页。
-            this.ShowSettings()
-            sectionOf key |> Option.iter settings.ShowSection
-        | PaletteCommand.ApplyPreset _ ->
-            match preset with
-            | Some p -> this.ApplyPreset p
-            | None -> toast "这个预设已经不存在。" Warning
-        | PaletteCommand.Action "new" -> this.CreateConversation() |> ignore
-        | PaletteCommand.Action "save-preset" -> this.SaveConversationAsPreset()
-        | PaletteCommand.Action "model" ->
-            this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
-        | PaletteCommand.Action "export" ->
-            match activeSummary () with
-            | Some summary -> this.ExportConversation summary
-            | None -> toast "没有打开的对话可导出" Warning
-        | PaletteCommand.Action "fork" ->
-            match activeConversation () with
-            | Some view ->
-                let seed = messagesOf view |> List.filter MessageView.isUser |> List.tryLast |> Option.map (fun m -> m.text) |> Option.defaultValue ""
-                this.ForkFrom(None, seed)
-            | None -> toast ForkAnchor.noConversationText Warning
-        | PaletteCommand.Action "copy-reply" -> this.CopyLatestReply()
-        | PaletteCommand.Action "regenerate" -> this.RegenerateLatest()
-        | PaletteCommand.Action "import" -> this.ImportConversation()
-        | PaletteCommand.Action "theme" -> this.CycleTheme()
-        | PaletteCommand.Action "sidebar" -> this.ToggleSidebar()
-        | PaletteCommand.Action "shortcuts" -> Dialogs.shortcuts overlay
-        | PaletteCommand.Action "settings" -> this.ShowSettings()
-        | PaletteCommand.Action "add-provider" -> this.ShowAddProvider()
-        | PaletteCommand.Action _ | PaletteCommand.Ignore -> ()
+    /// 快捷键、命令面板分派、主题轮转、Escape 链归 Wanxiang2.ShellCommands；这里只给事实与界面面。
+    member private this.Commands: ShellCommands =
+        match shellCommands with
+        | Some c -> c
+        | None ->
+            let modelAnchor () = if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor()
+            let c =
+                ShellCommands(
+                    { OverlayEscape = fun () -> overlay.HandleEscape()
+                      IsDialogOpen = fun () -> overlay.IsDialogOpen
+                      IsPopupOpen = fun () -> overlay.IsPopupOpen
+                      IsSettingsOpen = fun () -> settingsHost.IsVisible
+                      IsDrawerOpen = fun () -> this.Navigation.compactMode && this.Navigation.compactNavigationOpen
+                      IsGenerating = fun () -> (runs.Get activeConvId).generationId.IsSome
+                      HasConversation = fun () -> (activeSummary ()).IsSome
+                      VisibleOrder = fun () -> sidebar.GetVisibleOrder()
+                      HasPreset = fun id -> catalog.presets |> List.exists (fun p -> p.id = id)
+                      PaletteInput = fun () -> this.PaletteInput()
+                      Theme = fun () -> prefs.theme
+                      CloseSettings = fun () -> this.CloseSettings()
+                      CloseDrawer = fun () -> this.SetCompactNavigation false
+                      StopGeneration = fun () -> this.StopGeneration()
+                      ToggleSidebar = fun () -> this.ToggleSidebar()
+                      CloseWindow =
+                          // 与右上角叉号同一路径：走 Window.Close 才会触发 MainWindow.Closing 里的几何持久化。
+                          // PWA 没有 Window（决策 48），浏览器自身的关闭语义不由我们代理。
+                          fun () ->
+                              match topLevel () with
+                              | :? Window as window -> window.Close(); true
+                              | _ -> false
+                      NewConversation = fun () -> this.CreateConversation() |> ignore
+                      FocusSearch = fun query -> this.FocusSidebarSearch query
+                      OpenSettings =
+                          fun key ->
+                              // 找不到分区时只打开设置页。
+                              this.ShowSettings()
+                              key
+                              |> Option.bind (fun k -> Wanxiang2.SettingsScreen.SettingsPart.all |> List.tryFind (fun s -> (string s).ToLowerInvariant() = k))
+                              |> Option.iter settings.ShowSection
+                      OpenModelPicker = fun () -> this.ShowModelPicker(modelAnchor ())
+                      JumpExchange = fun direction -> chat.JumpExchange direction
+                      ScrollToBeginning = fun () -> chat.SmoothScrollToBeginning()
+                      ScrollToEnd = fun () -> chat.SmoothScrollToEnd()
+                      FocusComposer = fun () -> composer.Focus()
+                      CopyLastReply = fun () -> this.CopyLatestReply()
+                      RegenerateLast = fun () -> this.RegenerateLatest()
+                      TryUndo =
+                          // 决策 232：只在「撤销」提示条可见时接管；输入框里的 Ctrl+Z 仍归文本撤销。
+                          fun () ->
+                              let inTextBox =
+                                  match topLevel () with
+                                  | null -> false
+                                  | tl -> (tl.FocusManager |> Option.ofObj |> Option.bind (fun fm -> fm.GetFocusedElement() |> Option.ofObj)) |> Option.exists (fun f -> match f with :? TextBox as tb -> not (String.IsNullOrEmpty tb.Text) | _ -> false)
+                              not inTextBox && overlay.TryInvokeToastAction "撤销"
+                      FocusToast = fun () -> overlay.FocusToastAction()
+                      ExportConversation = fun () -> activeSummary () |> Option.iter this.ExportConversation
+                      OpenConversation = fun id -> this.OpenConversation id
+                      ShowShortcuts = fun () -> Dialogs.shortcuts overlay
+                      ApplyPreset =
+                          fun id -> catalog.presets |> List.tryFind (fun p -> p.id = id) |> Option.iter this.ApplyPreset
+                      SavePreset = fun () -> this.SaveConversationAsPreset()
+                      Fork =
+                          fun () ->
+                              match activeConversation () with
+                              | Some view ->
+                                  let seed = messagesOf view |> List.filter MessageView.isUser |> List.tryLast |> Option.map (fun m -> m.text) |> Option.defaultValue ""
+                                  this.ForkFrom(None, seed)
+                              | None -> toast ForkAnchor.noConversationText Warning
+                      Import = fun () -> this.ImportConversation()
+                      AddProvider = fun () -> this.ShowAddProvider()
+                      ShowPalette = fun items recent -> palette.Show(items, recent)
+                      SaveRecent = fun recent -> paletteRecent <- recent; PaletteRecent.saveRecent recent
+                      SaveTheme = fun theme -> this.SavePrefs { prefs with theme = theme }
+                      Toast = fun text tone -> toast text (match tone with ShellTone.Info -> Info | ShellTone.Warning -> Warning) },
+                    paletteRecent)
+            shellCommands <- Some c
+            c
 
-    member this.ShowCommandPalette() =
-        palette.Show((fun () -> this.PaletteItems()), (fun () -> paletteRecent))
+    member private this.RunPaletteItem(item: PaletteItem, query: string) = this.Commands.RunPaletteItem(item, query)
+
+    member this.ShowCommandPalette() = this.Commands.ShowPalette()
 
     member this.ToggleSidebar() =
         // 焦点归宿（compact 打开进抽屉、收起回输入区；桌面折叠焦点在侧栏时回输入区）在 ShellDesk。
@@ -1545,86 +1571,43 @@ type MainView() as this =
         (match shortcut with
          | ShortcutAction.NoShortcut -> ()
          | _ -> ParityProbe.hit "shortcut.resolved")
-        match shortcut with
-        | ShortcutAction.Escape ->
-            // 浮层先试；抽屉内有焦点的分支已先消费 Escape，落到这里说明焦点在抽屉外（D3/D4）。
-            let overlayHandled = overlay.HandleEscape()
-            match EscapeChain.decide overlayHandled settingsHost.IsVisible
-                      (this.Navigation.compactMode && this.Navigation.compactNavigationOpen)
-                      (runs.Get activeConvId).generationId.IsSome with
-            | EscapeTarget.Overlay -> e.Handled <- true
-            | EscapeTarget.CloseSettings -> e.Handled <- true; this.CloseSettings()
-            | EscapeTarget.CloseDrawer -> e.Handled <- true; this.SetCompactNavigation false
-            | EscapeTarget.StopGeneration -> e.Handled <- true; this.StopGeneration()
-            | EscapeTarget.Unhandled -> ()
-        | ShortcutAction.NoShortcut -> ()
-        | _ when EscapeChain.blockedByOverlay overlay.IsDialogOpen overlay.IsPopupOpen -> ()
-        | ShortcutAction.ToggleSidebar -> e.Handled <- true; this.ToggleSidebar()
-        | ShortcutAction.CloseWindow ->
-            // 与右上角叉号同一路径：走 Window.Close 才会触发 MainWindow.Closing
-            // 里的几何持久化，快捷键关窗不会丢窗口位置。
-            // PWA 没有 Window（决策 48：browser 宿主下根视图是 Control），
-            // 浏览器自身的关闭语义不由我们代理，这里安全降级为空操作。
-            match topLevel () with
-            | :? Window as window ->
-                e.Handled <- true
-                window.Close()
-            | _ -> ()
-        | ShortcutAction.NewConversation -> e.Handled <- true; this.CreateConversation() |> ignore
-        | ShortcutAction.FocusSearch -> e.Handled <- true; this.FocusSidebarSearch None
-        | ShortcutAction.OpenSettings -> e.Handled <- true; this.ShowSettings()
-        | ShortcutAction.OpenModelPicker ->
-            e.Handled <- true
-            // 焦点在输入框时不必先找到左下角芯片：锚点取芯片本身，菜单位置与点击一致。
-            this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
-        | ShortcutAction.JumpExchange direction ->
-            e.Handled <- true
-            chat.JumpExchange direction
-        | ShortcutAction.ScrollToBeginning ->
-            e.Handled <- true
-            // 锚点作废由入口自己负责（见 ScrollToBeginning）：这里是快捷键，
-            // 不需要 shell 再补一遍。
-            chat.SmoothScrollToBeginning()
-        | ShortcutAction.ScrollToEnd ->
-            e.Handled <- true
-            chat.SmoothScrollToEnd()
-        | ShortcutAction.FocusComposer ->
-            e.Handled <- true
-            // 与重新生成/重试后「焦点回家」同一个入口（Composer.Focus 自带线程与可见性守卫）。
-            composer.Focus()
-        | ShortcutAction.ToggleTheme -> e.Handled <- true; this.CycleTheme()
-        | ShortcutAction.OpenCommandPalette -> e.Handled <- true; this.ShowCommandPalette()
-        | ShortcutAction.CopyLastReply -> e.Handled <- true; this.CopyLatestReply()
-        | ShortcutAction.RegenerateLast -> e.Handled <- true; this.RegenerateLatest()
-        | ShortcutAction.UndoPending ->
-            // 决策 232：只在「撤销」提示条可见时接管；输入框里的 Ctrl+Z 仍归文本撤销。
-            let inTextBox =
-                match topLevel () with
-                | null -> false
-                | tl -> (tl.FocusManager |> Option.ofObj |> Option.bind (fun fm -> fm.GetFocusedElement() |> Option.ofObj)) |> Option.exists (fun f -> match f with :? TextBox as tb -> not (String.IsNullOrEmpty tb.Text) | _ -> false)
-            if not inTextBox && overlay.TryInvokeToastAction "撤销" then e.Handled <- true
-        | ShortcutAction.FocusToast -> if overlay.FocusToastAction() then e.Handled <- true
-        | ShortcutAction.ExportConversation ->
-            e.Handled <- true
-            match activeSummary() with
-            | Some summary -> this.ExportConversation summary
-            | None -> toast "没有打开的对话可导出" Warning
-        | ShortcutAction.OpenConversationAt index ->
-            // Ctrl+1..9 走侧栏当前可见顺序（C2）；打开后焦点经 OpenConversation 回家（D3/D4）。
-            match EscapeChain.conversationAt index (sidebar.GetVisibleOrder()) with
-            | Some id ->
-                e.Handled <- true
-                this.OpenConversation id
-            | None -> ()
-        | ShortcutAction.ShowShortcuts -> e.Handled <- true; Dialogs.shortcuts overlay
+        if this.Commands.HandleShortcut shortcut then e.Handled <- true
 
     // ---- 协议事件 ----
 
-    member private this.HandleEvent(ev: WireEvent) =
+    /// 协议事件入口：模型部分归 Wanxiang2.ProtocolDispatch，这里只是转交（测试经反射调用）。
+    member private this.HandleEvent(ev: WireEvent) = this.Dispatch.Handle ev
+
+    /// ProtocolDispatch 做完模型部分后交回的界面面（认证、配对、目录、健康、设备、审批、
+    /// 探测落点、列表快照、历史页、搜索结果、导出、能力表、附件上传、浏览器事务）。
+    member private this.Dispatch: ProtocolDispatch =
+        match protocolDispatch with
+        | Some d -> d
+        | None ->
+            let d =
+                ProtocolDispatch(
+                    { State = state; Runs = runs; Outbox = outbox; Commands = commandFeedback
+                      Configs = configFeedback; Downloads = downloads; Search = search; Probes = probes },
+                    { ActiveConversation = fun () -> activeConvId
+                      InstanceId = fun () -> instanceId
+                      Send = send
+                      Render = fun () -> this.Render()
+                      Toast = fun text tone ->
+                          toast text (match tone with
+                                      | DispatchTone.Info -> Info
+                                      | DispatchTone.Success -> Success
+                                      | DispatchTone.Warning -> Warning
+                                      | DispatchTone.Failure -> Failure)
+                      ObserveList = fun () -> observeConversationList ()
+                      DispatchPending = fun item -> this.DispatchPendingMessage item
+                      Downloaded = fun name bytes -> this.SaveDownload(name, bytes)
+                      MissingAttachment = fun sha -> missingAttachments <- missingAttachments.Add sha
+                      Apply = fun ev -> this.ApplyHostEvent ev })
+            protocolDispatch <- Some d
+            d
+
+    member private this.ApplyHostEvent(ev: WireEvent) =
         match ev with
-        // ADR-001 方案 B：Hello/UpgradeRequired 无生产路径（版本 in-band）。
-        // 保留匹配分支仅为兼容 reader（旧主机可能发送）；不改变任何状态。
-        | Hello _ | UpgradeRequired _ -> ()
         | AuthAccepted d ->
             if instanceId <> "" && instanceId <> d.instanceId then
                 if exportDialog |> Option.exists (fun dialog -> dialog.IsOpen) then overlay.CloseDialog()
@@ -1705,7 +1688,6 @@ type MainView() as this =
             this.Render()
             this.CompleteOnboarding()
         | ConfigChanged _ ->
-            send CatalogRequest
             // 配置重新加载成功：之前的「配置有误」随之消失。只在从有误恢复时提示一次。
             match ConfigIssueNotice.recovered (settings.Health.ClearConfigIssue()) with
             | Some text ->
@@ -1724,38 +1706,23 @@ type MainView() as this =
         | DoctorReport d ->
             doctorWait.Settle() |> ignore
             settings.Health.SetReport(d.ok, DoctorCheck.parseChecks d.checks)
-        | DoctorRequest _ -> ()
         | DevicesSnapshot d -> settings.Devices.SetDevices(DevicesModel.parse d.items, d.canInvite)
         | PairingInviteIssued d -> settings.Devices.SetInvite(d.code, d.expiresAtUtc, DateTimeOffset.UtcNow)
         | PairingInviteRejected d -> settings.Devices.SetInviteRejected d.reason
         | ToolApprovalRequested _
         | ToolApprovalResolved _ -> approvalPanel.Handle ev |> ignore
-        | ToolApprovalCapability _ | ToolApprovalDecision _ | ConfigUpdateTools _ -> ()
         | ProviderProbeResult d ->
-            probes.Resolve d.requestId
             let models = ProbeModels.ofJson d.models
             // 首次运行卡片自己发起的探测由它处理；其余交给设置页。
             if not (this.Onboarding.ApplyProbe(d.providerId, d.ok, models, d.error)) then
                 settings.ApplyProbe(d.providerId, d.ok, models, d.error)
-        | ConfigApplied d ->
-            let tracked = configFeedback.Resolve d.requestId
-            tracked |> Option.iter (fun feedback -> feedback.onCompleted d.ok)
-            // 空文案 = 调用方（首次运行卡片）自己会说话，这里不再叠 toast。
-            let notice, refetch = ConfigApplied.notice (tracked |> Option.map _.successMessage) d.ok (List.ofSeq d.errors)
-            match notice with
-            | ConfigAppliedNotice.Success text -> toast text Success
-            | ConfigAppliedNotice.Failure text -> toast text Failure
-            | ConfigAppliedNotice.Silent -> ()
-            if refetch then send CatalogRequest
         | ConversationListSnapshot d ->
-            state.Handle ev
             summaries <- ConversationSummary.parseList d.items
             lineage <- ForkLineage.parse d.items
             sidebar.SetLineage lineage
             // SetConversations 即快照到达：侧栏加载中状态随数据一并解除。
             sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
             sidebar.SetActive activeConvId
-            state.AdvanceCursor()
             this.PruneDeletedConversationDrafts()
             listReceived <- true
             this.Render()
@@ -1763,40 +1730,16 @@ type MainView() as this =
             if StartupTrace.mark "listReady" && StartupTrace.exitAfter then
                 Avalonia.Threading.DispatcherTimer.RunOnce((fun () -> StartupTrace.requestExit ()), TimeSpan.FromSeconds 3.0) |> ignore
         | ConversationSnapshot d ->
-            state.Handle ev
-            state.AdvanceCursor()
-            runs.Snapshot(d.conversationId, d.runtimeState, d.generationId)
+            // 发件箱放行与第二次重画在 ProtocolDispatch 里（次数与旧代码相同）。
             if activeConvId = Some d.conversationId then
                 pageLoading <- false
-                this.Render()
-            outbox.ConversationReady(instanceId, d.conversationId)
-            for item in outbox.Items(instanceId, Some d.conversationId) do
-                if item.state = PreparingConversation then this.DispatchPendingMessage item
-            if activeConvId = Some d.conversationId then
                 this.Render()
                 if StartupTrace.enabled then
                     ui.Post(
                         (fun () ->
                             if StartupTrace.mark "chatReady" && StartupTrace.exitAfter then StartupTrace.requestExit ()),
                         Avalonia.Threading.DispatcherPriority.Background)
-        | MessageCommitted d ->
-            state.Handle ev
-            state.AdvanceCursor()
-            let committed = MessageView.ofJson d.payload
-            if not (MessageView.isUser committed) then runs.ClearMessage d.conversationId
-            if activeConvId = Some d.conversationId then
-                // 这条已成为权威消息，流式临时副本必须立刻作废；
-                // 工具循环里会连续提交多条，留着旧缓冲就会看到重复的回复。
-                this.Render()
-        | ConversationUpdated d ->
-            state.Handle ev
-            state.AdvanceCursor()
-            observeConversationList ()
-            if activeConvId = Some d.conversationId then
-                this.Render()
-        | AuthorityCatchUp _ -> state.Handle ev
         | HistoryPage d ->
-            state.Handle ev
             if activeConvId = Some d.conversationId then
                 pageLoading <- false
                 pageRequestedAt <- None
@@ -1804,54 +1747,25 @@ type MainView() as this =
                 this.Render()
                 chat.RestoreHistoryPrependAnchorDeferred()
         | SearchResults d ->
-            // 只认最近一次发出的查询：更早的结果（用户又改了词）迟到就丢掉。
-            if search.Accept d.queryId then
-                sidebar.ApplySearchResults(
-                    { queryId = d.queryId
-                      query = d.query
-                      hits = SearchHit.parse d.items
-                      hasMore = d.hasMore
-                      truncated = d.truncated },
-                    d.offset)
+            // 迟到的旧结果已由 ProtocolDispatch 丢掉。
+            sidebar.ApplySearchResults(
+                { queryId = d.queryId
+                  query = d.query
+                  hits = SearchHit.parse d.items
+                  hasMore = d.hasMore
+                  truncated = d.truncated },
+                d.offset)
         | SearchFailed d ->
-            if search.Accept d.queryId then
-                sidebar.ApplySearchFailure(sidebar.SearchQueryText, d.message)
+            sidebar.ApplySearchFailure(sidebar.SearchQueryText, d.message)
         | ConversationExportPage page -> exportDialog |> Option.iter (fun dialog -> dialog.Handle page)
         | ConversationExportFailed d -> exportDialog |> Option.iter (fun dialog -> dialog.Fail(d.exportId, d.message))
-        | GenerationStarted d ->
-            runs.Start(d.conversationId, d.generationId)
-            if (runs.Get(Some d.conversationId)).generationId = Some d.generationId then
-                state.Handle ev
-                if activeConvId = Some d.conversationId then this.Render()
-        | GenerationDelta d ->
-            if runs.Delta(d.conversationId, d.generationId, MessageView.ofJson d.payload)
-               && activeConvId = Some d.conversationId then
-                this.Render()
         | GenerationFinished d ->
-            // Fail-closed：未知状态与无错误详情的失败一律落成可重试的通用失败卡，绝不静默（D2）。
-            let error = GenerationOutcome.errorOf d.status d.error
-            error |> Option.iter (fun err -> RetryCountdown.attach d.generationId err DateTimeOffset.UtcNow)
-            if runs.Finish(d.conversationId, d.generationId, error, d.usage) then
-                state.Handle ev
-                // PWA 安装引导推迟到第一次成功对话之后（第 210 节）：首次运行时不和引导卡 / 输入框抢位置。
-                if d.status = "completed" && OperatingSystem.IsBrowser() then
-                    try BrowserPage.ConversationSucceeded() with _ -> ()
-                // 非当前对话的失败只 toast（卡片看不见）；当前对话的失败只进卡片，不叠 toast。
-                match GenerationOutcome.notice d.status error (activeConvId = Some d.conversationId) with
-                | FinishNotice.Stopped -> toast "已停止" Info
-                | FinishNotice.FailureToast text -> toast text Failure
-                | FinishNotice.Quiet -> ()
-                if activeConvId = Some d.conversationId then this.Render()
+            // PWA 安装引导推迟到第一次成功对话之后（第 210 节）：首次运行时不和引导卡 / 输入框抢位置。
+            if d.status = "completed" && OperatingSystem.IsBrowser() then
+                try BrowserPage.ConversationSucceeded() with _ -> ()
         | HostCapabilities d ->
             hostFeatures <- Some(Set.ofList d.features)
             this.SyncPresetSurfaces()
-        | GenerationPartial d ->
-            if runs.RestorePartial(d.conversationId, d.generationId, MessageView.ofJson d.message, d.error)
-               && activeConvId = Some d.conversationId then
-                this.Render()
-        | ProviderRateLimitNotice d ->
-            // 决策 241：限流信号先到，等对应的 generation.finished 再挂到错误卡上。
-            RetryCountdown.notice d.generationId d.limit DateTimeOffset.UtcNow
         | AttachmentCommitted d ->
             match drafts.All |> Seq.tryPick (fun draft -> draft.attachments.Complete(d.attachmentId, d.size)) with
             // 决策 351：上传完成不再 toast——附件条上的 chip 已自证完成，每个文件一条
@@ -1867,46 +1781,6 @@ type MainView() as this =
                 composer.SetAttachments((attachmentDraft ()).Items)
                 toast (UploadFacts.uploadFailedText upload.fileName) Warning
             | None -> ()
-        | AttachmentDownloadBegin d ->
-            // 重试同键 Begin 会重置缓冲；新下载开始时也解除一次性的超限提示记忆。
-            downloads.Begin(d.sha256, d.fileName)
-        | AttachmentDownloadChunk d ->
-            if downloads.AppendBase64(d.sha256, d.dataBase64) then toast UploadFacts.downloadCappedText Warning
-        | AttachmentDownloadComplete d ->
-            match downloads.Take(d.sha256) with
-            | Some(fileName, bytes) -> this.SaveDownload(fileName, bytes)
-            | None -> ()
-        | CommandAccepted d ->
-            outbox.Accept d.invocationId
-            this.Render()
-        | CommandCommitted d ->
-            outbox.Commit d.invocationId
-            match commandFeedback.Commit d.invocationId with
-            | Some feedback ->
-                feedback.onCommitted ()
-                feedback.onCompleted true
-                feedback.successMessage |> Option.iter (fun message -> toast message Success)
-            | None -> ()
-            this.Render()
-        | CommandRejected d ->
-            commandFeedback.Reject d.invocationId |> Option.iter (fun feedback -> feedback.onCompleted false)
-            outbox.SetState(d.invocationId, RejectedMessage d.message)
-            outbox.RejectCreation(d.invocationId, d.message)
-            this.Render()
-            // 拒绝只报一次：输入区上方的未确认行已内联呈现原因与重试，不再叠 toast。
-        | ServerError d ->
-            // 附件 blob 缺失时把该 sha256 标成缺失，消息里就会显示「内容已丢失」
-            match ServerErrorRoute.classify activeConvId.IsSome d.message with
-            | ServerErrorRoute.MissingAttachment sha ->
-                missingAttachments <- missingAttachments.Add sha
-                this.Render()
-            | ServerErrorRoute.ConversationFailure message ->
-                // 可行动的主机错误进持久面：错误卡片自带重试，不再叠 toast（D9）。
-                // 若正有生成在跑（槽位被占），退回 toast，避免踩掉进行中的状态。
-                let failure = GenerationError.create GenerationErrorKind.UnknownFailure message
-                if runs.Finish(activeConvId.Value, Guid.CreateVersion7(), Some failure, None) then this.Render()
-                else toast (ServerErrorRoute.toastText message) Failure
-            | ServerErrorRoute.Toast text -> toast text Failure
         | _ -> ()
 
     // ---- 组装 ----

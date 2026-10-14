@@ -152,6 +152,8 @@
     <PackageReference Include="Wanxiang2.MessageCardView" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.SettingsScreen" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatPane" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ProtocolDispatch" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ShellCommands" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.DialogsDesk" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.SidebarDesk" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProgressThrottle" Version="0.0.0-local" />

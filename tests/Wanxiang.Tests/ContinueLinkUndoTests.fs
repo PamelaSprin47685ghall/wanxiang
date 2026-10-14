@@ -73,22 +73,3 @@ let private findNamed (root: Control) (name: string) =
 // ---------- 231 ----------
 
 // ---------- 232 ----------
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``232 Ctrl+Z 映射到撤销，并只触发可见提示条上的「撤销」`` () =
-    Headless.run (fun () ->
-        Assert.Equal(ShortcutAction.UndoPending, KeyShortcut.resolve (KeyEventArgs(Key = Key.Z, KeyModifiers = KeyModifiers.Control)))
-        Assert.Equal(ShortcutAction.UndoPending, KeyShortcut.resolve (KeyEventArgs(Key = Key.Z, KeyModifiers = KeyModifiers.Meta)))
-        Assert.NotEqual(ShortcutAction.UndoPending, KeyShortcut.resolve (KeyEventArgs(Key = Key.Z, KeyModifiers = (KeyModifiers.Control ||| KeyModifiers.Shift))))
-        let root = Grid()
-        let overlay = OverlayHost(root)
-        Assert.False(overlay.TryInvokeToastAction "撤销")
-        let mutable undone = 0
-        overlay.ToastWith("已删除「甲」", Info, Some("撤销", fun () -> undone <- undone + 1))
-        Assert.True(overlay.HasToastAction "撤销")
-        Assert.True(overlay.TryInvokeToastAction "撤销")
-        Assert.Equal(1, undone)
-        // 提示条已关：再按不会重复撤销
-        Assert.False(overlay.TryInvokeToastAction "撤销")
-        Assert.Equal(1, undone))
