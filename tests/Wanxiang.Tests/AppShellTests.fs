@@ -459,48 +459,6 @@ module AppShellTests =
 
     [<Trait("Category", "UI")>]
     [<Fact>]
-    let ``NeighborExcluding returns next visible neighbor when active conversation is removed`` () =
-        Headless.run (fun () ->
-            let view, _ = createShell ()
-            let t0 = DateTimeOffset.UtcNow
-            let id1 = Guid.NewGuid()
-            let id2 = Guid.NewGuid()
-            let id3 = Guid.NewGuid()
-
-            // 侧栏按 updatedAt 降序排列：t0 + 3分 (id3) 在最前，t0 + 2分 (id2) 居中，t0 + 1分 (id1) 在最后
-            // 可见顺序为 [ id3; id2; id1 ]
-            let summaries =
-                [ createSummaryWithTime id1 "Conv 1" (t0.AddMinutes 1.0)
-                  createSummaryWithTime id2 "Conv 2" (t0.AddMinutes 2.0)
-                  createSummaryWithTime id3 "Conv 3" (t0.AddMinutes 3.0) ]
-
-            let sidebar: Sidebar = getField view "sidebar"
-            sidebar.SetConversations summaries
-            setField view "summaries" summaries
-            setField view "activeConvId" (Some id2)
-
-            // 当移除当前对话 id2 时，从可见顺序自顶向下排除 id2，首个存活的可见对话为 id3
-            let neighbor: Guid option = invokeMethod view "NeighborExcluding" [| box [ id2 ] |]
-            Assert.True(neighbor.IsSome)
-            Assert.Equal(id3, neighbor.Value)
-
-            // 若同时移除 [ id3; id2 ]，则下一个可见对话落到 id1
-            let neighbor2: Guid option = invokeMethod view "NeighborExcluding" [| box [ id3; id2 ] |]
-            Assert.True(neighbor2.IsSome)
-            Assert.Equal(id1, neighbor2.Value)
-
-            // 若全部可见对话都被移除，则返回 None（主视图落回欢迎页）
-            let noNeighborAll: Guid option = invokeMethod view "NeighborExcluding" [| box [ id1; id2; id3 ] |]
-            Assert.True(noNeighborAll.IsNone)
-
-            // 若当前未激活被删除的对话，则返回 None（不触碰主视图）
-            setField view "activeConvId" (Some id1)
-            let noNeighbor: Guid option = invokeMethod view "NeighborExcluding" [| box [ id3 ] |]
-            Assert.True(noNeighbor.IsNone)
-        )
-
-    [<Trait("Category", "UI")>]
-    [<Fact>]
     let ``SelectConversation switches active conversation and sets composer text from draft`` () =
         Headless.run (fun () ->
             let view, _ = createShell ()

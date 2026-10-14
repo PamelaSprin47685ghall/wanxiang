@@ -60,8 +60,8 @@ type MainView() as this =
     let mutable timersStarted = false
     let mutable topLevelKeysHooked: TopLevel option = None
     /// 决策 444：搜索与模型服务探测也是「请求→回应」，同样设等待上限。
-    let mutable searchSentAt: DateTimeOffset option = None
-    let pendingProbes = System.Collections.Generic.Dictionary<Guid, string * DateTimeOffset>()
+    let search = SearchInFlight()
+    let probes = PendingProbes()
     let runs = ConversationRuns()
     let mutable summaries: ConversationSummary list = []
     let mutable paletteRecent: string list = PaletteRecent.loadRecent ()
@@ -69,7 +69,6 @@ type MainView() as this =
     let mutable pendingDeletes = PendingDeletion.empty
     /// W4：分叉谱系（随列表快照更新）、最近一次搜索的 queryId、待滚动到的消息。
     let mutable lineage: Map<Guid, ForkLineage> = Map.empty
-    let mutable latestSearchQueryId: Guid option = None
     let mutable pendingReveal: (Guid * RevealTarget) option = None
 
     let drafts = ComposerDrafts()
@@ -687,19 +686,9 @@ type MainView() as this =
 
     // ---- 对话操作 ----
 
-    /// 批量删除后的主视图归宿：删的集合里含当前对话时，从侧栏可见顺序排除待删集合
-    /// 取第一个存活对话（整列全删则 None → 欢迎页）。不含当前对话时 None = 不动主视图。
-    /// 与单条删除的 NeighborAfterDelete 同一意图，只是口径从「单个 id」扩到「一批 id」。
+    /// 批量删除后的主视图归宿（规则见 PendingDeletion.neighborAfter）。InteractabilityPolish8Tests 反射调用它。
     member private this.NeighborExcluding(removedIds: Guid list) : Guid option =
-        match activeConvId with
-        | Some currentId when List.contains currentId removedIds ->
-            let removed = Set.ofList removedIds
-            sidebar.GetVisibleOrder()
-            |> List.tryPick (fun id ->
-                match Guid.TryParse id with
-                | true, g when not (removed.Contains g) -> Some g
-                | _ -> None)
-        | _ -> None
+        PendingDeletion.neighborAfter activeConvId removedIds (sidebar.GetVisibleOrder())
 
     /// §214：登记待删 → 隐去行 → 当前对话落邻位 → 带「撤销」的提示条 → 宽限期后提交。
     member private this.ScheduleDelete(ids: Guid list) =
@@ -738,7 +727,7 @@ type MainView() as this =
                             sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
                             if deletingCurrent && ids.Length = 1 then this.SelectConversation(Some ids.Head)
                             this.Render()
-                            toast (if ids.Length = 1 then "已恢复对话" else sprintf "已恢复 %d 个对话" ids.Length) Success))
+                            toast (PendingDeletion.restoredText ids.Length) Success))
             this.Render()
 
     /// 宽限期到：真正提交删除。被拒的条目在下一次列表快照里自然回到列表。
@@ -853,7 +842,7 @@ type MainView() as this =
     /// 决策 442：主机明确声明不支持时，发请求前就说清楚，而不是等它石沉大海。
     member private _.ProbeProvider(providerId: string) =
         let requestId = newInvocation ()
-        pendingProbes[requestId] <- (providerId, DateTimeOffset.UtcNow)
+        probes.Track(requestId, providerId, DateTimeOffset.UtcNow)
         send (ProviderProbeRequest {| requestId = requestId; providerId = providerId |})
 
     /// 决策 443/444：到点仍没回应的请求统一收尾。
@@ -865,15 +854,8 @@ type MainView() as this =
         for f in expiredConfig do f.onCompleted false
         for f in expiredCommands do f.onCompleted false
         if not (List.isEmpty expiredConfig && List.isEmpty expiredCommands) then toast message Warning
-        match searchSentAt with
-        | Some at when now - at >= timeout ->
-            searchSentAt <- None
-            latestSearchQueryId <- None
-            sidebar.ApplySearchFailure(sidebar.SearchQueryText, message)
-        | _ -> ()
-        let dueProbes = [ for KeyValue(id, (pid, at)) in pendingProbes do if now - at >= timeout then id, pid ]
-        for (id, pid) in dueProbes do
-            pendingProbes.Remove id |> ignore
+        if search.Expire(now, timeout) then sidebar.ApplySearchFailure(sidebar.SearchQueryText, message)
+        for (_, pid) in probes.Expire(now, timeout) do
             let err = Some message
             if not (this.Onboarding.ApplyProbe(pid, false, [], err)) then settings.ApplyProbe(pid, false, [], err)
         not (List.isEmpty expiredCommands)
@@ -1913,7 +1895,7 @@ type MainView() as this =
             if d.alreadyHandled then toast (ApprovalCardText.alreadyHandledText d.status) Info
         | ToolApprovalCapability _ | ToolApprovalDecision _ | ConfigUpdateTools _ -> ()
         | ProviderProbeResult d ->
-            pendingProbes.Remove d.requestId |> ignore
+            probes.Resolve d.requestId
             let models =
                 [ for item in d.models do
                       if not (isNull item) && item.GetValueKind() = JsonValueKind.String then item.GetValue<string>() ]
@@ -1921,22 +1903,15 @@ type MainView() as this =
             if not (this.Onboarding.ApplyProbe(d.providerId, d.ok, models, d.error)) then
                 settings.ApplyProbe(d.providerId, d.ok, models, d.error)
         | ConfigApplied d ->
-            match configFeedback.Resolve d.requestId with
-            | Some feedback ->
-                feedback.onCompleted d.ok
-                if d.ok then
-                    // 空文案 = 调用方（首次运行卡片）自己会说话，这里不再叠 toast。
-                    if not (String.IsNullOrEmpty feedback.successMessage) then
-                        toast feedback.successMessage Success
-                    send CatalogRequest
-                else
-                    toast (String.Join("；", d.errors)) Failure
-            | None ->
-                if d.ok then
-                    toast "配置已保存" Success
-                    send CatalogRequest
-                else
-                    toast (String.Join("；", d.errors)) Failure
+            let tracked = configFeedback.Resolve d.requestId
+            tracked |> Option.iter (fun feedback -> feedback.onCompleted d.ok)
+            // 空文案 = 调用方（首次运行卡片）自己会说话，这里不再叠 toast。
+            let notice, refetch = ConfigApplied.notice (tracked |> Option.map _.successMessage) d.ok (List.ofSeq d.errors)
+            match notice with
+            | ConfigAppliedNotice.Success text -> toast text Success
+            | ConfigAppliedNotice.Failure text -> toast text Failure
+            | ConfigAppliedNotice.Silent -> ()
+            if refetch then send CatalogRequest
         | ConversationListSnapshot d ->
             state.Handle ev
             summaries <- ConversationSummary.parseList d.items
@@ -1995,8 +1970,7 @@ type MainView() as this =
                 chat.RestoreHistoryPrependAnchorDeferred()
         | SearchResults d ->
             // 只认最近一次发出的查询：更早的结果（用户又改了词）迟到就丢掉。
-            if latestSearchQueryId = Some d.queryId then
-                searchSentAt <- None
+            if search.Accept d.queryId then
                 sidebar.ApplySearchResults(
                     { queryId = d.queryId
                       query = d.query
@@ -2005,8 +1979,7 @@ type MainView() as this =
                       truncated = d.truncated },
                     d.offset)
         | SearchFailed d ->
-            if latestSearchQueryId = Some d.queryId then
-                searchSentAt <- None
+            if search.Accept d.queryId then
                 sidebar.ApplySearchFailure(sidebar.SearchQueryText, d.message)
         | ConversationExportPage page -> exportDialog |> Option.iter (fun dialog -> dialog.Handle page)
         | ConversationExportFailed d -> exportDialog |> Option.iter (fun dialog -> dialog.Fail(d.exportId, d.message))
@@ -2021,30 +1994,18 @@ type MainView() as this =
                 this.Render()
         | GenerationFinished d ->
             // Fail-closed：未知状态与无错误详情的失败一律落成可重试的通用失败卡，绝不静默（D2）。
-            let error =
-                match d.status with
-                | "completed" | "cancelled" -> None
-                | "failed" ->
-                    match d.error with
-                    | Some _ as error -> error
-                    | None ->
-                        Some(GenerationError.create GenerationErrorKind.UnknownFailure "生成失败，主机没有说明原因。可以重试；反复出现时请在设置里「检查主机」。")
-                | unknown ->
-                    Some(
-                        GenerationError.create GenerationErrorKind.UnknownFailure "生成结束状态未知，已按失败处理。"
-                        |> GenerationError.withDetail (sprintf "未知状态：%s" unknown))
+            let error = GenerationOutcome.errorOf d.status d.error
             error |> Option.iter (fun err -> RetryCountdown.attach d.generationId err DateTimeOffset.UtcNow)
             if runs.Finish(d.conversationId, d.generationId, error, d.usage) then
                 state.Handle ev
                 // PWA 安装引导推迟到第一次成功对话之后（第 210 节）：首次运行时不和引导卡 / 输入框抢位置。
                 if d.status = "completed" && OperatingSystem.IsBrowser() then
                     try BrowserPage.ConversationSucceeded() with _ -> ()
-                match d.status, error with
-                | "cancelled", _ when activeConvId = Some d.conversationId -> toast "已停止" Info
                 // 非当前对话的失败只 toast（卡片看不见）；当前对话的失败只进卡片，不叠 toast。
-                | _, Some err when activeConvId <> Some d.conversationId ->
-                    toast (GenerationError.display err) Failure
-                | _ -> ()
+                match GenerationOutcome.notice d.status error (activeConvId = Some d.conversationId) with
+                | FinishNotice.Stopped -> toast "已停止" Info
+                | FinishNotice.FailureToast text -> toast text Failure
+                | FinishNotice.Quiet -> ()
                 if activeConvId = Some d.conversationId then this.Render()
         | HostCapabilities d ->
             hostFeatures <- Some(Set.ofList d.features)
@@ -2108,20 +2069,17 @@ type MainView() as this =
             // 拒绝只报一次：输入区上方的未确认行已内联呈现原因与重试，不再叠 toast。
         | ServerError d ->
             // 附件 blob 缺失时把该 sha256 标成缺失，消息里就会显示「内容已丢失」
-            if d.message.StartsWith("attachment ", StringComparison.Ordinal) && d.message.Contains "not found" then
-                let parts = d.message.Split(' ')
-                if parts.Length > 1 then
-                    missingAttachments <- missingAttachments.Add(parts[1].ToLowerInvariant())
-                    this.Render()
-            elif d.message.StartsWith("消息记账失败", StringComparison.Ordinal) && activeConvId.IsSome then
+            match ServerErrorRoute.classify activeConvId.IsSome d.message with
+            | ServerErrorRoute.MissingAttachment sha ->
+                missingAttachments <- missingAttachments.Add sha
+                this.Render()
+            | ServerErrorRoute.ConversationFailure message ->
                 // 可行动的主机错误进持久面：错误卡片自带重试，不再叠 toast（D9）。
                 // 若正有生成在跑（槽位被占），退回 toast，避免踩掉进行中的状态。
-                let convId = activeConvId.Value
-                let failure = GenerationError.create GenerationErrorKind.UnknownFailure d.message
-                if runs.Finish(convId, Guid.CreateVersion7(), Some failure, None) then this.Render()
-                else toast (sprintf "主机报告了错误：%s" d.message) Failure
-            else
-                toast (sprintf "主机报告了错误：%s" d.message) Failure
+                let failure = GenerationError.create GenerationErrorKind.UnknownFailure message
+                if runs.Finish(activeConvId.Value, Guid.CreateVersion7(), Some failure, None) then this.Render()
+                else toast (ServerErrorRoute.toastText message) Failure
+            | ServerErrorRoute.Toast text -> toast text Failure
         | _ -> ()
 
     // ---- 组装 ----
@@ -2227,8 +2185,7 @@ type MainView() as this =
                 this.OpenMessageLink link
               | None ->
                 let queryId = Guid.CreateVersion7()
-                latestSearchQueryId <- Some queryId
-                searchSentAt <- Some DateTimeOffset.UtcNow
+                search.Sent(queryId, DateTimeOffset.UtcNow)
                 send (
                     SearchQuery
                         { queryId = queryId
