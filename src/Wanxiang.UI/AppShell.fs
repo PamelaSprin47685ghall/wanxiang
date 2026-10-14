@@ -1550,71 +1550,15 @@ type MainView() as this =
 
     /// 决策 370–379：命令面板条目。每次输入现取，对话列表与当前对话状态永远是新的。
     member private this.PaletteItems() : PaletteItem list =
-        let act id title subtitle keywords shortcut =
-            { id = "act:" + id; kind = PaletteAction; title = title; subtitle = subtitle; keywords = keywords; shortcut = shortcut }
-        let hasConv = activeConvId.IsSome
-        let actions =
-            [ act "new" "新建对话" "" [ "new"; "chat"; "xinjian" ] (Some "Ctrl / ⌘ + N")
-              act "model" "切换模型" (if hasConv then "本对话" else "新对话使用的模型") [ "model"; "switch" ] (Some "Ctrl / ⌘ + M")
-              if hasConv then
-                  act "export" "导出当前对话" "Markdown 或 JSON" [ "export"; "download" ] (Some "Ctrl / ⌘ + Shift + E")
-                  act "fork" "从最新提问分叉" "编辑后另开一个分叉" [ "fork"; "branch"; "分支" ] None
-                  act "copy-reply" "复制最新回复" "" [ "copy" ] (Some "Ctrl / ⌘ + Shift + C")
-                  act "regenerate" "重新生成最新回复" "" [ "regenerate"; "retry"; "重试" ] (Some "Ctrl / ⌘ + Shift + G")
-              for p in catalog.presets do
-                  { id = "preset:" + p.id; kind = PaletteAction; title = "用预设新建：" + p.name
-                    subtitle = Presets.describe catalog p; keywords = [ "preset"; "yushe"; "ys"; p.name ]; shortcut = None }
-              if hasConv && HostFeatures.supports hostFeatures HostFeatures.Presets then
-                  act "save-preset" "存为预设" "记下本对话的模型、指令、参数和工具" [ "preset"; "save"; "yushe" ] None
-              if HostFeatures.supports hostFeatures HostFeatures.ConversationImport then
-                act "import" "导入对话" "从导出的 JSON 文件" [ "import"; "upload" ] None
-              act "theme" "切换主题" (sprintf "当前：%s" (ThemePreference.label prefs.theme)) [ "theme"; "dark"; "light"; "深色"; "浅色" ] (Some "Ctrl / ⌘ + Shift + S")
-              act "sidebar" "显示 / 隐藏侧栏" "" [ "sidebar" ] (Some "Ctrl / ⌘ + B")
-              act "shortcuts" "键盘快捷键" "" [ "shortcuts"; "keyboard"; "help"; "帮助" ] (Some "F1")
-              act "settings" "打开设置" "" [ "settings"; "preferences" ] (Some "Ctrl / ⌘ + ,")
-              act "add-provider" "添加模型服务" "" [ "provider"; "api key"; "密钥" ] None ]
-        let sectionItems =
-            SettingsSection.all
-            |> List.map (fun section ->
-                { id = "set:" + (string section).ToLowerInvariant()
-                  kind = PaletteSetting
-                  title = "设置 › " + SettingsSection.label section
-                  subtitle = SettingsSection.scope section
-                  keywords = [ string section; SettingsSection.label section ]
-                  shortcut = None })
-        let settingItems =
-            [ "appearance", "主题", [ "theme" ]
-              "appearance", "消息字号", [ "font"; "字体" ]
-              "appearance", "发送键（Enter / Ctrl / ⌘ + Enter）", [ "enter"; "send" ]
-              "appearance", "减弱动态效果", [ "motion"; "动画" ]
-              "appearance", "本机保存草稿", [ "draft" ]
-              "appearance", "代码块折行", [ "wrap"; "code" ]
-              "generation", "默认模型与温度", [ "temperature"; "default model" ]
-              "generation", "导入对话", [ "import" ]
-              "devices", "配对新设备", [ "pair"; "qr"; "二维码" ]
-              "tools", "工具审批", [ "approval"; "tool" ] ]
-            |> List.map (fun (section, title, keywords) ->
-                { id = "set:" + section + ":" + title
-                  kind = PaletteSetting
-                  title = title
-                  subtitle = "设置 › " + (SettingsSection.all |> List.find (fun s -> (string s).ToLowerInvariant() = section) |> SettingsSection.label)
-                  keywords = keywords
-                  shortcut = None })
-        let conversations =
-            summaries
-            |> List.filter (fun s -> not s.archived || prefs.showArchived)
-            |> List.map (fun s ->
-                { id = "conv:" + string s.id
-                  kind = PaletteConversation
-                  title = (if String.IsNullOrWhiteSpace s.title then "新对话" else s.title)
-                  subtitle =
-                      let tags =
-                          [ (s.pinned, "已置顶"); (s.archived, "已归档"); (s.isFork, "分叉") ]
-                          |> List.filter fst |> List.map snd
-                      String.Join(" · ", tags @ [ s.updatedAt.ToLocalTime().ToString("M月d日 HH:mm") ])
-                  keywords = []
-                  shortcut = None })
-        actions @ sectionItems @ settingItems @ conversations
+        ShellPalette.items
+            { hasConversation = activeConvId.IsSome
+              presets = [ for p in catalog.presets -> p.id, p.name, Presets.describe catalog p ]
+              supportsPresets = HostFeatures.supports hostFeatures HostFeatures.Presets
+              supportsImport = HostFeatures.supports hostFeatures HostFeatures.ConversationImport
+              themeLabel = ThemePreference.label prefs.theme
+              sections = [ for s in SettingsSection.all -> string s, SettingsSection.label s, SettingsSection.scope s ]
+              conversations = summaries
+              showArchived = prefs.showArchived }
 
     member private this.RunPaletteItem(item: PaletteItem, query: string) =
         paletteRecent <- CommandPalette.pushRecent item.id paletteRecent
@@ -1623,45 +1567,48 @@ type MainView() as this =
             if navigation.State.compactMode && navigation.State.compactNavigationOpen then this.SetCompactNavigation false
         let sectionOf (key: string) =
             SettingsSection.all |> List.tryFind (fun s -> (string s).ToLowerInvariant() = key)
-        match item.id with
-        | id when id = CommandPalette.fullTextId -> this.FocusSidebarSearch(Some(query.Trim()))
-        | id when id.StartsWith "conv:" ->
-            match Guid.TryParse(id.Substring 5) with
-            | true, convId -> closeDrawer (); this.OpenConversation convId
-            | _ -> ()
-        | id when id.StartsWith "set:" ->
-            let key = id.Substring(4).Split(':')[0]
-            closeDrawer ()
+        let command = ShellPalette.commandOf item.id
+        // 预设已不存在：只 toast，不收抽屉（旧分派先查预设）。
+        let preset =
+            match command with
+            | PaletteCommand.ApplyPreset presetId -> catalog.presets |> List.tryFind (fun p -> p.id = presetId)
+            | _ -> None
+        let missingPreset = (match command with PaletteCommand.ApplyPreset _ -> preset.IsNone | _ -> false)
+        if ShellPalette.closesDrawer command && not missingPreset then closeDrawer ()
+        match command with
+        | PaletteCommand.SearchMessages -> this.FocusSidebarSearch(Some(query.Trim()))
+        | PaletteCommand.OpenConversation convId -> this.OpenConversation convId
+        | PaletteCommand.OpenSettings key ->
+            // 找不到分区时只打开设置页。
             this.ShowSettings()
             sectionOf key |> Option.iter settings.ShowSection
-        | "act:new" -> closeDrawer (); this.CreateConversation() |> ignore
-        | id when id.StartsWith "preset:" ->
-            match catalog.presets |> List.tryFind (fun p -> "preset:" + p.id = id) with
-            | Some p -> closeDrawer (); this.ApplyPreset p
+        | PaletteCommand.ApplyPreset _ ->
+            match preset with
+            | Some p -> this.ApplyPreset p
             | None -> toast "这个预设已经不存在。" Warning
-        | "act:save-preset" -> this.SaveConversationAsPreset()
-        | "act:model" ->
-            closeDrawer ()
+        | PaletteCommand.Action "new" -> this.CreateConversation() |> ignore
+        | PaletteCommand.Action "save-preset" -> this.SaveConversationAsPreset()
+        | PaletteCommand.Action "model" ->
             this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
-        | "act:export" ->
+        | PaletteCommand.Action "export" ->
             match activeSummary () with
             | Some summary -> this.ExportConversation summary
             | None -> toast "没有打开的对话可导出" Warning
-        | "act:fork" ->
+        | PaletteCommand.Action "fork" ->
             match activeConversation () with
             | Some view ->
                 let seed = messagesOf view |> List.filter MessageView.isUser |> List.tryLast |> Option.map (fun m -> m.text) |> Option.defaultValue ""
                 this.ForkFrom(None, seed)
             | None -> toast "当前没有可分叉的对话。" Warning
-        | "act:copy-reply" -> this.CopyLatestReply()
-        | "act:regenerate" -> closeDrawer (); this.RegenerateLatest()
-        | "act:import" -> this.ImportConversation()
-        | "act:theme" -> this.CycleTheme()
-        | "act:sidebar" -> this.ToggleSidebar()
-        | "act:shortcuts" -> Dialogs.shortcuts overlay
-        | "act:settings" -> closeDrawer (); this.ShowSettings()
-        | "act:add-provider" -> closeDrawer (); this.ShowAddProvider()
-        | _ -> ()
+        | PaletteCommand.Action "copy-reply" -> this.CopyLatestReply()
+        | PaletteCommand.Action "regenerate" -> this.RegenerateLatest()
+        | PaletteCommand.Action "import" -> this.ImportConversation()
+        | PaletteCommand.Action "theme" -> this.CycleTheme()
+        | PaletteCommand.Action "sidebar" -> this.ToggleSidebar()
+        | PaletteCommand.Action "shortcuts" -> Dialogs.shortcuts overlay
+        | PaletteCommand.Action "settings" -> this.ShowSettings()
+        | PaletteCommand.Action "add-provider" -> this.ShowAddProvider()
+        | PaletteCommand.Action _ | PaletteCommand.Ignore -> ()
 
     member this.ShowCommandPalette() =
         if not overlay.IsDialogOpen then
@@ -1696,20 +1643,18 @@ type MainView() as this =
          | _ -> ParityProbe.hit "shortcut.resolved")
         match shortcut with
         | ShortcutAction.Escape ->
-            if overlay.HandleEscape() then e.Handled <- true
-            elif settingsHost.IsVisible then
-                e.Handled <- true
-                this.CloseSettings()
-            elif navigation.State.compactMode && navigation.State.compactNavigationOpen then
-                // 抽屉内有焦点的分支（搜索/行/开关/空态）已先消费 Escape 并标记 Handled；
-                // 落到这里说明焦点在抽屉外，直接收起并把焦点还给输入区，且先于生成停止分支（D3/D4）。
-                e.Handled <- true
-                this.SetCompactNavigation false
-            elif (runs.Get activeConvId).generationId.IsSome then
-                e.Handled <- true
-                this.StopGeneration()
+            // 浮层先试；抽屉内有焦点的分支已先消费 Escape，落到这里说明焦点在抽屉外（D3/D4）。
+            let overlayHandled = overlay.HandleEscape()
+            match EscapeChain.decide overlayHandled settingsHost.IsVisible
+                      (navigation.State.compactMode && navigation.State.compactNavigationOpen)
+                      (runs.Get activeConvId).generationId.IsSome with
+            | EscapeTarget.Overlay -> e.Handled <- true
+            | EscapeTarget.CloseSettings -> e.Handled <- true; this.CloseSettings()
+            | EscapeTarget.CloseDrawer -> e.Handled <- true; this.SetCompactNavigation false
+            | EscapeTarget.StopGeneration -> e.Handled <- true; this.StopGeneration()
+            | EscapeTarget.Unhandled -> ()
         | ShortcutAction.NoShortcut -> ()
-        | _ when overlay.IsDialogOpen || overlay.IsPopupOpen -> ()
+        | _ when EscapeChain.blockedByOverlay overlay.IsDialogOpen overlay.IsPopupOpen -> ()
         | ShortcutAction.ToggleSidebar -> e.Handled <- true; this.ToggleSidebar()
         | ShortcutAction.CloseWindow ->
             // 与右上角叉号同一路径：走 Window.Close 才会触发 MainWindow.Closing
@@ -1762,13 +1707,11 @@ type MainView() as this =
             | None -> toast "没有打开的对话可导出" Warning
         | ShortcutAction.OpenConversationAt index ->
             // Ctrl+1..9 走侧栏当前可见顺序（C2）；打开后焦点经 OpenConversation 回家（D3/D4）。
-            let order = sidebar.GetVisibleOrder()
-            if index >= 0 && index < order.Length then
-                match Guid.TryParse order[index] with
-                | true, id ->
-                    e.Handled <- true
-                    this.OpenConversation id
-                | _ -> ()
+            match EscapeChain.conversationAt index (sidebar.GetVisibleOrder()) with
+            | Some id ->
+                e.Handled <- true
+                this.OpenConversation id
+            | None -> ()
         | ShortcutAction.ShowShortcuts -> e.Handled <- true; Dialogs.shortcuts overlay
 
     // ---- 协议事件 ----
