@@ -18,6 +18,8 @@ type ConversationImportDialog(
     topLevel: unit -> TopLevel,
     submit: ImportPreview -> (bool -> unit) -> unit) as this =
 
+    /// 构造时所在的 UI 调度器；后台续延一律投递到这里，不在调用方线程上新建调度器（决策 421）。
+    let ui = Avalonia.Threading.Dispatcher.UIThread
     let heading = Ui.title "导入对话"
     let intro =
         Ui.caption "选择从万象「导出（Markdown / JSON）」里保存的 JSON 文件。导入后是这台主机上的一个新对话，不会自动生成回复。"
@@ -65,7 +67,7 @@ type ConversationImportDialog(
         busy <- false
         this.Refresh()
         overlay.ShowDialog(content :> Control, 480.0, onClosed = (fun () -> active <- false; preview <- None))
-        Dispatcher.UIThread.Post(fun () -> if pickButton.IsEffectivelyVisible then pickButton.Focus() |> ignore)
+        ui.Post(fun () -> if pickButton.IsEffectivelyVisible then pickButton.Focus() |> ignore)
 
     /// 读到文件内容后的唯一入口（测试也走这里）：解析、给预览或说明为什么不行。
     member this.LoadText(fileName: string, byteCount: int64, text: string) =
@@ -89,7 +91,7 @@ type ConversationImportDialog(
                       yield "模型使用这台主机的对话默认值，导入后可以在对话顶部更换。" ]
                 details.Text <- String.Join("\n", lines)
                 details.IsVisible <- true
-                Dispatcher.UIThread.Post(fun () -> if importButton.IsEffectivelyVisible then importButton.Focus() |> ignore)
+                ui.Post(fun () -> if importButton.IsEffectivelyVisible then importButton.Focus() |> ignore)
             | Error message ->
                 preview <- None
                 status.Text <- message
@@ -124,9 +126,9 @@ type ConversationImportDialog(
                                 if n = 0 then reading <- false else buffer.Write(chunk, 0, n)
                             let bytes = buffer.ToArray()
                             let text = if int64 bytes.Length > ConversationTransfer.maxImportBytes then "" else Encoding.UTF8.GetString bytes
-                            Dispatcher.UIThread.Post(fun () -> this.LoadText(file.Name, int64 bytes.Length, text))
+                            ui.Post(fun () -> this.LoadText(file.Name, int64 bytes.Length, text))
                     with ex ->
-                        Dispatcher.UIThread.Post(fun () ->
+                        ui.Post(fun () ->
                             if active then
                                 status.Text <- "读取文件失败：" + ex.Message
                                 status.Foreground <- Tokens.danger)

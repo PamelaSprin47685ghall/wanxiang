@@ -22,6 +22,8 @@ type ConversationExportDialog(
     topLevel: unit -> TopLevel,
     ?lineage: ExportLineage) as this =
 
+    /// 构造时所在的 UI 调度器；后台续延一律投递到这里，不在调用方线程上新建调度器（决策 421）。
+    let ui = Avalonia.Threading.Dispatcher.UIThread
     let lineage = defaultArg lineage ConversationTransfer.rootLineage
 
     let controller = ConversationExportController(conversationId)
@@ -148,8 +150,8 @@ type ConversationExportDialog(
             try
                 let! sent = sending |> Async.AwaitTask
                 if not sent then
-                    Dispatcher.UIThread.Post(fun () -> this.Fail(query.exportId, "连接已断开，未完成导出；请重新连接后重试。"))
-            with ex -> Dispatcher.UIThread.Post(fun () -> this.Fail(query.exportId, "读取历史失败：" + ex.Message))
+                    ui.Post(fun () -> this.Fail(query.exportId, "连接已断开，未完成导出；请重新连接后重试。"))
+            with ex -> ui.Post(fun () -> this.Fail(query.exportId, "读取历史失败：" + ex.Message))
         } |> Async.Start
 
     /// 用户主动取消：控制器放弃本次读取并进入取消态；立即渲染，
@@ -236,7 +238,7 @@ type ConversationExportDialog(
             outputJson <- None))
         timer.Start()
         this.Start()
-        Dispatcher.UIThread.Post(fun () ->
+        ui.Post(fun () ->
             if closeButton.IsEffectivelyVisible && closeButton.IsEnabled then
                 closeButton.Focus() |> ignore)
 
@@ -313,7 +315,7 @@ type ConversationExportDialog(
                                 if stream.CanSeek then stream.SetLength 0L
                                 do! stream.WriteAsync(bytes, 0, bytes.Length) |> Async.AwaitTask
                                 do! stream.FlushAsync() |> Async.AwaitTask
-                            Dispatcher.UIThread.Post(fun () ->
+                            ui.Post(fun () ->
                                 if active then
                                     saving <- false
                                     if not (isNull file) then
@@ -321,7 +323,7 @@ type ConversationExportDialog(
                                         savedKind <- (if asJson then "JSON" else "Markdown")
                                     this.Refresh())
                         with ex ->
-                            Dispatcher.UIThread.Post(fun () ->
+                            ui.Post(fun () ->
                                 if active then
                                     saving <- false
                                     saveError <- Some("保存失败：" + ex.Message + "。完整内容仍保留，可以再次保存。")

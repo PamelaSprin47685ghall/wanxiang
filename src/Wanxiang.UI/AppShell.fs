@@ -28,6 +28,11 @@ open Wanxiang.Protocol
 type MainView() as this =
     inherit UserControl()
 
+    /// 构造时所在的 UI 调度器。后台回调（模块级事件 Highlight.Ready、网络线程、Async 续延）
+    /// 一律投递到这里，而不是事后去取 `Dispatcher.UIThread`：后者在调度器尚未建立/已被测试会话
+    /// 重置时，会在调用方线程上**新建**一个 UI 调度器并永久归它所有（决策 421）。
+    let ui = Dispatcher.UIThread
+
     let client = WsClient()
     let state = ClientState()
 
@@ -141,9 +146,9 @@ type MainView() as this =
                     async {
                         try
                             do! clip.SetTextAsync text |> Async.AwaitTask
-                            Dispatcher.UIThread.Post(fun () -> toast "已复制到剪贴板" Success)
+                            ui.Post(fun () -> toast "已复制到剪贴板" Success)
                         with _ ->
-                            Dispatcher.UIThread.Post(fun () -> toast "复制到剪贴板失败，请重试。" Failure)
+                            ui.Post(fun () -> toast "复制到剪贴板失败，请重试。" Failure)
                     }
                     |> Async.Start
         with _ -> ()
@@ -188,7 +193,7 @@ type MainView() as this =
         async {
             let! sent = sending |> Async.AwaitTask
             if not sent then
-                Dispatcher.UIThread.Post(fun () ->
+                ui.Post(fun () ->
                     if epoch = client.ConnectionGeneration then
                         let id = ClientCommand.invocationId cmd
                         commandFeedback.Reject id |> Option.iter (fun feedback -> feedback.onCompleted false)
@@ -662,10 +667,10 @@ type MainView() as this =
                     if usePairing then
                         let! _ = client.TrySendAtGenerationAsync(epoch, PairingRequested {| clientName = Some CredentialStore.clientName |}) |> Async.AwaitTask
                         ()
-                Dispatcher.UIThread.Post(fun () ->
+                ui.Post(fun () ->
                     if attempt = connectAttempt && not authenticated then sidebar.SetConnection(false, "正在连接"))
             with ex ->
-                Dispatcher.UIThread.Post(fun () ->
+                ui.Post(fun () ->
                     if attempt = connectAttempt then
                         this.ReportConnectionIssue(ConnectionIssue.ofException ex)
                         sidebar.SetConnection(false, "连接已断开")
@@ -700,7 +705,7 @@ type MainView() as this =
             async {
                 do! Async.Sleep delay
                 if not cts.IsCancellationRequested then
-                    Dispatcher.UIThread.Post(fun () ->
+                    ui.Post(fun () ->
                         if not cts.IsCancellationRequested then
                             reconnectCts <- None
                             pairingRequested <- false
@@ -1200,7 +1205,7 @@ type MainView() as this =
         match settingsReturnFocus with
         | Some control ->
             settingsReturnFocus <- None
-            Dispatcher.UIThread.Post(fun () ->
+            ui.Post(fun () ->
                 try
                     if control.IsEnabled
                        && control.IsEffectivelyVisible
@@ -1225,7 +1230,7 @@ type MainView() as this =
     member private this.ShowAddProvider() =
         enteredSettingsForFirstProvider <- not (Catalog.isReady catalog)
         this.ShowSettings()
-        Dispatcher.UIThread.Post(
+        ui.Post(
             (fun () ->
                 let rec findAddButton (control: Control) : ActionBorder option =
                     match control with
@@ -1253,7 +1258,7 @@ type MainView() as this =
         workspace.IsVisible <- false
         // 打开即有焦点归宿：分区导航按钮。刚翻可见性时控件还没过布局，
         // 直接 Focus 会落空，所以延一帧到 Render 之后。
-        Dispatcher.UIThread.Post(
+        ui.Post(
             (fun () -> settings.FocusInitial()),
             DispatcherPriority.Render)
         send CatalogRequest
@@ -1328,13 +1333,13 @@ type MainView() as this =
                         use buffer = new MemoryStream()
                         do! stream.CopyToAsync buffer |> Async.AwaitTask
                         let bytes = buffer.ToArray()
-                        Dispatcher.UIThread.Post(fun () ->
+                        ui.Post(fun () ->
                             if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
                                 this.BeginUpload(owner, file.Name, bytes)
                             else toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning)
-                    Dispatcher.UIThread.Post(fun () -> composer.Focus())
+                    ui.Post(fun () -> composer.Focus())
                 with ex ->
-                    Dispatcher.UIThread.Post(fun () ->
+                    ui.Post(fun () ->
                         toast (sprintf "读取文件失败：%s" ex.Message) Failure
                         composer.Focus())
             }
@@ -1356,7 +1361,7 @@ type MainView() as this =
                             use buffer = new MemoryStream()
                             do! stream.CopyToAsync buffer |> Async.AwaitTask
                             let bytes = buffer.ToArray()
-                            Dispatcher.UIThread.Post(fun () ->
+                            ui.Post(fun () ->
                                 if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
                                     this.BeginUpload(owner, sf.Name, bytes)
                                 else toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning)
@@ -1365,13 +1370,13 @@ type MainView() as this =
                             if not (String.IsNullOrEmpty path) && File.Exists path then
                                 let bytes = File.ReadAllBytes path
                                 let name = Path.GetFileName path
-                                Dispatcher.UIThread.Post(fun () ->
+                                ui.Post(fun () ->
                                     if authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection then
                                         this.BeginUpload(owner, name, bytes)
                                     else toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning)
-                    Dispatcher.UIThread.Post(fun () -> composer.Focus())
+                    ui.Post(fun () -> composer.Focus())
                 with ex ->
-                    Dispatcher.UIThread.Post(fun () ->
+                    ui.Post(fun () ->
                         toast (sprintf "读取拖入文件失败：%s" ex.Message) Failure
                         composer.Focus())
             }
@@ -1396,9 +1401,9 @@ type MainView() as this =
                                 try
                                     let! files = clipboard.TryGetFilesAsync() |> Async.AwaitTask
                                     if files <> null && files.Length > 0 then
-                                        Dispatcher.UIThread.Post(fun () -> this.DropFiles(List.ofArray files))
+                                        ui.Post(fun () -> this.DropFiles(List.ofArray files))
                                 with ex ->
-                                    Dispatcher.UIThread.Post(fun () ->
+                                    ui.Post(fun () ->
                                         toast (sprintf "读取剪贴板文件失败：%s" ex.Message) Failure
                                         composer.Focus())
                             } |> Async.Start
@@ -1414,12 +1419,12 @@ type MainView() as this =
                                         let bytes = buffer.ToArray()
                                         let name = sprintf "paste_%s.png" (DateTime.Now.ToString("yyyyMMdd_HHmmss"))
                                         let owner = attachmentDraft ()
-                                        Dispatcher.UIThread.Post(fun () ->
+                                        ui.Post(fun () ->
                                             if authenticated then this.BeginUpload(owner, name, bytes)
                                             else toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning
                                             composer.Focus())
                                 with ex ->
-                                    Dispatcher.UIThread.Post(fun () ->
+                                    ui.Post(fun () ->
                                         toast (sprintf "读取剪贴板图片失败：%s" ex.Message) Failure
                                         composer.Focus())
                             } |> Async.Start
@@ -1437,7 +1442,7 @@ type MainView() as this =
             toast (sprintf "「%s」太大，正在自动缩小…" fileName) Info
             async {
                 let! result = ImageShrink.shrinkAsync fileName bytes
-                Dispatcher.UIThread.Post(fun () ->
+                ui.Post(fun () ->
                     if not (authenticated && instanceId = ownerInstance && client.ConnectionGeneration = ownerConnection) then
                         toast "连接已断开，请重新选择附件；文件没有发送到其他主机。" Warning
                     else
@@ -1503,9 +1508,9 @@ type MainView() as this =
                     if not (isNull file) then
                         use! stream = file.OpenWriteAsync() |> Async.AwaitTask
                         do! stream.WriteAsync(bytes, 0, bytes.Length) |> Async.AwaitTask
-                        Dispatcher.UIThread.Post(fun () -> toast (sprintf "已保存 %s" fileName) Success)
+                        ui.Post(fun () -> toast (sprintf "已保存 %s" fileName) Success)
                 with ex ->
-                    Dispatcher.UIThread.Post(fun () -> toast (sprintf "保存失败：%s" ex.Message) Failure)
+                    ui.Post(fun () -> toast (sprintf "保存失败：%s" ex.Message) Failure)
             }
             |> Async.Start
 
@@ -1714,7 +1719,7 @@ type MainView() as this =
                     (fun item query ->
                         overlay.CloseDialog()
                         // 先让焦点归还、对话层关闭，再执行（执行可能再开对话框或切页面）。
-                        Dispatcher.UIThread.Post(fun () -> this.RunPaletteItem(item, query)))
+                        ui.Post(fun () -> this.RunPaletteItem(item, query)))
             overlay.ShowDialog(content, 560.0, initialFocus = search, scrollWholeContent = false)
 
     member this.ToggleSidebar() =
@@ -1988,7 +1993,7 @@ type MainView() as this =
             if activeConvId = Some d.conversationId then
                 this.Render()
                 if StartupTrace.enabled then
-                    Avalonia.Threading.Dispatcher.UIThread.Post(
+                    ui.Post(
                         (fun () ->
                             if StartupTrace.mark "chatReady" && StartupTrace.exitAfter then StartupTrace.requestExit ()),
                         Avalonia.Threading.DispatcherPriority.Background)
@@ -2553,7 +2558,7 @@ type MainView() as this =
         // 决策 251：系统打开的 wanxiang:// 链接（启动参数 / 第二实例转发 / macOS 激活）
         if not (OperatingSystem.IsBrowser()) then
             ExternalLinks.subscribe (fun url ->
-                Avalonia.Threading.Dispatcher.UIThread.Post(fun () ->
+                ui.Post(fun () ->
                     match MessageLink.tryParse url with
                     | Some link -> this.OpenMessageLink link
                     | None -> toast "无法识别这个链接。" Warning))
@@ -2621,11 +2626,11 @@ type MainView() as this =
         overlay.WireDismiss()
 
         client.ConnectionEventReceived.Add(fun (epoch, ev) ->
-            Dispatcher.UIThread.Post(fun () ->
+            ui.Post(fun () ->
                 if epoch = client.ConnectionGeneration then this.HandleEvent ev))
         state.CursorChanged.Add(fun _ -> send (state.CursorAdvancedEvent()))
         client.ConnectionClosed.Add(fun (epoch, error) ->
-            Dispatcher.UIThread.Post(fun () ->
+            ui.Post(fun () ->
                 if epoch = client.ConnectionGeneration then
                     authenticated <- false
                     approvalPanel.Clear()
@@ -2649,12 +2654,12 @@ type MainView() as this =
 
         // 壳背景跟随主题一起换：内容容器全透明，任一层过期都会在窗口边缘漏出异色细线。
         Tokens.Changed.Publish.Add(fun _ ->
-            Dispatcher.UIThread.Post(fun () ->
+            ui.Post(fun () ->
                 this.Background <- Tokens.canvas
                 this.Render()))
         // 后台着色算完：卡片身份没变，必须显式丢缓存才会换成着色版
         Highlight.Ready.Add(fun _ ->
-            Dispatcher.UIThread.Post(fun () ->
+            ui.Post(fun () ->
                 chat.InvalidateCards()
                 this.Render()))
         match Application.Current with
@@ -2666,7 +2671,7 @@ type MainView() as this =
                 ParityProbe.hit "theme.systemSubscribed"
                 settings.ColorValuesChanged.Add(fun _ ->
                     if prefs.theme = FollowSystem then
-                        Dispatcher.UIThread.Post(fun () -> this.ApplyTheme()))
+                        ui.Post(fun () -> this.ApplyTheme()))
         this.KeyDown.Add(fun e -> this.HandleShortcut e)
         chat.SetStarterHandler(fun seed -> composer.SetText seed)
         chat.SetModelSwitcherHandler(fun anchor -> this.ShowModelPicker anchor)
@@ -2741,7 +2746,7 @@ type MainView() as this =
         else
             task.ContinueWith(fun (t: System.Threading.Tasks.Task<DraftSnapshot>) ->
                 let snapshot = if t.IsFaulted then DraftSnapshot.empty else t.Result
-                Dispatcher.UIThread.Post(fun () -> apply snapshot))
+                ui.Post(fun () -> apply snapshot))
             |> ignore
 
     /// 已有凭据时自动连接：桌面读 client.toml，PWA 读 IndexedDB（决策 52/53、Q191）。
@@ -2759,13 +2764,13 @@ type MainView() as this =
                     let! stored = CredentialStore.tryLoadBrowserConnectionAsync () |> Async.AwaitTask
                     match stored with
                     | Some(url, token, _) ->
-                        Dispatcher.UIThread.Post(fun () ->
+                        ui.Post(fun () ->
                             hasSavedCredentials <- true
                             lastUrl <- url
                             lastToken <- Some token
                             this.Connect())
                     | None ->
-                        Dispatcher.UIThread.Post(fun () ->
+                        ui.Post(fun () ->
                             hasSavedCredentials <- false
                             this.Render())
                 }

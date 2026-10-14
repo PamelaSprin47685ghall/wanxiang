@@ -86,13 +86,17 @@ let ``260 AppShell 首次打开连接对话框时自动进入配对`` () =
 
 // ---- 261 ----
 
+[<Trait("Category", "UI")>]
 [<Fact>]
 let ``261 输入框菜单文案为中文`` () =
+    // ResourceDictionary 是 AvaloniaObject：必须在 headless UI 线程上构造，
+    // 否则 Dispatcher.UIThread 绑到 xunit 工作线程，毒化后续 UI 测试（决策 421）。
+    Headless.run (fun () ->
     let res = ResourceDictionary()
     TextFlyoutLocale.apply res
     Assert.Equal<obj>(box "剪切", res["StringTextFlyoutCutText"])
     Assert.Equal<obj>(box "复制", res["StringTextFlyoutCopyText"])
-    Assert.Equal<obj>(box "粘贴", res["StringTextFlyoutPasteText"])
+    Assert.Equal<obj>(box "粘贴", res["StringTextFlyoutPasteText"]))
     Assert.Contains("TextFlyoutLocale.apply this.Resources", read "src/Wanxiang.UI/App.fs")
     Assert.Contains("OfType<MenuFlyoutPresenter>", read "src/Wanxiang.UI/App.fs")
 

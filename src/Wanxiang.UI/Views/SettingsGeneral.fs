@@ -18,6 +18,8 @@ open Wanxiang.Core
 /// （Q195：窗口尺寸与主题是客户端偏好，不进业务 TOML、不经 NDJSON）。
 type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChanged: UiPrefs -> unit) =
 
+    /// 构造时所在的 UI 调度器；后台续延一律投递到这里，不在调用方线程上新建调度器（决策 421）。
+    let ui = Avalonia.Threading.Dispatcher.UIThread
     let mutable catalog = Catalog.empty
     let mutable prefs = UiPrefs.defaults
 
@@ -631,9 +633,9 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
                     async {
                         try
                             do! clip.SetTextAsync diag |> Async.AwaitTask
-                            Dispatcher.UIThread.Post(fun () -> actions.toast "诊断报告已复制到剪贴板。" Success)
+                            ui.Post(fun () -> actions.toast "诊断报告已复制到剪贴板。" Success)
                         with _ ->
-                            Dispatcher.UIThread.Post(fun () -> actions.toast "复制诊断报告失败，请重试。" Failure)
+                            ui.Post(fun () -> actions.toast "复制诊断报告失败，请重试。" Failure)
                     }
                     |> Async.Start)
         copyDiagButton.HorizontalAlignment <- HorizontalAlignment.Left

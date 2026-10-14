@@ -107,6 +107,8 @@ module Onboarding =
 /// 换一家多 1 个。连接成功后卡片收起，输入框预填并聚焦（由外壳完成）。
 type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
 
+    /// 构造时所在的 UI 调度器；后台续延一律投递到这里，不在调用方线程上新建调度器（决策 421）。
+    let ui = Avalonia.Threading.Dispatcher.UIThread
     let mutable selected: ProviderPreset = List.head ProviderPresets.featured
     /// 是否改用同一家的另一条传输（兼容端点）：只在探测失败的下一步里出现。
     let mutable useAlternate = false
@@ -377,7 +379,7 @@ type OnboardingCard(overlay: OverlayHost, actions: OnboardingActions) =
             let task = actions.discoverLocal ()
             task.ContinueWith(fun (t: Task<string list option>) ->
                 let result = if t.IsCompletedSuccessfully then t.Result else None
-                Dispatcher.UIThread.Post(fun () -> if not disposed then this.ShowDiscovered result))
+                ui.Post(fun () -> if not disposed then this.ShowDiscovered result))
             |> ignore
 
     member this.ShowDiscovered(result: string list option) =
