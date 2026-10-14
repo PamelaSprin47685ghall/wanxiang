@@ -412,7 +412,7 @@ node tools/qa_shot.js --tag now-dark --theme dark --out .scratch/shots
 # 重建内嵌字体（正文比例字 + 代码等宽字，均已子集化）
 python3 tools/build_fonts.py
 
-# 重建内嵌的 highlight.js / KaTeX 与 KaTeX 字体
+# 重建 KaTeX 字体（脚本资源归 wanxiang2 的 libs/RichScripts）
 node tools/build_webassets.js
 ```
 
