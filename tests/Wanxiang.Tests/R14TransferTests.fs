@@ -65,47 +65,6 @@ let ``312 JSON 导出带格式版本、分叉信息和隐私说明，消息原�
     Assert.Equal(3, root["messages"].AsArray().Count)
     Assert.Equal("user", root["messages"].[0].["payload"].["role"].GetValue<string>())
 
-[<Fact>]
-let ``312 载荷里出现密钥类字段一律去掉`` () =
-    let raw = JsonObject()
-    raw["commitId"] <- 5UL
-    raw["payload"] <- JsonNode.Parse("""{"role":"assistant","apiKey":"sk-xx","contents":[{"type":"text","text":"hi","Authorization":"Bearer y"}]}""")
-    let json = ConversationTransfer.toJson (Guid.NewGuid()) "t" 5UL DateTimeOffset.UtcNow ConversationTransfer.rootLineage [ raw ]
-    Assert.DoesNotContain("sk-xx", json)
-    Assert.DoesNotContain("Bearer y", json)
-    Assert.Contains("\"hi\"", json)
-    Assert.Contains("\"kind\": \"root\"", json)
-
-[<Fact>]
-let ``312 Markdown 头部写明来源、分叉和隐私说明`` () =
-    let md = ConversationTransfer.withPreamble "# 标题\n\n## 用户\n\n你好\n" (ConversationTransfer.markdownPreamble (forkLineage (Guid.NewGuid())) 2 DateTimeOffset.UtcNow)
-    Assert.StartsWith("# 标题\n\n> 导出自万象", md)
-    Assert.Contains("「原对话」第 3 条消息的分叉", md)
-    Assert.Contains("分出了 1 个分叉：「子分叉」", md)
-    Assert.Contains("不含 API 密钥", md)
-    Assert.Contains("## 用户", md)
-
-[<Fact>]
-let ``312 谱系从对话列表派生：分叉、原对话已删除、子分叉`` () =
-    let root, fork, child = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
-    let summary id title : ConversationSummary =
-        { id = id; title = title; preview = ""; running = false; pinned = false; archived = false
-          createdAt = DateTimeOffset.UtcNow; updatedAt = DateTimeOffset.UtcNow; messageCount = 1
-          isFork = false; providerId = ""; model = ""; lastCommitId = 1UL }
-    let l parent : ForkLineage =
-        { parentId = parent; forkBaseMessageId = Some 2UL; forkFirstMessageId = Some 7UL; parentTitle = None; parentDeleted = false; forkOrdinal = Some 2 }
-    let lineage = Map [ fork, l root; child, l fork ]
-    let summaries = [ summary root "根"; summary fork "分叉一"; summary child "分叉二" ]
-    let lf = ConversationTransfer.lineageOf summaries lineage fork
-    Assert.Equal(Some root, lf.parentId)
-    Assert.Equal(Some "根", lf.parentTitle)
-    Assert.False lf.parentDeleted
-    Assert.Equal<string list>([ "分叉二" ], lf.forks |> List.map (fun (_, t, _) -> t))
-    let gone = ConversationTransfer.lineageOf [ summary fork "分叉一" ] lineage fork
-    Assert.True gone.parentDeleted
-    Assert.Contains("原对话已删除", ConversationTransfer.lineageLines gone |> String.concat "")
-    Assert.True((ConversationTransfer.lineageOf summaries lineage root).parentId.IsNone)
-
 // ---------- 313 ----------
 
 let private exported count =
@@ -113,33 +72,6 @@ let private exported count =
     let controller = ConversationExportController id
     let doc = complete proj controller (controller.Start())
     ConversationTransfer.toJson id doc.title doc.atCommitId DateTimeOffset.UtcNow (forkLineage (Guid.NewGuid())) doc.raw
-
-[<Fact>]
-let ``313 导出的 JSON 能解析回预览：标题、条数、分叉说明`` () =
-    let text = exported 4
-    match ConversationTransfer.parseImport (int64 text.Length) text with
-    | Ok p ->
-        Assert.Equal("旅行计划", p.title)
-        Assert.Equal(4, p.messages.Length)
-        Assert.Equal(0, p.skipped)
-        Assert.Contains("分叉关系不会恢复", p.lineageNote.Value)
-        Assert.Equal("旅行计划（导入）", ConversationTransfer.importedTitle p.title)
-    | Error e -> failwith e
-
-[<Fact>]
-let ``313 不认识的文件给出可读原因，不部分导入`` () =
-    let expectError (text: string) (fragment: string) =
-        match ConversationTransfer.parseImport (int64 text.Length) text with
-        | Error e -> Assert.Contains(fragment, e)
-        | Ok _ -> failwithf "should reject %s" text
-    expectError "# 标题\n\n正文" "不是有效的 JSON"
-    expectError """{"hello":1}""" "不是万象导出的对话文件"
-    expectError """{"format":"wanxiang.conversation","formatVersion":9,"messages":[]}""" "更新版本"
-    expectError """{"format":"wanxiang.conversation","formatVersion":1,"messages":[]}""" "没有可导入的消息"
-    expectError """{"format":"wanxiang.conversation","formatVersion":1,"messages":[{"payload":{"role":"robot"}}]}""" "没有可导入的消息"
-    match ConversationTransfer.parseImport (ConversationTransfer.maxImportBytes + 1L) "" with
-    | Error e -> Assert.Contains("超过", e)
-    | Ok _ -> failwith "oversize"
 
 [<Fact>]
 let ``313 conversation.import 编解码往返`` () =

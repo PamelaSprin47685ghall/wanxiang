@@ -29,12 +29,6 @@ module R19SimplifyTests =
           lastCommitId = 0UL }
 
     [<Fact>]
-    let ``366 限流只给「换个模型」并直达切换器`` () =
-        Assert.Equal(Some SwitchModel, ErrorRecovery.forKind ProviderRateLimited)
-        Assert.Equal("换个模型", ErrorRecovery.label SwitchModel)
-        Assert.Equal(Some OpenConversationSettings, ErrorRecovery.forKind ConfigInvalid)
-
-    [<Fact>]
     let ``367 主机生成设置改名为对话默认值`` () =
         Assert.Equal("对话默认值", SettingsSection.label SettingsSection.Generation)
         Assert.NotEqual<string>(SettingsSection.label SettingsSection.Generation, SettingsSection.label SettingsSection.Appearance)

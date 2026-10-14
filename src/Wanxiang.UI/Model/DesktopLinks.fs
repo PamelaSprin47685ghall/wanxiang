@@ -33,24 +33,6 @@ module ExternalLinks =
 /// 决策 251：系统注册 `wanxiang://` 协议。只写当前用户范围，幂等（内容不变就不碰）。
 module UrlSchemeRegistration =
 
-    let desktopFileName = "wanxiang-url-handler.desktop"
-
-    /// Linux 桌面文件：`%u` 把链接交给万象；NoDisplay 不在应用菜单里多出一个图标。
-    let desktopEntry (command: string) =
-        String.concat "\n"
-            [ "[Desktop Entry]"
-              "Type=Application"
-              "Name=万象"
-              "Comment=打开万象消息链接"
-              sprintf "Exec=%s %%u" command
-              "Terminal=false"
-              "NoDisplay=true"
-              "MimeType=x-scheme-handler/wanxiang;"
-              "" ]
-
-    /// 引号包住含空格的路径（桌面文件与注册表命令都用）。
-    let quote (path: string) = if path.Contains ' ' then "\"" + path + "\"" else path
-
     /// 当前进程的启动命令：apphost 直接用它；`dotnet wanxiang.dll` 时带上程序集。
     let launchCommand () : string option =
         match Environment.ProcessPath with
@@ -60,9 +42,9 @@ module UrlSchemeRegistration =
             if name.Equals("dotnet", StringComparison.OrdinalIgnoreCase) then
                 match Reflection.Assembly.GetEntryAssembly() with
                 | null -> None
-                | asm when not (String.IsNullOrEmpty asm.Location) -> Some(quote exe + " " + quote asm.Location)
+                | asm when not (String.IsNullOrEmpty asm.Location) -> Some(UrlSchemeRegistration.quote exe + " " + UrlSchemeRegistration.quote asm.Location)
                 | _ -> None
-            else Some(quote exe)
+            else Some(UrlSchemeRegistration.quote exe)
 
     let private runQuiet (file: string) (args: string list) =
         try
@@ -81,13 +63,13 @@ module UrlSchemeRegistration =
             | s when not (String.IsNullOrWhiteSpace s) -> s
             | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".local", "share")
         let dir = Path.Combine(dataHome, "applications")
-        let path = Path.Combine(dir, desktopFileName)
-        let content = desktopEntry command
+        let path = Path.Combine(dir, UrlSchemeRegistration.desktopFileName)
+        let content = UrlSchemeRegistration.desktopEntry command
         let existing = if File.Exists path then (try File.ReadAllText path with _ -> "") else ""
         if existing <> content then
             Directory.CreateDirectory dir |> ignore
             File.WriteAllText(path, content)
-            runQuiet "xdg-mime" [ "default"; desktopFileName; "x-scheme-handler/wanxiang" ]
+            runQuiet "xdg-mime" [ "default"; UrlSchemeRegistration.desktopFileName; "x-scheme-handler/wanxiang" ]
             runQuiet "update-desktop-database" [ dir ]
 
     let private registerWindows (command: string) =

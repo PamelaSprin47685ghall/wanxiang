@@ -33,14 +33,6 @@ let ``250 generation.partial 编解码往返`` () =
     | other -> failwithf "unexpected %A" other
 
 [<Fact>]
-let ``251 Linux 桌面文件声明 x-scheme-handler 并以 %u 接收链接`` () =
-    let entry = UrlSchemeRegistration.desktopEntry "/opt/wanxiang/wanxiang"
-    Assert.Contains("MimeType=x-scheme-handler/wanxiang;", entry)
-    Assert.Contains("Exec=/opt/wanxiang/wanxiang %u", entry)
-    Assert.Contains("NoDisplay=true", entry)
-    Assert.Equal("\"/a b/w\"", UrlSchemeRegistration.quote "/a b/w")
-
-[<Fact>]
 let ``251 第二实例把链接转发给主实例，主实例不在时转发失败`` () =
     let dir = tempDir ()
     let path = SingleInstance.socketPath dir
