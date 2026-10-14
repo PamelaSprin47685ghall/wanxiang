@@ -158,6 +158,9 @@
     <PackageReference Include="Wanxiang2.LinkChunks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MarkdownBlocks" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MathTypeset" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.RevealFlash" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BreadcrumbAction" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ModelPickerList" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MessageMenu" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.SidebarSelection" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProviderProbeText" Version="0.0.0-local" />

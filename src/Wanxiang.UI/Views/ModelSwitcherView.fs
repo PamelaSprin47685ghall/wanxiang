@@ -85,26 +85,26 @@ module ModelSwitcherView =
         search.Name <- "ModelSwitcherSearch"
         Avalonia.Automation.AutomationProperties.SetName(search, "搜索模型")
         // 决策 304：键盘路径写进帮助文字；空结果以 polite 播报。
-        Avalonia.Automation.AutomationProperties.SetHelpText(search, "输入筛选，回车选第一条，下方向键进入列表，Esc 关闭")
+        Avalonia.Automation.AutomationProperties.SetHelpText(search, ModelPickerList.searchHelp)
         let list = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXXs, Name = "ModelSwitcherList")
         let empty =
             TextBlock(
-                Text = "没有匹配的模型。",
+                Text = ModelPickerList.emptyText,
                 FontSize = Tokens.fontCaption,
                 Foreground = Tokens.textMuted,
                 Margin = Thickness(Spacing.spaceXl, Spacing.spaceMd),
                 IsVisible = false)
         Avalonia.Automation.AutomationProperties.SetLiveSetting(empty, Avalonia.Automation.AutomationLiveSetting.Polite)
-        let choose (o: ModelOption) = if not o.isCurrent then pick o
+        let choose (o: ModelOption) = if ModelPickerList.shouldPick o.isCurrent then pick o
         let rows () = list.Children |> Seq.choose (function :? ActionBorder as b -> Some b | _ -> None) |> Array.ofSeq
         let mutable shown: ModelOption list = options
         let render (query: string) =
             shown <- ModelSwitcher.filter query options
             list.Children.Clear()
-            let grouped = shown |> List.groupBy (fun o -> o.providerLabel)
-            let showHeaders = String.IsNullOrWhiteSpace query && grouped.Length > 1
-            for (label, items) in grouped do
-                if showHeaders then
+            for (label, items) in ModelPickerList.groups (fun (o: ModelOption) -> o.providerLabel) query shown do
+                match label with
+                | None -> ()
+                | Some label ->
                     let header = Ui.sectionLabel label
                     header.Margin <- Thickness(Spacing.spaceXl, Spacing.spaceMd, Spacing.spaceXl, Spacing.spaceXs)
                     list.Children.Add header
@@ -116,12 +116,12 @@ module ModelSwitcherView =
             match e.Key with
             | Key.Enter ->
                 // 回车直接选第一条命中：搜到就切，不必再摸鼠标。
-                match shown with
-                | first :: _ ->
+                match ModelPickerList.enterPick shown with
+                | Some first ->
                     e.Handled <- true
                     overlay.ClosePopup()
                     choose first
-                | [] -> ()
+                | None -> ()
             | Key.Down ->
                 match rows () with
                 | [||] -> ()
@@ -134,11 +134,12 @@ module ModelSwitcherView =
             if items.Length > 0 && (e.Key = Key.Up || e.Key = Key.Down) then
                 let current = items |> Array.tryFindIndex _.IsFocused |> Option.defaultValue -1
                 e.Handled <- true
-                if e.Key = Key.Up && current <= 0 then search.Focus() |> ignore
-                else
-                    let next = if e.Key = Key.Up then current - 1 else min (items.Length - 1) (current + 1)
+                match ModelPickerList.move (e.Key = Key.Up) current items.Length with
+                | Some PickerMove.ToSearch -> search.Focus() |> ignore
+                | Some(PickerMove.Focus next) ->
                     items[next].Focus(NavigationMethod.Directional) |> ignore
-                    items[next].BringIntoView())
+                    items[next].BringIntoView()
+                | None -> ())
         let heading =
             TextBlock(
                 Text = title,

@@ -125,8 +125,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable showMore: Control -> unit = ignore
     let mutable awaitingApproval: Set<string> = Set.empty
     let mutable partialReply: (MessageView * (unit -> unit)) option = None
-    let mutable lastFlashedCommit: uint64 option = None
-    let mutable highlightedCommit: uint64 option = None
+    /// 定位高亮的记账归 RevealFlash；计时器与承载面仍在这里。
+    let flash = RevealFlash()
     let mutable highlightTimer: (DispatcherTimer * (unit -> unit)) option = None
     let mutable canJumpPrevious = false
     /// 决策 300：主机上还有更早的历史页（AppShell 按 pageHasMore 同步）。
@@ -156,7 +156,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         Border(
             Padding = Thickness(Tokens.shellInset, 0.0, Tokens.shellInset, Spacing.spaceXs),
             IsVisible = false)
-    let mutable breadcrumbTarget: Guid option = None
+    let breadcrumb = BreadcrumbAction<Guid>()
     let mutable openBreadcrumbParent: Guid -> unit = ignore
 
     let messagePanel =
@@ -707,13 +707,11 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 设置（或清除）顶栏面包屑。crumb = None 时整条隐藏。
     member this.SetBreadcrumb(crumb: ForkBreadcrumb option, openParent: Guid -> unit) =
         openBreadcrumbParent <- openParent
+        let view = breadcrumb.Set(crumb |> Option.map (fun c -> c.text, c.description, c.parentAvailable, c.parentId))
         match crumb with
-        | None ->
-            breadcrumbTarget <- None
-            breadcrumbBar.IsVisible <- false
+        | None -> breadcrumbBar.IsVisible <- view.visible
         | Some c ->
-            breadcrumbText.Text <- c.text
-            breadcrumbTarget <- if c.parentAvailable then Some c.parentId else None
+            breadcrumbText.Text <- view.text
             breadcrumbAction.Focusable <- c.parentAvailable
             breadcrumbAction.Cursor <- if c.parentAvailable then new Cursor(StandardCursorType.Hand) else null
             ToolTip.SetTip(breadcrumbAction, c.description)
@@ -721,14 +719,14 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Avalonia.Automation.AutomationProperties.SetHelpText(breadcrumbAction, c.description)
             if c.parentAvailable then Avalonia.Automation.AutomationProperties.SetRole(breadcrumbAction, AutomationRole.Button)
             else Avalonia.Automation.AutomationProperties.SetControlTypeOverride(breadcrumbAction, Nullable Avalonia.Automation.Peers.AutomationControlType.Text)
-            breadcrumbBar.IsVisible <- true
+            breadcrumbBar.IsVisible <- view.visible
 
     /// 面包屑当前显示的文字（空串 = 不显示）。
-    member _.BreadcrumbText: string = if breadcrumbBar.IsVisible then breadcrumbText.Text else ""
+    member _.BreadcrumbText: string = breadcrumb.Text
 
     /// 激活面包屑（回到父对话）；不可点击时什么也不做。返回是否发生了跳转。
     member _.ActivateBreadcrumb() : bool =
-        match breadcrumbTarget with
+        match breadcrumb.Activate() with
         | Some id ->
             openBreadcrumbParent id
             true
@@ -736,13 +734,13 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     /// 把指定消息滚到视口。卡片不在已加载窗口里（更早的历史）时返回 false，由调用方先加载更早历史。
     /// 最近一次被「闪一下」的消息（测试与无障碍：定位成功的可观察信号）。
-    member _.LastFlashedCommit = lastFlashedCommit
+    member _.LastFlashedCommit = flash.LastFlashed
 
     /// 滚到一条消息并短暂高亮（第 211 节）：搜索命中跳转后，眼睛要能立刻找到是哪一条。
     /// 背景淡色停留约 1.6 秒后复原；不改布局，不抢焦点。
     member this.RevealAndHighlight(commitId: uint64) : bool =
         if this.ScrollToMessage commitId then
-            lastFlashedCommit <- Some commitId
+            flash.Revealed commitId
             Dispatcher.UIThread.Post(
                 (fun () ->
                     let index = mountedKeys |> Array.tryFindIndex (function Some k -> k.commit = commitId | None -> false)
@@ -767,12 +765,12 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                         | Some b ->
                             highlightTimer |> Option.iter (fun (t: DispatcherTimer, restore) -> t.Stop(); restore ())
                             b.Background <- Tokens.accentSoft
-                            highlightedCommit <- Some commitId
+                            flash.Begin commitId |> ignore
                             let restore () =
                                 b.Background <- Brushes.Transparent
-                                highlightedCommit <- None
+                                flash.End() |> ignore
                                 highlightTimer <- None
-                            let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 1600.0)
+                            let timer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds RevealFlash.DwellMs)
                             timer.Tick.Add(fun _ ->
                                 timer.Stop()
                                 restore ())
@@ -788,7 +786,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member _.RevealPinned = revealPinned
 
     /// 当前正高亮着的消息（高亮结束后为 None）。
-    member _.HighlightedCommit = highlightedCommit
+    member _.HighlightedCommit = flash.Highlighted
 
     /// 立即结束定位高亮（计时器到点时走的同一路径；无显示测试里 DispatcherTimer 不可确定泵出）。
     member _.EndRevealHighlight() =
