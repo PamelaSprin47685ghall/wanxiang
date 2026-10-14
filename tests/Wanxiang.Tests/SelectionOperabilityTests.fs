@@ -485,7 +485,7 @@ let ``ctrl+m resolves to the model picker action`` () =
             RoutedEvent = InputElement.KeyDownEvent,
             Key = Key.M,
             KeyModifiers = KeyModifiers.Control)
-    Assert.Equal(OpenModelPicker, ShortcutRouter.resolve args)
+    Assert.Equal(ShortcutAction.OpenModelPicker, KeyShortcut.resolve args)
     )
 
 // 长用户消息折叠在同一 detailViewport contract 上：未超限时不出现展开入口，

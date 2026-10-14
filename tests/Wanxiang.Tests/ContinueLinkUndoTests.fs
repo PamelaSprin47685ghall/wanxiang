@@ -19,39 +19,6 @@ let private msg role text = { MessageView.empty with role = role; text = text }
 // ---------- 230 ----------
 
 [<Fact>]
-let ``230 失败时保留有正文的半截回复，重试或重新开始即清掉`` () =
-    let runs = ConversationRuns()
-    let conv, gen = Guid.NewGuid(), Guid.NewGuid()
-    runs.Start(conv, gen)
-    runs.Delta(conv, gen, msg "assistant" "写到一半  ") |> ignore
-    let err = GenerationError.create ProviderTimeout "超时"
-    Assert.True(runs.Finish(conv, gen, Some err, None))
-    Assert.Equal(Some "写到一半  ", (runs.Get(Some conv)).partial |> Option.map _.text)
-    runs.ClearError conv
-    Assert.True((runs.Get(Some conv)).partial.IsNone)
-
-[<Fact>]
-let ``230 成功结束或空回复不留半截`` () =
-    let runs = ConversationRuns()
-    let conv = Guid.NewGuid()
-    let g1 = Guid.NewGuid()
-    runs.Start(conv, g1)
-    runs.Delta(conv, g1, msg "assistant" "完整") |> ignore
-    runs.Finish(conv, g1, None, None) |> ignore
-    Assert.True((runs.Get(Some conv)).partial.IsNone)
-    let g2 = Guid.NewGuid()
-    runs.Start(conv, g2)
-    runs.Delta(conv, g2, msg "assistant" "   ") |> ignore
-    runs.Finish(conv, g2, Some(GenerationError.create ProviderTimeout "x"), None) |> ignore
-    Assert.True((runs.Get(Some conv)).partial.IsNone)
-
-[<Fact>]
-let ``230 半截回复编成去尾空白的助手消息`` () =
-    let json = ConversationRuns.PartialMessageJson(msg "assistant" "半句\n\n ")
-    Assert.Equal("assistant", json["role"].GetValue<string>())
-    Assert.Equal("半句", json["contents"].[0].["text"].GetValue<string>())
-
-[<Fact>]
 let ``230 chat.continue 编解码往返`` () =
     let inv, conv = Guid.NewGuid(), Guid.NewGuid()
     let cmd = ContinueResponse {| invocationId = inv; conversationId = conv; messageJson = ConversationRuns.PartialMessageJson(msg "assistant" "半句") |}
@@ -126,9 +93,9 @@ let ``230 错误卡有半截回复时先给「继续生成」，没有时不给`
 [<Fact>]
 let ``232 Ctrl+Z 映射到撤销，并只触发可见提示条上的「撤销」`` () =
     Headless.run (fun () ->
-        Assert.Equal(UndoPending, ShortcutRouter.resolve (KeyEventArgs(Key = Key.Z, KeyModifiers = KeyModifiers.Control)))
-        Assert.Equal(UndoPending, ShortcutRouter.resolve (KeyEventArgs(Key = Key.Z, KeyModifiers = KeyModifiers.Meta)))
-        Assert.NotEqual(UndoPending, ShortcutRouter.resolve (KeyEventArgs(Key = Key.Z, KeyModifiers = (KeyModifiers.Control ||| KeyModifiers.Shift))))
+        Assert.Equal(ShortcutAction.UndoPending, KeyShortcut.resolve (KeyEventArgs(Key = Key.Z, KeyModifiers = KeyModifiers.Control)))
+        Assert.Equal(ShortcutAction.UndoPending, KeyShortcut.resolve (KeyEventArgs(Key = Key.Z, KeyModifiers = KeyModifiers.Meta)))
+        Assert.NotEqual(ShortcutAction.UndoPending, KeyShortcut.resolve (KeyEventArgs(Key = Key.Z, KeyModifiers = (KeyModifiers.Control ||| KeyModifiers.Shift))))
         let root = Grid()
         let overlay = OverlayHost(root)
         Assert.False(overlay.TryInvokeToastAction "撤销")

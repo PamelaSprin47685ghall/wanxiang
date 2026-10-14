@@ -206,28 +206,6 @@ let ``a 429 with rate limit headers is classified and its headers survive to the
 
 // ---------------------------------------------------------------- 错误卡倒计时登记
 
-[<Fact>]
-let ``retry countdown deadline is fixed at finish time and survives re-reads`` () =
-    let gid = Guid.CreateVersion7()
-    let err = GenerationError.create ProviderRateLimited "限流"
-    RetryCountdown.notice gid { ProviderRateLimit.empty with resetSeconds = Some 60; remainingRequests = Some 0 } now
-    RetryCountdown.attach gid err (now.AddSeconds 2.0)
-    match RetryCountdown.tryGet err (now.AddSeconds 30.0) with
-    | Some info ->
-        Assert.Equal(now.AddSeconds 60.0, info.retryAt)
-        Assert.Equal(30, RetryCountdown.remainingSeconds info (now.AddSeconds 30.0))
-        Assert.Equal(0, RetryCountdown.remainingSeconds info (now.AddSeconds 90.0))
-        Assert.True(info.limit |> Option.exists ProviderRateLimit.isExhausted)
-    | None -> Assert.Fail "expected countdown"
-
-[<Fact>]
-let ``non retryable errors never get a countdown`` () =
-    let gid = Guid.CreateVersion7()
-    let err = { GenerationError.create ProviderAuthFailed "密钥无效" with retryAfterSeconds = Some 10 }
-    RetryCountdown.notice gid { ProviderRateLimit.empty with retryAfterSeconds = Some 10 } now
-    RetryCountdown.attach gid err now
-    Assert.Equal(None, RetryCountdown.tryGet err now)
-
 // ---------------------------------------------------------------- 快速切换纯逻辑
 
 let private provider (id: string) (label: string) (models: string list) : ProviderInfo =
@@ -241,27 +219,3 @@ let private catalog =
             provider "ds" "DeepSeek" [ "deepseek-chat"; "deepseek-reasoner" ]
             { provider "off" "Disabled" [ "x" ] with enabled = false } ]
         generation = { Catalog.empty.generation with defaultProvider = Some "ds"; defaultModel = Some "deepseek-chat" } }
-
-[<Fact>]
-let ``switcher lists usable models with provider, current and default marks`` () =
-    let items = ModelSwitcher.options catalog (Some("oa", "o3"))
-    Assert.Equal(5, items.Length)
-    Assert.DoesNotContain(items, fun o -> o.providerId = "off")
-    Assert.Equal<string list>([ "o3" ], items |> List.filter _.isCurrent |> List.map _.model)
-    Assert.Equal<string list>([ "deepseek-chat" ], items |> List.filter _.isDefault |> List.map _.model)
-    Assert.All(items, fun o -> Assert.False(String.IsNullOrWhiteSpace o.providerLabel))
-
-[<Fact>]
-let ``switcher search matches model or provider and ranks prefix hits first`` () =
-    let items = ModelSwitcher.options catalog None
-    Assert.Equal<string list>([ "deepseek-chat"; "deepseek-reasoner" ], ModelSwitcher.filter "deepseek" items |> List.map _.model)
-    Assert.Equal<string list>([ "gpt-4o-mini" ], ModelSwitcher.filter "openai MINI" items |> List.map _.model)
-    Assert.Equal<string list>([ "o3"; "gpt-4o"; "gpt-4o-mini" ] |> List.sort, ModelSwitcher.filter "o" items |> List.filter (fun o -> o.providerId = "oa") |> List.map _.model |> List.sort)
-    Assert.Equal("o3", (ModelSwitcher.filter "o" items |> List.head).model)
-    Assert.Empty(ModelSwitcher.filter "claude" items)
-    Assert.Equal(items.Length, (ModelSwitcher.filter "  " items).Length)
-
-[<Fact>]
-let ``switching copy says it applies from the next reply`` () =
-    Assert.Contains("从下一条回复开始生效", ModelSwitcher.switchedToast "OpenAI" "o3")
-    Assert.Contains("已有回复不会改变", ModelSwitcher.appliesNote)

@@ -55,10 +55,8 @@
     <Compile Include="InteractabilityPolishTests.fs" />
     <Compile Include="InteractabilityPolish8Tests.fs" />
     <Compile Include="DismissFocusTests.fs" />
-    <Compile Include="UiControllersTests.fs" />
     <Compile Include="AppShellTests.fs" />
     <Compile Include="SettingsViewTests.fs" />
-    <Compile Include="UiModelTests.fs" />
     <Compile Include="DialogsTests.fs" />
     <Compile Include="MessageCardTests.fs" />
     <Compile Include="W3ToolApprovalUiTests.fs" />

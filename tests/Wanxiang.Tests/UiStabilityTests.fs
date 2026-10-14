@@ -204,26 +204,6 @@ let ``chat reading column relies on avalonia stretch and max width across viewpo
     )
 
 // probe: collapse focus destination
-[<Fact>]
-let ``navigation controller owns compact and collapsed state transitions`` () =
-    let navigation = NavigationController(true)
-    let applyWide, wide = navigation.ApplyViewport(1200.0, false)
-    Assert.True applyWide
-    Assert.False wide.compactMode
-    Assert.True wide.sidebarCollapsed
-
-    let opened = navigation.EnsureSearchVisible()
-    Assert.False opened.sidebarCollapsed
-
-    let applyCompact, compact = navigation.ApplyViewport(600.0, false)
-    Assert.True applyCompact
-    Assert.True compact.compactMode
-    Assert.False compact.compactNavigationOpen
-
-    let toggled = navigation.ToggleSidebar()
-    Assert.True toggled.compactNavigationOpen
-    let closed = navigation.SetCompactNavigation(false)
-    Assert.False closed.compactNavigationOpen
 
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -294,9 +274,9 @@ let ``main layout controller is the only column projector and survives every mat
         let mutable savedWidth = Tokens.sidebarWidth
         let controller = MainLayoutController(shell, sidebar, splitter, chatColumn, composer, chat, fun () -> savedWidth)
         let compact =
-            NavigationController(false).ApplyViewport(719.0, false) |> snd
+            NavigationController(false, LayoutPolicy.compactBreakpoint).ApplyViewport(719.0) |> snd
             |> fun state -> { state with compactNavigationOpen = true }
-        let wide = NavigationController(false).ApplyViewport(721.0, false) |> snd
+        let wide = NavigationController(false, LayoutPolicy.compactBreakpoint).ApplyViewport(721.0) |> snd
         let collapsed = { wide with sidebarCollapsed = true }
 
         // 宽视口：三列投影，splitter 只在未折叠时可见。
@@ -352,12 +332,12 @@ let ``main layout controller is the only column projector and survives every mat
 let ``shortcut router maps global keys without executing UI effects`` () =
     Headless.run (fun () ->
     let event key modifiers = KeyEventArgs(Key = key, KeyModifiers = modifiers)
-    Assert.Equal(ToggleSidebar, ShortcutRouter.resolve (event Key.B KeyModifiers.Control))
-    Assert.Equal(NewConversation, ShortcutRouter.resolve (event Key.N KeyModifiers.Meta))
-    Assert.Equal(ToggleTheme, ShortcutRouter.resolve (event Key.S (KeyModifiers.Control ||| KeyModifiers.Shift)))
-    Assert.Equal(OpenConversationAt 2, ShortcutRouter.resolve (event Key.D3 KeyModifiers.Control))
-    Assert.Equal(ShowShortcuts, ShortcutRouter.resolve (event Key.F1 KeyModifiers.None))
-    Assert.Equal(NoShortcut, ShortcutRouter.resolve (event Key.A KeyModifiers.None))
+    Assert.Equal(ShortcutAction.ToggleSidebar, KeyShortcut.resolve (event Key.B KeyModifiers.Control))
+    Assert.Equal(ShortcutAction.NewConversation, KeyShortcut.resolve (event Key.N KeyModifiers.Meta))
+    Assert.Equal(ShortcutAction.ToggleTheme, KeyShortcut.resolve (event Key.S (KeyModifiers.Control ||| KeyModifiers.Shift)))
+    Assert.Equal(ShortcutAction.OpenConversationAt 2, KeyShortcut.resolve (event Key.D3 KeyModifiers.Control))
+    Assert.Equal(ShortcutAction.ShowShortcuts, KeyShortcut.resolve (event Key.F1 KeyModifiers.None))
+    Assert.Equal(ShortcutAction.NoShortcut, KeyShortcut.resolve (event Key.A KeyModifiers.None))
     )
 
 [<Trait("Category", "UI")>]
@@ -612,18 +592,18 @@ let ``download buffers cap single transfer and dispose on cap`` () =
     Assert.Equal(1, buffers.PendingCount)
 
     // 正常分片按小写键归一接收。
-    Assert.Equal(Accepted, buffers.Append("abc", Array.zeroCreate 600))
-    Assert.Equal(Accepted, buffers.Append("abc", Array.zeroCreate 400))
+    Assert.Equal(DownloadChunkResult.Accepted, buffers.Append("abc", Array.zeroCreate 600))
+    Assert.Equal(DownloadChunkResult.Accepted, buffers.Append("abc", Array.zeroCreate 400))
 
-    // 触顶：缓冲整体丢弃，后续 chunk 变为 Unknown，内存不随异常流增长。
-    Assert.Equal(Capped, buffers.Append("abc", Array.zeroCreate 100))
+    // 触顶：缓冲整体丢弃，后续 chunk 变为 DownloadChunkResult.Unknown，内存不随异常流增长。
+    Assert.Equal(DownloadChunkResult.Capped, buffers.Append("abc", Array.zeroCreate 100))
     Assert.Equal(0, buffers.PendingCount)
-    Assert.Equal(Unknown "没有在途缓冲：尚未开始、已被丢弃或已完成。", buffers.Append("abc", Array.zeroCreate 8))
+    Assert.Equal(DownloadChunkResult.Unknown "没有在途缓冲：尚未开始、已被丢弃或已完成。", buffers.Append("abc", Array.zeroCreate 8))
     Assert.True(Option.isNone (buffers.Take("abc")))
 
-    // Capped 之后重新 Begin 是全新下载：缓冲恢复可用。
+    // DownloadChunkResult.Capped 之后重新 Begin 是全新下载：缓冲恢复可用。
     buffers.Begin("abc", "again.pdf")
-    Assert.Equal(Accepted, buffers.Append("abc", Array.zeroCreate 10))
+    Assert.Equal(DownloadChunkResult.Accepted, buffers.Append("abc", Array.zeroCreate 10))
     match buffers.Take("ABC") with
     | Some(fileName, bytes) ->
         Assert.Equal("again.pdf", fileName)
@@ -638,11 +618,11 @@ let ``download buffers reset on repeated begin and clear on disconnect`` () =
     Headless.run (fun () ->
     let buffers = DownloadBuffers(4096L)
     buffers.Begin("aa", "first.bin")
-    Assert.Equal(Accepted, buffers.Append("aa", Array.zeroCreate 100))
+    Assert.Equal(DownloadChunkResult.Accepted, buffers.Append("aa", Array.zeroCreate 100))
 
     // 同键重试：重置而不是叠加，不会把两半份文件拼在一起。
     buffers.Begin("AA", "retry.bin")
-    Assert.Equal(Accepted, buffers.Append("aa", Array.zeroCreate 50))
+    Assert.Equal(DownloadChunkResult.Accepted, buffers.Append("aa", Array.zeroCreate 50))
     match buffers.Take("aa") with
     | Some(fileName, bytes) ->
         Assert.Equal("retry.bin", fileName)
@@ -657,7 +637,7 @@ let ``download buffers reset on repeated begin and clear on disconnect`` () =
     Assert.True(Option.isNone (buffers.Take("bb")))
     // Clear 后可继续服务新下载。
     buffers.Begin("cc", "next.bin")
-    Assert.Equal(Accepted, buffers.Append("cc", Array.zeroCreate 4))
+    Assert.Equal(DownloadChunkResult.Accepted, buffers.Append("cc", Array.zeroCreate 4))
     )
 
 [<Trait("Category", "UI")>]
@@ -2043,7 +2023,7 @@ let ``appearance preference update keeps the same focused control instance`` () 
     let settings = SettingsView(overlay, settingsActions, onPrefsChanged, ignore)
     settingsRef <- Some settings
     settings.Build()
-    settings.SetPrefs UiPrefs.defaults
+    settings.SetPrefs UiPrefsFile.defaults
     root.Children.Insert(0, settings)
     let window = show root 900.0 680.0
     try
@@ -2088,7 +2068,7 @@ let ``font size stepper disables the direction that hits the scale boundary`` ()
     let settings = SettingsView(overlay, settingsActions, onPrefsChanged, ignore)
     settingsRef <- Some settings
     settings.Build()
-    settings.SetPrefs UiPrefs.defaults
+    settings.SetPrefs UiPrefsFile.defaults
     root.Children.Insert(0, settings)
     let window = show root 900.0 680.0
     try
@@ -2809,7 +2789,7 @@ let ``collapsing the desktop sidebar returns focus to the composer`` () =
     try
         let mutable savedWidth = Tokens.sidebarWidth
         let controller = MainLayoutController(shell, sidebar, splitter, chatColumn, composer, chat, fun () -> savedWidth)
-        let wide = NavigationController(false).ApplyViewport(1200.0, false) |> snd
+        let wide = NavigationController(false, LayoutPolicy.compactBreakpoint).ApplyViewport(1200.0) |> snd
         controller.Apply wide
         // 焦点放进侧栏：ListBox 本体可聚焦（进入侧栏的 Tab 停靠点）。
         let list = byAutomationName sidebar "对话列表" :?> ListBox

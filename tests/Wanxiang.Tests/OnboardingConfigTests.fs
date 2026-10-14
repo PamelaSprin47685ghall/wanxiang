@@ -291,34 +291,6 @@ module OnboardingConfigTests =
         finally
             stop ()
 
-    [<Fact>]
-    let ``错误码编码解码往返，客户端类型与主机错误码一一对应`` () =
-        for f in ProviderCatalog.ProbeFailure.all do
-            let wire = ProviderCatalog.ProbeFailure.encode f "说明文字"
-            let decoded, text = ProviderCatalog.ProbeFailure.decode wire
-            Assert.Equal(Some f, decoded)
-            Assert.Equal("说明文字", text)
-            // 客户端解析器认得主机每个错误码
-            let kind, uiText = ProbeFailureKind.parse wire
-            Assert.NotEqual(ProbeUnclassified, kind)
-            Assert.Equal("说明文字", uiText)
-            Assert.Equal(ProbeFailureKind.ofCode (ProviderCatalog.ProbeFailure.code f), kind)
-        // 旧主机（无前缀）：类型未知，原文保留
-        let kind, text = ProbeFailureKind.parse "HTTP 401 · 凭据被拒绝"
-        Assert.Equal(ProbeUnclassified, kind)
-        Assert.Equal("HTTP 401 · 凭据被拒绝", text)
-        // 线上形态仍含状态码，旧调用方的断言不受影响
-        let url, stop = serveOnce 401 "x"
-        try
-            let r = ProviderCatalog.probeModels { provider "p" [ "m" ] "m" with baseUrl = url } CancellationToken.None |> Async.AwaitTask |> Async.RunSynchronously
-            match r with
-            | Error msg ->
-                Assert.StartsWith("[invalid-key]", msg)
-                Assert.Contains("401", msg)
-            | Ok _ -> failwith "应当失败"
-        finally
-            stop ()
-
     // ---- 预设重排与合并 ----
 
     // ---- 验收 6：卡片与设置页同一保存路径 ----

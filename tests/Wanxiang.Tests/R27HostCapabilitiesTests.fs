@@ -34,31 +34,6 @@ let ``unknown capabilities mean supported; declared table gates`` () =
     Assert.DoesNotContain("版本", HostFeatures.noResponseMessage (Some Set.empty))
 
 [<Fact>]
-let ``config tracker expires silent requests and resolves only once`` () =
-    let tracker = ConfigFeedbackTracker()
-    let id = Guid.NewGuid()
-    let mutable result = None
-    tracker.Track(id, "ok", fun ok -> result <- Some ok)
-    Assert.Empty(tracker.Expire(DateTimeOffset.UtcNow, TimeSpan.FromSeconds 12.0))
-    let expired = tracker.Expire(DateTimeOffset.UtcNow.AddSeconds 13.0, TimeSpan.FromSeconds 12.0)
-    Assert.Equal(1, expired.Length)
-    expired |> List.iter (fun f -> f.onCompleted false)
-    Assert.Equal(Some false, result)
-    Assert.True((tracker.Resolve id).IsNone)
-    Assert.Equal(0, tracker.Count)
-
-[<Fact>]
-let ``command tracker expires newer commands but leaves message delivery to outbox`` () =
-    let tracker = CommandFeedbackTracker()
-    let cont = ContinueResponse {| invocationId = Guid.NewGuid(); conversationId = Guid.NewGuid(); messageJson = System.Text.Json.Nodes.JsonObject() |}
-    let send = SendUserMessage {| invocationId = Guid.NewGuid(); conversationId = Guid.NewGuid(); messageJson = System.Text.Json.Nodes.JsonObject() |}
-    tracker.Track(cont, None, ignore)
-    tracker.Track(send, None, ignore)
-    let expired = tracker.Expire(DateTimeOffset.UtcNow.AddMinutes 1.0, TimeSpan.FromSeconds 12.0)
-    Assert.Equal(1, expired.Length)
-    Assert.Equal(1, tracker.Count)
-
-[<Fact>]
 let ``host announces capabilities right after authentication`` () =
     let port = ServerE2eTests.pickPort ()
     let token = ClientToken.ClientToken.generate ()

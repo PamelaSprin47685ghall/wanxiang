@@ -14,7 +14,7 @@ type MainWindow() as this =
     inherit Window()
 
     let view = MainView()
-    let mutable prefs = UiPrefs.load ()
+    let mutable prefs = UiPrefsFile.load ()
 
     do
         this.Title <- "万象"
@@ -52,10 +52,10 @@ type MainWindow() as this =
             // 以磁盘上的最新偏好为底再写窗口几何：设置页改过的开关（如「保存未发送的草稿」）
             // 不能被构造时读到的旧副本覆盖回去。
             prefs <-
-                { UiPrefs.load () with
+                { UiPrefsFile.load () with
                     windowWidth = this.Width
                     windowHeight = this.Height
                     windowX = this.Position.X
                     windowY = this.Position.Y
                     hasWindowPosition = true }
-            UiPrefs.save prefs)
+            UiPrefsFile.save prefs)

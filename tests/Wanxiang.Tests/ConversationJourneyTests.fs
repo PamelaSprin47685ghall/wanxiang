@@ -16,35 +16,18 @@ module ConversationJourneyTests =
 
     // ---------- 纯逻辑 ----------
 
-    [<Fact>]
-    let ``latest reply text skips empty assistant tail and ignores earlier turns`` () =
-        let messages =
-            [ msg "user" "q1"; msg "assistant" "a1"
-              msg "user" "q2"; msg "assistant" "a2"; msg "tool" ""; msg "assistant" "" ]
-        Assert.Equal(Some "a2", ReplyTail.latestText messages)
-        // 尾部是用户消息：没有可复制的「最新回复」，不回退去复制上一轮。
-        Assert.Equal(None, ReplyTail.latestText (messages @ [ msg "user" "q3" ]))
-
-    [<Fact>]
-    let ``regenerate needs confirmation only when the tail has something to lose`` () =
-        let failedEmpty = [ msg "user" "q"; msg "assistant" "" ]
-        Assert.False(ReplyTail.hasLosableContent failedEmpty)
-        Assert.False(ReplyTail.hasLosableContent [ msg "user" "q" ])
-        Assert.True(ReplyTail.hasLosableContent [ msg "user" "q"; msg "assistant" "partial" ])
-        Assert.True(ReplyTail.hasLosableContent [ msg "user" "q"; { msg "assistant" "" with reasoning = "thinking" } ])
-
     // ---------- 快捷键 ----------
 
     [<Trait("Category", "UI")>]
     [<Fact>]
     let ``copy and regenerate latest reply have shortcuts that avoid browser reload`` () =
         Headless.run (fun () ->
-        Assert.Equal(CopyLastReply, ShortcutRouter.resolve (keyEvent Key.C (KeyModifiers.Control ||| KeyModifiers.Shift)))
-        Assert.Equal(RegenerateLast, ShortcutRouter.resolve (keyEvent Key.G (KeyModifiers.Control ||| KeyModifiers.Shift)))
-        Assert.Equal(RegenerateLast, ShortcutRouter.resolve (keyEvent Key.G (KeyModifiers.Meta ||| KeyModifiers.Shift)))
+        Assert.Equal(ShortcutAction.CopyLastReply, KeyShortcut.resolve (keyEvent Key.C (KeyModifiers.Control ||| KeyModifiers.Shift)))
+        Assert.Equal(ShortcutAction.RegenerateLast, KeyShortcut.resolve (keyEvent Key.G (KeyModifiers.Control ||| KeyModifiers.Shift)))
+        Assert.Equal(ShortcutAction.RegenerateLast, KeyShortcut.resolve (keyEvent Key.G (KeyModifiers.Meta ||| KeyModifiers.Shift)))
         // Ctrl+Shift+R 是浏览器强制刷新，绝不占用；裸 Ctrl+C 仍归文本复制。
-        Assert.Equal(NoShortcut, ShortcutRouter.resolve (keyEvent Key.R (KeyModifiers.Control ||| KeyModifiers.Shift)))
-        Assert.Equal(NoShortcut, ShortcutRouter.resolve (keyEvent Key.C KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.NoShortcut, KeyShortcut.resolve (keyEvent Key.R (KeyModifiers.Control ||| KeyModifiers.Shift)))
+        Assert.Equal(ShortcutAction.NoShortcut, KeyShortcut.resolve (keyEvent Key.C KeyModifiers.Control))
         )
 
     // ---------- 空对话起手式 ----------

@@ -45,7 +45,7 @@ module CloseWindowTests =
     [<Fact>]
     let ``ctrl w resolves to close window`` () =
         Headless.run (fun () ->
-        Assert.Equal(CloseWindow, ShortcutRouter.resolve (keyEvent Key.W KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.CloseWindow, KeyShortcut.resolve (keyEvent Key.W KeyModifiers.Control))
         )
 
     [<Trait("Category", "UI")>]
@@ -53,7 +53,7 @@ module CloseWindowTests =
     let ``close window accepts either ctrl or meta`` () =
         Headless.run (fun () ->
         // ⌘W 在 macOS 上与 Ctrl+W 同权：与其它 Ctrl/* 快捷键同一判据。
-        Assert.Equal(CloseWindow, ShortcutRouter.resolve (keyEvent Key.W KeyModifiers.Meta))
+        Assert.Equal(ShortcutAction.CloseWindow, KeyShortcut.resolve (keyEvent Key.W KeyModifiers.Meta))
         )
 
     [<Trait("Category", "UI")>]
@@ -61,15 +61,15 @@ module CloseWindowTests =
     let ``close window does not steal neighbouring key bindings`` () =
         Headless.run (fun () ->
         // Ctrl+Shift+W 留给浏览器/未来的标签语义；裸 W 是输入框正文，绝不能占。
-        Assert.Equal(NoShortcut, ShortcutRouter.resolve (keyEvent Key.W KeyModifiers.None))
+        Assert.Equal(ShortcutAction.NoShortcut, KeyShortcut.resolve (keyEvent Key.W KeyModifiers.None))
         Assert.Equal(
-            NoShortcut,
-            ShortcutRouter.resolve (keyEvent Key.W (KeyModifiers.Control ||| KeyModifiers.Shift)))
+            ShortcutAction.NoShortcut,
+            KeyShortcut.resolve (keyEvent Key.W (KeyModifiers.Control ||| KeyModifiers.Shift)))
         // 同一批键位不许把既有动作挤掉。
-        Assert.Equal(NewConversation, ShortcutRouter.resolve (keyEvent Key.N KeyModifiers.Control))
-        Assert.Equal(ToggleSidebar, ShortcutRouter.resolve (keyEvent Key.B KeyModifiers.Control))
-        Assert.Equal(ScrollToEnd, ShortcutRouter.resolve (keyEvent Key.End KeyModifiers.Control))
-        Assert.Equal(ScrollToBeginning, ShortcutRouter.resolve (keyEvent Key.Home KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.NewConversation, KeyShortcut.resolve (keyEvent Key.N KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.ToggleSidebar, KeyShortcut.resolve (keyEvent Key.B KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.ScrollToEnd, KeyShortcut.resolve (keyEvent Key.End KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.ScrollToBeginning, KeyShortcut.resolve (keyEvent Key.Home KeyModifiers.Control))
         )
 
     // ---------- 壳层行为 ----------

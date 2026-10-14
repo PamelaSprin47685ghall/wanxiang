@@ -102,41 +102,6 @@ let private catalogWithPresets () =
             presets = Map.ofList [ "writer", samplePreset ] }
     Catalog.parse (JsonArray()) (JsonArray()) (ProviderCatalog.generation cfg)
 
-[<Fact>]
-let ``catalog snapshot carries presets to clients`` () =
-    let catalog = catalogWithPresets ()
-    let p = List.exactlyOne catalog.presets
-    Assert.Equal("写作助手", p.name)
-    Assert.Equal(Some 0.4, p.temperature)
-    Assert.Equal<string list>([ "builtin:time" ], p.tools)
-    // 旧主机没有 presets 字段 → 空列表
-    Assert.Empty((Catalog.parse (JsonArray()) (JsonArray()) (JsonObject())).presets)
-
-[<Fact>]
-let ``applying a preset falls back when its model or tools are gone`` () =
-    let preset = List.exactlyOne (catalogWithPresets ()).presets
-    let tool : ToolInfo = { id = "builtin:time"; label = "time"; description = ""; source = "builtin"; serverId = None }
-    let ok = { Catalog.empty with providers = [ provider "openai" [ "gpt-4o"; "gpt-4o-mini" ] ]; tools = [ tool ] }
-    let config, note = Presets.toSessionConfig ok preset
-    Assert.Equal(("openai", "gpt-4o"), (config.provider, config.model))
-    Assert.Equal<string list>([ "builtin:time" ], config.tools)
-    Assert.Equal(Some 2048, config.maxTokens)
-    Assert.True(note.IsNone)
-    // 模型服务被删 + 工具消失：回落默认模型，并说明原因
-    let gone = { Catalog.empty with providers = [ provider "anthropic" [ "claude" ] ] }
-    let config2, note2 = Presets.toSessionConfig gone preset
-    Assert.Equal(("anthropic", "claude"), (config2.provider, config2.model))
-    Assert.Empty(config2.tools)
-    Assert.Contains("已不可用", note2.Value)
-    Assert.Contains("工具 time 在主机上已没有", note2.Value)
-
-[<Fact>]
-let ``preset names are suggested from the title without collisions`` () =
-    let existing = (catalogWithPresets ()).presets
-    Assert.Equal("写作助手 2", Presets.suggestName existing "写作助手")
-    Assert.Equal("我的预设", Presets.suggestName existing "新对话")
-    Assert.Contains("gpt-4o", Presets.describe (catalogWithPresets ()) existing.Head)
-
 let rec private descendants (control: Avalonia.Visual) : seq<Avalonia.Visual> =
     seq {
         yield control

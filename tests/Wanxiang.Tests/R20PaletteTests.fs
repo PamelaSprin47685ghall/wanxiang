@@ -27,12 +27,12 @@ module R20PaletteTests =
     [<Fact>]
     let ``372 Ctrl+K 打开面板，Ctrl+Shift+F 归侧栏搜索，其他键不变`` () =
         Headless.run (fun () ->
-            let resolve key mods = ShortcutRouter.resolve(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = mods))
-            Assert.Equal(OpenCommandPalette, resolve Key.K KeyModifiers.Control)
-            Assert.Equal(OpenCommandPalette, resolve Key.K KeyModifiers.Meta)
-            Assert.Equal(FocusSearch, resolve Key.F (KeyModifiers.Control ||| KeyModifiers.Shift))
-            Assert.Equal(OpenModelPicker, resolve Key.M KeyModifiers.Control)
-            Assert.Equal(NoShortcut, resolve Key.F KeyModifiers.Control))
+            let resolve key mods = KeyShortcut.resolve(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = mods))
+            Assert.Equal(ShortcutAction.OpenCommandPalette, resolve Key.K KeyModifiers.Control)
+            Assert.Equal(ShortcutAction.OpenCommandPalette, resolve Key.K KeyModifiers.Meta)
+            Assert.Equal(ShortcutAction.FocusSearch, resolve Key.F (KeyModifiers.Control ||| KeyModifiers.Shift))
+            Assert.Equal(ShortcutAction.OpenModelPicker, resolve Key.M KeyModifiers.Control)
+            Assert.Equal(ShortcutAction.NoShortcut, resolve Key.F KeyModifiers.Control))
 
     let private texts (root: Control) =
         root.GetVisualDescendants() |> Seq.choose (function :? TextBlock as t -> Option.ofObj t.Text | _ -> None) |> List.ofSeq

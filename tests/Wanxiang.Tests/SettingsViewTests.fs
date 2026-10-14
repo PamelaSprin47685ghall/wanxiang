@@ -866,12 +866,12 @@ module SettingsViewTests =
     let ``SettingsGeneral BuildAppearance adjusts fontScale within bounds and updates prefs`` () =
         Headless.run (fun () ->
             let toasts = ResizeArray<string * ToastTone>()
-            let mutable updatedPrefs = UiPrefs.defaults
+            let mutable updatedPrefs = UiPrefsFile.defaults
             let general = SettingsGeneral(overlay (), defaultActions toasts, (fun p -> updatedPrefs <- p))
             let built = general.BuildAppearance()
 
             // 验证初始字号
-            general.SetPrefs { UiPrefs.defaults with fontScale = 14.5 }
+            general.SetPrefs { UiPrefsFile.defaults with fontScale = 14.5 }
 
             // 找到更小和更大按钮
             let iconBtns =
@@ -886,12 +886,12 @@ module SettingsViewTests =
             let largerBtn = iconBtns.["更大"]
 
             // 验证调到上限时按钮禁用态
-            general.SetPrefs { UiPrefs.defaults with fontScale = UiPrefs.maxFontScale }
+            general.SetPrefs { UiPrefsFile.defaults with fontScale = UiPrefs.maxFontScale }
             Assert.False(largerBtn.IsEnabled)
             Assert.True(smallerBtn.IsEnabled)
 
             // 验证调到下限时按钮禁用态
-            general.SetPrefs { UiPrefs.defaults with fontScale = UiPrefs.minFontScale }
+            general.SetPrefs { UiPrefsFile.defaults with fontScale = UiPrefs.minFontScale }
             Assert.False(smallerBtn.IsEnabled)
             Assert.True(largerBtn.IsEnabled)
         )

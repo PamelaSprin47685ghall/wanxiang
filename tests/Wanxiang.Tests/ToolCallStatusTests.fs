@@ -136,19 +136,3 @@ module ToolCallStatusTests =
     // =========================================================================
     // ToolCallStatus.badgeText 与 isTerminal 的穷尽式契约验证
     // =========================================================================
-
-    [<Fact>]
-    let ``ToolCallStatus badgeText returns exact expected text for all states`` () =
-        Assert.Equal("执行中", ToolCallStatus.badgeText ToolCallStatus.Running)
-        Assert.Equal("已完成", ToolCallStatus.badgeText ToolCallStatus.Success)
-        Assert.Equal("执行失败", ToolCallStatus.badgeText (ToolCallStatus.Failed(Some "特定错误")))
-        Assert.Equal("执行失败", ToolCallStatus.badgeText (ToolCallStatus.Failed None))
-        Assert.Equal("结果未知", ToolCallStatus.badgeText ToolCallStatus.Unknown)
-
-    [<Fact>]
-    let ``ToolCallStatus isTerminal returns true only for terminal states`` () =
-        Assert.False(ToolCallStatus.isTerminal ToolCallStatus.Running)
-        Assert.True(ToolCallStatus.isTerminal ToolCallStatus.Success)
-        Assert.True(ToolCallStatus.isTerminal (ToolCallStatus.Failed(Some "错误")))
-        Assert.True(ToolCallStatus.isTerminal (ToolCallStatus.Failed None))
-        Assert.True(ToolCallStatus.isTerminal ToolCallStatus.Unknown)

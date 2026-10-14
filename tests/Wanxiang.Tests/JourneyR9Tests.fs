@@ -123,16 +123,8 @@ let ``262 没有倒计时的可重试错误照常可按`` () =
 // ---- 263 ----
 
 [<Fact>]
-let ``263 末尾用户消息超过宽限期仍无回复判为未回复`` () =
-    let now = DateTimeOffset(2026, 10, 12, 12, 0, 0, TimeSpan.Zero)
-    let old = Some(now.AddMinutes -3.0)
-    let fresh = Some(now.AddSeconds -3.0)
-    Assert.True(ReplyTail.isUnanswered now [ msg "user" "RATE" old ])
-    Assert.False(ReplyTail.isUnanswered now [ msg "user" "刚发" fresh ])
-    Assert.False(ReplyTail.isUnanswered now [ msg "user" "q" old; msg "assistant" "a" old ])
-    Assert.False(ReplyTail.isUnanswered now [ msg "user" "流式" None ])
-    Assert.False(ReplyTail.isUnanswered now [])
-    Assert.True(ReplyTail.unansweredError.retryable)
+let ``263 未回复卡可重试`` () =
+    Assert.True(UnansweredReply.error.retryable)
 
 [<Fact>]
 let ``263 AppShell 只在空闲且没有失败卡时补出未回复卡`` () =

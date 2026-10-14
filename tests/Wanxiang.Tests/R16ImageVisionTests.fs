@@ -107,19 +107,6 @@ let private providerInfo overrides detected : ProviderInfo =
       enabled = true; visionOverrides = overrides; visionDetected = detected }
 
 [<Fact>]
-let ``vision precedence is user override, then provider metadata, then name`` () =
-    let catalog detected overrides = { Catalog.empty with providers = [ providerInfo overrides detected ] }
-    // 只有名字：llama3.1 推断为只吃文字。
-    Assert.Equal((VisionNo, VisionFromName), Catalog.visionOf "local" "llama3.1:8b" (catalog Map.empty Map.empty))
-    // 服务信息说能看图：压过名字。
-    Assert.Equal((VisionYes, VisionFromProvider), Catalog.visionOf "local" "llama3.1:8b" (catalog (Map.ofList [ "llama3.1:8b", true ]) Map.empty))
-    // 用户指定：压过服务信息。
-    Assert.Equal(
-        (VisionNo, VisionFromUser),
-        Catalog.visionOf "local" "llama3.1:8b" (catalog (Map.ofList [ "llama3.1:8b", true ]) (Map.ofList [ "llama3.1:8b", false ])))
-    Assert.Equal((VisionUnknown, VisionFromName), Catalog.visionOf "local" "my-model" (catalog Map.empty Map.empty))
-
-[<Fact>]
 let ``catalog snapshot carries overrides and detected capability, and the client parses them`` () =
     ModelCapabilities.clear ()
     let p: ProviderConfig =

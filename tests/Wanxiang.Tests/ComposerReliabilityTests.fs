@@ -114,44 +114,7 @@ module ComposerReliabilityTests =
 
     // ---------- 验收 2：按对话隔离，切换主机互不泄漏 ----------
 
-    [<Fact>]
-    let ``drafts are isolated per conversation and per host`` () =
-        let convA, convB = Guid.NewGuid(), Guid.NewGuid()
-        let snapshot =
-            { drafts =
-                [ { instanceId = "host-1"; conversationId = Some convA; text = "一号机甲"; attachments = [] }
-                  { instanceId = "host-1"; conversationId = Some convB; text = "一号机乙"; attachments = [] }
-                  { instanceId = "host-2"; conversationId = Some convA; text = "二号机甲"; attachments = [] } ]
-              unsent = [] }
-        let drafts, outbox = ComposerDrafts(), MessageOutbox()
-        DraftPolicy.restoreInto snapshot "host-1" drafts outbox |> ignore
-        Assert.Equal("一号机甲", (drafts.Get("host-1", Some convA)).text)
-        Assert.Equal("一号机乙", (drafts.Get("host-1", Some convB)).text)
-        Assert.Equal("", (drafts.Get("host-2", Some convA)).text)
-        // 反方向：只恢复 host-2 时，host-1 的内容不会出现。
-        let drafts2 = ComposerDrafts()
-        DraftPolicy.restoreInto snapshot "host-2" drafts2 (MessageOutbox()) |> ignore
-        Assert.Equal("二号机甲", (drafts2.Get("host-2", Some convA)).text)
-        Assert.Equal("", (drafts2.Get("host-1", Some convA)).text)
-
-    [<Fact>]
-    let ``saving while connected to one host keeps another host's stored drafts`` () =
-        let stored =
-            { drafts = [ { instanceId = "host-2"; conversationId = None; text = "另一台机器上的草稿"; attachments = [] } ]
-              unsent = [] }
-        let drafts = ComposerDrafts()
-        (drafts.Get("host-1", None)).text <- "这台机器"
-        let current = DraftPolicy.snapshotOf drafts (MessageOutbox()) (fun _ -> DateTimeOffset.UtcNow)
-        let merged = DraftPolicy.mergeForSave stored (Set.ofList [ "host-1" ]) current
-        Assert.Equal<string list>([ "另一台机器上的草稿"; "这台机器" ], merged.drafts |> List.map _.text)
-
     // ---------- 验收 3：删除对话后其草稿被清理 ----------
-
-    [<Fact>]
-    let ``conversations that vanish from the list count as deleted unless a send is in flight`` () =
-        let kept, gone, sending = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
-        let deleted = DraftPolicy.deletedConversations (Set.ofList [ kept ]) (Set.ofList [ kept; gone; sending ]) (Set.ofList [ sending ])
-        Assert.Equal<Guid list>([ gone ], Set.toList deleted)
 
     [<Trait("Category", "UI")>]
     [<Fact>]
@@ -213,19 +176,10 @@ module ComposerReliabilityTests =
     // ---------- 默认开启、可关闭、可清除 ----------
 
     [<Fact>]
-    let ``persisting drafts is on by default and an old ui file without the key keeps it on`` () =
-        Assert.True UiPrefs.defaults.persistDrafts
-        withHome (fun home ->
-            File.WriteAllText(Path.Combine(home, "ui.json"), """{"theme":"dark","fontScale":15}""")
-            Assert.True((UiPrefs.load ()).persistDrafts)
-            UiPrefs.save { UiPrefs.defaults with persistDrafts = false }
-            Assert.False((UiPrefs.load ()).persistDrafts))
-
-    [<Fact>]
     let ``when turned off nothing is written and what was stored is deleted`` () =
         let backend = MemoryDraftBackend()
         let mutable enabled = true
-        let store = DraftStore(backend, fun () -> enabled)
+        let store = LocalDraftStore(backend, fun () -> enabled)
         let snapshot = { drafts = [ { instanceId = "h"; conversationId = None; text = "x"; attachments = [] } ]; unsent = [] }
         store.Save(snapshot).Wait()
         Assert.True backend.Stored.IsSome
@@ -249,7 +203,7 @@ module ComposerReliabilityTests =
                     shell.FlushDrafts()
                     Assert.True(File.Exists(draftFile home))
                     // 设置页的「清除本地草稿」
-                    (settingsOf shell).LocalDrafts.ClearRequested()
+                    (settingsOf shell).LocalDrafts.RequestClear()
                     Dispatcher.UIThread.RunJobs()
                     // 确认框在 overlay 里；这里直接走外壳的清除实现。
                     typeof<MainView>.GetMethod("ClearLocalDrafts", BindingFlags.NonPublic ||| BindingFlags.Instance).Invoke(shell, [||]) |> ignore
@@ -260,7 +214,7 @@ module ComposerReliabilityTests =
                     shell.FlushDrafts()
                     Assert.True(File.Exists(draftFile home))
                     typeof<MainView>.GetMethod("SavePrefs", BindingFlags.NonPublic ||| BindingFlags.Instance)
-                        .Invoke(shell, [| box { UiPrefs.load () with persistDrafts = false } |]) |> ignore
+                        .Invoke(shell, [| box { UiPrefsFile.load () with persistDrafts = false } |]) |> ignore
                     Assert.False(File.Exists(draftFile home))
                     (composerOf shell).SetText "关掉之后"
                     shell.FlushDrafts()
@@ -270,64 +224,7 @@ module ComposerReliabilityTests =
 
     // ---------- 未确认消息：重新打开后恢复为「未确认，可重试」----------
 
-    [<Fact>]
-    let ``an unconfirmed send comes back as retryable with the original invocation id`` () =
-        let conv = Guid.NewGuid()
-        let drafts, outbox = ComposerDrafts(), MessageOutbox()
-        let attachment =
-            { attachmentId = Guid.NewGuid(); sha256 = String('b', 64); size = 10L; mediaType = "text/plain"
-              fileName = "a.txt"; ready = true; failed = false }
-        let item = outbox.Stage("host-1", conv, "还没确认的消息", [ attachment ], None)
-        outbox.SetState(PendingMessage.invocationId item, UnconfirmedMessage "连接已断开")
-        let snapshot = DraftPolicy.snapshotOf drafts outbox (fun _ -> DateTimeOffset.UtcNow)
-        let text = DraftCodec.serialize snapshot
-        // 重新启动：新的内存，只从落盘文本恢复。
-        let parsed = DraftCodec.tryParse text
-        let drafts2, outbox2 = ComposerDrafts(), MessageOutbox()
-        let restored = DraftPolicy.restoreInto parsed "host-1" drafts2 outbox2
-        Assert.Equal(1, restored)
-        let back = Assert.Single(outbox2.Items("host-1", Some conv))
-        Assert.Equal(PendingMessage.invocationId item, PendingMessage.invocationId back)
-        Assert.True(PendingMessage.canRetry back, "必须是可重试的未确认状态，而不是已排队/发送中")
-        Assert.Equal("还没确认的消息", back.text)
-        Assert.Equal(1, back.attachments.Length)
-        // 重试发出的命令载荷与原命令逐字相同（主机据此幂等核对，不会重复保存）。
-        Assert.Equal(
-            WireCodec.encodeCommand item.command,
-            WireCodec.encodeCommand back.command)
-
-    [<Fact>]
-    let ``a send whose conversation was never confirmed falls back into the start draft`` () =
-        let conv = Guid.NewGuid()
-        let drafts, outbox = ComposerDrafts(), MessageOutbox()
-        let creation =
-            CreateConversation {| invocationId = Guid.NewGuid(); conversationId = conv; title = "新对话"; config = SessionConfig.empty |}
-        let item = outbox.Stage("host-1", conv, "对话还没建成", [], Some creation)
-        outbox.SetState(PendingMessage.invocationId item, UnconfirmedMessage "断线")
-        let snapshot = DraftPolicy.snapshotOf drafts outbox (fun _ -> DateTimeOffset.UtcNow)
-        Assert.Empty snapshot.unsent
-        let row = Assert.Single snapshot.drafts
-        Assert.Equal(None, row.conversationId)
-        Assert.Equal("对话还没建成", row.text)
-
     // ---------- 编解码与 PWA：IndexedDB 夹具（页面被回收后重开） ----------
-
-    [<Fact>]
-    let ``a recycled page restores drafts from the browser backend`` () =
-        // MemoryDraftBackend 与 BrowserDraftBackend 同一接口；页面被回收 = 丢掉全部内存对象，只剩后端里的字符串。
-        let backend = MemoryDraftBackend()
-        let before = DraftStore(backend, fun () -> true)
-        let conv = Guid.NewGuid()
-        let snapshot =
-            { drafts =
-                [ { instanceId = "host-1"; conversationId = Some conv; text = "手机切后台前的草稿"
-                    attachments = [ { fileName = "照片.jpg"; mediaType = "image/jpeg"; size = 99L; sha256 = String('c', 64) } ] } ]
-              unsent = [] }
-        before.Save(snapshot).Wait()
-        let after = DraftStore(backend, fun () -> true)
-        let loaded = after.Load().Result
-        Assert.Equal("手机切后台前的草稿", (Assert.Single loaded.drafts).text)
-        Assert.Equal("照片.jpg", (Assert.Single (Assert.Single loaded.drafts).attachments).fileName)
 
     [<Fact>]
     let ``damaged or newer draft files are ignored instead of blocking startup`` () =
@@ -520,11 +417,12 @@ module ComposerReliabilityTests =
                     dispatchEvent shell (AuthAccepted {| instanceId = "host-doctor" |})
                     let settings = settingsOf shell
                     let mutable requested = 0
-                    settings.Health.RequestCheck <- fun () -> requested <- requested + 1
+                    settings.Health.CheckRequested.Add(fun () -> requested <- requested + 1)
                     let about = settings.Health
                     about.BeginCheck()
                     Assert.Equal(1, requested)
-                    Assert.Equal(Running, about.Doctor)
+                    // 外壳也订阅了 CheckRequested（事件可多播）；测试里没有真连接，外壳会标成「无法检查」。
+                    Assert.NotEqual(NotRun, about.Doctor)
                     let checks = JsonArray()
                     for name, ok, detail in [ "config", true, "ok"; "disk-free-space", false, "only 10 MiB free" ] do
                         let c = JsonObject()

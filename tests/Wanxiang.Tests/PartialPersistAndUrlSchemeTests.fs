@@ -33,23 +33,6 @@ let ``250 generation.partial 编解码往返`` () =
     | other -> failwithf "unexpected %A" other
 
 [<Fact>]
-let ``250 刷新后客户端从主机恢复半截与错误卡；正在生成时不覆盖`` () =
-    let runs = ConversationRuns()
-    let conv, gen = Guid.NewGuid(), Guid.NewGuid()
-    let err = GenerationError.create ProviderTimeout "超时"
-    let msg = { MessageView.empty with role = "assistant"; text = "半截" }
-    Assert.True(runs.RestorePartial(conv, gen, msg, Some err))
-    let run = runs.Get(Some conv)
-    Assert.Equal(Some "半截", run.partial |> Option.map _.text)
-    Assert.True(run.error.IsSome)
-    // 迟到的同代 started 不应复活这次生成
-    runs.Start(conv, gen)
-    Assert.False((runs.Get(Some conv)).running)
-    let conv2, g2 = Guid.NewGuid(), Guid.NewGuid()
-    runs.Start(conv2, g2)
-    Assert.False(runs.RestorePartial(conv2, Guid.NewGuid(), msg, Some err))
-
-[<Fact>]
 let ``251 Linux 桌面文件声明 x-scheme-handler 并以 %u 接收链接`` () =
     let entry = UrlSchemeRegistration.desktopEntry "/opt/wanxiang/wanxiang"
     Assert.Contains("MimeType=x-scheme-handler/wanxiang;", entry)

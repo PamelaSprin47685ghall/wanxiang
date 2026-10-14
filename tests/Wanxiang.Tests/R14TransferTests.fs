@@ -264,7 +264,7 @@ let ``311 撤销提示条按钮进 Tab 序，F6 直达，聚焦时暂停倒计�
     let button = overlay.ToastActionButtons |> List.exactlyOne
     Assert.True button.IsTabStop
     Assert.True button.Focusable
-    Assert.Equal(ShortcutAction.FocusToast, ShortcutRouter.resolve (KeyEventArgs(Key = Key.F6, KeyModifiers = KeyModifiers.None)))
+    Assert.Equal(ShortcutAction.FocusToast, KeyShortcut.resolve (KeyEventArgs(Key = Key.F6, KeyModifiers = KeyModifiers.None)))
     Assert.True(overlay.FocusToastAction())
     Dispatcher.UIThread.RunJobs()
     Assert.True button.IsFocused

@@ -256,9 +256,9 @@ let ``窄屏不自动打开抽屉，显式打开后焦点留在抽屉内`` () =
             args
 
         // 真实状态迁移：先进入 compact，再由用户动作打开抽屉。
-        let nav = NavigationController(false)
+        let nav = NavigationController(false, LayoutPolicy.compactBreakpoint)
         let before = nav.State
-        let needsApply, compactState = nav.ApplyViewport(360.0, false)
+        let needsApply, compactState = nav.ApplyViewport(360.0)
         Assert.True(needsApply, "进入 compact 应触发一次布局投影")
         Assert.False(compactState.compactNavigationOpen, "没有对话也先展示输入区，不自动盖上历史列表")
         let state = nav.ToggleSidebar()
@@ -293,18 +293,18 @@ let ``窄屏不自动打开抽屉，显式打开后焦点留在抽屉内`` () =
 
         // 反向守卫：聚焦归宿只在抽屉真的翻到打开时成立。有对话时 compact 视口不自动开抽屉，
         // 非 compact 更不开——两种情形下触发条件为假，焦点不因缩放被抢。
-        let withConversation = NavigationController(false)
+        let withConversation = NavigationController(false, LayoutPolicy.compactBreakpoint)
         let convBefore = withConversation.State
-        let _, convState = withConversation.ApplyViewport(360.0, true)
+        let _, convState = withConversation.ApplyViewport(360.0)
         Assert.False(convState.compactNavigationOpen, "有对话时 compact 视口不自动开抽屉")
         Assert.False(
             convState.compactMode && convState.compactNavigationOpen
             && not (convBefore.compactMode && convBefore.compactNavigationOpen),
             "抽屉未开时不得触发聚焦进抽屉")
 
-        let wide = NavigationController(false)
+        let wide = NavigationController(false, LayoutPolicy.compactBreakpoint)
         let wideBefore = wide.State
-        let _, wideState = wide.ApplyViewport(1200.0, false)
+        let _, wideState = wide.ApplyViewport(1200.0)
         Assert.False(wideState.compactMode, "宽视口非 compact")
         Assert.False(
             wideState.compactMode && wideState.compactNavigationOpen

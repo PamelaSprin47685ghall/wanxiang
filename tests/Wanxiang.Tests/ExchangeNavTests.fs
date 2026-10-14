@@ -371,13 +371,13 @@ module ExchangeNavTests =
     let ``ctrl+up/down resolve to exchange jumps`` () =
         Headless.run (fun () ->
         let resolve (key: Key) =
-            ShortcutRouter.resolve(
+            KeyShortcut.resolve(
                 KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = KeyModifiers.Control))
-        Assert.Equal(JumpExchange -1, resolve Key.Up)
-        Assert.Equal(JumpExchange 1, resolve Key.Down)
+        Assert.Equal(ShortcutAction.JumpExchange -1, resolve Key.Up)
+        Assert.Equal(ShortcutAction.JumpExchange 1, resolve Key.Down)
         // 不带 Ctrl 的上下键归输入框历史召回，不能被全局吞掉。
         let plain =
-            ShortcutRouter.resolve(
+            KeyShortcut.resolve(
                 KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Up, KeyModifiers = KeyModifiers.None))
         Assert.Equal(ShortcutAction.NoShortcut, plain)
         )

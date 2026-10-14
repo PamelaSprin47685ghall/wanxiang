@@ -22,17 +22,16 @@
     <Compile Include="Rich/Highlight.fs" />
     <Compile Include="Rich/MathLayout.fs" />
     <Compile Include="Rich/MathVisual.fs" />
-    <Compile Include="Model/MessageModel.fs" />
     <Compile Include="Model/ImageShrink.fs" />
     <Compile Include="Model/ConversationExport.fs" />
     <Compile Include="Model/ConversationTransfer.fs" />
     <Compile Include="Model/DesktopLinks.fs" />
     <Compile Include="Model/ErrorRecovery.fs" />
-    <Compile Include="Model/Catalog.fs" />
     <Compile Include="Model/CommandPalette.fs" />
-    <Compile Include="Model/UiControllers.fs" />
     <Compile Include="Model/DraftStore.fs" />
+    <Compile Include="Model/UnansweredReply.fs" />
     <!-- Interaction 必须先于 Primitives：Primitives 的基控件挂 Interaction.surface。 -->
+    <Compile Include="Controls/KeyShortcut.fs" />
     <Compile Include="Controls/ImeGuard.fs" />
     <Compile Include="Controls/Interaction.fs" />
     <Compile Include="Controls/Primitives.fs" />
@@ -111,6 +110,21 @@
     <PackageReference Include="Wanxiang2.MediaTypes" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ReconnectBackoff" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ConnectionIssue" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.Outbox" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ConversationRuns" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.Catalog" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ShortcutKeys" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.NavigationState" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.CommandFeedback" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ConfigFeedback" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DownloadBuffers" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ComposerDrafts" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DraftStore" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ModelSwitcher" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ProbeFailureKind" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.HostCatalog" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.UiPrefs" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MessageView" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ConnectIssueText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ColorBlend" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PopupPlacement" Version="0.0.0-local" />

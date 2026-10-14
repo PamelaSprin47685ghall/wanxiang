@@ -6,7 +6,7 @@ open System
 module PaletteRecent =
 
     let private recentFile () =
-        IO.Path.Combine(IO.Path.GetDirectoryName(UiPrefs.filePath ()), "palette-recent.json")
+        IO.Path.Combine(IO.Path.GetDirectoryName(UiPrefsFile.filePath ()), "palette-recent.json")
 
     let loadRecent () : string list =
         try

@@ -196,10 +196,10 @@ module EndpointScrollTests =
     let ``ctrl home and ctrl end resolve to endpoint scroll intents`` () =
         Headless.run (fun () ->
         let event key modifiers = KeyEventArgs(Key = key, KeyModifiers = modifiers)
-        Assert.Equal(ScrollToBeginning, ShortcutRouter.resolve (event Key.Home KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.ScrollToBeginning, KeyShortcut.resolve (event Key.Home KeyModifiers.Control))
         // ⌘ 与 Ctrl 同权：macOS 上 ⌘Home 就是同一意图。
-        Assert.Equal(ScrollToBeginning, ShortcutRouter.resolve (event Key.Home KeyModifiers.Meta))
-        Assert.Equal(ScrollToEnd, ShortcutRouter.resolve (event Key.End KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.ScrollToBeginning, KeyShortcut.resolve (event Key.Home KeyModifiers.Meta))
+        Assert.Equal(ShortcutAction.ScrollToEnd, KeyShortcut.resolve (event Key.End KeyModifiers.Control))
         )
 
     [<Trait("Category", "UI")>]
@@ -208,10 +208,10 @@ module EndpointScrollTests =
         Headless.run (fun () ->
         let event key modifiers = KeyEventArgs(Key = key, KeyModifiers = modifiers)
         // 裸 Home/End 必须是 NoShortcut：消息区正在读文本，端点键该归内容自己。
-        Assert.Equal(NoShortcut, ShortcutRouter.resolve (event Key.Home KeyModifiers.None))
-        Assert.Equal(NoShortcut, ShortcutRouter.resolve (event Key.End KeyModifiers.None))
+        Assert.Equal(ShortcutAction.NoShortcut, KeyShortcut.resolve (event Key.Home KeyModifiers.None))
+        Assert.Equal(ShortcutAction.NoShortcut, KeyShortcut.resolve (event Key.End KeyModifiers.None))
         // Ctrl+Shift+Home 也不占用：端点键只设一个组合，避免与将来可能的选区快捷键相撞。
-        Assert.Equal(NoShortcut, ShortcutRouter.resolve (event Key.Home (KeyModifiers.Control ||| KeyModifiers.Shift)))
+        Assert.Equal(ShortcutAction.NoShortcut, KeyShortcut.resolve (event Key.Home (KeyModifiers.Control ||| KeyModifiers.Shift)))
         )
 
     [<Trait("Category", "UI")>]
@@ -220,10 +220,10 @@ module EndpointScrollTests =
         Headless.run (fun () ->
         let event key modifiers = KeyEventArgs(Key = key, KeyModifiers = modifiers)
         // 问答跳转占 Up/Down，端点占 Home/End：两条键位互不遮挡。
-        Assert.Equal(JumpExchange -1, ShortcutRouter.resolve (event Key.Up KeyModifiers.Control))
-        Assert.Equal(JumpExchange 1, ShortcutRouter.resolve (event Key.Down KeyModifiers.Control))
-        Assert.Equal(ScrollToBeginning, ShortcutRouter.resolve (event Key.Home KeyModifiers.Control))
-        Assert.Equal(ScrollToEnd, ShortcutRouter.resolve (event Key.End KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.JumpExchange -1, KeyShortcut.resolve (event Key.Up KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.JumpExchange 1, KeyShortcut.resolve (event Key.Down KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.ScrollToBeginning, KeyShortcut.resolve (event Key.Home KeyModifiers.Control))
+        Assert.Equal(ShortcutAction.ScrollToEnd, KeyShortcut.resolve (event Key.End KeyModifiers.Control))
         )
 
     // ---------- 落位 ----------

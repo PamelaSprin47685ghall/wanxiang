@@ -21,7 +21,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
     /// 构造时所在的 UI 调度器；后台续延一律投递到这里，不在调用方线程上新建调度器（决策 421）。
     let ui = Avalonia.Threading.Dispatcher.UIThread
     let mutable catalog = Catalog.empty
-    let mutable prefs = UiPrefs.defaults
+    let mutable prefs = UiPrefsFile.defaults
 
     let temperatureBox = snd (Ui.textField "留空 = 使用模型服务默认")
     let topPBox = snd (Ui.textField "0–1，留空不设")
@@ -392,7 +392,7 @@ type SettingsGeneral(overlay: OverlayHost, actions: SettingsActions, onPrefsChan
         let clearButton =
             Ui.button Ui.Secondary "清除本地草稿" (fun () ->
                 // 确认框由外壳弹（Dialogs 在设置视图之后编译）；这里只发出请求。
-                this.LocalDrafts.ClearRequested())
+                this.LocalDrafts.RequestClear())
         clearButton.HorizontalAlignment <- HorizontalAlignment.Left
         Avalonia.Automation.AutomationProperties.SetAutomationId(clearButton, "clear-local-drafts")
         this.LocalDrafts.Changed.Add(fun () -> summaryText.Text <- this.LocalDrafts.Summary)

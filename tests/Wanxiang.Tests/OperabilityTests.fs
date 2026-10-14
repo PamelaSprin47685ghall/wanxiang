@@ -92,7 +92,7 @@ module OperabilityTests =
     let ``ctrl+L 解析为聚焦输入框`` () =
         Headless.run (fun () ->
         let resolve (key: Key) (mods: KeyModifiers) =
-            ShortcutRouter.resolve(
+            KeyShortcut.resolve(
                 KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = mods))
         Assert.Equal(ShortcutAction.FocusComposer, resolve Key.L KeyModifiers.Control)
         )
@@ -102,7 +102,7 @@ module OperabilityTests =
     let ``ctrl+L 不与既有快捷键或输入框快捷键撞车`` () =
         Headless.run (fun () ->
         let resolve (key: Key) (mods: KeyModifiers) =
-            ShortcutRouter.resolve(
+            KeyShortcut.resolve(
                 KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = key, KeyModifiers = mods))
         // 现有全局键一个都不能被 L 抢走。
         for key in [ Key.B; Key.N; Key.K; Key.M; Key.OemComma; Key.OemQuestion; Key.F1 ] do

@@ -39,7 +39,7 @@ type MainView() as this =
     let root = Grid()
     let overlay = OverlayHost(root)
 
-    let mutable prefs = UiPrefs.load ()
+    let mutable prefs = UiPrefsFile.load ()
     // 启动就把折行默认值交给渲染器：它是渲染期读的静态值，不走构造参数
     do
         MarkdownRenderer.DefaultCodeWrap <- prefs.codeWrap
@@ -75,7 +75,7 @@ type MainView() as this =
     let drafts = ComposerDrafts()
     let outbox = MessageOutbox()
     // ---- 本地草稿（W5，决策 80/81）：只存本机，不入日志、不上传、不同步 ----
-    let mutable draftStore = DraftStore.Default(fun () -> prefs.persistDrafts)
+    let mutable draftStore = LocalDraftStore.Default(fun () -> prefs.persistDrafts)
     /// 启动时从本机读到的快照；保存时其中「尚未恢复的主机」原样保留。
     let mutable storedDrafts = DraftSnapshot.empty
     let mutable draftsLoaded = false
@@ -170,7 +170,7 @@ type MainView() as this =
     let mutable onboarding: OnboardingCard = Unchecked.defaultof<OnboardingCard>
     let mutable sidebarSplitter: GridSplitter = Unchecked.defaultof<GridSplitter>
     let mutable mainLayout: MainLayoutController = Unchecked.defaultof<MainLayoutController>
-    let navigation = NavigationController(prefs.sidebarCollapsed)
+    let navigation = NavigationController(prefs.sidebarCollapsed, LayoutPolicy.compactBreakpoint)
     let workspace = Grid()
     let settingsHost = Grid(IsVisible = false)
     let mutable shellGrid: Grid = Unchecked.defaultof<Grid>
@@ -244,7 +244,7 @@ type MainView() as this =
         let effective = hostViewportWidth |> Option.defaultValue width
         if effective > 0.0 && not (isNull (box mainLayout)) then
             let before = navigation.State
-            let needsApply, state = navigation.ApplyViewport(effective, activeConvId.IsSome)
+            let needsApply, state = navigation.ApplyViewport(effective)
             if needsApply then mainLayout.Apply state
             // compact 抽屉的焦点归宿与用户手动打开一致（D3/D4）：视口把抽屉自动带开时
             // （进入 compact 且无对话），也先把焦点送进抽屉（搜索框），避免 Tab 漏到背景聊天/输入区。
@@ -423,7 +423,7 @@ type MainView() as this =
                      | Some e -> Some(e, retry)
                      | None when not generating && streaming.IsNone && run.partial.IsNone
                                  && ReplyTail.isUnanswered DateTimeOffset.UtcNow messages ->
-                         Some(ReplyTail.unansweredError, retry)
+                         Some(UnansweredReply.error, retry)
                      | None -> None),
                     prefs.fontScale,
                     prefs.autoCollapseReasoning,
@@ -460,7 +460,7 @@ type MainView() as this =
             false
 
     member private this.ApplyTheme() =
-        Tokens.apply (UiPrefs.resolveTheme prefs (this.SystemPrefersDark()))
+        Tokens.apply (UiPrefsFile.resolveTheme prefs (this.SystemPrefersDark()))
 
     // ---- 本地草稿 ----
 
@@ -572,7 +572,7 @@ type MainView() as this =
         let draftsToggled = next.persistDrafts <> prefs.persistDrafts
         let motionChanged = next.reduceMotion <> prefs.reduceMotion
         prefs <- next
-        UiPrefs.save prefs
+        UiPrefsFile.save prefs
         if themeChanged then this.ApplyTheme()
         if motionChanged then MotionPolicy.setReduced prefs.reduceMotion
         sidebar.SetShowArchived prefs.showArchived
@@ -1590,7 +1590,7 @@ type MainView() as this =
         mainLayout.Apply state
         if not state.compactMode && prefs.sidebarCollapsed <> state.sidebarCollapsed then
             prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
-            UiPrefs.save prefs
+            UiPrefsFile.save prefs
         query |> Option.iter sidebar.SetSearchText
         sidebar.FocusSearch()
 
@@ -1733,15 +1733,15 @@ type MainView() as this =
             // 桌面态折叠的焦点归宿由 MainLayout.Apply 收口（侧栏隐藏的必然副作用），
             // 与 compact 收起分支同一归宿——焦点回输入区。
             prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
-            UiPrefs.save prefs
+            UiPrefsFile.save prefs
 
     member this.HandleShortcut(e: KeyEventArgs) =
-        let shortcut = ShortcutRouter.resolve e
+        let shortcut = ShortcutRouter.resolveKey (KeyShortcut.ofEvent e)
         (match shortcut with
-         | NoShortcut -> ()
+         | ShortcutAction.NoShortcut -> ()
          | _ -> ParityProbe.hit "shortcut.resolved")
         match shortcut with
-        | Escape ->
+        | ShortcutAction.Escape ->
             if overlay.HandleEscape() then e.Handled <- true
             elif settingsHost.IsVisible then
                 e.Handled <- true
@@ -1754,10 +1754,10 @@ type MainView() as this =
             elif (runs.Get activeConvId).generationId.IsSome then
                 e.Handled <- true
                 this.StopGeneration()
-        | NoShortcut -> ()
+        | ShortcutAction.NoShortcut -> ()
         | _ when overlay.IsDialogOpen || overlay.IsPopupOpen -> ()
-        | ToggleSidebar -> e.Handled <- true; this.ToggleSidebar()
-        | CloseWindow ->
+        | ShortcutAction.ToggleSidebar -> e.Handled <- true; this.ToggleSidebar()
+        | ShortcutAction.CloseWindow ->
             // 与右上角叉号同一路径：走 Window.Close 才会触发 MainWindow.Closing
             // 里的几何持久化，快捷键关窗不会丢窗口位置。
             // PWA 没有 Window（决策 48：browser 宿主下根视图是 Control），
@@ -1767,46 +1767,46 @@ type MainView() as this =
                 e.Handled <- true
                 window.Close()
             | _ -> ()
-        | NewConversation -> e.Handled <- true; this.CreateConversation() |> ignore
-        | FocusSearch -> e.Handled <- true; this.FocusSidebarSearch None
-        | OpenSettings -> e.Handled <- true; this.ShowSettings()
-        | OpenModelPicker ->
+        | ShortcutAction.NewConversation -> e.Handled <- true; this.CreateConversation() |> ignore
+        | ShortcutAction.FocusSearch -> e.Handled <- true; this.FocusSidebarSearch None
+        | ShortcutAction.OpenSettings -> e.Handled <- true; this.ShowSettings()
+        | ShortcutAction.OpenModelPicker ->
             e.Handled <- true
             // 焦点在输入框时不必先找到左下角芯片：锚点取芯片本身，菜单位置与点击一致。
             this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
-        | JumpExchange direction ->
+        | ShortcutAction.JumpExchange direction ->
             e.Handled <- true
             chat.JumpExchange direction
-        | ScrollToBeginning ->
+        | ShortcutAction.ScrollToBeginning ->
             e.Handled <- true
             // 锚点作废由入口自己负责（见 ScrollToBeginning）：这里是快捷键，
             // 不需要 shell 再补一遍。
             chat.SmoothScrollToBeginning()
-        | ScrollToEnd ->
+        | ShortcutAction.ScrollToEnd ->
             e.Handled <- true
             chat.SmoothScrollToEnd()
-        | FocusComposer ->
+        | ShortcutAction.FocusComposer ->
             e.Handled <- true
             // 与重新生成/重试后「焦点回家」同一个入口（Composer.Focus 自带线程与可见性守卫）。
             composer.Focus()
-        | ToggleTheme -> e.Handled <- true; this.CycleTheme()
-        | OpenCommandPalette -> e.Handled <- true; this.ShowCommandPalette()
-        | CopyLastReply -> e.Handled <- true; this.CopyLatestReply()
-        | RegenerateLast -> e.Handled <- true; this.RegenerateLatest()
-        | UndoPending ->
+        | ShortcutAction.ToggleTheme -> e.Handled <- true; this.CycleTheme()
+        | ShortcutAction.OpenCommandPalette -> e.Handled <- true; this.ShowCommandPalette()
+        | ShortcutAction.CopyLastReply -> e.Handled <- true; this.CopyLatestReply()
+        | ShortcutAction.RegenerateLast -> e.Handled <- true; this.RegenerateLatest()
+        | ShortcutAction.UndoPending ->
             // 决策 232：只在「撤销」提示条可见时接管；输入框里的 Ctrl+Z 仍归文本撤销。
             let inTextBox =
                 match topLevel () with
                 | null -> false
                 | tl -> (tl.FocusManager |> Option.ofObj |> Option.bind (fun fm -> fm.GetFocusedElement() |> Option.ofObj)) |> Option.exists (fun f -> match f with :? TextBox as tb -> not (String.IsNullOrEmpty tb.Text) | _ -> false)
             if not inTextBox && overlay.TryInvokeToastAction "撤销" then e.Handled <- true
-        | FocusToast -> if overlay.FocusToastAction() then e.Handled <- true
-        | ExportConversation ->
+        | ShortcutAction.FocusToast -> if overlay.FocusToastAction() then e.Handled <- true
+        | ShortcutAction.ExportConversation ->
             e.Handled <- true
             match activeSummary() with
             | Some summary -> this.ExportConversation summary
             | None -> toast "没有打开的对话可导出" Warning
-        | OpenConversationAt index ->
+        | ShortcutAction.OpenConversationAt index ->
             // Ctrl+1..9 走侧栏当前可见顺序（C2）；打开后焦点经 OpenConversation 回家（D3/D4）。
             let order = sidebar.GetVisibleOrder()
             if index >= 0 && index < order.Length then
@@ -1815,7 +1815,7 @@ type MainView() as this =
                     e.Handled <- true
                     this.OpenConversation id
                 | _ -> ()
-        | ShowShortcuts -> e.Handled <- true; Dialogs.shortcuts overlay
+        | ShortcutAction.ShowShortcuts -> e.Handled <- true; Dialogs.shortcuts overlay
 
     // ---- 协议事件 ----
 
@@ -2107,7 +2107,7 @@ type MainView() as this =
             try
                 let bytes = Convert.FromBase64String d.dataBase64
                 match downloads.Append(d.sha256, bytes) with
-                | Capped when not downloadCappedNotified ->
+                | DownloadChunkResult.Capped when not downloadCappedNotified ->
                     downloadCappedNotified <- true
                     toast "附件过大，下载已中止。" Warning
                 | _ -> ()
@@ -2471,8 +2471,7 @@ type MainView() as this =
               toast = fun message tone -> toast message tone }
         settings <- SettingsView(overlay, actions, (fun next -> this.SavePrefs next), (fun () -> this.CloseSettings()))
         // 检查主机：只读请求；旧主机不认识这个事件会直接忽略，所以要有超时说明。
-        settings.Health.RequestCheck <-
-            (fun () ->
+        settings.Health.CheckRequested.Add(fun () ->
                 if authenticated && client.IsConnected then
                     send (DoctorRequest {| requestId = newInvocation () |})
                     let timeout = DispatcherTimer(Interval = TimeSpan.FromSeconds 30.0)
@@ -2485,8 +2484,7 @@ type MainView() as this =
                     timeout.Start()
                 else
                     settings.Health.SetUnavailable "还没连接主机，无法检查。连接后再试。")
-        settings.LocalDrafts.ClearRequested <-
-            (fun () ->
+        settings.LocalDrafts.ClearRequested.Add(fun () ->
                 Dialogs.confirm
                     overlay
                     "清除本地草稿"
@@ -2607,7 +2605,7 @@ type MainView() as this =
             if not nav.compactMode && not nav.sidebarCollapsed then
                 let width = mainLayout.NoteUserSidebarWidth shellGrid.ColumnDefinitions[0].ActualWidth
                 prefs <- { prefs with sidebarWidth = width }
-                UiPrefs.save prefs)
+                UiPrefsFile.save prefs)
         shellGrid.Children.Add sidebar
         shellGrid.Children.Add sidebarSplitter
         shellGrid.Children.Add chatColumn
