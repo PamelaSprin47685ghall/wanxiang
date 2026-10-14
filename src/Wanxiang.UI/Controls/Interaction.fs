@@ -125,14 +125,9 @@ module Interaction =
     let blendOver (baseBrush: IBrush) (overlayBrush: IBrush) : IBrush =
         match baseBrush, overlayBrush with
         | (:? SolidColorBrush as b), (:? SolidColorBrush as o) ->
-            let blend (bc: byte) (oc: byte) (alpha: byte) =
-                byte (int bc + (int oc - int bc) * int alpha / 255)
-            SolidColorBrush(
-                Color.FromArgb(
-                    b.Color.A,
-                    blend b.Color.R o.Color.R o.Color.A,
-                    blend b.Color.G o.Color.G o.Color.A,
-                    blend b.Color.B o.Color.B o.Color.A))
+            let a, r, g, bl =
+                ColorBlend.over (b.Color.A, b.Color.R, b.Color.G, b.Color.B) (o.Color.A, o.Color.R, o.Color.G, o.Color.B)
+            SolidColorBrush(Color.FromArgb(a, r, g, bl))
             :> IBrush
         | _ -> baseBrush
 

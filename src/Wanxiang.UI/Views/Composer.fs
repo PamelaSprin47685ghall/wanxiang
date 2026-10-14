@@ -217,11 +217,8 @@ type Composer(actions: ComposerActions) as this =
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Child = visionNoticeText,
             IsVisible = false)
-    // 发送历史全局共享（shell 风格，不随对话隔离）；半截输入由 uncommittedDraft + per-session draft 持有，不进历史。
-    let promptHistory = ResizeArray<string>()
-    let mutable historyIndex = -1
-    let mutable uncommittedDraft = ""
-    let maxHistoryCount = 100
+    // 发送历史全局共享（shell 风格，不随对话隔离）；召回期间的半截输入由 history 保管，不进历史。
+    let history = PromptHistory()
     let mutable attachments: PendingAttachment list = []
     let mutable pendingFocusAttachmentId: Guid option = None
     let removeButtons = System.Collections.Generic.Dictionary<Guid, Control>()
@@ -398,12 +395,13 @@ type Composer(actions: ComposerActions) as this =
                         e.Handled <- true
                         actions.stopGeneration ()
                     else
+                        let recalledDraft =
+                            if input.SelectionStart <> input.SelectionEnd then None else history.Escape()
                         if input.SelectionStart <> input.SelectionEnd then
                             e.Handled <- true
                             input.ClearSelection()
-                        elif historyIndex <> -1 then
-                            historyIndex <- -1
-                            input.Text <- uncommittedDraft
+                        elif recalledDraft.IsSome then
+                            input.Text <- recalledDraft.Value
                             input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
                             e.Handled <- true
                         elif input.IsFocused then
@@ -420,13 +418,7 @@ type Composer(actions: ComposerActions) as this =
                 elif e.Key = Key.Enter && not (isImeComposing ()) then
                     let shift = e.KeyModifiers.HasFlag KeyModifiers.Shift
                     let ctrl = e.KeyModifiers.HasFlag KeyModifiers.Control || e.KeyModifiers.HasFlag KeyModifiers.Meta
-                    if shift then ()
-                    // 发送键与换行键严格互补，不交叉：Enter 发送模式下 Ctrl+Enter 归换行，
-                    // Ctrl+Enter 发送模式下裸 Enter 归换行。
-                    // 借 kelivo chat_input_bar.dart:1293-1310 的两分支互斥写法；与帮助对话框
-                    // 对 Ctrl+Enter 的描述一致——此前裸 Enter 发送模式会把
-                    // Ctrl+Enter 也发出去，用户改行只能按 Shift+Enter 一条路。
-                    elif (enterSends && not ctrl) || (not enterSends && ctrl) then
+                    if SendKey.sends enterSends shift ctrl then
                         e.Handled <- true
                         this.Submit()
                 elif e.Key = Key.V then
@@ -436,50 +428,20 @@ type Composer(actions: ComposerActions) as this =
                             e.Handled <- true
                 // 组合中 Up/Down 归输入法（候选导航），不召回历史。
                 elif e.Key = Key.Up && e.KeyModifiers = KeyModifiers.None && not (isImeComposing ()) then
-                    let hasSelection = input.SelectionStart <> input.SelectionEnd
-                    if not hasSelection && promptHistory.Count > 0 then
-                        let currentText = if isNull input.Text then "" else input.Text
-                        let isMultiline = currentText.IndexOfAny([| '\n'; '\r' |]) >= 0
-                        let caret = input.CaretIndex
-                        let hasNewlineBeforeCaret =
-                            let idx = Math.Clamp(caret, 0, currentText.Length)
-                            currentText.Substring(0, idx).IndexOfAny([| '\n'; '\r' |]) >= 0
-
-                        let canRecall =
-                            if isMultiline then
-                                not hasNewlineBeforeCaret && caret = 0
-                            elif historyIndex <> -1 then
-                                true
-                            else
-                                currentText.Length = 0 || caret = 0
-
-                        if canRecall then
-                            if historyIndex = -1 then
-                                uncommittedDraft <- currentText
-                                historyIndex <- promptHistory.Count - 1
-                            elif historyIndex > 0 then
-                                historyIndex <- historyIndex - 1
-                            input.Text <- promptHistory.[historyIndex]
-                            input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
-                            e.Handled <- true
+                    match history.Up(input.Text, input.CaretIndex, input.SelectionStart <> input.SelectionEnd) with
+                    | Some text ->
+                        input.Text <- text
+                        input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
+                        e.Handled <- true
+                    | None -> ()
                 // 组合中 Up/Down 归输入法（候选导航），不召回历史。
                 elif e.Key = Key.Down && e.KeyModifiers = KeyModifiers.None && not (isImeComposing ()) then
-                    let hasSelection = input.SelectionStart <> input.SelectionEnd
-                    if not hasSelection && historyIndex <> -1 then
-                        let currentText = if isNull input.Text then "" else input.Text
-                        let isAtEnd = input.CaretIndex >= currentText.Length
-                        if isAtEnd then
-                            if historyIndex < promptHistory.Count - 1 then
-                                historyIndex <- historyIndex + 1
-                                input.Text <- promptHistory.[historyIndex]
-                                input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
-                                e.Handled <- true
-                            else
-                                // Reached the end: restore draft
-                                historyIndex <- -1
-                                input.Text <- uncommittedDraft
-                                input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
-                                e.Handled <- true),
+                    match history.Down(input.Text, input.CaretIndex, input.SelectionStart <> input.SelectionEnd) with
+                    | Some text ->
+                        input.Text <- text
+                        input.CaretIndex <- (if isNull input.Text then 0 else input.Text.Length)
+                        e.Handled <- true
+                    | None -> ()),
             RoutingStrategies.Tunnel)
 
     /// chip 的 Opacity 补间：入场/退场共用 MotionPolicy 时长 + DoubleTransition(Visual.OpacityProperty)，
@@ -503,14 +465,7 @@ type Composer(actions: ComposerActions) as this =
             let text = if isNull input.Text then "" else input.Text
             if not (String.IsNullOrWhiteSpace text) || attachments |> List.exists (fun a -> a.ready) then
                 if actions.submit text then
-                    if not (String.IsNullOrWhiteSpace text) then
-                        let isDuplicate = promptHistory.Count > 0 && promptHistory.[promptHistory.Count - 1] = text
-                        if not isDuplicate then
-                            promptHistory.Add text
-                            if promptHistory.Count > maxHistoryCount then
-                                promptHistory.RemoveAt 0
-                    historyIndex <- -1
-                    uncommittedDraft <- ""
+                    history.Record text
                     // 所有权已经移交；回调若切到了另一份草稿，不清它的内容。
                     if input.Text = text then
                         input.Text <- ""
@@ -777,12 +732,9 @@ type Composer(actions: ComposerActions) as this =
             this.RenderAttachments()
             refreshSendState ()
 
-    /// 历史召回中输入框显示的是旧发送，真正的半截草稿在 uncommittedDraft；
+    /// 历史召回中输入框显示的是旧发送，真正的半截草稿由 history 保管；
     /// 对话切换经由它保存，半截输入不会被召回项覆盖。
-    member _.Text =
-        if historyIndex <> -1 then uncommittedDraft
-        elif isNull input.Text then ""
-        else input.Text
+    member _.Text = history.Draft input.Text
 
     member _.SetCanStop(value: bool) =
         canStop <- value
@@ -970,8 +922,7 @@ type Composer(actions: ComposerActions) as this =
     member _.SetText(text: string) =
         input.Text <- text
         input.CaretIndex <- if isNull text then 0 else text.Length
-        historyIndex <- -1
-        uncommittedDraft <- ""
+        history.Reset()
         tryFocusInput ()
 
     member this.Build() =

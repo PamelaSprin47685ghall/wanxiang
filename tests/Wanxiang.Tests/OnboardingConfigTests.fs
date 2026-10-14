@@ -342,7 +342,7 @@ module OnboardingConfigTests =
         // 第二步（探测后写回清单与默认模型）同样与设置页“填完清单再保存”一致
         let probed = [ "gpt-4o"; "gpt-5"; "text-embedding-3-small" ]
         let cardStep2 =
-            ProviderPresets.payload "openai" preset.label preset.kind preset.baseUrl None probed (Onboarding.pickDefaultModel preset probed) true 120 2
+            ProviderPresets.payload "openai" preset.label preset.kind preset.baseUrl None probed (OnboardingRules.pickDefaultModel preset.models probed) true 120 2
         let settingsStep2 =
             ProviderPresets.payload "openai" preset.label preset.kind preset.baseUrl None probed "gpt-5" true 120 2
         let after (step2: JsonObject) =
@@ -356,34 +356,12 @@ module OnboardingConfigTests =
         Assert.Contains("defaultModel = \"gpt-5\"", after cardStep2)
         Assert.Contains("apiKey = \"sk-test\"", after cardStep2)
 
-    [<Fact>]
-    let ``默认模型从探测清单里挑：优先预设推荐的，否则清单第一项`` () =
-        let openai = ProviderPresets.tryFind "openai" |> Option.get
-        Assert.Equal("gpt-5", Onboarding.pickDefaultModel openai [ "zzz"; "gpt-5"; "gpt-4o" ])
-        Assert.Equal("aaa", Onboarding.pickDefaultModel openai [ "aaa"; "zzz" ])
-
     // ---- 本机 Ollama 发现 ----
 
     [<Fact>]
-    let ``发现本机 Ollama：有响应给出模型清单，没有响应为 None`` () =
-        let url, stop = serveOnce 200 """{"object":"list","data":[{"id":"qwen3:8b"},{"id":"llama3.2"}]}"""
-        try
-            let found = Onboarding.discoverOllamaAt (url + "/v1/models") |> Async.AwaitTask |> Async.RunSynchronously
-            Assert.Equal(Some [ "qwen3:8b"; "llama3.2" ], found)
-        finally
-            stop ()
-        let none =
-            Onboarding.discoverOllamaAt (sprintf "http://127.0.0.1:%d/v1/models" (getFreePort ()))
-            |> Async.AwaitTask
-            |> Async.RunSynchronously
-        Assert.Equal(None, none)
-        Assert.Equal<string list>([ "a"; "b" ], Onboarding.parseModelIds """{"data":[{"id":"a"},{"id":"b"},{"id":"a"},{"x":1}]}""")
-        Assert.Empty(Onboarding.parseModelIds "not json")
-
-    [<Fact>]
     let ``只有主机在本机时才探测本机端口`` () =
-        Assert.True(Onboarding.canDiscoverLocal "ws://127.0.0.1:8765/ws")
-        Assert.True(Onboarding.canDiscoverLocal "http://localhost:8765")
-        Assert.False(Onboarding.canDiscoverLocal "https://wanxiang.example.com")
-        Assert.False(Onboarding.canDiscoverLocal "")
+        Assert.True(OnboardingRules.canDiscoverLocal "ws://127.0.0.1:8765/ws")
+        Assert.True(OnboardingRules.canDiscoverLocal "http://localhost:8765")
+        Assert.False(OnboardingRules.canDiscoverLocal "https://wanxiang.example.com")
+        Assert.False(OnboardingRules.canDiscoverLocal "")
         Assert.Equal("http://127.0.0.1:11434/v1/models", ProviderPresets.OllamaProbeUrl)

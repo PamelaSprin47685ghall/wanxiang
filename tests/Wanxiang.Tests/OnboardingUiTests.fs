@@ -442,9 +442,9 @@ module OnboardingUiTests =
                 // 卡片已收起；输入框预填第一句话并获得焦点
                 Assert.Empty(named shell "添加一个模型服务" |> List.filter (fun c -> c.IsEffectivelyVisible))
                 let composer = field<Composer> shell "composer"
-                Assert.Equal(Onboarding.FirstPrompt, composer.Text)
+                Assert.Equal(OnboardingRules.FirstPrompt, composer.Text)
                 match window.FocusManager.GetFocusedElement() with
-                | :? TextBox as box -> Assert.Equal(Onboarding.FirstPrompt, box.Text)
+                | :? TextBox as box -> Assert.Equal(OnboardingRules.FirstPrompt, box.Text)
                 | other -> failwithf "焦点应在输入框，实际 %A" other
                 // 设置页全程没被打开
                 Assert.False((field<Grid> shell "settingsHost").IsVisible)

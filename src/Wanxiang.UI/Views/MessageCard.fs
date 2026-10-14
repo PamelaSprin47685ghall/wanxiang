@@ -112,11 +112,6 @@ module MessageCard =
             Dispatcher.UIThread.Post refreshButton
         host :> Control, setVisible
 
-    let private formatDuration (ms: int64) =
-        if ms >= 1000L then sprintf "%.1fs" (float ms / 1000.0)
-        elif ms > 0L then sprintf "%dms" (int ms)
-        else ""
-
     let private technicalText (text: string) (size: float) (brush: IBrush) =
         SelectableTextBlock(
             // 视觉走查 r8：主题自带的英文「Copy」浮层会吞掉右键，消息菜单（含「复制消息链接」）出不来
@@ -285,7 +280,7 @@ module MessageCard =
         let durationText =
             match durationMs with
             | Some ms ->
-                let formatted = formatDuration ms
+                let formatted = DurationText.format ms
                 if String.IsNullOrWhiteSpace formatted then ""
                 else
                     sprintf " · %s" formatted
@@ -382,251 +377,10 @@ module MessageCard =
         card.Margin <- Thickness(0.0, 0.0, 0.0, Spacing.spaceXl)
         card :> Control
 
-    /// 工具调用卡片：名称 + 状态 + 参数摘要，展开后看完整参数与结果。
-    ///
-    /// 刻意做成与代码块同一量级的卡片：工具调用是模型行为的一部分，
-    /// 缩成一个灰色小标签会让人以为它不重要。
-    let private prettyFormatJson (raw: string) : string =
-        if String.IsNullOrWhiteSpace raw then ""
-        else
-            let trimmed = raw.Trim()
-            if (trimmed.StartsWith "{" && trimmed.EndsWith "}") || (trimmed.StartsWith "[" && trimmed.EndsWith "]") then
-                try
-                    use doc = JsonDocument.Parse trimmed
-                    let options = JsonSerializerOptions(WriteIndented = true)
-                    JsonSerializer.Serialize(doc.RootElement, options)
-                with _ -> raw
-            else raw
-
-    let private formatToolArgsPreview (argsJson: string) : int * string =
-        if String.IsNullOrWhiteSpace argsJson then 0, ""
-        else
-            let trimmed = argsJson.Trim()
-            try
-                use doc = JsonDocument.Parse trimmed
-                match doc.RootElement.ValueKind with
-                | JsonValueKind.Object ->
-                    let props = [ for p in doc.RootElement.EnumerateObject() -> p.Name, p.Value ]
-                    let count = props.Length
-                    if count = 0 then 0, "无参数"
-                    else
-                        let formatVal (v: JsonElement) =
-                            match v.ValueKind with
-                            | JsonValueKind.String ->
-                                let s = v.GetString().Replace('\n', ' ').Replace('\r', ' ').Trim()
-                                if s.Length <= 32 then sprintf "\"%s\"" s else sprintf "\"%s…\"" (s.Substring(0, 30))
-                            | JsonValueKind.Number -> v.GetRawText()
-                            | JsonValueKind.True -> "true"
-                            | JsonValueKind.False -> "false"
-                            | JsonValueKind.Null -> "null"
-                            | JsonValueKind.Array -> sprintf "[%d]" (v.GetArrayLength())
-                            | JsonValueKind.Object -> sprintf "{%d}" (v.EnumerateObject() |> Seq.length)
-                            | _ -> v.GetRawText()
-                        let pairs = props |> List.map (fun (name, v) -> sprintf "%s: %s" name (formatVal v))
-                        let joined = String.Join(", ", pairs)
-                        count, (if joined.Length > 96 then joined.Substring(0, 95) + "…" else joined)
-                | JsonValueKind.Array ->
-                    let count = doc.RootElement.GetArrayLength()
-                    count, sprintf "[%d 项]" count
-                | _ ->
-                    let s = trimmed.Replace('\n', ' ').Replace('\r', ' ')
-                    1, (if s.Length > 96 then s.Substring(0, 95) + "…" else s)
-            with _ ->
-                let single = trimmed.Replace('\n', ' ').Replace('\r', ' ')
-                1, (if single.Length > 96 then single.Substring(0, 95) + "…" else single)
-
-    /// 从工具调用结果中尝试提取错误摘要。
-    /// 若返回 Some msg 说明调用失败并携带错误说明；若为 None 说明没有检测到错误。
-    let private tryExtractToolError (resultOpt: string option) : string option =
-        match resultOpt with
-        | Some res when not (String.IsNullOrWhiteSpace res) ->
-            let trimmed = res.Trim()
-            if trimmed.StartsWith("error:", StringComparison.OrdinalIgnoreCase) then
-                let msg = trimmed.Substring(6).Trim()
-                Some(if String.IsNullOrWhiteSpace msg then "执行失败" else msg)
-            elif trimmed.StartsWith "{" && trimmed.EndsWith "}" then
-                try
-                    use doc = JsonDocument.Parse trimmed
-                    let root = doc.RootElement
-                    if root.ValueKind = JsonValueKind.Object then
-                        let mutable errProp = Unchecked.defaultof<_>
-                        let mutable isErrProp = Unchecked.defaultof<_>
-                        let mutable successProp = Unchecked.defaultof<_>
-                        let mutable statusProp = Unchecked.defaultof<_>
-
-                        let tryExtractMessageFromObject (obj: JsonElement) : string option =
-                            let mutable p = Unchecked.defaultof<_>
-                            if obj.TryGetProperty("message", &p) && p.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(p.GetString())) then
-                                Some(p.GetString().Trim())
-                            elif obj.TryGetProperty("msg", &p) && p.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(p.GetString())) then
-                                Some(p.GetString().Trim())
-                            elif obj.TryGetProperty("reason", &p) && p.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(p.GetString())) then
-                                Some(p.GetString().Trim())
-                            elif obj.TryGetProperty("error", &p) then
-                                match p.ValueKind with
-                                | JsonValueKind.String when not (String.IsNullOrWhiteSpace(p.GetString())) -> Some(p.GetString().Trim())
-                                | JsonValueKind.Object ->
-                                    let mutable innerMsg = Unchecked.defaultof<_>
-                                    if p.TryGetProperty("message", &innerMsg) && innerMsg.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(innerMsg.GetString())) then
-                                        Some(innerMsg.GetString().Trim())
-                                    else Some(p.GetRawText())
-                                | _ -> None
-                            else None
-
-                        if root.TryGetProperty("error", &errProp)
-                           && errProp.ValueKind <> JsonValueKind.Null
-                           && errProp.ValueKind <> JsonValueKind.False then
-                            match errProp.ValueKind with
-                            | JsonValueKind.String -> Some(errProp.GetString())
-                            | JsonValueKind.Object ->
-                                let mutable msgProp = Unchecked.defaultof<_>
-                                if errProp.TryGetProperty("message", &msgProp) && msgProp.ValueKind = JsonValueKind.String then
-                                    Some(msgProp.GetString())
-                                else Some(errProp.GetRawText())
-                            | JsonValueKind.True -> Some("执行失败")
-                            | _ -> Some(errProp.GetRawText())
-                        elif (root.TryGetProperty("isError", &isErrProp) && isErrProp.ValueKind = JsonValueKind.True)
-                             || (root.TryGetProperty("is_error", &isErrProp) && isErrProp.ValueKind = JsonValueKind.True) then
-                            Some(defaultArg (tryExtractMessageFromObject root) "执行失败")
-                        elif root.TryGetProperty("success", &successProp) && successProp.ValueKind = JsonValueKind.False then
-                            Some(defaultArg (tryExtractMessageFromObject root) "执行失败")
-                        elif root.TryGetProperty("status", &statusProp) && statusProp.ValueKind = JsonValueKind.String then
-                            let statusVal = statusProp.GetString().Trim()
-                            if statusVal.Equals("error", StringComparison.OrdinalIgnoreCase)
-                               || statusVal.Equals("failed", StringComparison.OrdinalIgnoreCase)
-                               || statusVal.Equals("failure", StringComparison.OrdinalIgnoreCase) then
-                                Some(defaultArg (tryExtractMessageFromObject root) "执行失败")
-                            else
-                                None
-                        else
-                            None
-                    else None
-                with _ -> None
-            elif trimmed.IndexOf("traceback", StringComparison.OrdinalIgnoreCase) >= 0 then
-                // Python traceback：摘要取最后一行非空行（真正的异常行），全文仍在详情里。
-                let lastLine =
-                    trimmed.Split('\n')
-                    |> Array.map (fun s -> s.Trim())
-                    |> Array.filter (not << String.IsNullOrWhiteSpace)
-                    |> Array.tryLast
-                Some(defaultArg lastLine "执行失败")
-            elif trimmed.IndexOf("command failed", StringComparison.OrdinalIgnoreCase) >= 0 then
-                // shell 失败：摘要取首行非空行，全文仍在详情里。
-                let firstLine =
-                    trimmed.Split('\n')
-                    |> Array.map (fun s -> s.Trim())
-                    |> Array.filter (not << String.IsNullOrWhiteSpace)
-                    |> Array.tryHead
-                Some(defaultArg firstLine "执行失败")
-            elif trimmed.IndexOf("500 internal server error", StringComparison.OrdinalIgnoreCase) >= 0 then
-                Some("500 Internal Server Error")
-            elif trimmed.IndexOf("internal server error", StringComparison.OrdinalIgnoreCase) >= 0 then
-                Some("Internal Server Error")
-            else
-                let lines =
-                    trimmed.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
-                    |> Array.map (fun s -> s.Trim())
-                    |> Array.filter (not << String.IsNullOrWhiteSpace)
-
-                let tryMatchFatal () =
-                    lines
-                    |> Array.tryFind (fun l -> l.StartsWith("fatal:", StringComparison.OrdinalIgnoreCase))
-                    |> Option.map (fun l ->
-                        let rest = l.Substring(6).Trim()
-                        if String.IsNullOrWhiteSpace rest then "执行失败" else rest)
-
-                let tryMatchHttpStatus () =
-                    let isStatusLine (l: string) =
-                        let stripped =
-                            if l.StartsWith("HTTP/", StringComparison.OrdinalIgnoreCase) then
-                                let idx = l.IndexOf(' ')
-                                if idx > 0 then l.Substring(idx).Trim() else l
-                            elif l.StartsWith("HTTP ", StringComparison.OrdinalIgnoreCase) then
-                                l.Substring(5).Trim()
-                            else l
-                        if stripped.Equals("401 Unauthorized", StringComparison.OrdinalIgnoreCase)
-                           || stripped.Equals("401: Unauthorized", StringComparison.OrdinalIgnoreCase)
-                           || stripped.StartsWith("401 Unauthorized", StringComparison.OrdinalIgnoreCase)
-                           || stripped.StartsWith("401: Unauthorized", StringComparison.OrdinalIgnoreCase) then
-                            Some "401 Unauthorized"
-                        elif stripped.Equals("403 Forbidden", StringComparison.OrdinalIgnoreCase)
-                             || stripped.Equals("403: Forbidden", StringComparison.OrdinalIgnoreCase)
-                             || stripped.StartsWith("403 Forbidden", StringComparison.OrdinalIgnoreCase)
-                             || stripped.StartsWith("403: Forbidden", StringComparison.OrdinalIgnoreCase) then
-                            Some "403 Forbidden"
-                        elif stripped.Equals("404 Not Found", StringComparison.OrdinalIgnoreCase)
-                             || stripped.Equals("404: Not Found", StringComparison.OrdinalIgnoreCase)
-                             || stripped.StartsWith("404 Not Found", StringComparison.OrdinalIgnoreCase)
-                             || stripped.StartsWith("404: Not Found", StringComparison.OrdinalIgnoreCase) then
-                            Some "404 Not Found"
-                        else None
-
-                    let isExactStatus (l: string) =
-                        let stripped =
-                            if l.StartsWith("HTTP/", StringComparison.OrdinalIgnoreCase) then
-                                let idx = l.IndexOf(' ')
-                                if idx > 0 then l.Substring(idx).Trim() else l
-                            elif l.StartsWith("HTTP ", StringComparison.OrdinalIgnoreCase) then
-                                l.Substring(5).Trim()
-                            else l
-                        if stripped.Equals("401 Unauthorized", StringComparison.OrdinalIgnoreCase)
-                           || stripped.Equals("401: Unauthorized", StringComparison.OrdinalIgnoreCase) then
-                            Some "401 Unauthorized"
-                        elif stripped.Equals("403 Forbidden", StringComparison.OrdinalIgnoreCase)
-                             || stripped.Equals("403: Forbidden", StringComparison.OrdinalIgnoreCase) then
-                            Some "403 Forbidden"
-                        elif stripped.Equals("404 Not Found", StringComparison.OrdinalIgnoreCase)
-                             || stripped.Equals("404: Not Found", StringComparison.OrdinalIgnoreCase) then
-                            Some "404 Not Found"
-                        else None
-
-                    match lines |> Array.tryHead with
-                    | Some firstLine when (isStatusLine firstLine).IsSome -> isStatusLine firstLine
-                    | _ -> lines |> Array.tryPick isExactStatus
-
-                let tryMatchPermissionDenied () =
-                    lines
-                    |> Array.tryFind (fun l ->
-                        let s = l.Trim()
-                        s.Equals("permission denied", StringComparison.OrdinalIgnoreCase)
-                        || s.Equals("permission denied.", StringComparison.OrdinalIgnoreCase)
-                        || s.Equals("access denied", StringComparison.OrdinalIgnoreCase)
-                        || s.Equals("access denied.", StringComparison.OrdinalIgnoreCase)
-                        || s.StartsWith("permission denied:", StringComparison.OrdinalIgnoreCase)
-                        || s.StartsWith("access denied:", StringComparison.OrdinalIgnoreCase)
-                        || s.StartsWith("access denied for ", StringComparison.OrdinalIgnoreCase)
-                        || s.IndexOf(": permission denied", StringComparison.OrdinalIgnoreCase) >= 0
-                        || s.IndexOf(": access denied", StringComparison.OrdinalIgnoreCase) >= 0)
-
-                let tryMatchCommandNotFound () =
-                    lines
-                    |> Array.tryFind (fun l ->
-                        let s = l.Trim()
-                        s.Equals("command not found", StringComparison.OrdinalIgnoreCase)
-                        || s.Equals("command not found.", StringComparison.OrdinalIgnoreCase)
-                        || s.StartsWith("command not found:", StringComparison.OrdinalIgnoreCase)
-                        || s.EndsWith(": command not found", StringComparison.OrdinalIgnoreCase)
-                        || s.EndsWith(": command not found.", StringComparison.OrdinalIgnoreCase)
-                        || s.IndexOf(": command not found", StringComparison.OrdinalIgnoreCase) >= 0)
-
-                match tryMatchFatal () with
-                | Some err -> Some err
-                | None ->
-                    match tryMatchHttpStatus () with
-                    | Some err -> Some err
-                    | None ->
-                        match tryMatchPermissionDenied () with
-                        | Some err -> Some err
-                        | None ->
-                            match tryMatchCommandNotFound () with
-                            | Some err -> Some err
-                            | None -> None
-        | _ -> None
-
     let private resolveToolCallStatusWith (awaiting: Set<string>) (isStreaming: bool) (call: ToolCallView) : ToolCallStatus =
         match call.result with
         | Some res ->
-            match tryExtractToolError (Some res) with
+            match ToolErrorSummary.tryExtract (Some res) with
             | Some err -> ToolCallStatus.Failed(Some err)
             | None -> ToolCallStatus.Success
         | None ->
@@ -638,6 +392,10 @@ module MessageCard =
     let resolveStatus (ctx: MessageContext) (call: ToolCallView) =
         resolveToolCallStatusWith ctx.awaitingApproval ctx.streaming call
 
+    /// 工具调用卡片：名称 + 状态 + 参数摘要，展开后看完整参数与结果。
+    ///
+    /// 刻意做成与代码块同一量级的卡片：工具调用是模型行为的一部分，
+    /// 缩成一个灰色小标签会让人以为它不重要。
     let private toolCallCard (ctx: MessageContext) (actions: MessageActions) (call: ToolCallView) : Control =
         let status = resolveStatus ctx call
         let statusBrush: IBrush =
@@ -699,7 +457,7 @@ module MessageCard =
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = statusPillContent)
         /// 未展开时也给一行参数摘要：多数时候用户只想确认「传了什么」。
-        let argCount, previewText = formatToolArgsPreview call.argumentsJson
+        let argCount, previewText = ToolArgsPreview.preview call.argumentsJson
         let summaryText = previewText
         let summary =
             TextBlock(
@@ -764,7 +522,7 @@ module MessageCard =
             DockPanel.SetDock(copyBtn, Dock.Right)
             header.Children.Add sectionTitle
             header.Children.Add copyBtn
-            let formattedPayload = prettyFormatJson payload
+            let formattedPayload = ToolArgsPreview.prettyJson payload
             let contentText = technicalText formattedPayload Tokens.fontCaption (if isError then Tokens.danger else Tokens.codeText)
             let codeBox =
                 Border(
@@ -1316,16 +1074,6 @@ module MessageCard =
         | _ -> ()
         row
 
-    /// 错误标题必须是人话：兼容路径（旧主机纯文本 error）可能把原始异常直接塞进 message；
-    /// 含换行、堆栈帧或异常类名的原文一律降级为固定标题，原文只进按需展开的「技术细节」。
-    let private errorTitle (error: GenerationError) : string =
-        let m = if isNull error.message then "" else error.message.Trim()
-        let looksRaw =
-            m.Contains "\n" || m.Contains "Exception" || m.Contains "StackTrace"
-            || m.Contains " at " || m.StartsWith "error:"
-        if String.IsNullOrWhiteSpace m || looksRaw then "生成失败"
-        else m
-
     /// 生成失败卡片：发生了什么 → 用户能做什么 → 是否可重试 → 技术细节按需。
     /// 决策 230：半截回复卡下方的「未完成」标记——不是完整答案，不能让人当成已写完。
     let incompleteMarker () : Control =
@@ -1354,7 +1102,7 @@ module MessageCard =
         icon.Margin <- Thickness 0.0
         let title =
             TextBlock(
-                Text = errorTitle error,
+                Text = GenerationErrorTitle.ofMessage error.message,
                 FontSize = Tokens.fontBody,
                 FontWeight = FontWeight.Medium,
                 Foreground = Tokens.text,
@@ -1603,17 +1351,6 @@ module MessageCard =
         card.MaxWidth <- Tokens.readingWidth
         card :> Control
 
-    /// 消息时间的展示形式：今天只给时刻，昨天加前缀，更早给日期。
-    /// 聊天里绝大多数消息是今天的，堆完整日期只是噪音。
-    let private formatTimestamp (at: DateTimeOffset) : string =
-        let local = at.ToLocalTime()
-        let today = DateTimeOffset.Now.Date
-        let days = (today - local.Date).TotalDays
-        if days < 1.0 then local.ToString "HH:mm"
-        elif days < 2.0 then local.ToString "'昨天' HH:mm"
-        elif local.Year = DateTimeOffset.Now.Year then local.ToString "M月d日 HH:mm"
-        else local.ToString "yyyy年M月d日 HH:mm"
-
     /// 渲染用量角标/脚注：紧凑、优雅且无杂乱感。
     /// 用标签（Tokens.textFaint）与等宽数字（Tokens.textMuted, monoFontFamily）搭配，
     /// 并支持无障碍朗读名称与悬浮完整提示。
@@ -1724,7 +1461,7 @@ module MessageCard =
 
     /// 脚注：时间 + 可选用量。合成一行，避免两条弱字上下堆叠。
     let private footer (message: MessageView) (usage: GenerationUsage option) : Control option =
-        let timeText = message.committedAt |> Option.map formatTimestamp
+        let timeText = message.committedAt |> Option.map (fun at -> MessageTimestamp.format DateTimeOffset.Now (at.ToLocalTime()))
         let usageControl = usage |> Option.bind renderUsage
         match timeText, usageControl with
         | None, None -> None

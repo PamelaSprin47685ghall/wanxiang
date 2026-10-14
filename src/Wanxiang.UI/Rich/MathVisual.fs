@@ -28,11 +28,7 @@ type MathVisual(tex: string, displayMode: bool, fontSize: float, lineHeight: flo
     /// 公式基线到控件顶缘的距离。行内时以父级文本块的真实基线为准。
     member this.Baseline =
         let _, _, ownBaseline = this.Metrics
-        if displayMode then ownBaseline
-        else
-            match this.HostBaseline with
-            | Some hostBaseline -> hostBaseline - this.Bounds.Y
-            | None -> ownBaseline
+        MathBaseline.drawBaseline displayMode ownBaseline this.HostBaseline this.Bounds.Y
 
     /// 正文字体在同一字号下的下沉量。
     ///
@@ -59,9 +55,7 @@ type MathVisual(tex: string, displayMode: bool, fontSize: float, lineHeight: flo
     /// 盒宽、盒高、盒内基线位置。盒子只按公式自身的墨迹范围算，
     /// 与段落无关——对齐由绘制偏移负责，布局这一层保持简单。
     member private _.Metrics =
-        match box.Value with
-        | None -> 0.0, 0.0, 0.0
-        | Some laid -> laid.width, laid.above + laid.below, laid.above
+        MathBaseline.metrics (box.Value |> Option.map (fun laid -> laid.width, laid.above, laid.below))
 
     override this.MeasureOverride(_) =
         let width, height, _ = this.Metrics
@@ -73,12 +67,7 @@ type MathVisual(tex: string, displayMode: bool, fontSize: float, lineHeight: flo
             // 图元坐标以基线为原点。行内模式把基线对到父级文本块的真实基线上；
             // 问不到（不在文本块里、或还没排版）就退回自身的 above。
             let _, _, ownBaseline = this.Metrics
-            let drawBaseline =
-                if displayMode then ownBaseline
-                else
-                    match this.HostBaseline with
-                    | Some hostBaseline -> hostBaseline - this.Bounds.Y
-                    | None -> ownBaseline
+            let drawBaseline = MathBaseline.drawBaseline displayMode ownBaseline this.HostBaseline this.Bounds.Y
             use _ = context.PushTransform(Matrix.CreateTranslation(0.0, drawBaseline))
             for item in laid.items do
                 match item with

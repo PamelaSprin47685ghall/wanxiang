@@ -111,6 +111,22 @@
     <PackageReference Include="Wanxiang2.MediaTypes" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ReconnectBackoff" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ConnectionIssue" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ConnectIssueText" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ColorBlend" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PopupPlacement" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MathBaseline" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SendKey" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PromptHistory" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.OnboardingRules" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ChatEmptyText" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PairingHint" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.TranscriptMarkdown" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ExportFileName" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MessageTimestamp" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.GenerationErrorTitle" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DurationText" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ToolArgsPreview" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ToolErrorSummary" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProviderPresets" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.LocalDraftControls" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.HostHealth" Version="0.0.0-local" />

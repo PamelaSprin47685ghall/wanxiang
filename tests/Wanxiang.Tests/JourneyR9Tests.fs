@@ -42,13 +42,6 @@ let private msg role text (at: DateTimeOffset option) : MessageView =
 
 // ---- 260 ----
 
-[<Fact>]
-let ``260 首次连接（无令牌无凭据无错误）才直接走配对码`` () =
-    Assert.True(ConnectDialogMode.pairingFirst None false None)
-    Assert.False(ConnectDialogMode.pairingFirst (Some "t") false None)
-    Assert.False(ConnectDialogMode.pairingFirst None true None)
-    Assert.False(ConnectDialogMode.pairingFirst None false (Some "连接被拒绝"))
-
 [<Trait("Category", "UI")>]
 [<Fact>]
 let ``260 startPairing 展开配对码区、发起配对、切换入口改为改用令牌`` () =
@@ -81,7 +74,7 @@ let ``260 startPairing 展开配对码区、发起配对、切换入口改为改
 [<Fact>]
 let ``260 AppShell 首次打开连接对话框时自动进入配对`` () =
     let shell = read "src/Wanxiang.UI/AppShell.fs"
-    Assert.Contains("ConnectDialogMode.pairingFirst lastToken hasSavedCredentials connectionError", shell)
+    Assert.Contains("PairingHint.pairingFirst lastToken hasSavedCredentials connectionError", shell)
     Assert.Contains("handle.startPairing ()", shell)
 
 // ---- 261 ----

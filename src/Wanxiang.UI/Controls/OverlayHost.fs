@@ -275,13 +275,11 @@ type OverlayHost(root: Grid) =
                     fitPopupToViewport ()
                     let width = min popupCard.MaxWidth (max popupCard.Bounds.Width popupCard.MinWidth)
                     let height = min popupCard.MaxHeight popupCard.Bounds.Height
-                    let x = if popupAlignRight then p.X + anchor.Bounds.Width - width else p.X
-                    let clampedX = Math.Clamp(x, viewportInset, max viewportInset (root.Bounds.Width - width - viewportInset))
-                    let flipUp = p.Y + height > root.Bounds.Height - viewportInset
-                    let candidateY =
-                        if flipUp then p.Y - anchor.Bounds.Height - height - popupGap * 2.0 else p.Y
-                    let maxY = max viewportInset (root.Bounds.Height - height - viewportInset)
-                    let clampedY = Math.Clamp(candidateY, viewportInset, maxY)
+                    // p 是锚点下方 gap 处；PopupPlacement 要锚点左上角
+                    let clampedX, clampedY =
+                        PopupPlacement.place
+                            p.X (p.Y - anchor.Bounds.Height - popupGap) anchor.Bounds.Width anchor.Bounds.Height
+                            width height root.Bounds.Width root.Bounds.Height viewportInset popupGap popupAlignRight
                     popupCard.Margin <- Thickness(clampedX, clampedY, 0.0, 0.0)
             with _ -> ()
         | _ -> ()

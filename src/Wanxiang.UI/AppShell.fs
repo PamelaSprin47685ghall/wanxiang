@@ -612,13 +612,13 @@ type MainView() as this =
         | None ->
             connectionError |> Option.iter handle.info
             // 决策 260：本机从没连过（无令牌、无保存凭据）时，配对码就是唯一可走的路。
-            if ConnectDialogMode.pairingFirst lastToken hasSavedCredentials connectionError then
+            if PairingHint.pairingFirst lastToken hasSavedCredentials connectionError then
                 handle.startPairing ()
 
     /// 记录并呈现一次类型化的连接失败（对话框内联 + 空态入口）。
     member private this.ReportConnectionIssue(issue: ConnectionIssue) =
         connectionIssue <- Some issue
-        connectionError <- Some(Dialogs.describeIssue issue)
+        connectionError <- Some(ConnectIssueText.describe issue)
         failConnectStatus issue
 
     member private this.Connect() =
@@ -1222,7 +1222,7 @@ type MainView() as this =
             this.Onboarding.Reset()
             draftModelSelection <- Some(providerId, model)
             this.Render()
-            if String.IsNullOrWhiteSpace composer.Text then composer.SetText Onboarding.FirstPrompt
+            if String.IsNullOrWhiteSpace composer.Text then composer.SetText OnboardingRules.FirstPrompt
             composer.Focus()
             toast (sprintf "已连接 %s" (Catalog.describeModel providerId model catalog)) Success
         | None -> ()
@@ -2541,8 +2541,8 @@ type MainView() as this =
               takenIds = fun () -> catalog.providers |> List.map (fun p -> p.id)
               discoverLocal =
                 fun () ->
-                    if Onboarding.canDiscoverLocal lastUrl then
-                        Onboarding.discoverOllamaAt ProviderPresets.OllamaProbeUrl
+                    if OnboardingRules.canDiscoverLocal lastUrl then
+                        OnboardingRules.discoverOllamaAt ProviderPresets.OllamaProbeUrl
                     else
                         System.Threading.Tasks.Task.FromResult None
               openAdvanced = fun () -> this.ShowAddProvider()

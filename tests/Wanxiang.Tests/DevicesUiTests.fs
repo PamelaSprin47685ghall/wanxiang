@@ -86,7 +86,7 @@ module DevicesUiTests =
                 | Some label -> Assert.Equal<string list>([ label ], visible)
                 | None -> Assert.Empty visible
                 // 表与实现一致（防止有人改了其中一边）
-                Assert.Equal(expected, ConnectionIssue.retry issue |> Option.map Dialogs.retryLabel))
+                Assert.Equal(expected, ConnectionIssue.retry issue |> Option.map ConnectIssueText.retryLabel))
 
     [<Fact>]
     let ``wrong pairing code keeps a single primary action and no retry button`` () =
@@ -106,7 +106,7 @@ module DevicesUiTests =
             handle.info "这里写了失败 拒绝 超时 断开 错误，但只是普通提示"
             Assert.Empty(visibleRetryButtons overlay.Root)
             // 类型化错误的文案不含任何旧关键词，也照样出现重试
-            let text = Dialogs.describeIssue (ConnectionIssue.PairingRejected "x")
+            let text = ConnectIssueText.describe (ConnectionIssue.PairingRejected "x")
             for keyword in [ "失败"; "拒绝"; "断开"; "超时"; "错误" ] do
                 Assert.DoesNotContain(keyword, text)
             handle.fail (ConnectionIssue.PairingRejected "x")
@@ -148,30 +148,17 @@ module DevicesUiTests =
     // ---------- 配对页提示：本机 / 远端 ----------
 
     [<Fact>]
-    let ``pairing hint differs between this machine and a remote host`` () =
-        let local = Dialogs.pairingCodeHint "ws://127.0.0.1:8765/ws"
-        let local2 = Dialogs.pairingCodeHint "ws://localhost:8765/ws"
-        let remote = Dialogs.pairingCodeHint "wss://wanxiang.example.com/ws"
-        Assert.Equal(local, local2)
-        Assert.NotEqual<string>(local, remote)
-        Assert.Contains("这台机器", local)
-        Assert.Contains("远端", remote)
-        for hint in [ local; remote ] do
-            Assert.Contains("设备", hint)
-            Assert.Contains("5 分钟", hint)
-
-    [<Fact>]
     let ``connect dialog updates the pairing hint when the address changes`` () =
         Headless.run (fun () ->
             let overlay, _, _, _ = openDialog ()
             click (visibleButton overlay.Root "没有令牌？改用配对码").Value
-            Assert.Contains(Dialogs.pairingCodeHint "ws://127.0.0.1:1/ws", textOf overlay.Root)
+            Assert.Contains(PairingHint.codeHint "ws://127.0.0.1:1/ws", textOf overlay.Root)
             let urlBox =
                 descendants overlay.Root
                 |> Seq.pick (fun c -> match c with :? TextBox as t when t.Text = "ws://127.0.0.1:8765/ws" -> Some t | _ -> None)
             urlBox.Text <- "wss://host.example.com/ws"
             Dispatcher.UIThread.RunJobs()
-            Assert.Contains(Dialogs.pairingCodeHint "wss://host.example.com/ws", textOf overlay.Root))
+            Assert.Contains(PairingHint.codeHint "wss://host.example.com/ws", textOf overlay.Root))
 
     // ---------- 设备分区 ----------
 

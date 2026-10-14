@@ -293,19 +293,6 @@ let ``export wire roundtrips and cannot advance the chat cursor`` () =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``Markdown keeps orphan tool results timestamps and embedded fences`` () =
-    Headless.run (fun () ->
-    let timestamp = DateTimeOffset.Parse "2026-09-07T12:00:00Z"
-    let tool = { MessageView.empty with role = "tool"; toolResults = [ "orphan", "result with ``` inside" ]; committedAt = Some timestamp }
-    let markdown = Export.toMarkdown "工具记录" [ tool ]
-    Assert.Contains("## 工具", markdown)
-    Assert.Contains("result with ``` inside", markdown)
-    Assert.Contains("````json", markdown)
-    Assert.Contains("2026-09-07", markdown)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``unrenderable messages retain their raw content in export`` () =
     Headless.run (fun () ->
     let initial, id = fixture 0
@@ -313,21 +300,6 @@ let ``unrenderable messages retain their raw content in export`` () =
     let controller = ConversationExportController id
     let document = complete proj controller (controller.Start())
     Assert.Contains("keep-me", Export.toMarkdown document.title document.messages)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``export filenames stay a bounded filename including long emoji titles`` () =
-    Headless.run (fun () ->
-    Assert.Equal("对话.md", Export.safeFileName "..")
-    let name = Export.safeFileName "../a\\b\nfile"
-    Assert.DoesNotContain("/", name)
-    Assert.DoesNotContain("\\", name)
-    Assert.DoesNotContain("\n", name)
-    let emoji = Export.safeFileName(String.replicate 100 "👩🏽‍💻")
-    Assert.True(Encoding.UTF8.GetByteCount emoji <= 223)
-    let baseName = emoji.Substring(0, emoji.Length - 3)
-    Assert.Equal(baseName, String.replicate (Globalization.StringInfo.ParseCombiningCharacters(baseName).Length) "👩🏽‍💻")
     )
 
 [<Trait("Category", "UI")>]
