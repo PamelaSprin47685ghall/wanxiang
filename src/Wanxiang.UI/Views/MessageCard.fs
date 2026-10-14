@@ -687,48 +687,29 @@ module MessageCard =
     /// 不创建独立执行看板，且可折叠/展开工具卡片列表。
     let private toolActivityBlock (ctx: MessageContext) (actions: MessageActions) (calls: ToolCallView list) : Control =
         let statuses = calls |> List.map (resolveStatus ctx)
-        let total = List.length calls
-        let runningCount = statuses |> List.filter (function ToolCallStatus.Running -> true | _ -> false) |> List.length
-        let awaitingCount = statuses |> List.filter (function ToolCallStatus.AwaitingApproval -> true | _ -> false) |> List.length
-        let successCount = statuses |> List.filter (function ToolCallStatus.Success -> true | _ -> false) |> List.length
-        let failedCount = statuses |> List.filter (function ToolCallStatus.Failed _ -> true | _ -> false) |> List.length
-        let unknownCount = statuses |> List.filter (function ToolCallStatus.Unknown -> true | _ -> false) |> List.length
-
-        let overviewBaseText =
-            if total = 1 then
-                match List.head statuses with
-                | ToolCallStatus.Running -> "调用 1 个工具 · 执行中"
-                | ToolCallStatus.AwaitingApproval -> "调用 1 个工具 · 等待批准"
-                | ToolCallStatus.Success -> "调用 1 个工具 · 已完成"
-                | ToolCallStatus.Failed _ -> "调用 1 个工具 · 执行失败"
-                | ToolCallStatus.Unknown -> "调用 1 个工具 · 结果未知"
-            else
-                let parts = [
-                    if successCount > 0 then yield sprintf "%d 个完成" successCount
-                    if awaitingCount > 0 then yield sprintf "%d 个等待批准" awaitingCount
-                    if runningCount > 0 then yield sprintf "%d 个执行中" runningCount
-                    if failedCount > 0 then yield sprintf "%d 个失败" failedCount
-                    if unknownCount > 0 then yield sprintf "%d 个结果未知" unknownCount
-                ]
-                let summary =
-                    if List.isEmpty parts then "无状态"
-                    else String.concat " · " parts
-                sprintf "调用 %d 个工具 · %s" total summary
+        let count f = statuses |> List.filter f |> List.length
+        let counts =
+            { running = count (function ToolCallStatus.Running -> true | _ -> false)
+              awaiting = count (function ToolCallStatus.AwaitingApproval -> true | _ -> false)
+              success = count (function ToolCallStatus.Success -> true | _ -> false)
+              failed = count (function ToolCallStatus.Failed _ -> true | _ -> false)
+              unknown = count (function ToolCallStatus.Unknown -> true | _ -> false) }
+        let overviewBaseText = ToolOverview.text counts
 
         // 等待批准优先于执行中：需要用户动手的状态最先被看到（第 206 节）；绝不显示「完成」对勾。
         let overviewBrush: IBrush =
-            if awaitingCount > 0 then Tokens.warning
-            elif runningCount > 0 then Tokens.accent
-            elif failedCount > 0 then Tokens.danger
-            elif unknownCount > 0 then Tokens.warning
-            else Tokens.textMuted
+            match ToolOverview.tone counts with
+            | OverviewTone.Warning -> Tokens.warning
+            | OverviewTone.Accent -> Tokens.accent
+            | OverviewTone.Danger -> Tokens.danger
+            | OverviewTone.Muted -> Tokens.textMuted
 
         let overviewIcon: Control =
-            if awaitingCount > 0 then Icons.info overviewBrush
-            elif runningCount > 0 then Ui.spinner ControlMetrics.spinnerCompactSize
-            elif failedCount > 0 then Icons.alert overviewBrush
-            elif unknownCount > 0 then Icons.info overviewBrush
-            else Icons.check overviewBrush
+            match ToolOverview.icon counts with
+            | OverviewIcon.Info -> Icons.info overviewBrush
+            | OverviewIcon.Spinner -> Ui.spinner ControlMetrics.spinnerCompactSize
+            | OverviewIcon.Alert -> Icons.alert overviewBrush
+            | OverviewIcon.Check -> Icons.check overviewBrush
         overviewIcon.VerticalAlignment <- VerticalAlignment.Center
 
         let cardsPanel = StackPanel(Orientation = Orientation.Vertical, Spacing = 0.0)

@@ -362,12 +362,12 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             | :? ConversationSummary as summary -> this.ApplyRowState(summary, host)
             | _ ->
                 let isActive = activeId = Some id
-                let highlighted = isActive || (selection.IsSelected id)
+                let highlighted = SidebarRowState.highlighted isActive (selection.IsSelected id)
                 host.Background <- if highlighted then Tokens.selected :> IBrush else Brushes.Transparent :> IBrush
                 // 焦点环同上：归 ActionBorder，避免与选中态阴影打架。
                 host.BorderBrush <- if highlighted then Tokens.accent :> IBrush else Brushes.Transparent :> IBrush
 
-                Avalonia.Automation.AutomationProperties.SetItemStatus(host, if highlighted then "当前对话" else "")
+                Avalonia.Automation.AutomationProperties.SetItemStatus(host, SidebarRowState.itemStatus highlighted)
 
     member private _.FocusRowAt(index: int) =
         if index >= 0 && index < visibleRowIds.Length then
@@ -774,21 +774,15 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
         // 多选模式下整行都可勾选，行内「更多操作」单条菜单被 openMenu 拒绝，
         // 留着可见只会诱导用户去点一个必然空转的按钮：同批下线可见性/命中/焦点/读屏。
         // kelivo 同款：side_drawer.dart:4414-4435 选择模式下前导区换成勾选框、无单条菜单按钮。
-        if selection.Active then
-            moreButton.IsVisible <- false
-            moreButton.IsHitTestVisible <- false
-            moreButton.Focusable <- false
-            Avalonia.Automation.AutomationProperties.SetAccessibilityView(
-                moreButton,
-                Avalonia.Automation.AccessibilityView.Raw)
-        else
-            moreButton.IsVisible <- true
-            moreButton.Opacity <- if visible then 1.0 else Tokens.opacitySubtle
-            moreButton.IsHitTestVisible <- true
-            moreButton.Focusable <- true
-            Avalonia.Automation.AutomationProperties.SetAccessibilityView(
-                moreButton,
-                Avalonia.Automation.AccessibilityView.Default)
+        let state = SidebarRowState.moreButton selection.Active visible
+        moreButton.IsVisible <- state.visible
+        if state.visible then moreButton.Opacity <- if state.fullOpacity then 1.0 else Tokens.opacitySubtle
+        moreButton.IsHitTestVisible <- state.interactive
+        moreButton.Focusable <- state.interactive
+        Avalonia.Automation.AutomationProperties.SetAccessibilityView(
+            moreButton,
+            if state.interactive then Avalonia.Automation.AccessibilityView.Default
+            else Avalonia.Automation.AccessibilityView.Raw)
 
     /// 一行对话。选中态用强调色浅底 + 左缘，生成中是一个静态圆点（无动画，避免列表常驻动效）。
     member private this.RenderRow(summary: ConversationSummary) : Control =
@@ -1545,8 +1539,7 @@ type Sidebar(overlay: OverlayHost, actions: SidebarActions, brandLogo: float -> 
             searchDebounce.Stop()
             // 词没变（已为它发过查询，结果已到或在途）就不重发：迟到的防抖 Tick
             // 否则会清空刚到的命中（CI 上 LibraryTests 偶发失败的根因）。
-            let q = (if isNull searchBox.Text then "" else searchBox.Text).Trim()
-            if not (q <> "" && q = searchHitsQuery) then
+            if SearchRequery.shouldQuery searchBox.Text searchHitsQuery then
                 this.BeginMessageSearch()
             this.Rebuild()
             // 结果刷新不碰滚动：首项可见由 Down 通路的 FocusRowAt/BringIntoView 保证。
