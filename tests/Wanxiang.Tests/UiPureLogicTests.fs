@@ -373,56 +373,6 @@ $$
             Assert.Empty(box.items)
 
     // =========================================================================
-    // 7. RichBackend.fs & KatexHtml.fs 纯逻辑测试
-    // =========================================================================
-    module RichBackendAndKatexHtmlTests =
-
-        [<Fact>]
-        let ``KatexHtml fontScaleOf computes ratio of size classes`` () =
-            // 默认无 class 为 1.0
-            Assert.Equal(1.0, KatexHtml.fontScaleOf [])
-            // reset-size6 size3 的缩放比率：size6 索引 5 (1.0)，size3 索引 2 (0.7)
-            let scaled = KatexHtml.fontScaleOf [ "reset-size6"; "size3" ]
-            Assert.Equal(0.7, scaled, 3)
-
-        [<Fact>]
-        let ``KatexHtml emOf parses em and px correctly`` () =
-            let style = Map.ofList [ "height", "1.5em"; "margin-top", "-0.2em"; "width", "24px" ]
-            Assert.Equal(Some 1.5, KatexHtml.emOf style "height")
-            Assert.Equal(Some -0.2, KatexHtml.emOf style "margin-top")
-            Assert.Equal(Some 24.0, KatexHtml.emOf style "width")
-            Assert.True(KatexHtml.emOf style "nonexistent" |> Option.isNone)
-
-        [<Fact>]
-        let ``KatexHtml parse and visualSubtree filters katex-html`` () =
-            let html = "<span class=\"katex\"><span class=\"katex-mathml\">text</span><span class=\"katex-html\"><span>x</span></span></span>"
-            let nodes = KatexHtml.parse html
-            Assert.NotEmpty(nodes)
-            let vis = KatexHtml.visualSubtree nodes
-            Assert.True(vis.IsSome)
-
-        [<Fact>]
-        let ``KatexHtml isDisplay detects display formulas`` () =
-            let inlineHtml = "<span class=\"katex\"><span class=\"katex-html\">x</span></span>"
-            let displayHtml = "<span class=\"katex-display\"><span class=\"katex-html\">x</span></span>"
-            Assert.False(KatexHtml.isDisplay (KatexHtml.parse inlineHtml))
-            Assert.True(KatexHtml.isDisplay (KatexHtml.parse displayHtml))
-
-        [<Fact>]
-        let ``RichBackend Cache stores and evicts by capacity`` () =
-            let cache = RichBackend.Cache<string, int>(2)
-            cache.Set("a", 1)
-            cache.Set("b", 2)
-            Assert.Equal(Some 1, cache.TryGet("a"))
-            Assert.Equal(Some 2, cache.TryGet("b"))
-
-            // 触发容量淘汰
-            cache.Set("c", 3)
-            Assert.Equal(Some 3, cache.TryGet("c"))
-            // 超出容量 2，最早的 "a" 被淘汰
-            Assert.True(cache.TryGet("a").IsNone)
-
-    // =========================================================================
     // 8. ProviderPresets.fs + UiPrefs.fs + ConversationSummary.fs 纯逻辑测试
     // =========================================================================
     module PresetsAndPrefsTests =

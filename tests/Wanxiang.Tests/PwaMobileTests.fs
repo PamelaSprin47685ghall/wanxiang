@@ -81,7 +81,7 @@ let ``main.js 跟随 visualViewport 并把恢复信号交给 F# 侧`` () =
     Assert.Contains("export function wxResumeEpoch()", js)
     Assert.Contains("wxResumeEpoch,", js)
     Assert.Contains("visibilitychange", js)
-    let interop = read "src/Wanxiang.Interop/BrowserBridge.cs"
+    let interop = read "vendor/wanxiang2/libs/BrowserPage/BrowserPage.cs"
     Assert.Contains("[JSImport(\"wxResumeEpoch\", \"wanxiang\")]", interop)
     let shell = read "src/Wanxiang.UI/AppShell.fs"
     Assert.Contains("this.ResumeReconnectNow()", shell)

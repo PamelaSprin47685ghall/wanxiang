@@ -22,7 +22,6 @@
     <Compile Include="Model/UiPrefs.fs" />
     <Compile Include="Rich/RichBackend.fs" />
     <Compile Include="Rich/Highlight.fs" />
-    <Compile Include="Rich/KatexHtml.fs" />
     <Compile Include="Rich/MathLayout.fs" />
     <Compile Include="Rich/MathVisual.fs" />
     <Compile Include="Model/Markdown.fs" />
@@ -84,9 +83,6 @@
        KaTeX 字体反过来是真正的视觉资源，与正文字体同放 Assets/Fonts，
        由上面那条 AvaloniaResource 一并打包。 -->
   <ItemGroup>
-    <EmbeddedResource Include="Assets/Js/**">
-      <LogicalName>js/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
-    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>
@@ -103,13 +99,21 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Wanxiang.Interop\Wanxiang.Interop.csproj" />
     <PackageReference Include="Wanxiang2.AguiWire" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatDomain" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.WsClient" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.CommandPalette" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.HljsHtml" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.KatexHtml" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BoundedCache" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.RichAssets" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BrowserCredentials" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BrowserDrafts" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BrowserPage" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BrowserProbe" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BrowserLocalStore" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PinyinInitials" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.FuzzyMatch" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.MessageLink" Version="0.0.0-local" />

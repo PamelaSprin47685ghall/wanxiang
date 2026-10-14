@@ -27,8 +27,8 @@ module Program =
                     FrameworkAssetPathResolver = fun fileName -> $"./{fileName}?v=20261012b"
                 )
             // 代码着色与公式排版交给浏览器自带的 JS 引擎；脚本正文仍是 .NET 侧的内嵌资源
-            let rich = BrowserRichBackend()
-            RichBackend.install rich
+            let rich, backend = RichBrowserAdapter.create ()
+            RichBackend.install backend
             rich.Warmup()
             // 决策 342：图片缩小交给浏览器（原生解码 + Canvas，异步），不占 wasm 单线程
             ImageShrink.platformShrinker <- Some BrowserImageShrink.shrink

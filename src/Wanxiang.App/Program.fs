@@ -186,8 +186,8 @@ module Program =
                 let runDesktopUi (argv: string array) : int =
                     // 代码着色与公式排版跑在进程内的 JS 引擎上。基座脚本解析要几百毫秒，
                     // 放到后台线程先付掉；没预热完也只是第一次渲染慢，不影响正确性。
-                    let rich = JintRichBackend()
-                    Wanxiang.UI.RichBackend.install rich
+                    let rich, backend = RichJintAdapter.create ()
+                    Wanxiang.UI.RichBackend.install backend
                     Task.Run(fun () -> rich.Warmup()) |> ignore
                     AppBuilder
                         .Configure<Wanxiang.UI.App>()

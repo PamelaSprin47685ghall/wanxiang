@@ -7,7 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="RichJint.fs" />
+    <Compile Include="RichJintAdapter.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
@@ -19,11 +19,11 @@
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
     <!-- 纯托管 JS 解释器：让桌面端能跑 highlight.js 与 KaTeX，不引入原生依赖 -->
-    <PackageReference Include="Jint" Version="4.16.1" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Wanxiang2.ServerApp" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.RichJint" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.LaunchPlan" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.CliArgs" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.RunModes" Version="0.0.0-local" />

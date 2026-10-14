@@ -22,7 +22,8 @@ const HLJS_VERSION = '11.12.0';
 
 const repoRoot = path.resolve(__dirname, '..');
 const assetsDir = path.join(repoRoot, 'src/Wanxiang.UI/Assets');
-const jsOut = path.join(assetsDir, 'Js');
+// 脚本资源已迁入 wanxiang2 的 libs/RichScripts（清单逻辑名不变）；字体仍留在界面
+const jsOut = path.join(repoRoot, 'vendor/wanxiang2/libs/RichScripts/js');
 const langOut = path.join(jsOut, 'hljs.lang');
 const fontOut = path.join(assetsDir, 'Fonts');
 const workDir = path.join(repoRoot, '.scratch/webassets-build');

@@ -52,7 +52,7 @@ module CredentialStore =
                 return []
             else
                 try
-                    let! json = BrowserBridge.CredList()
+                    let! json = BrowserCredentials.List()
                     let results = System.Collections.Generic.List<string * string * string>()
                     if not (String.IsNullOrWhiteSpace json) then
                         match JsonNode.Parse json with
@@ -88,7 +88,7 @@ module CredentialStore =
         task {
             if OperatingSystem.IsBrowser() then
                 try
-                    do! BrowserBridge.CredPut(instanceId, url, token, name)
+                    do! BrowserCredentials.Put(instanceId, url, token, name)
                 with _ -> ()
         }
 
@@ -97,7 +97,7 @@ module CredentialStore =
         task {
             if OperatingSystem.IsBrowser() then
                 try
-                    do! BrowserBridge.CredDelete(instanceId)
+                    do! BrowserCredentials.Delete(instanceId)
                 with _ -> ()
         }
 
@@ -107,7 +107,7 @@ module CredentialStore =
             "ws://127.0.0.1:8765/ws"
         else
             try
-                let href = BrowserBridge.PageUrl()
+                let href = BrowserPage.Url()
                 let scheme =
                     if href.StartsWith "https://" then "wss://"
                     elif href.StartsWith "http://" then "ws://"

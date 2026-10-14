@@ -346,7 +346,7 @@ let ``highlight parseHtml maps nested scopes and diff tokens correctly`` () =
     Headless.run (fun () ->
     let html =
         """<span class="hljs-keyword">let</span> <span class="hljs-variable">x</span> = <span class="hljs-string">&quot;hello <span class="hljs-subst">name</span>&quot;</span> <span class="hljs-comment">// 注释</span>"""
-    let tokens = Highlight.parseHtml html
+    let tokens = HljsHtml.parseHtml html
     Assert.True(tokens.Length >= 5)
     Assert.Contains(tokens, fun t -> t.kind = CodeKeyword && t.text = "let")
     Assert.Contains(tokens, fun t -> t.kind = CodeVariable && t.text = "x")
@@ -354,7 +354,7 @@ let ``highlight parseHtml maps nested scopes and diff tokens correctly`` () =
 
     let diffHtml =
         """<span class="hljs-addition">+ added line</span>\n<span class="hljs-deletion">- deleted line</span>"""
-    let diffTokens = Highlight.parseHtml diffHtml
+    let diffTokens = HljsHtml.parseHtml diffHtml
     Assert.Contains(diffTokens, fun t -> t.kind = CodeAddition && t.text.Contains("added line"))
     Assert.Contains(diffTokens, fun t -> t.kind = CodeDeletion && t.text.Contains("deleted line"))
     )

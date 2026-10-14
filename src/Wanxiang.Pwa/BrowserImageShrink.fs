@@ -12,7 +12,7 @@ module BrowserImageShrink =
         async {
             try
                 let! json =
-                    BrowserBridge.ImageShrink(bytes, mediaType, ImageShrink.maxDimension, float ImageShrink.maxBytes)
+                    BrowserImage.Shrink(bytes, mediaType, ImageShrink.maxDimension, float ImageShrink.maxBytes)
                     |> Async.AwaitTask
                 match JsonNode.Parse json with
                 | :? JsonObject as o when o["ok"].GetValue<bool>() ->

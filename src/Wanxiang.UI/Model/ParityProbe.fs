@@ -10,7 +10,7 @@ open Wanxiang.Interop
 /// 探点只记「这条生命周期路径真的跑到了」，不带任何用户内容。
 module ParityProbe =
     let private browserEnabled () =
-        OperatingSystem.IsBrowser() && (try BrowserBridge.ProbeEnabled() with _ -> false)
+        OperatingSystem.IsBrowser() && (try BrowserProbe.Enabled() with _ -> false)
 
     let private desktopEnabled () =
         not (OperatingSystem.IsBrowser())
@@ -37,7 +37,7 @@ module ParityProbe =
                         true)
             if external.Force() then
                 if OperatingSystem.IsBrowser() then
-                    try BrowserBridge.Probe name with _ -> ()
+                    try BrowserProbe.Hit name with _ -> ()
                 elif first then
                     eprintfn "parity.%s" name
 
@@ -58,7 +58,7 @@ module LocalText =
     let read (path: string) : string option =
         try
             if OperatingSystem.IsBrowser() then
-                match BrowserBridge.LocalGet(key path) with
+                match BrowserLocalStore.Get(key path) with
                 | null -> None
                 | s -> Some s
             elif IO.File.Exists path then
@@ -72,7 +72,7 @@ module LocalText =
     let write (path: string) (text: string) : bool =
         try
             if OperatingSystem.IsBrowser() then
-                BrowserBridge.LocalSet(key path, text)
+                BrowserLocalStore.Set(key path, text)
                 true
             else
                 IO.Directory.CreateDirectory(IO.Path.GetDirectoryName path) |> ignore

@@ -263,13 +263,13 @@ type MainView() as this =
             timer.Tick.Add(fun _ ->
                 ParityProbe.hit "timer.viewport"
                 try
-                    let css = BrowserBridge.ViewportWidth()
+                    let css = BrowserPage.ViewportWidth()
                     if css > 0.0 && hostViewportWidth <> Some css then
                         hostViewportWidth <- Some css
                         this.ApplyResponsiveLayout css
                 with _ -> ()
                 try
-                    let epoch = BrowserBridge.ResumeEpoch()
+                    let epoch = BrowserPage.ResumeEpoch()
                     if epoch <> lastResumeEpoch then
                         lastResumeEpoch <- epoch
                         ParityProbe.hit "reconnect.resume"
@@ -995,7 +995,7 @@ type MainView() as this =
     member private this.CheckPageLink() =
         if OperatingSystem.IsBrowser() then
             try
-                let href = BrowserBridge.PageUrl()
+                let href = BrowserPage.Url()
                 if href <> lastPageLink then
                     lastPageLink <- href
                     MessageLink.tryParse href
@@ -2066,7 +2066,7 @@ type MainView() as this =
                 state.Handle ev
                 // PWA 安装引导推迟到第一次成功对话之后（第 210 节）：首次运行时不和引导卡 / 输入框抢位置。
                 if d.status = "completed" && OperatingSystem.IsBrowser() then
-                    try BrowserBridge.ConversationSucceeded() with _ -> ()
+                    try BrowserPage.ConversationSucceeded() with _ -> ()
                 match d.status, error with
                 | "cancelled", _ when activeConvId = Some d.conversationId -> toast "已停止" Info
                 // 非当前对话的失败只 toast（卡片看不见）；当前对话的失败只进卡片，不叠 toast。
@@ -2282,7 +2282,7 @@ type MainView() as this =
         MessageCard.setLinkSink (fun commitId ->
             match activeConvId with
             | Some convId ->
-                let pageUrl = if OperatingSystem.IsBrowser() then (try Some(BrowserBridge.PageUrl()) with _ -> None) else None
+                let pageUrl = if OperatingSystem.IsBrowser() then (try Some(BrowserPage.Url()) with _ -> None) else None
                 copyToClipboard (MessageLink.format pageUrl convId commitId)
             | None -> ())
         MessageCard.setRecoverySink (fun recovery ->
@@ -2720,7 +2720,7 @@ type MainView() as this =
         if not (isNull (TopLevel.GetTopLevel this)) then startTimers ()
         // 决策 451：PWA 没有关窗口事件——页面转入后台 / 卸载时同样立刻落草稿。
         if OperatingSystem.IsBrowser() then
-            BrowserBridge.add_PageHidden(fun () ->
+            BrowserPage.add_Hidden(fun () ->
                 ParityProbe.hit "drafts.flushOnHide"
                 this.FlushDrafts())
         this.DetachedFromVisualTree.Add(fun _ ->

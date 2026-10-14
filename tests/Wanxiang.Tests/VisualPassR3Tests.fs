@@ -96,4 +96,4 @@ let ``PWA 安装引导推迟到首次成功对话后，且在顶部不压输入�
     let dock = css.IndexOf "body:has(#shell-install:not([hidden])) #out"
     let desktopOnly = css.IndexOf "@media (min-width: 900px) and (not (pointer: coarse))"
     Assert.True(dock >= 0 && dock < desktopOnly, "画布让位规则应对手机同样生效")
-    Assert.Contains("BrowserBridge.ConversationSucceeded", read "src/Wanxiang.UI/AppShell.fs")
+    Assert.Contains("BrowserPage.ConversationSucceeded", read "src/Wanxiang.UI/AppShell.fs")

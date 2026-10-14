@@ -209,20 +209,20 @@ type MemoryDraftBackend() =
             stored <- None
             Task.CompletedTask
 
-/// PWA：IndexedDB（经 BrowserBridge；wwwroot/main.js 的 draftGet/draftPut/draftDelete）。
+/// PWA：IndexedDB（经 BrowserDrafts；wwwroot/main.js 的 draftGet/draftPut/draftDelete）。
 type BrowserDraftBackend() =
     interface IDraftBackend with
         member _.Load() =
             task {
                 try
-                    let! text = BrowserBridge.DraftGet()
+                    let! text = BrowserDrafts.Get()
                     return if String.IsNullOrWhiteSpace text then None else Some text
                 with _ -> return None
             }
         member _.Save(text) =
-            task { try do! BrowserBridge.DraftPut text with _ -> () } :> Task
+            task { try do! BrowserDrafts.Put text with _ -> () } :> Task
         member _.Clear() =
-            task { try do! BrowserBridge.DraftDelete() with _ -> () } :> Task
+            task { try do! BrowserDrafts.Delete() with _ -> () } :> Task
 
 /// 草稿存储：把「是否启用」的唯一判断收在这里。关闭时不写、也不读，并删除已存内容。
 type DraftStore(backend: IDraftBackend, isEnabled: unit -> bool) =
