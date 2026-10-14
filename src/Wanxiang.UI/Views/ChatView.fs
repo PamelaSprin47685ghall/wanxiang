@@ -128,10 +128,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 定位高亮的记账归 RevealFlash；计时器与承载面仍在这里。
     let flash = RevealFlash()
     let mutable highlightTimer: (DispatcherTimer * (unit -> unit)) option = None
-    let mutable canJumpPrevious = false
     /// 决策 300：主机上还有更早的历史页（AppShell 按 pageHasMore 同步）。
     /// 决策 300：「上一轮」越过已加载历史时挂起的跳转，下一页渲染完再续跳。
-    let mutable canJumpNext = false
     let sidebarToggleButton = Ui.iconButton Icons.panelLeft "切换侧边栏（Ctrl / ⌘ + B）"
 
     // W4：分叉面包屑。只在“当前对话是某个对话的分叉”时出现；父对话在时可点击回到它，
@@ -156,133 +154,22 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let breadcrumb = BreadcrumbAction<Guid>()
     let mutable openBreadcrumbParent: Guid -> unit = ignore
 
-    let messagePanel =
-        StackPanel(
-            Orientation = Orientation.Vertical,
-            Spacing = ContentMetrics.messageGap,
-            // 滚到底时末条消息与输入区之间的呼吸量：
-            // 由 messagePanel 的下边距统一定义（见 ScrollLayoutTests）。
-            // 实测可见量比设定值小约 15pt，48 对应约 33pt 的净留白。
-            Margin = Thickness(0.0, 0.0, 0.0, ContentMetrics.messageEndBreathing),
-            MaxWidth = Tokens.readingWidth,
-            HorizontalAlignment = HorizontalAlignment.Stretch)
-    let scroller =
-        ScrollViewer(
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            // 末条消息与输入区之间的留白统一由 messagePanel.Margin 承担，底部 Padding 设为 0 避免叠加。
-            // 水平留白先落最窄档（shellInset=16，同 horizontalInset 0.0 的取值），
-            // 挂树后由 applyHorizontalInsets 按 ChatView 自身宽度实时取档（见 Build）。
-            Padding = Thickness(Tokens.shellInset, Spacing.space3xl, Tokens.shellInset, 0.0))
-    let emptyPanel =
-        StackPanel(
-            Orientation = Orientation.Vertical,
-            Spacing = 0.0,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            // reading column 内水平居中，留出下方呼吸留白形成微妙向上视差偏置 (optical bias)
-            Margin = Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, Spacing.space6xl),
-            MaxWidth = ContentMetrics.emptyStateMaxWidth,
-            IsVisible = false)
-    let mutable currentPrimaryAction: unit -> unit = ignore
-    let emptyActionButton =
-        let btn = Ui.button Ui.Primary "" (fun () -> currentPrimaryAction ())
-        btn.HorizontalAlignment <- HorizontalAlignment.Center
-        btn.VerticalAlignment <- VerticalAlignment.Center
-        btn.MinWidth <- ControlMetrics.emptyStateActionMinWidth
-        btn.Height <- ControlMetrics.emptyStateActionHeight
-        btn.CornerRadius <- CornerRadius Spacing.Radius.md
-        btn.Padding <- Thickness(Spacing.space2xl, 0.0)
-        btn.Focusable <- true
-        btn.IsVisible <- false
-        btn
-    let mutable lastEmptyState: (ChatEmptyState * string option) option = None
-    /// 决策 433：空态里的「从预设开始」。没有预设时整行不出现，首次使用的空态保持原样。
-    let mutable presetStarters: (string * string * (unit -> unit)) list = []
-    /// 决策 434：顶栏「⋯」里的「存为预设…」；未接线时不显示。
+    /// 滚动区、空态、骨架、问答跳转、贴底与「回到最新」归 Wanxiang2.ChatPane；消息卡放进它的 Messages 插槽。
+    let pane = Wanxiang2.ChatPane.ChatPane<CardKey>(Wanxiang2.ChatPane.ChatPaneLooks.ofTheme SharedTheme.manager SharedTheme.styles)
+    let messagePanel = pane.Messages
+    let scroller = pane.Scroller.Viewer
+    let follow = pane.Follow
+    let jump = pane.Jumps
+    /// 决策 433：顶栏「⋯」里的「存为预设…」；未接线时不显示。
     let mutable savePresetAction: (unit -> unit) option = None
-    let presetRow () : Control =
-        let row = WrapPanel(Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center)
-        for (name, detail, run) in presetStarters do
-            let chip = Ui.button Ui.Secondary name run
-            chip.Margin <- Thickness(Spacing.spaceXs)
-            chip.Focusable <- true
-            chip.Name <- "preset-chip"
-            ToolTip.SetTip(chip, detail)
-            Avalonia.Automation.AutomationProperties.SetName(chip, sprintf "套用预设 %s" name)
-            Avalonia.Automation.AutomationProperties.SetHelpText(chip, detail)
-            row.Children.Add chip
-        let caption = Ui.caption "从预设开始"
-        caption.HorizontalAlignment <- HorizontalAlignment.Center
-        let column = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceXs)
-        column.Margin <- Thickness(0.0, Spacing.spaceXl, 0.0, 0.0)
-        column.Children.Add caption
-        column.Children.Add row
-        column :> Control
-    /// 空对话的起手式（决策 222）：点一下只把半句话填进输入框，不替用户发送。
-    let mutable starterPick: (string -> unit) option = None
-    let starterRow () : Control =
-        let row = WrapPanel(Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center)
-        row.Margin <- Thickness(0.0, Spacing.spaceXl, 0.0, 0.0)
-        for (label, seed) in ChatStarters.items do
-            let chip = Ui.button Ui.Secondary label (fun () -> starterPick |> Option.iter (fun pick -> pick seed))
-            chip.Margin <- Thickness(Spacing.spaceXs)
-            chip.Focusable <- true
-            chip.Name <- "starter-chip"
-            ToolTip.SetTip(chip, sprintf "填入「%s」" seed)
-            Avalonia.Automation.AutomationProperties.SetName(chip, label)
-            row.Children.Add chip
-        row :> Control
-    /// 决策 310：更早一页历史取不回来时的行内提示 + 重试（浮在消息区顶部，不进滚动内容，不改滚动锚点）。
-    let olderFailureText =
-        TextBlock(
-            Text = "",
-            FontSize = Tokens.fontSmall,
-            Foreground = Tokens.text,
-            TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center)
-    let mutable olderRetry: unit -> unit = ignore
-    let olderRetryButton = Ui.button Ui.Secondary "重试" (fun () -> olderRetry ())
-    let olderFailureBanner =
-        let row = Grid(ColumnSpacing = Spacing.spaceXl)
-        row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
-        row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
-        Grid.SetColumn(olderFailureText, 0)
-        Grid.SetColumn(olderRetryButton, 1)
-        row.Children.Add olderFailureText
-        row.Children.Add olderRetryButton
-        let border =
-            Border(
-                Name = "older-page-failure",
-                Background = Tokens.surfaceRaised,
-                BorderBrush = Tokens.warning,
-                BorderThickness = Thickness ControlMetrics.borderWidth,
-                CornerRadius = CornerRadius Spacing.Radius.lg,
-                Padding = Thickness(Spacing.space2xl, Spacing.spaceMd),
-                Margin = Thickness(Spacing.space2xl, Spacing.spaceMd, Spacing.space2xl, 0.0),
-                MaxWidth = Tokens.readingWidth,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Top,
-                IsVisible = false,
-                Child = row)
-        border.BoxShadow <- Tokens.shadowPopup ()
-        Avalonia.Automation.AutomationProperties.SetLiveSetting(olderFailureText, Avalonia.Automation.AutomationLiveSetting.Polite)
-        Avalonia.Automation.AutomationProperties.SetName(olderRetryButton, "重试加载更早消息")
-        border
-    let skeletonPanel =
-        StackPanel(
-            Orientation = Orientation.Vertical,
-            Spacing = ContentMetrics.messageGap,
-            Margin = Thickness(0.0, 0.0, 0.0, ContentMetrics.messageEndBreathing),
-            MaxWidth = Tokens.readingWidth,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            IsVisible = false)
-    let mutable skeletonTimer: DispatcherTimer option = None
-    /// 骨架呼吸的相位归 BreathPhase；计时器与减弱动效时的静态透明度在这里。
-    let breath = BreathPhase()
-    let mutable motionSubscription: IDisposable option = None
-    let mutable attached = false
+    let mutable presetStarterCount = 0
+    do
+        messagePanel.Spacing <- ContentMetrics.messageGap
+        // 滚到底时末条消息与输入区之间的呼吸量由 messagePanel 的下边距统一定义（见 ScrollLayoutTests）。
+        messagePanel.Margin <- Thickness(0.0, 0.0, 0.0, ContentMetrics.messageEndBreathing)
+        messagePanel.MaxWidth <- Tokens.readingWidth
+        messagePanel.HorizontalAlignment <- HorizontalAlignment.Stretch
+        scroller.Padding <- Thickness(Tokens.shellInset, Spacing.space3xl, Tokens.shellInset, 0.0)
 
     /// 已渲染的卡片，按身份缓存。
     ///
@@ -301,36 +188,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     let mutable streamSlot: (obj * CardKey * Wanxiang2.MarkdownView.MarkdownStream) option = None
     let mutable streamGeneration = 0
 
-    let scrollToBottomButton = Ui.iconButtonAccent Icons.arrowDown "回到最新"
-    let scrollToBottomLabel =
-        TextBlock(
-            Text = "回到最新",
-            FontSize = Tokens.fontSmall,
-            Foreground = Tokens.textOnAccent,
-            FontWeight = FontWeight.Medium,
-            VerticalAlignment = VerticalAlignment.Center)
-    let scrollToBottomIcon = Icons.arrowDown Tokens.textOnAccent
-    let scrollToBottomContent =
-        let panel = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
-        panel.Children.Add scrollToBottomIcon
-        panel.Children.Add scrollToBottomLabel
-        panel
-    /// 贴底跟随、「回到最新」意图、未读数、上一帧条数与流式、定位钉住归 ScrollFollow。
-    let follow = ScrollFollow()
-    let mutable smoothScrollTimer: DispatcherTimer option = None
-
-    /// 当前「上一条 / 下一条」跳转锚点：用户消息卡的身份。
-    /// None 表示还没跳转过，此时以当前所在的那一轮问答为基准（kelivo 的
-    /// jump-to-question 语义；见 currentExchangeIndex）。
-    let jump = ExchangeJump<CardKey>()
-    /// 决策 460：定位钉住的目标卡。钉住期间布局再变（分页前置、卡片晚量高、重绘）都按它的当前位置重新对齐，
-    /// 而不是只在发起时量一次 Bounds——满载 CI 上量早了就会停在旧底部。
+    /// 决策 460：定位钉住的目标卡。钉住期间布局再变都按它的当前位置重新对齐。
     let mutable revealTarget: Control option = None
-    /// 平滑滚动的补间与最近一次动画写入的偏移归 ScrollTween。ScrollChanged 据此区分「动画自己往上走」和「用户往上滚」：
-    /// 向上的动画（定位到更早的消息、回到顶部）每一帧都是负增量，若当成用户手势就会在第一帧把自己打断（v4 走查）。
-    let tween = ScrollTween()
     let mutable headerBar: Border = Unchecked.defaultof<Border>
-    let mutable pendingHistoryAnchor: (float * float) option = None
     /// 决策 293：打开长对话只挂尾部一个窗口的卡片（首屏只排这几十张），
     /// 往上滚到窗口顶再把已在本机的更早消息挂上来（与分页同一套 prepend 锚点），本机挂完了才向主机要更早一页。
     /// 搜索命中 / 消息链接指向窗口外的消息时，窗口直接扩到那条。
@@ -368,42 +228,17 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         |> Option.orElseWith (fun () -> List.tryHead cards)
         |> Option.defaultValue 0
 
-    /// 把某张用户卡平滑带到视口顶部：目标卡片尽量完整可见，不被输入区挡住。
+    /// 「回到最新」浮钮随 follow 状态重画（ChatPane 没有公开的刷新入口，SetCompact 会重算一次）。
+    let refreshLatest () = pane.SetCompact compactMode
+
+    /// 把某张用户卡平滑带到视口顶部：目标卡片尽量完整可见，不被输入区挡住。每帧按卡片当前位置取目标（决策 460）。
     let smoothScrollToCard (child: Control) =
-        // 与 SmoothScrollToEnd 同一条曲线、同一帧节拍；只换目标点。
-        // 计时器登记到 smoothScrollTimer：连按「上一条 / 下一条」或动画途中滚轮，
-        // 旧动画必须先停，否则两个动画都在写 Offset.Y，画面跟着两个目标打架。
-        let stopSmoothScroll () =
-            smoothScrollTimer |> Option.iter (fun t -> t.Stop())
-            smoothScrollTimer <- None
         let targetOf () = max 0.0 (child.Bounds.Y - Spacing.space3xl)
-        let target = targetOf ()
-        if not (tween.Start(DateTimeOffset.UtcNow, scroller.Offset.Y, target, MotionPolicy.isReduced ())) then
-            scroller.Offset <- Vector(scroller.Offset.X, target)
-        else
-            stopSmoothScroll ()
-            let timer = new DispatcherTimer(Interval = MotionLedger.smoothScrollFrame)
-            timer.Tick.Add(fun _ ->
-                // 每帧按卡片当前位置取目标：动画途中布局变了也落在卡片上（决策 460）。
-                match tween.Frame(DateTimeOffset.UtcNow, targetOf ()) with
-                | ScrollFrame.Done target ->
-                    stopSmoothScroll ()
-                    tween.Pin target
-                    scroller.Offset <- Vector(scroller.Offset.X, target)
-                | ScrollFrame.Offset newY ->
-                    scroller.Offset <- Vector(scroller.Offset.X, newY))
-            smoothScrollTimer <- Some timer
-            timer.Start()
+        if not (pane.Scroller.SmoothTo(targetOf, ignore, ignore)) then pane.Scroller.SetOffset(targetOf ())
 
-
-    /// 阅读导航的端点状态。菜单与快捷键共用锚点，不再为不可用动作预留顶栏按钮。
+    /// 阅读导航的端点状态（规则见 ExchangeJump）。
     let syncExchangeNavState () =
-        let cards = exchangeIndices ()
-        // 贴底时没有「下一条」；窗口外或主机上还有更早消息时「上一轮」永远可用（决策 300）。规则见 ExchangeJump。
-        let hasPrev, hasNext = jump.NavState(mounted, cards, currentExchangeIndex (), follow.AtBottom, mountWindow.HiddenCount > 0)
-        canJumpPrevious <- hasPrev
-        canJumpNext <- hasNext
-
+        pane.RefreshJumps(mounted, exchangeIndices (), currentExchangeIndex (), mountWindow.HiddenCount > 0)
 
     do
         generatingChip.Child <-
@@ -595,8 +430,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.SetCanStop(value: bool) =
         canStop <- value
 
-    member _.CanJumpPrevious = canJumpPrevious
-    member _.CanJumpNext = canJumpNext
+    member _.CanJumpPrevious = pane.Nav.CanJumpPrevious
+    member _.CanJumpNext = pane.Nav.CanJumpNext
 
     member this.ConfigureMenu(overlay: OverlayHost, exportConversation: unit -> unit) =
         showMore <- fun anchor ->
@@ -611,9 +446,9 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
                   | None -> ()
                   MenuEntry.create "导出（Markdown / JSON）…" exportConversation |> MenuEntry.withIcon Icons.download ]
             let reading =
-                [ if canJumpPrevious then
+                [ if pane.Nav.CanJumpPrevious then
                       MenuEntry.create "上一条提问" (fun () -> this.JumpExchange -1) |> MenuEntry.withIcon Icons.chevronsUp
-                  if canJumpNext then
+                  if pane.Nav.CanJumpNext then
                       MenuEntry.create "下一条提问" (fun () -> this.JumpExchange 1) |> MenuEntry.withIcon Icons.chevronsDown
                   if messagePanel.Children.Count > 0 then
                       MenuEntry.create "回到对话开头" (fun () -> this.SmoothScrollToBeginning()) ]
@@ -759,8 +594,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         | Some _ ->
             follow.Pin()
             // 分页前置的锚点恢复会把偏移写回旧位置，这里的目标位置优先
-            pendingHistoryAnchor <- None
-            this.UpdateScrollToBottomAppearance()
+            pane.Scroller.CancelPrependAnchor()
+            refreshLatest ()
             // 卡片刚挂上时 Bounds 还没量好：等一次布局再量（按身份重新找，期间卡片序可能变）。
             Dispatcher.UIThread.Post(
                 (fun () ->
@@ -777,104 +612,48 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     member this.SetCompactMode(value: bool) =
         compactMode <- value
         let size = if value then LayoutPolicy.compactActionTarget else Tokens.iconButton
-        for button in [ sidebarToggleButton; moreButton; scrollToBottomButton ] do
+        for button in [ sidebarToggleButton; moreButton ] do
             Ui.setSquareTarget button size
+        pane.SetCompact value
         moreButton.IsVisible <- hasConversationChrome
         // 手机窄屏：芯片收窄但不收起——标题可以截断，当前模型不能看不见。
         headerModelCaption.MaxWidth <- if value then 120.0 else 220.0
         headerModelChip.MinHeight <- if value then LayoutPolicy.compactActionTarget else 0.0
-        this.UpdateScrollToBottomAppearance()
         this.SyncGeneratingChipVisibility()
 
     /// 空态标题靠近输入区；只改布局，不移除或重挂输入控件。
-    member _.SetStartMode(value: bool) =
-        emptyPanel.VerticalAlignment <- if value then VerticalAlignment.Bottom else VerticalAlignment.Center
-        emptyPanel.Margin <- Thickness(Spacing.space2xl, 0.0, Spacing.space2xl, Spacing.space2xl)
+    member _.SetStartMode(value: bool) = pane.Empty.SetBottomAligned value
 
     /// 起手式的去处（通常是 Composer.SetText）；不设则空态不显示起手式。
     member _.SetStarterHandler(pick: string -> unit) =
-        starterPick <- Some pick
-        lastEmptyState <- None
+        pane.Empty.SetStarters ChatStarters.items
+        pane.Empty.SetStarterPick(Some pick)
 
-    /// 决策 433：空态的预设芯片（名称, 说明, 套用）。列表变化时下次 ShowEmpty 重建。
+    /// 决策 433：空态的预设芯片（名称, 说明, 套用）。
     member _.SetPresetStarters(items: (string * string * (unit -> unit)) list) =
-        let names l = l |> List.map (fun (n, d, _) -> n, d)
-        if names items <> names presetStarters then lastEmptyState <- None
-        presetStarters <- items
+        presetStarterCount <- items.Length
+        pane.Empty.SetPresets items
 
-    member _.PresetStarterCount = presetStarters.Length
+    member _.PresetStarterCount = presetStarterCount
 
     member _.SetSavePresetAction(action: (unit -> unit) option) = savePresetAction <- action
 
     member this.ShowEmpty(state: ChatEmptyState, onPrimary: (string * (unit -> unit)) option) =
-        match onPrimary with
-        | Some(_, action) -> currentPrimaryAction <- action
-        | None -> currentPrimaryAction <- ignore
-        let primaryLabel = onPrimary |> Option.map fst
-        let currentStateKey = (state, primaryLabel)
-        if lastEmptyState <> Some currentStateKey then
-            lastEmptyState <- Some currentStateKey
-            let title, hint = ChatEmptyText.text state
-            match onPrimary with
-            | Some(label, _) ->
-                Ui.setButtonText emptyActionButton label
-                ToolTip.SetTip(emptyActionButton, label)
-                Avalonia.Automation.AutomationProperties.SetName(emptyActionButton, label)
-                Avalonia.Automation.AutomationProperties.SetHelpText(emptyActionButton, label)
-                emptyActionButton.IsVisible <- true
-            | None -> emptyActionButton.IsVisible <- false
-            match emptyActionButton.Parent with
-            | :? Panel as panel -> panel.Children.Remove emptyActionButton |> ignore
-            | _ -> ()
-            emptyPanel.Children.Clear()
-            match state with
-            | NoConversation | EmptyConversation ->
-                emptyPanel.Children.Add(
-                    Ui.conversationPrompt title hint (onPrimary |> Option.map (fun _ -> emptyActionButton)))
-                if not (List.isEmpty presetStarters) then emptyPanel.Children.Add(presetRow ())
-                if starterPick.IsSome then emptyPanel.Children.Add(starterRow ())
-            | NotConnected | ConnectionFailed _ | NoProvider ->
-                let logo = brandLogo Tokens.logoEmpty
-                logo.HorizontalAlignment <- HorizontalAlignment.Center
-                emptyPanel.Children.Add(
-                    Ui.emptyStateWith true logo (Some title) hint None (Some emptyActionButton))
-        emptyPanel.HorizontalAlignment <- HorizontalAlignment.Center
-        emptyPanel.IsVisible <- true
-        scroller.IsVisible <- false
-        this.HideSkeletonLoading()
+        let logo = brandLogo Tokens.logoEmpty
+        logo.HorizontalAlignment <- HorizontalAlignment.Center
+        pane.ShowEmpty(state, logo, onPrimary)
         messagePanel.IsVisible <- false
 
     /// 在空态位置放一块自带交互的内容（首次运行的「连接一个模型」卡片）。
-    /// 只换 emptyPanel 的子项，不动滚动区与输入控件。
     member this.ShowEmbeddedEmpty(content: Control) =
-        lastEmptyState <- None
-        currentPrimaryAction <- ignore
-        emptyActionButton.IsVisible <- false
-        let alreadyHosted = emptyPanel.Children.Count = 1 && obj.ReferenceEquals(emptyPanel.Children[0], content)
-        if not alreadyHosted then
-            match content.Parent with
-            | :? Panel as panel -> panel.Children.Remove content |> ignore
-            | _ -> ()
-            emptyPanel.Children.Clear()
-            emptyPanel.Children.Add content
-        // 内嵌卡片（首次连接）按列宽拉伸到 MaxWidth：Center 让宽度跟内容走，
-        // 出现一行错误提示整张卡就变宽。
-        emptyPanel.HorizontalAlignment <- HorizontalAlignment.Stretch
-        emptyPanel.IsVisible <- true
-        scroller.IsVisible <- false
-        this.HideSkeletonLoading()
+        pane.ShowEmbedded content
+        pane.HideSkeleton()
         messagePanel.IsVisible <- false
 
     member this.HideEmpty() =
-        lastEmptyState <- None
-        currentPrimaryAction <- ignore
-        emptyActionButton.IsVisible <- false
-        // 每次重绘都会经过这里：定位（搜索命中 / 版本切换）刚把视口钉在目标消息上时不能复位，
-        // 否则紧随其后的重绘把 follow.AtBottom 改回 true、停掉滚动动画，视口又被拉回底部（v4 走查）。
-        // 换对话由 AppShell.SelectConversation 显式复位。
+        // 定位（搜索命中 / 版本切换）刚把视口钉在目标消息上时不能复位（v4 走查）；换对话由 AppShell 显式复位。
         if not follow.RevealPinned then this.ResetScrollState()
-        emptyPanel.IsVisible <- false
-        scroller.IsVisible <- true
+        pane.HideEmpty()
         messagePanel.IsVisible <- true
 
     /// 重置滚动到底状态与未读计数（换对话、加载骨架或切换视图时调用）。
@@ -884,7 +663,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     /// 决策 300：主机上是否还有更早的历史页。没有了就撤掉挂起的「上一轮」。
     member _.SetOlderAvailable(value: bool) =
-        jump.SetOlderAvailable value
+        pane.SetOlderAvailable value
         syncExchangeNavState ()
 
     member _.PendingJumpPrevious = jump.PendingPrevious
@@ -892,19 +671,13 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
     /// 决策 310：更早一页取失败（超时 / 断线 / 主机拒绝）。挂起的「上一轮」撤掉，
     /// 消息区顶部给一句原因和「重试」；重试由调用方重新发页请求。
     member _.ShowOlderPageFailure(message: string, retry: unit -> unit) =
-        jump.OlderFailed()
-        olderRetry <- (fun () ->
-            olderFailureBanner.IsVisible <- false
-            retry ())
-        olderFailureText.Text <- message
-        Avalonia.Automation.AutomationProperties.SetName(olderFailureText, message)
-        olderFailureBanner.IsVisible <- true
+        pane.ShowOlderFailure(message, retry)
         syncExchangeNavState ()
 
-    member _.HideOlderPageFailure() = olderFailureBanner.IsVisible <- false
-    member _.OlderPageFailureVisible = olderFailureBanner.IsVisible
-    member _.OlderPageFailureText = olderFailureText.Text
-    member _.OlderPageRetryButton = olderRetryButton
+    member _.HideOlderPageFailure() = pane.HideOlderFailure()
+    member _.OlderPageFailureVisible = pane.Nav.OlderFailureVisible
+    member _.OlderPageFailureText = pane.Nav.OlderFailureText
+    member _.OlderPageRetryButton = pane.Nav.RetryButton
 
     /// 当前因窗口未挂载的已加载消息数（测试 / 诊断用）
     member _.HiddenMessageCount = mountWindow.HiddenCount
@@ -925,144 +698,26 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
     member this.ResetScrollState() =
         mountWindow.Reset()
-        follow.Reset()
         revealTarget <- None
-        smoothScrollTimer |> Option.iter (fun t -> t.Stop())
-        smoothScrollTimer <- None
         // 锚点跟着对话一起丢：换对话后旧锚引用的卡片已不在面板上。
-        jump.Reset()
-        olderFailureBanner.IsVisible <- false
-        this.UpdateScrollToBottomAppearance()
+        pane.Reset()
+        pane.HideOlderFailure()
         syncExchangeNavState ()
-    /// 停止骨架呼吸动画。
-    member private this.StopSkeletonBreathing() =
-        skeletonTimer |> Option.iter (fun t -> t.Stop())
-        skeletonTimer <- None
-        skeletonPanel.Opacity <- if skeletonPanel.IsVisible && MotionPolicy.isReduced () then Tokens.skeletonOpacityReduced else 1.0
-
-    /// 启动骨架呼吸动画（低频平滑透明度呼吸）。
-    member private this.StartSkeletonBreathing() =
-        skeletonTimer |> Option.iter (fun t -> t.Stop())
-        skeletonTimer <- None
-        if MotionPolicy.isReduced () then
-            skeletonPanel.Opacity <- Tokens.skeletonOpacityReduced
-        elif not attached then
-            // 尚未挂载到视觉树时不启动计时器；挂载时若骨架仍可见会触发
-            skeletonPanel.Opacity <- Tokens.skeletonOpacityReduced
-        elif breath.Start(false, true) then
-            let timer = new DispatcherTimer(Interval = MotionLedger.skeletonBreathFrame)
-            timer.Tick.Add(fun _ ->
-                // 0.55 ~ 0.95 之间的平滑呼吸（相位归 BreathPhase）
-                skeletonPanel.Opacity <- breath.Step())
-            timer.Start()
-            skeletonTimer <- Some timer
-
-    member private this.RefreshSkeletonMotion() =
-        if skeletonPanel.IsVisible then
-            if MotionPolicy.isReduced () then
-                this.StopSkeletonBreathing()
-                skeletonPanel.Opacity <- Tokens.skeletonOpacityReduced
-            elif attached then
-                this.StartSkeletonBreathing()
-
-    /// 构建骨架屏占位内容：
-    /// Assistant (头像 + 多行正文条) -> User (右对齐气泡) -> Assistant (头像 + 多行正文条)
-    member private this.EnsureSkeletonBuilt() =
-        if skeletonPanel.Children.Count = 0 then
-            Avalonia.Automation.AutomationProperties.SetName(skeletonPanel, "正在加载历史消息")
-            let makeTextBar (height: float) (widthFraction: float) =
-                let border =
-                    Border(
-                        Height = height,
-                        CornerRadius = CornerRadius Spacing.Radius.sm,
-                        Background = Tokens.borderSoft,
-                        Opacity = Tokens.skeletonOpacityBase,
-                        HorizontalAlignment = HorizontalAlignment.Stretch)
-                let colStar = widthFraction
-                let colRest = max 0.01 (1.0 - widthFraction)
-                let grid = Grid(HorizontalAlignment = HorizontalAlignment.Stretch)
-                grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(colStar, GridUnitType.Star)))
-                grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(colRest, GridUnitType.Star)))
-                Grid.SetColumn(border, 0)
-                grid.Children.Add border
-                grid :> Control
-
-            let makeAssistantSkeleton (lineFractions: (float * float) list) =
-                let avatar =
-                    Border(
-                        Width = ControlMetrics.skeletonAvatarSize,
-                        Height = ControlMetrics.skeletonAvatarSize,
-                        CornerRadius = CornerRadius Spacing.Radius.pill,
-                        Background = Tokens.borderSoft,
-                        VerticalAlignment = VerticalAlignment.Top,
-                        Margin = Thickness(0.0, 0.0, Spacing.spaceXl, 0.0),
-                        Opacity = Tokens.skeletonOpacityReduced)
-                let lines = StackPanel(Orientation = Orientation.Vertical, Spacing = Spacing.spaceMd, HorizontalAlignment = HorizontalAlignment.Stretch)
-                for (h, w) in lineFractions do
-                    lines.Children.Add(makeTextBar h w)
-                let dock = DockPanel(LastChildFill = true, HorizontalAlignment = HorizontalAlignment.Stretch)
-                DockPanel.SetDock(avatar, Dock.Left)
-                dock.Children.Add avatar
-                dock.Children.Add lines
-                Avalonia.Automation.AutomationProperties.SetName(dock, "正在加载助手消息")
-                dock :> Control
-
-            let makeUserSkeleton () =
-                let bubble =
-                    Border(
-                        // 与真实用户气泡同一 chrome：hairlineStrong 细描边，
-                        // 骨架换成真卡时轮廓不变，不产生跳变。
-                        Background = Tokens.borderSoft,
-                        BorderBrush = Tokens.hairlineStrong,
-                        BorderThickness = Thickness ControlMetrics.borderWidth,
-                        CornerRadius = CornerRadius(Spacing.Radius.lg, Spacing.Radius.lg, Spacing.Radius.sm, Spacing.Radius.lg),
-                        Width = 260.0,
-                        Height = 40.0,
-                        Opacity = Tokens.skeletonOpacityBreathMin,
-                        HorizontalAlignment = HorizontalAlignment.Right)
-                let avatar =
-                    Border(
-                        Width = ControlMetrics.skeletonAvatarSize,
-                        Height = ControlMetrics.skeletonAvatarSize,
-                        CornerRadius = CornerRadius Spacing.Radius.pill,
-                        Background = Tokens.borderSoft,
-                        VerticalAlignment = VerticalAlignment.Top,
-                        Margin = Thickness 0.0,
-                        Opacity = Tokens.skeletonOpacityBreathMin)
-                let stack = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceXl, HorizontalAlignment = HorizontalAlignment.Right)
-                stack.Children.Add bubble
-                stack.Children.Add avatar
-                Avalonia.Automation.AutomationProperties.SetName(stack, "正在加载用户消息")
-                stack :> Control
-
-            // 助手骨架 1
-            skeletonPanel.Children.Add(makeAssistantSkeleton [ (14.0, 0.45); (13.0, 0.85); (13.0, 0.70); (13.0, 0.35) ])
-            // 用户骨架
-            skeletonPanel.Children.Add(makeUserSkeleton ())
-            // 助手骨架 2
-            skeletonPanel.Children.Add(makeAssistantSkeleton [ (14.0, 0.60); (13.0, 0.90); (13.0, 0.75); (13.0, 0.50) ])
 
     /// 显示骨架屏（换对话或初次加载中，替代空白屏与“加载中…”）
     member this.ShowSkeletonLoading() =
         this.ResetScrollState()
-        this.EnsureSkeletonBuilt()
-        lastEmptyState <- None
-        emptyPanel.IsVisible <- false
+        pane.HideEmpty()
         messagePanel.IsVisible <- false
-        scroller.IsVisible <- true
-        skeletonPanel.IsVisible <- true
-        scroller.Content <- skeletonPanel
-        this.StartSkeletonBreathing()
+        pane.ShowSkeleton()
 
     /// 隐藏骨架屏
     member this.HideSkeletonLoading() =
-        if skeletonPanel.IsVisible then
-            this.StopSkeletonBreathing()
-            skeletonPanel.IsVisible <- false
-            scroller.Content <- messagePanel
+        if pane.Skeleton.IsShown then
+            pane.HideSkeleton()
             messagePanel.IsVisible <- true
 
-    member this.IsSkeletonVisible: bool = skeletonPanel.IsVisible
+    member this.IsSkeletonVisible: bool = pane.Skeleton.IsShown
     member this.IsMessagePanelVisible: bool = messagePanel.IsVisible
 
     /// 重绘全部消息。流式期间由 `streamingMessage` 追加一条临时消息。
@@ -1151,7 +806,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
 
         // 决策 293：只挂尾部窗口。分页回来的更早一页（prepend 锚点在途、首条变了）整页挂上——
         // 那是用户滚到顶要看的内容。
-        let firstMounted = mountWindow.Plan(merged |> List.map (fun m -> m.commitId), pendingHistoryAnchor.IsSome)
+        let firstMounted = mountWindow.Plan(merged |> List.map (fun m -> m.commitId), pane.Scroller.PrependAnchorPending)
         rerenderLast <- fun () ->
             this.RenderMessages(messages, streamingMessage, error, fontSize, autoCollapseReasoning, usage, missingAttachments)
         merged
@@ -1248,41 +903,8 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             Dispatcher.UIThread.Post((fun () -> this.JumpExchange -1), DispatcherPriority.ContextIdle)
 
         // 窗口外未挂载的消息也算条数（决策 293）；分页前置与流式占位不记未读，流式收尾补记一条。规则见 ScrollFollow。
-        match follow.Rendered(streamingMessage.IsSome, desired.Count + firstMounted, pendingHistoryAnchor.IsSome) with
-        | RenderFollow.ScrollToEnd -> this.ScrollToEndDeferred()
-        | RenderFollow.Keep -> this.UpdateScrollToBottomAppearance()
-
-    member private this.UpdateScrollToBottomAppearance() =
-        let extent = scroller.Extent.Height
-        let viewport = scroller.Viewport.Height
-        scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Spacing.space3xl, Spacing.space2xl)
-        let view = follow.Button(extent > viewport + ContentMetrics.scrollBottomRevealThreshold, compactMode)
-        scrollToBottomButton.IsVisible <- view.visible
-        scrollToBottomLabel.Text <- view.text
-        scrollToBottomLabel.IsVisible <- view.showLabel
-        ToolTip.SetTip(scrollToBottomButton, view.text)
-        Avalonia.Automation.AutomationProperties.SetName(scrollToBottomButton, view.text)
-        if follow.AtBottom then
-            let size = if compactMode then LayoutPolicy.compactActionTarget else Tokens.iconButton
-            Ui.setSquareTarget scrollToBottomButton size
-            scrollToBottomButton.Padding <- Thickness 0.0
-        else
-            if follow.Unread > 0 then
-                if compactMode then
-                    let size = LayoutPolicy.compactActionTarget
-                    Ui.setSquareTarget scrollToBottomButton size
-                    scrollToBottomButton.Padding <- Thickness 0.0
-                else
-                    let height = Tokens.iconButton
-                    scrollToBottomButton.Width <- Double.NaN
-                    scrollToBottomButton.MinWidth <- ControlMetrics.scrollToBottomMinWidth
-                    scrollToBottomButton.Height <- height
-                    scrollToBottomButton.MinHeight <- height
-                    scrollToBottomButton.Padding <- Thickness(Spacing.spaceXl, 0.0, Spacing.space2xl, 0.0)
-            else
-                let size = if compactMode then LayoutPolicy.compactActionTarget else Tokens.iconButton
-                Ui.setSquareTarget scrollToBottomButton size
-                scrollToBottomButton.Padding <- Thickness 0.0
+        // ChatPane 约定：渲染后同步调用、先于布局，否则贴底跟随会失效。
+        pane.Rendered(streamingMessage.IsSome, desired.Count + firstMounted, pane.Scroller.PrependAnchorPending)
 
     /// 丢弃卡片缓存，下一次重绘全部重建。
     ///
@@ -1292,150 +914,60 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         deck.Clear()
         mounted <- [||]
 
-    /// 滚到底必须等布局把新内容的高度算进 Extent，否则会停在旧的底部，
-    /// 末条消息（例如带「重试」按钮的错误卡片）就被输入区挡住。
-    member this.ScrollToEndDeferred() =
-        let rec attempt (remaining: int) =
-            Dispatcher.UIThread.Post(
-                (fun () ->
-                    if not follow.RevealPinned then scroller.ScrollToEnd()
-                    if remaining > 0 then attempt (remaining - 1)),
-                DispatcherPriority.Background)
-        attempt 3
+    /// 滚到底必须等布局把新内容的高度算进 Extent（定位钉住时不滚）。
+    member this.ScrollToEndDeferred() = pane.Scroller.ScrollToEndDeferred(fun () -> follow.RevealPinned)
 
     member this.ScrollToEnd() = this.ScrollToEndDeferred()
 
-    /// 平滑滚动到顶部：与 SmoothScrollToEnd 同一条曲线、同一帧节拍，只换目标点。
-    ///
-    /// 为什么不能只写 Offset <- 0：ctrl+Home 常连着一次「看一下最早那个提问」的意图，
-    /// 直接从数万像素高处瞬移会让用户失去当前位置感，平滑上滚与既有的「回到最新」
-    /// 体感一致。Reduced motion 下退化为瞬移，与 ScrollToEndDeferred 同口径。
-    ///
-    /// 锚点同样在这里作废：这条路径也是用户意图入口（快捷键走的就是它），
-    /// 理由见 ScrollToBeginning。
+    /// 平滑滚动到顶部：与「回到最新」同一条曲线；减弱动效下退化为瞬移。锚点作废。
     member this.SmoothScrollToBeginning() =
         jump.ClearAnchor()
-        // 一离开底部就不再是「贴底」：否则整个上滚过程里「回到最新」一直藏着，
-        // 用户中途改主意只能继续滚。与 ScrollChanged 里 nowAtBottom 同一个判据的方向。
         follow.LeaveForBeginning()
-        smoothScrollTimer |> Option.iter (fun t -> t.Stop())
-        smoothScrollTimer <- None
-        let reduced = MotionPolicy.isReduced ()
-        if not (tween.Start(DateTimeOffset.UtcNow, scroller.Offset.Y, 0.0, reduced)) then
-            if reduced then this.ScrollToBeginningDeferred()
-            else this.UpdateScrollToBottomAppearance()
-        else
-                let timer = new DispatcherTimer(Interval = MotionLedger.smoothScrollFrame)
-                timer.Tick.Add(fun _ ->
-                    match tween.Frame(DateTimeOffset.UtcNow, 0.0) with
-                    | ScrollFrame.Done _ ->
-                        timer.Stop()
-                        smoothScrollTimer <- None
-                        scroller.Offset <- Vector(scroller.Offset.X, 0.0)
-                        this.UpdateScrollToBottomAppearance()
-                    | ScrollFrame.Offset newY ->
-                        // 同一 easeOutCubic：上滚与下滚共享同一条曲线，端点两条路手感不劈叉。
-                        scroller.Offset <- Vector(scroller.Offset.X, newY)
-                        this.UpdateScrollToBottomAppearance())
-                smoothScrollTimer <- Some timer
-                timer.Start()
+        pane.Scroller.StopSmooth()
+        if not (pane.Scroller.SmoothTo((fun () -> 0.0), refreshLatest, fun _ -> refreshLatest ())) then
+            if pane.Scroller.Reduced then this.ScrollToBeginningDeferred()
+            else refreshLatest ()
+        else refreshLatest ()
 
-    /// 滚到顶必须等布局把新内容的高度算进 Extent：与 ScrollToEndDeferred 对称地重试几次，
-    /// 否则 prepend 的更早历史刚到那一帧还会停在旧顶端。
-    member this.ScrollToBeginningDeferred() =
-        let rec attempt (remaining: int) =
-            Dispatcher.UIThread.Post(
-                (fun () ->
-                    scroller.ScrollToHome()
-                    if remaining > 0 then attempt (remaining - 1)),
-                DispatcherPriority.Background)
-        attempt 3
+    member this.ScrollToBeginningDeferred() = pane.Scroller.ScrollToHomeDeferred()
 
-    /// 用户意图入口：回到对话开头。
-    ///
-    /// 与 Deferred/Smooth 两兄弟的分工同 ScrollToEnd：这个成员是「用户说要回到开头」，
-    /// 因此把阅读位置相关的状态一起收口——锚点作废，让接下来的「上一条 / 下一条」
-    /// 从新的视口重新起算。留着旧锚点会让导航从半途那轮开始，看起来像跳过了
-    /// 用户刚刚翻过去的内容。
-    ///
-    /// 锚点只能在这一层清：Deferred 那层被自动跟随（每个流式 delta）反复调用，
-    /// 在那里清等于每次接收都丢锚点。
+    /// 用户意图入口：回到对话开头；阅读锚点只在这一层清。
     member this.ScrollToBeginning() =
         jump.ClearAnchor()
         this.ScrollToBeginningDeferred()
 
     /// 平滑滚动到底部
     member this.SmoothScrollToEnd() =
-        follow.ReturnToLatest()
         revealTarget <- None
-        smoothScrollTimer |> Option.iter (fun t -> t.Stop())
-        smoothScrollTimer <- None
-        this.UpdateScrollToBottomAppearance()
-        let reduced = MotionPolicy.isReduced ()
-        let maxTarget = max 0.0 (scroller.Extent.Height - scroller.Viewport.Height)
-        if not (tween.Start(DateTimeOffset.UtcNow, scroller.Offset.Y, maxTarget, reduced)) then
-            if reduced then this.ScrollToEndDeferred()
-            else
-                follow.Arrived()
-                this.ScrollToEndDeferred()
-                this.UpdateScrollToBottomAppearance()
-        else
-                let timer = new DispatcherTimer(Interval = MotionLedger.smoothScrollFrame)
-                timer.Tick.Add(fun _ ->
-                    let target = max 0.0 (scroller.Extent.Height - scroller.Viewport.Height)
-                    // 目标 ≤ 0（内容不足一屏）时宿主自己收尾（旧判据）。
-                    if target <= 0.0 then tween.Cancel()
-                    match tween.Frame(DateTimeOffset.UtcNow, target) with
-                    | ScrollFrame.Done _ ->
-                        timer.Stop()
-                        smoothScrollTimer <- None
-                        follow.Arrived()
-                        scroller.ScrollToEnd()
-                        this.UpdateScrollToBottomAppearance()
-                    | ScrollFrame.Offset newY ->
-                        scroller.Offset <- Vector(scroller.Offset.X, newY))
-                smoothScrollTimer <- Some timer
-                timer.Start()
+        pane.ScrollToLatest()
 
-    /// 加载更早历史前记录当前滚动几何。分页是 prepend，不保留 anchor 的话
-    /// 新内容一插到顶部，用户正在读的那条消息会瞬间跳出视口。
-    member _.BeginHistoryPrependAnchor() =
-        pendingHistoryAnchor <- Some(scroller.Extent.Height, scroller.Offset.Y)
+    /// 分页前置的滚动锚点（ChatScroller）。
+    member _.BeginHistoryPrependAnchor() = pane.Scroller.BeginPrependAnchor()
+    member _.RestoreHistoryPrependAnchorDeferred() = pane.Scroller.RestorePrependAnchorDeferred()
+    member _.CancelHistoryPrependAnchor() = pane.Scroller.CancelPrependAnchor()
 
-    /// HistoryPage 已写入 state 并完成 RenderMessages 后调用。用 extent 增量补偿
-    /// prepend 的新增高度，让原先 viewport 内的内容保持在原来的屏幕位置。
-    member _.RestoreHistoryPrependAnchorDeferred() =
-        match pendingHistoryAnchor with
-        | None -> ()
-        | Some(oldExtent, oldOffset) ->
-            pendingHistoryAnchor <- None
-            Dispatcher.UIThread.Post(
-                (fun () ->
-                    let delta = max 0.0 (scroller.Extent.Height - oldExtent)
-                    let target = max 0.0 (oldOffset + delta)
-                    scroller.Offset <- Vector(scroller.Offset.X, target)),
-                DispatcherPriority.Background)
+    /// 测试读：消息列滚动区、消息插槽与「回到最新」浮钮。
+    member _.MessageScroller: ScrollViewer = scroller
+    member _.MessagesPanel: StackPanel = messagePanel
+    member _.LatestButton = pane.Scroller.LatestButton
 
-    member _.CancelHistoryPrependAnchor() = pendingHistoryAnchor <- None
+    /// 平滑滚动是否在进行（测试读）。
+    member _.IsSmoothScrolling = pane.Scroller.IsSmoothing
 
     /// 跳转到上一条 / 下一条用户提问。`direction` < 0 向上，> 0 向下。
     /// 锚点语义与 kelivo 一致：跳过一次之后箭头就跟着锚点走，不再受当前滚动位置影响，
     /// 连续按「上一条」能一排排往回翻。
     member this.JumpExchange(direction: int) =
         let cards = exchangeIndices ()
-        match jump.Jump(direction, mounted, cards, currentExchangeIndex (), mountWindow.HiddenCount > 0, mountWindow.LastFirstCommit) with
+        match pane.Jump(direction, mounted, cards, currentExchangeIndex (), mountWindow.HiddenCount > 0, mountWindow.LastFirstCommit) with
         | JumpStep.ExpandAndRetry ->
-            // 决策 300：本机已加载、只是没挂载——先挂上一步再续跳（锚点不变，索引随之后移）。
+            // 决策 300：本机已加载、只是没挂载——先挂上一步再续跳。
             if this.ExpandMountWindow() then this.JumpExchange direction
         | JumpStep.RequestOlder -> actions.requestOlderHistory ()
-        | JumpStep.ScrollTo(index, toBottom) ->
-            if index < messagePanel.Children.Count then
-                smoothScrollToCard messagePanel.Children.[index]
-            // 跳转离开底部：新回复不该把用户从正在看的历史里拽走。
-            follow.JumpedTo toBottom
-            this.UpdateScrollToBottomAppearance()
+        | JumpStep.ScrollTo(index, _) ->
+            // ChatPane 已停旧动画并记下跳转；宿主把那张卡滚进视口。
+            if index < messagePanel.Children.Count then smoothScrollToCard messagePanel.Children.[index]
         | JumpStep.Stay -> ()
-        // 顶按钮的可用态随时跟着收敛：跳转后可能已经到了端点。
         syncExchangeNavState ()
 
     member this.Build() =
@@ -1528,96 +1060,29 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         let header = headerBar
 
 
-        // 让 Avalonia 的 ContentPresenter 完成 reading column 的收缩/拉伸；
-        // `MaxWidth + Stretch` 取代手工监听 Viewport 后写 Width，避免 resize/scale 时
-        // 维护第二套宽度同步逻辑。
-        scroller.Content <- messagePanel
-        // 水平留白按实时宽度取档：首调对齐当前档位，之后仅宽度跨断档时重写。
-        // 订阅 ChatView 自身 Bounds（headerBar 已在前文赋值），一次刷新顶栏与滚动区。
         this.ApplyHorizontalInsets()
         this.PropertyChanged.Add(fun args ->
             if args.Property = Visual.BoundsProperty then this.ApplyHorizontalInsets())
-        scroller.ScrollChanged.Add(fun e ->
+        pane.Scroller.Scrolled.Add(fun note ->
             // 决策 460：钉住期间内容高度变了（不是用户在滚）→ 把目标卡重新对齐到顶部。
-            // 动画进行中由动画每帧自己对齐，这里只管动画结束之后的布局漂移。
             match revealTarget with
-            | Some child when follow.RevealPinned && smoothScrollTimer.IsNone && abs e.ExtentDelta.Y > 0.1 ->
+            | Some child when follow.RevealPinned && not pane.Scroller.IsSmoothing && abs note.ExtentDelta > 0.1 ->
                 if isNull child.Parent then revealTarget <- None
                 else
                     let target = max 0.0 (child.Bounds.Y - Spacing.space3xl)
-                    if abs (scroller.Offset.Y - target) > 1.0 then
-                        tween.Pin target
-                        scroller.Offset <- Vector(scroller.Offset.X, target)
+                    if abs (scroller.Offset.Y - target) > 1.0 then pane.Scroller.SetOffset target
             | _ -> ()
-            let extent = scroller.Extent.Height
-            let viewport = scroller.Viewport.Height
-            let offset = scroller.Offset.Y
-            // 用户手动向上滚动（或滚轮/触控向上拉），立即打断平滑自动滚动，不与用户手势冲突
-            let fromAnimation = tween.IsOwnOffset offset
-            let nowAtBottom = extent - viewport - offset < ContentMetrics.scrollBottomThreshold
-            // 中途帧仍按用户已发出的“回到底”意图处理，不重新显示按钮。
-            if follow.Scrolled(e.OffsetDelta.Y < -0.1 && not fromAnimation, nowAtBottom) then
-                smoothScrollTimer |> Option.iter (fun t -> t.Stop())
-                smoothScrollTimer <- None
-            if nowAtBottom then
-                scrollToBottomButton.IsVisible <- false
-            // 手动滚动会改变「当前是哪一轮」：没有锚点时锚点由视口定，
-            // 所以端点禁用态必须跟着滚动走，只在渲染时刷一次会停在旧状态。
             syncExchangeNavState ()
-            this.UpdateScrollToBottomAppearance()
-            // 骨架可见时不预取更早历史：对话切换中的 extent 抖动会误触发，
-            // 等真实内容挂载后再按正常阈值取。
-            if offset <= 0.5 && extent > viewport && not skeletonPanel.IsVisible then
-                // 决策 293：本机还有没挂的更早消息时先挂它们；只认「用户把视口往上推到了顶」
-                // （本帧偏移在减小），首屏布局时偏移本来就是 0，不能因此把整段历史一次挂满。
+            // 骨架可见时不预取更早历史。
+            if note.AtTop && not pane.Skeleton.IsShown then
+                // 决策 293：本机还有没挂的更早消息时先挂它们；只认用户把视口往上推到了顶。
                 if mountWindow.HiddenCount > 0 then
-                    if e.OffsetDelta.Y < -0.1 then this.ExpandMountWindow() |> ignore
-                // 决策 310：上一页刚失败时不靠滚动静默重发——由行内「重试」显式触发。
-                elif not olderFailureBanner.IsVisible then actions.requestOlderHistory ())
-        // 滚轮不论方向都是「用户此刻要动」：向上滚原本会打断平滑滚动，向下滚同理
-        // （Avalonia 向下滚 Delta.Y 为负）。只截一半会让「上滚动画途中改主意往下滚」
-        // 变成两个动画争抢 Offset——手势输了。
-        scroller.PointerWheelChanged.Add(fun e ->
-            if abs e.Delta.Y > 0.0 then
-                follow.Wheel()
-                revealTarget <- None
-                smoothScrollTimer |> Option.iter (fun t -> t.Stop())
-                smoothScrollTimer <- None)
-
-        scrollToBottomButton.Child <- scrollToBottomContent
-        scrollToBottomLabel.IsVisible <- false
-        scrollToBottomButton.BoxShadow <- Tokens.shadowPopup ()
-        scrollToBottomButton.IsVisible <- false
-        scrollToBottomButton.HorizontalAlignment <- HorizontalAlignment.Right
-        scrollToBottomButton.VerticalAlignment <- VerticalAlignment.Bottom
-        scrollToBottomButton.Margin <- Thickness(0.0, 0.0, Spacing.space3xl, Spacing.space2xl)
-        let doScrollToBottom () =
-            // 键盘激活这条路径：按钮随即因 follow.AtBottom 隐藏，而 Avalonia 不会自动
-            // 迁走焦点——停在按钮上的焦点直接被清成 null（探针实测），用户接着
-            // 按 Tab 会从窗口根部重新走。归宿取消息面板：用户刚才是在读消息，
-            // 视线要落回内容而不是被拽到输入区（与停止键 focusHome 分场景）。
-            let focusWasOnButton = scrollToBottomButton.IsFocused
-            follow.Arrived()
-            this.UpdateScrollToBottomAppearance()
-            this.SmoothScrollToEnd()
-            if focusWasOnButton then actions.focusHome ()
-        Ui.onClick scrollToBottomButton doScrollToBottom
-
-        let body = Grid()
-        body.Children.Add scroller
-        // 空态/首次连接卡放进自己的滚动区：矮窗口里卡片比可用高度高时可以滚动，
-        // 而不是溢出到输入区上。可见性跟随 emptyPanel，隐藏时不挡消息列表的命中。
-        let emptyScroller =
-            ScrollViewer(
-                Content = emptyPanel,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                IsVisible = emptyPanel.IsVisible)
-        emptyPanel.PropertyChanged.Add(fun e ->
-            if e.Property = Visual.IsVisibleProperty then emptyScroller.IsVisible <- emptyPanel.IsVisible)
-        body.Children.Add emptyScroller
-        body.Children.Add scrollToBottomButton
-        body.Children.Add olderFailureBanner
+                    if note.Upward then this.ExpandMountWindow() |> ignore
+                // 决策 310：上一页刚失败时不靠滚动静默重发。
+                elif not pane.Nav.OlderFailureVisible then actions.requestOlderHistory ())
+        pane.Scroller.Wheeled.Add(fun () -> revealTarget <- None)
+        pane.FocusReturned.Add(fun () -> actions.focusHome ())
+        let body = pane.Host
 
         breadcrumbAction.Child <-
             let icon = Icons.fork Tokens.textMuted
@@ -1642,19 +1107,5 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
         layout.Children.Add body
         this.Child <- layout
 
-        this.AttachedToVisualTree.Add(fun _ ->
-            ParityProbe.hit "lifecycle.chatAttached"
-            attached <- true
-            motionSubscription |> Option.iter (fun s -> s.Dispose())
-            motionSubscription <- Some(MotionPolicy.Changed.Subscribe(fun _ -> this.RefreshSkeletonMotion()))
-            if skeletonPanel.IsVisible then
-                this.RefreshSkeletonMotion())
-        this.DetachedFromVisualTree.Add(fun _ ->
-            attached <- false
-            this.StopSkeletonBreathing()
-            if skeletonPanel.IsVisible then
-                skeletonPanel.Opacity <- Tokens.skeletonOpacityReduced
-            smoothScrollTimer |> Option.iter (fun t -> t.Stop())
-            smoothScrollTimer <- None
-            motionSubscription |> Option.iter (fun s -> s.Dispose())
-            motionSubscription <- None)
+        this.AttachedToVisualTree.Add(fun _ -> ParityProbe.hit "lifecycle.chatAttached")
+        this.DetachedFromVisualTree.Add(fun _ -> pane.Scroller.StopSmooth())

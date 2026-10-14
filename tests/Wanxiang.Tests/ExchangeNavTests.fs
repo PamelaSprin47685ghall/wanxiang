@@ -69,11 +69,7 @@ module ExchangeNavTests =
                      commitId = Some(uint64 (round * 2)) } ]
 
     let private parts (chat: ChatView) =
-        let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
-        let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
-        let scroller = Assert.IsAssignableFrom<ScrollViewer>(body.Children.[0])
-        let panel = Assert.IsAssignableFrom<StackPanel>(scroller.Content)
-        scroller, panel
+        chat.MessageScroller, chat.MessagesPanel
 
     /// 卡片正文里是否含这段文字：消息卡把 text 渲成若干 TextBlock，任一片段命中即算。
     let private cardWith (panel: StackPanel) (needle: string) : Control =
@@ -240,9 +236,7 @@ module ExchangeNavTests =
                 None, None, Tokens.fontReading, true, None, Set.empty)
             Dispatcher.UIThread.RunJobs()
 
-            let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
-            let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
-            let backToBottom = Assert.IsAssignableFrom<Border>(body.Children.[2])
+            let backToBottom = chat.LatestButton
             let label () =
                 Assert.IsAssignableFrom<TextBlock>(Assert.IsAssignableFrom<StackPanel>(backToBottom.Child).Children.[1]).Text
             // 先确认未读真的计上了（否则下面「清零」什么也没证明）。

@@ -162,10 +162,7 @@ let private buildChat (messages: MessageView list) =
     chat, window
 
 let private chatParts (chat: ChatView) =
-    let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
-    let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
-    let scroller = Assert.IsAssignableFrom<ScrollViewer>(body.Children.[0])
-    scroller
+    chat.MessageScroller
 
 let private exchanges (count: int) : MessageView list =
     [ for round in 1 .. count do
@@ -182,7 +179,7 @@ let private exchanges (count: int) : MessageView list =
 [<Fact>]
 let ``wheel moving either way stops an in-flight smooth scroll`` () =
     Headless.run (fun () ->
-    // 「上一条提问」是一场有帧节拍的平滑滚动（smoothScrollTimer）。
+    // 「上一条提问」是一场有帧节拍的平滑滚动（ChatScroller.SmoothTo）。
     // 中断判据此前只认上滚（Delta.Y > 0）：上滚途中改主意往下滚，
     // 两个动画争抢 Offset，手势输给动画。
     let chat, window = buildChat (exchanges 3)
@@ -194,15 +191,11 @@ let ``wheel moving either way stops an in-flight smooth scroll`` () =
         Assert.True(scroller.Extent.Height > scroller.Viewport.Height, "前置条件：内容高过视口")
         // 记录这一路径上的平滑滚动计时器：这是动画是否存活的直接证据，
         // 比观察 offset 像素更硬（offset 停在目标值时两种路径看起来一样）。
-        let smoothField =
-            typeof<ChatView>.GetField("smoothScrollTimer", Reflection.BindingFlags.Instance ||| Reflection.BindingFlags.NonPublic)
-        Assert.True(not (isNull smoothField), "ChatView 应有 smoothScrollTimer 字段")
         // 从顶部往下跳：距离足够远，必然进入平滑滚动路径（近距离是立即落位）。
         Assert.True(chat.CanJumpNext, "前置条件：顶部时下一条可用")
         chat.JumpExchange 1
         Dispatcher.UIThread.RunJobs()
-        let running () : bool =
-            not (isNull (smoothField.GetValue chat))
+        let running () : bool = chat.IsSmoothScrolling
         Assert.True(running (), "前置条件：跳转触发了平滑滚动动画")
         // 下滚（Delta.Y < 0）：用户意图，必须打断动画（此前只认上滚）。
         let down = raiseWheel scroller -120.0

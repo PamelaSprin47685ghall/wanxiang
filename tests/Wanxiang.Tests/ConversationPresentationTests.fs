@@ -106,19 +106,8 @@ let sidebarFooterPaddingAndDisclosureAndSkeletonConverged () =
     Assert.DoesNotContain("Icons.chevronDown) Tokens.textFaint", text)
 
 [<Fact>]
-let chatViewSkeletonOpacitiesAndEmptyStateGeometryTokenized () =
+let chatViewGeneratingChipTokenized () =
     let text = source "src/Wanxiang.UI/Views/ChatView.fs"
-    Assert.True(occurrenceCount text "Tokens.skeletonOpacityReduced" >= 5, "减弱动效静态 0.85 应引 skeletonOpacityReduced")
-    Assert.Contains("Tokens.skeletonOpacityBase", text)
-    Assert.DoesNotContain("Opacity = 0.65", text)
-    Assert.True(occurrenceCount text "Tokens.skeletonOpacityBreathMin" >= 2, "呼吸下限应引 skeletonOpacityBreathMin")
-    Assert.DoesNotContain("Opacity = 0.55", text)
-    Assert.True(occurrenceCount text "ControlMetrics.emptyStateTitleMinWidth" >= 2, "空态标题与编辑壳最小宽应共用 emptyStateTitleMinWidth")
-    Assert.Contains("ControlMetrics.emptyStateActionMinWidth", text)
-    Assert.Contains("ControlMetrics.emptyStateActionHeight", text)
-    Assert.Contains("ControlMetrics.scrollToBottomMinWidth", text)
-    // 空态收敛到共享原语：ChatView 经 Ui.emptyStateWith 生成空态卡，标题/说明排版不再本地手写
-    // （letterSpacingEmphasis 等移入 Primitives 的空态原语持有）。
-    Assert.Contains("Ui.emptyStateWith", text)
+    // 骨架、空态、「回到最新」的几何与透明度归 Wanxiang2.ChatPane（ChatPane AGENTS 列为已覆盖）。
     // 「生成中」chip 收敛到 chip 密度唯一真源（此前是 12/3 的离群值）。
     Assert.Contains("ControlMetrics.chipPaddingX", text)

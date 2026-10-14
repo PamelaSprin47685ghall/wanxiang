@@ -165,11 +165,7 @@ let ``chat reading column relies on avalonia stretch and max width across viewpo
         let window = show chat width 520.0
         try
             Dispatcher.UIThread.RunJobs()
-            let scroller =
-                descendants chat
-                |> Seq.choose (function :? ScrollViewer as value -> Some value | _ -> None)
-                |> Seq.head
-            let readingColumn = scroller.Content :?> Control
+            let readingColumn = chat.MessagesPanel :> Control
             Assert.True(readingColumn.Bounds.Width <= Tokens.readingWidth + 0.5)
             if width > Tokens.readingWidth + Tokens.shellInset * 2.0 then
                 Assert.True(abs (readingColumn.Bounds.Width - Tokens.readingWidth) < 1.0)

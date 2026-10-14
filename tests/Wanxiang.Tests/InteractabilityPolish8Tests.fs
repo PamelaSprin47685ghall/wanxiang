@@ -209,10 +209,7 @@ let private buildChat (messages: MessageView list) =
     chat, window
 
 let private chatPanel (chat: ChatView) =
-    let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
-    let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
-    let scroller = Assert.IsAssignableFrom<ScrollViewer>(body.Children.[0])
-    Assert.IsAssignableFrom<StackPanel>(scroller.Content), scroller
+    chat.MessagesPanel, chat.MessageScroller
 
 let private exchanges (count: int) : MessageView list =
     [ for round in 1 .. count do

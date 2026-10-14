@@ -68,11 +68,7 @@ module EndpointScrollTests =
                      commitId = Some(uint64 (round * 2)) } ]
 
     let private scrollerOf (chat: ChatView) : ScrollViewer * StackPanel =
-        let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
-        let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
-        let scroller = Assert.IsAssignableFrom<ScrollViewer>(body.Children.[0])
-        let panel = Assert.IsAssignableFrom<StackPanel>(scroller.Content)
-        scroller, panel
+        chat.MessageScroller, chat.MessagesPanel
 
     /// 一个可视节点上所有的可读文本。
     /// 助手正文走 MarkdownRenderer：文本住在 SelectableTextBlock 的 Inlines 里，
@@ -141,9 +137,7 @@ module EndpointScrollTests =
             // 远离底部：ScrollChanged 让按钮自己出现（用户向上滚的自然路径）。
             scroller.Offset <- Vector(0.0, scroller.Extent.Height * 0.5)
             settle chat
-            let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
-            let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
-            let btn = Assert.IsAssignableFrom<Border>(body.Children.[2])
+            let btn = chat.LatestButton
             Assert.True(btn.IsVisible, "反证前提：离开底部后按钮必须出现")
             btn.Focus() |> ignore
             settle chat
@@ -171,9 +165,7 @@ module EndpointScrollTests =
             let scroller, _ = scrollerOf chat
             scroller.Offset <- Vector(0.0, 0.0)
             settle chat
-            let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
-            let body = Assert.IsAssignableFrom<Grid>(layout.Children.[1])
-            let button = Assert.IsAssignableFrom<Border>(body.Children.[2])
+            let button = chat.LatestButton
             Assert.True(button.IsVisible, "滚动前必须离开底部")
             button.RaiseEvent(
                 KeyEventArgs(
