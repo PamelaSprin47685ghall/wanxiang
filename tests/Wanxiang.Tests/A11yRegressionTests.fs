@@ -119,7 +119,7 @@ let ``共享图标按钮原语同时设置提示与自动化名称`` () =
 let private uiStrings () =
     // UI、Client、App 三个项目里含中文的字符串字面量（W6：术语扫描范围）。
     let lit = Regex("\"([^\"\\\\\\n]|\\\\.)*[\\u4e00-\\u9fff]([^\"\\\\\\n]|\\\\.)*\"")
-    [ for proj in [ "Wanxiang.UI"; "Wanxiang.Client"; "Wanxiang.App" ] do
+    [ for proj in [ "Wanxiang.UI"; "Wanxiang.App" ] do
         let files = Directory.GetFiles(Path.Combine(repoRoot, "src", proj), "*.fs", SearchOption.AllDirectories)
         for f in files do
             let lines = File.ReadAllLines f

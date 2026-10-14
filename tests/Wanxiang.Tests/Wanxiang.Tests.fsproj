@@ -36,7 +36,6 @@
     <Compile Include="AsyncHighlightTests.fs" />
     <Compile Include="FocusRingTests.fs" />
     <Compile Include="SelectionOperabilityTests.fs" />
-    <Compile Include="ReconnectBackoffTests.fs" />
     <Compile Include="DeliveryPolishingTests.fs" />
     <Compile Include="UiStabilityTests.fs" />
     <Compile Include="InteractionReliabilityTests.fs" />
@@ -56,7 +55,6 @@
     <Compile Include="InteractabilityPolishTests.fs" />
     <Compile Include="InteractabilityPolish8Tests.fs" />
     <Compile Include="DismissFocusTests.fs" />
-    <Compile Include="ClientStateAndWsClientTests.fs" />
     <Compile Include="UiControllersTests.fs" />
     <Compile Include="AppShellTests.fs" />
     <Compile Include="SettingsViewTests.fs" />
@@ -129,7 +127,9 @@
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
     <ProjectReference Include="..\..\src\Wanxiang.UI\Wanxiang.UI.fsproj" />
-    <ProjectReference Include="..\..\src\Wanxiang.Client\Wanxiang.Client.fsproj" />
+    <PackageReference Include="Wanxiang2.WsClient" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ReconnectBackoff" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ConnectionIssue" Version="0.0.0-local" />
   </ItemGroup>
 
   <ItemGroup>

@@ -111,7 +111,9 @@
     <PackageReference Include="Wanxiang2.ChatDomain" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PlainText" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ToolSummary" Version="0.0.0-local" />
-    <ProjectReference Include="..\Wanxiang.Client\Wanxiang.Client.fsproj" />
+    <PackageReference Include="Wanxiang2.WsClient" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ReconnectBackoff" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ConnectionIssue" Version="0.0.0-local" />
   </ItemGroup>
 
 </Project>

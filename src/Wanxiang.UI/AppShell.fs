@@ -1877,7 +1877,7 @@ type MainView() as this =
             sidebar.SetConnection(false, "未认证")
             // 失败只报一次：连接对话框内联呈现原因（紧邻重连入口），不再叠 toast。
             // 认证被拒就是令牌失效：入口是“重新配对”，不是“连接失败”。
-            this.ReportConnectionIssue TokenInvalid
+            this.ReportConnectionIssue ConnectionIssue.TokenInvalid
             this.Render()
         | PairingStarted _ ->
             connectionError <- None
@@ -1892,7 +1892,7 @@ type MainView() as this =
             send (AuthPresent {| token = d.token |})
         | PairingFailed d ->
             this.ReportConnectionIssue(
-                if d.frozen then PairingFrozen d.freezeMinutes else PairingRejected d.reason)
+                if d.frozen then ConnectionIssue.PairingFrozen d.freezeMinutes else ConnectionIssue.PairingRejected d.reason)
             this.Render()
         | CatalogSnapshot d ->
             catalog <- Catalog.parse d.providers d.tools d.generation

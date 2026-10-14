@@ -275,12 +275,12 @@ module Dialogs =
     /// 只用于展示；是否出现重试按钮看 `ConnectionIssue.retry`，不看这里的字。
     let describeIssue (issue: ConnectionIssue) : string =
         match issue with
-        | Rejected _ -> "主机拒绝了连接。可能没有在运行，或地址、端口不对。检查地址后再试。"
-        | TimedOut -> "连接超时。主机没有及时回应，可能网络不通或主机在休眠。确认主机在线后再试。"
-        | TokenInvalid -> "这台设备的授权已失效。令牌无效或已被吊销。请重新配对。"
-        | PairingFrozen minutes ->
+        | ConnectionIssue.Rejected _ -> "主机拒绝了连接。可能没有在运行，或地址、端口不对。检查地址后再试。"
+        | ConnectionIssue.TimedOut -> "连接超时。主机没有及时回应，可能网络不通或主机在休眠。确认主机在线后再试。"
+        | ConnectionIssue.TokenInvalid -> "这台设备的授权已失效。令牌无效或已被吊销。请重新配对。"
+        | ConnectionIssue.PairingFrozen minutes ->
             sprintf "配对已冻结 %d 分钟。连续输错次数过多。稍后再试，或请已连接的桌面端为这台设备发配对码。" minutes
-        | PairingRejected reason ->
+        | ConnectionIssue.PairingRejected reason ->
             let why =
                 match reason with
                 | "invalid pairing code" -> "配对码不对"
@@ -289,7 +289,7 @@ module Dialogs =
                 | "no pairing session active" -> "没有进行中的配对"
                 | other -> other
             sprintf "配对没有成功：%s。请核对 6 位配对码后再试一次。" why
-        | Disconnected detail ->
+        | ConnectionIssue.Disconnected detail ->
             if String.IsNullOrWhiteSpace detail then "连接已断开。网络中断或主机已关闭。检查后重新连接。"
             else sprintf "连接已断开：%s。网络中断或主机已关闭。检查后重新连接。" detail
 
@@ -400,7 +400,7 @@ module Dialogs =
             showMessage (describeIssue issue) true
             pendingRetry <- ConnectionIssue.retry issue
             match issue, pendingRetry with
-            | PairingRejected "invalid pairing code", _ ->
+            | ConnectionIssue.PairingRejected "invalid pairing code", _ ->
                 // 决策 285：码输错时配对会话仍有效，「提交配对码」就是下一步；不再并排一个「重试配对」。
                 // 全选错码并聚焦：直接重输即覆盖，凑满 6 位照常自动提交。
                 retryButton.IsVisible <- false

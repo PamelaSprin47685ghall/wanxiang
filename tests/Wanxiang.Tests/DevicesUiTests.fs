@@ -72,12 +72,12 @@ module DevicesUiTests =
         Headless.run (fun () ->
             // 表驱动：期望只来自 ConnectionIssue.retry 与按钮文案表，不看错误文案
             let cases =
-                [ Rejected "refused", Some "重试连接"
-                  TimedOut, Some "重试连接"
-                  TokenInvalid, Some "重新配对"
-                  PairingFrozen 5, None
-                  PairingRejected "pairing code expired", Some "重试配对"
-                  Disconnected "x", Some "重试连接" ]
+                [ ConnectionIssue.Rejected "refused", Some "重试连接"
+                  ConnectionIssue.TimedOut, Some "重试连接"
+                  ConnectionIssue.TokenInvalid, Some "重新配对"
+                  ConnectionIssue.PairingFrozen 5, None
+                  ConnectionIssue.PairingRejected "pairing code expired", Some "重试配对"
+                  ConnectionIssue.Disconnected "x", Some "重试连接" ]
             for issue, expected in cases do
                 let overlay, handle, _, _ = openDialog ()
                 handle.fail issue
@@ -93,7 +93,7 @@ module DevicesUiTests =
         Headless.run (fun () ->
             // 决策 285：码输错时会话仍有效，「提交配对码」就是下一步，不再并排「重试配对」
             let overlay, handle, _, _ = openDialog ()
-            handle.fail (PairingRejected "invalid pairing code")
+            handle.fail (ConnectionIssue.PairingRejected "invalid pairing code")
             Dispatcher.UIThread.RunJobs()
             Assert.Empty(visibleRetryButtons overlay.Root)
             Assert.Contains("配对码不对", textOf overlay.Root))
@@ -106,10 +106,10 @@ module DevicesUiTests =
             handle.info "这里写了失败 拒绝 超时 断开 错误，但只是普通提示"
             Assert.Empty(visibleRetryButtons overlay.Root)
             // 类型化错误的文案不含任何旧关键词，也照样出现重试
-            let text = Dialogs.describeIssue (PairingRejected "x")
+            let text = Dialogs.describeIssue (ConnectionIssue.PairingRejected "x")
             for keyword in [ "失败"; "拒绝"; "断开"; "超时"; "错误" ] do
                 Assert.DoesNotContain(keyword, text)
-            handle.fail (PairingRejected "x")
+            handle.fail (ConnectionIssue.PairingRejected "x")
             Assert.Equal(1, (visibleRetryButtons overlay.Root).Length)
             // 之后的中性提示会收起重试
             handle.info "配对成功，正在认证…"
@@ -119,7 +119,7 @@ module DevicesUiTests =
     let ``frozen pairing shows the minutes and offers no retry`` () =
         Headless.run (fun () ->
             let overlay, handle, _, _ = openDialog ()
-            handle.fail (PairingFrozen 5)
+            handle.fail (ConnectionIssue.PairingFrozen 5)
             Assert.Contains("5 分钟", textOf overlay.Root)
             Assert.Empty(visibleRetryButtons overlay.Root))
 
@@ -127,7 +127,7 @@ module DevicesUiTests =
     let ``token invalid returns to re pairing instead of a generic connect failure`` () =
         Headless.run (fun () ->
             let overlay, handle, requests, _ = openDialog ()
-            handle.fail TokenInvalid
+            handle.fail ConnectionIssue.TokenInvalid
             let button = (visibleButton overlay.Root "重新配对").Value
             Assert.Empty(visibleButton overlay.Root "重试连接" |> Option.toList)
             click button
@@ -139,28 +139,11 @@ module DevicesUiTests =
     let ``retry connect re issues the same connect request`` () =
         Headless.run (fun () ->
             let overlay, handle, requests, _ = openDialog ()
-            handle.fail TimedOut
+            handle.fail ConnectionIssue.TimedOut
             click (visibleButton overlay.Root "重试连接").Value
             Assert.Equal(1, requests.Count)
             Assert.False(requests[0].usePairing)
             Assert.Equal("ws://127.0.0.1:8765/ws", requests[0].url))
-
-    [<Fact>]
-    let ``exceptions are classified into typed issues`` () =
-        let refused = Net.Sockets.SocketException(int Net.Sockets.SocketError.ConnectionRefused)
-        let wrapped = Net.WebSockets.WebSocketException("x", Net.Http.HttpRequestException("y", refused))
-        match ConnectionIssue.ofException wrapped with
-        | Rejected _ -> ()
-        | other -> failwithf "expected Rejected, got %A" other
-        match ConnectionIssue.ofException (TimeoutException "t") with
-        | TimedOut -> ()
-        | other -> failwithf "expected TimedOut, got %A" other
-        match ConnectionIssue.ofException (Net.Sockets.SocketException(int Net.Sockets.SocketError.TimedOut)) with
-        | TimedOut -> ()
-        | other -> failwithf "expected TimedOut, got %A" other
-        match ConnectionIssue.ofException (InvalidOperationException "boom") with
-        | Disconnected d -> Assert.Equal("boom", d)
-        | other -> failwithf "expected Disconnected, got %A" other
 
     // ---------- 配对页提示：本机 / 远端 ----------
 
