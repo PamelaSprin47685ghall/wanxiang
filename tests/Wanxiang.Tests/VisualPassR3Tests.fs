@@ -58,13 +58,13 @@ let ``审批面板汇报待批准的 callId`` () =
 
 [<Fact>]
 let ``触屏输入后按触屏对待，键盘输入后恢复`` () =
-    InputModality.reset ()
-    Assert.Equal(OperatingSystem.IsBrowser(), InputModality.prefersTouch ())
-    InputModality.report true
-    Assert.True(InputModality.prefersTouch ())
-    InputModality.report false
-    Assert.False(InputModality.prefersTouch ())
-    InputModality.reset ()
+    SharedTheme.input.Reset()
+    Assert.Equal(OperatingSystem.IsBrowser(), SharedTheme.input.PrefersTouch)
+    SharedTheme.input.Report true
+    Assert.True(SharedTheme.input.PrefersTouch)
+    SharedTheme.input.Report false
+    Assert.False(SharedTheme.input.PrefersTouch)
+    SharedTheme.input.Reset()
 
 [<Trait("Category", "UI")>]
 [<Fact>]

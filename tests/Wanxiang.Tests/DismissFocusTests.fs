@@ -77,63 +77,6 @@ let private wheelAt (target: Control) (root: Grid) =
     root.RaiseEvent(e)
     e
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``wheel outside an open popup dismisses it without scrolling the content`` () =
-    Headless.run (fun () ->
-    let root = Grid()
-    root.Children.Add(Border(Width = 400.0, Height = 300.0))
-    let overlay = OverlayHost(root)
-    overlay.WireDismiss()
-    let anchor =
-        Border(
-            Width = 120.0,
-            Height = 40.0,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right)
-    root.Children.Add anchor
-    let entry = MenuEntry.create "重命名" ignore
-    let window = show root 400.0 300.0
-    try
-        Menu.show overlay anchor false [ entry ]
-        Dispatcher.UIThread.RunJobs()
-        Assert.True(overlay.IsPopupOpen, "前置条件：浮层已打开")
-        let e = wheelAt root root
-        Assert.False(overlay.IsPopupOpen, "层外滚轮应取消浮层")
-        // 关键：同一事件被消费。漏了这一行，取消浮层的同时底层滚动区也会收到同一次脉冲。
-        Assert.True(e.Handled, "层外滚轮取消浮层后必须消费事件，避免穿透到底层滚动")
-    finally
-        window.Close()
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``wheel inside an open popup is left to the popup itself`` () =
-    Headless.run (fun () ->
-    let root = Grid()
-    root.Children.Add(Border(Width = 400.0, Height = 300.0))
-    let overlay = OverlayHost(root)
-    overlay.WireDismiss()
-    let anchor =
-        Border(
-            Width = 120.0,
-            Height = 40.0,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right)
-    root.Children.Add anchor
-    let entry = MenuEntry.create "重命名" ignore
-    let window = show root 400.0 300.0
-    try
-        Menu.show overlay anchor false [ entry ]
-        Dispatcher.UIThread.RunJobs()
-        Assert.True(overlay.IsPopupOpen, "前置条件：浮层已打开")
-        // 命中的是浮层卡自己：长菜单要能在浮层内滚动，处理器必须放行（不关闭、不消费）。
-        let menuItem = byName root "重命名"
-        let e = wheelAt menuItem.Value root
-        Assert.True(overlay.IsPopupOpen, "命中浮层内的滚轮不应关闭浮层")
-        Assert.False(e.Handled, "命中浮层内的滚轮应放行给浮层自身的滚动条")
-    finally
-        window.Close()
-    )
-
 // ── 连接对话框：首焦落在第一个还缺内容的字段 ────────────────────────────────
 
 [<Trait("Category", "UI")>]

@@ -10,6 +10,7 @@
     <!-- MotionPolicy 必须先于 Tokens 编译：Tokens 的主题颜色补间消费
          MotionLedger.themeColorTransition 与 MotionPolicy.isReduced，
          F# 要求被引用的模块在编译顺序上在前。MotionPolicy 自身无项目内依赖，置顶安全。 -->
+    <Compile Include="Design/SharedTheme.fs" />
     <Compile Include="Design/MotionPolicy.fs" />
     <Compile Include="Design/Palette.fs" />
     <Compile Include="Design/Tokens.fs" />
@@ -29,12 +30,10 @@
     <Compile Include="Model/UnansweredReply.fs" />
     <!-- Interaction 必须先于 Primitives：Primitives 的基控件挂 Interaction.surface。 -->
     <Compile Include="Controls/KeyShortcut.fs" />
-    <Compile Include="Controls/ImeGuard.fs" />
     <Compile Include="Controls/Interaction.fs" />
     <Compile Include="Controls/Primitives.fs" />
     <Compile Include="Controls/OverlayHost.fs" />
     <Compile Include="Controls/Menu.fs" />
-    <Compile Include="Controls/CopyFeedback.fs" />
     <Compile Include="Controls/MarkdownRenderer.fs" />
     <Compile Include="CredentialStore.fs" />
     <Compile Include="Views/Brand.fs" />
@@ -143,13 +142,27 @@
     <PackageReference Include="Wanxiang2.LocalDraftControls" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.HostHealth" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PendingDeletion" Version="0.0.0-local" />
-    <PackageReference Include="Wanxiang2.CopyConfirm" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.CountdownTicker" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ScrollTween" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.BreathPhase" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.CardReconcile" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.BlockDiff" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ThemeTween" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.Theme" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ThemePalette" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ThemeMetrics" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MotionSwitch" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.IconSet" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.OverlayDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.OverlayLayer" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ToastStrip" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PopupMenu" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ImeShield" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.KeyChord" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.FocusOrigin" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.InputSense" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.FieldCheck" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.CopyButton" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProgressThrottle" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.HighlightQueue" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.DeferredReveal" Version="0.0.0-local" />

@@ -62,10 +62,8 @@ module Interaction =
     /// 焦点明明在按钮上（Enter 能激活）却看不见，键盘用户无从判断。
     /// 指针点击则不该留环（已有按压反馈，画环是视觉噪声）。
     /// 官方伪类区分不了这两者，因此用普通类名记录来源。
-    let private programmaticFocusClass = "focus-by-program"
+    let private programmaticFocusClass = Wanxiang2.FocusOrigin.FocusOrigin.ProgrammaticClass
 
-    /// 校验态类名。由附加属性同步（见 `setInvalid` / `syncInvalid`）。
-    let private invalidClass = "invalid"
 
     /// hover 变体：不同表面的 hover 底色不同，但「hover 时只改底色、
     /// 不改尺寸与边框粗细」这条规则对所有表面一致。
@@ -90,31 +88,8 @@ module Interaction =
         let bordered = "hover-bordered"
 
     // ---------- 校验态（业务事实，不是框架状态）----------
-
-    /// 「该表面处于校验错误」的**附加属性**。
-    ///
-    /// 为什么是附加属性而不是直接写 `BorderBrush`：一旦控件挂了
-    /// `surface` 类，样式系统就接管了 `BorderBrush`——代码侧写进去的值会在
-    /// 样式重算时被覆盖（实测：`setFieldError` 写完 danger，下一次重算又回到
-    /// border，字段红框一闪就没）。校验态**无法用伪类表达**（它是业务事实，
-    /// 不是框架状态），因此用附加属性声明事实、由样式查表决定视觉。
-    let private invalidProperty =
-        AvaloniaProperty.RegisterAttached<Border, bool>("IsInvalid", typeof<Border>, false)
-
-    /// 读取校验态。
-    let isInvalid (control: Border) = control.GetValue invalidProperty
-
-    /// 把校验态从附加属性同步到样式类名（可观测标记，便于测试与调试定位）。
-    /// 视觉由 `applyInvalidStroke` 负责——见上方「描边色不进样式表」的实测依据。
-    let syncInvalid (control: Border) =
-        if isInvalid control then control.Classes.Add invalidClass |> ignore
-        else control.Classes.Remove invalidClass |> ignore
-
-    /// 设置校验态并应用描边。**MUST** 用它而不是直接写 `BorderBrush`。
-    let setInvalid (control: Border) (invalid: bool) =
-        control.SetValue(invalidProperty, invalid) |> ignore
-        syncInvalid control
-        control.BorderBrush <- (if invalid then Tokens.danger else Tokens.border)
+    /// 校验态归 Wanxiang2.FieldCheck（附加属性 + `invalid` 类 + 描边值）。
+    let isInvalid (control: Border) = Wanxiang2.FieldCheck.FieldCheck.IsInvalid control
 
     // ---------- 颜色工具 ----------
 
@@ -403,63 +378,4 @@ module Interaction =
         control.BorderBrush <-
             (if invalid then Tokens.danger elif focused then Tokens.accent else Tokens.border)
 
-    let reportFocusOrigin (control: Control) =
-        control.GotFocus.Add(fun e ->
-            match e.NavigationMethod with
-            | NavigationMethod.Pointer -> control.Classes.Remove programmaticFocusClass |> ignore
-            | _ -> control.Classes.Add programmaticFocusClass |> ignore)
-        control.LostFocus.Add(fun _ -> control.Classes.Remove programmaticFocusClass |> ignore)
-/// 最近一次输入来自触屏还是键盘/鼠标（第 212 节）。
-/// 只用于「要不要替用户做一件只对键盘有用的事」：抽屉打开时自动聚焦搜索框（触屏上会弹出软键盘遮住列表）、
-/// 悬停提示（触屏没有悬停，点一下会留下一个挡手的提示框）。
-module InputModality =
-
-    let mutable private lastWasTouch: bool option = None
-
-    /// 报告一次真实输入：触屏按下为 true，键盘 / 鼠标为 false。
-    /// 决策 276：输入方式翻转时通知（App 据此在触屏上收起菜单里的 Ctrl+X 等快捷键提示）。
-    let Changed = Event<bool>()
-
-    let report (isTouch: bool) =
-        if lastWasTouch <> Some isTouch then
-            lastWasTouch <- Some isTouch
-            Changed.Trigger isTouch
-
-    /// 测试用：清除记录。
-    let reset () = lastWasTouch <- None
-
-    /// 当前是否按触屏对待。还没有任何输入时：浏览器（PWA，多为手机）按触屏，桌面按键盘。
-    let prefersTouch () =
-        match lastWasTouch with
-        | Some v -> v
-        | None -> OperatingSystem.IsBrowser()
-
-    /// 在根控件上挂隧道监听，记录输入方式（含已处理事件）。
-    let track (root: Control) =
-        root.AddHandler(
-            InputElement.PointerPressedEvent,
-            (fun _ (e: PointerPressedEventArgs) -> report (e.Pointer.Type = PointerType.Touch)),
-            Avalonia.Interactivity.RoutingStrategies.Tunnel,
-            true)
-        root.AddHandler(
-            InputElement.KeyDownEvent,
-            (fun _ (_: KeyEventArgs) -> report false),
-            Avalonia.Interactivity.RoutingStrategies.Tunnel,
-            true)
-
-    /// 触屏上不显示该控件的悬停提示（无障碍名称不受影响）。
-    let suppressTooltipOnTouch (control: Control) =
-        let sync (pointerType: PointerType) =
-            let touch = pointerType = PointerType.Touch
-            ToolTip.SetServiceEnabled(control, not touch)
-            if touch then ToolTip.SetIsOpen(control, false)
-        control.AddHandler(
-            InputElement.PointerEnteredEvent,
-            (fun _ (e: PointerEventArgs) -> sync e.Pointer.Type),
-            Avalonia.Interactivity.RoutingStrategies.Direct ||| Avalonia.Interactivity.RoutingStrategies.Bubble,
-            true)
-        control.AddHandler(
-            InputElement.PointerPressedEvent,
-            (fun _ (e: PointerPressedEventArgs) -> sync e.Pointer.Type),
-            Avalonia.Interactivity.RoutingStrategies.Tunnel ||| Avalonia.Interactivity.RoutingStrategies.Bubble,
-            true)
+    let reportFocusOrigin (control: Control) = Wanxiang2.FocusOrigin.FocusOrigin.report control

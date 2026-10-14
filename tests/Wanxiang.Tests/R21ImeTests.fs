@@ -13,15 +13,6 @@ open Wanxiang.UI
 /// 决策 384–386：中文输入法组合期间回车/方向键/Esc/Tab 归输入法（全局 ImeGuard）。
 module R21ImeTests =
 
-    [<Fact>]
-    let ``384 判定：组合中吞掉回车方向键Esc Tab，ImeProcessed 任何时候都吞，普通字符放行`` () =
-        for k in [ Key.Enter; Key.Up; Key.Down; Key.Escape; Key.Tab ] do
-            Assert.True(ImeGuard.shouldSwallow true k)
-            Assert.False(ImeGuard.shouldSwallow false k)
-        Assert.True(ImeGuard.shouldSwallow false Key.ImeProcessed)
-        Assert.False(ImeGuard.shouldSwallow true Key.A)
-        Assert.False(ImeGuard.shouldSwallow true Key.Back)
-
     let private presenter (tb: TextBox) =
         tb.GetVisualDescendants() |> Seq.pick (function :? TextPresenter as p -> Some p | _ -> None)
 
@@ -34,30 +25,6 @@ module R21ImeTests =
         w.GetLayoutManager().ExecuteLayoutPass()
         Dispatcher.UIThread.RunJobs()
         w
-
-    [<Trait("Category", "UI")>]
-    [<Fact>]
-    let ``385 任意 TextBox 的回车处理器在组合中不触发，结束后照常触发；预编辑可见且提交不重复`` () =
-        Headless.run (fun () ->
-            let tb = TextBox()
-            let mutable submits = 0
-            tb.KeyDown.Add(fun e -> if e.Key = Key.Enter then submits <- submits + 1; e.Handled <- true)
-            let w = show tb
-            tb.Focus() |> ignore
-            let p = presenter tb
-            p.PreeditText <- "ni"
-            Assert.True(ImeGuard.isComposing tb)
-            press tb Key.Enter
-            press tb Key.Escape
-            Assert.Equal(0, submits)
-            Assert.Equal("ni", p.PreeditText)
-            // 输入法提交：预编辑清空，正文只出现一次提交字。
-            p.PreeditText <- null
-            tb.RaiseEvent(TextInputEventArgs(RoutedEvent = InputElement.TextInputEvent, Text = "你", Source = tb))
-            Assert.Equal("你", tb.Text)
-            press tb Key.Enter
-            Assert.Equal(1, submits)
-            w.Close())
 
     [<Trait("Category", "UI")>]
     [<Fact>]

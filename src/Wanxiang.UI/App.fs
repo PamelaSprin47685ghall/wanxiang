@@ -79,7 +79,9 @@ type App() =
         // 交互状态走 Avalonia 原生伪类（:focus-visible / :pointerover / :pressed /
         // :disabled），全应用唯一注册处。MUST 在视图树构建之前调用。
         Interaction.register this.Styles
-        ImeGuard.install ()
+        // 共享类选择器样式（Wanxiang2.Theme.ThemeStyles），绑定 SharedTheme 的活实例，只装一次。
+        SharedTheme.styles.Install this.Styles
+        Wanxiang2.ImeShield.ImeShield.install ()
         // 画布主题固定为浅色变体：万象自己的深色由 Tokens 提供，
         // 若让 Fluent 也切深色，两套配色会互相打架。
         this.RequestedThemeVariant <- ThemeVariant.Light
@@ -134,8 +136,8 @@ type App() =
             let present = this.Styles.Contains hideGestures
             if touch && not present then this.Styles.Add hideGestures
             elif not touch && present then this.Styles.Remove hideGestures |> ignore
-        syncGestures (InputModality.prefersTouch ())
-        InputModality.Changed.Publish.Add syncGestures
+        syncGestures (SharedTheme.input.PrefersTouch)
+        SharedTheme.input.Changed.Add syncGestures
 
         // 选中/悬停一律走万象的强调浅底与暖灰，不用 Fluent 的糖果蓝
         this.Resources["SystemControlHighlightListAccentLowBrush"] <- Tokens.accentSoft

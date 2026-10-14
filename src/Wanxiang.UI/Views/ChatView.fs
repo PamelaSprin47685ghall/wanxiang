@@ -1641,7 +1641,7 @@ type ChatView(actions: ChatActions, brandLogo: float -> Control) =
             ParityProbe.hit "lifecycle.chatAttached"
             attached <- true
             motionSubscription |> Option.iter (fun s -> s.Dispose())
-            motionSubscription <- Some(MotionPolicy.Changed.Publish.Subscribe(fun _ -> this.RefreshSkeletonMotion()))
+            motionSubscription <- Some(MotionPolicy.Changed.Subscribe(fun _ -> this.RefreshSkeletonMotion()))
             if skeletonPanel.IsVisible then
                 this.RefreshSkeletonMotion())
         this.DetachedFromVisualTree.Add(fun _ ->

@@ -22,159 +22,110 @@ type ToastTone =
 ///
 /// 桌面与 PWA 共用同一套 UI，平台弹窗行为差异大，因此一律自绘。
 /// 一个应用只有一个实例，由 AppShell 创建并注入给各视图。
+/// 旧 OverlayHost 的门面：对话框 / 浮层 / 提示条全部交给 Wanxiang2.OverlayDesk，
+/// 外观由 SharedTheme 的活画笔与活值给出（主题补间、减弱动效都跟着走）。
 type OverlayHost(root: Grid) =
 
-    // 对话框 / 浮层 / 提示条统一的视口留白：space4 在小窗口与高 DPI 下仍能保证
-    // 卡片边缘与阴影不贴边；fit*ToViewport 与 popup 钳位都以它为唯一依据。
-    let viewportInset = Spacing.space2xl
-    let popupGap = Spacing.spaceMd
+    static let live (v: 'T) = Wanxiang2.Theme.LiveValue v
+    static let thick (v: float) = live (Thickness v)
+    static let reducedTo (span: TimeSpan) =
+        let value = live (if MotionPolicy.isReduced () then TimeSpan.Zero else span)
+        MotionPolicy.Changed.Add(fun reduced -> value.Set(if reduced then TimeSpan.Zero else span))
+        value
+    static let followTheme (read: unit -> BoxShadows) =
+        let value = live (read ())
+        Tokens.Changed.Publish.Add(fun _ -> value.Set(read ()))
+        value
 
-    let scrim =
-        Border(
-            Background = Tokens.scrim,
-            IsVisible = false,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch)
+    static let toTone (tone: ToastTone) =
+        match tone with
+        | Neutral -> Wanxiang2.ToastStrip.ToastTone.Neutral
+        | Success -> Wanxiang2.ToastStrip.ToastTone.Success
+        | Warning -> Wanxiang2.ToastStrip.ToastTone.Warning
+        | Failure -> Wanxiang2.ToastStrip.ToastTone.Failure
+        | Info -> Wanxiang2.ToastStrip.ToastTone.Info
 
-    let dialogCard =
-        Border(
-            Background = Tokens.surfaceRaised,
-            // 瞬态浮层边缘用最轻 hairline，抬升感交给 shadowDialog，避免重描边。
-            BorderBrush = Tokens.hairline,
-            BorderThickness = Thickness ControlMetrics.borderWidth,
-            CornerRadius = CornerRadius Spacing.Radius.xl,
-            Padding = Thickness Spacing.space4xl,
-            // Center + Margin 双保险：MaxWidth/MaxHeight 负责钳制，Margin 保证
-            // 首次测量前或 bounds 为 0 的过渡帧也不贴边。
-            Margin = Thickness viewportInset,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            IsVisible = false)
+    static let look () : Wanxiang2.OverlayDesk.OverlayDeskLook =
+        let popupShadow = followTheme Tokens.shadowPopup
+        { Layer =
+            { Scrim = Tokens.scrim
+              Surface = Tokens.surfaceRaised
+              Edge = Tokens.hairline
+              EdgeWidth = thick ControlMetrics.borderWidth
+              DialogRadius = live (CornerRadius Spacing.Radius.xl)
+              PopupRadius = live (CornerRadius Spacing.Radius.lg)
+              DialogPadding = thick Spacing.space4xl
+              PopupPadding = live (Thickness(Spacing.spaceXs, Spacing.spaceXs))
+              DialogShadow = followTheme Tokens.shadowDialog
+              PopupShadow = popupShadow
+              ViewportInset = live Spacing.space2xl
+              PopupGap = live Spacing.spaceMd
+              PopupMinWidth = live 180.0
+              ScrimFade = reducedTo MotionLedger.scrimFade
+              ScrimEasing = MotionPolicy.easeOutCubic }
+          Toasts =
+            { Surface = Tokens.surfaceRaised
+              Edge = Tokens.hairline
+              Text = Tokens.text
+              Accent =
+                (fun tone ->
+                    match tone with
+                    | Wanxiang2.ToastStrip.ToastTone.Neutral -> Tokens.textMuted :> IBrush
+                    | Wanxiang2.ToastStrip.ToastTone.Success -> Tokens.success :> IBrush
+                    | Wanxiang2.ToastStrip.ToastTone.Warning -> Tokens.warning :> IBrush
+                    | Wanxiang2.ToastStrip.ToastTone.Info -> Tokens.info :> IBrush
+                    | Wanxiang2.ToastStrip.ToastTone.Failure -> Tokens.danger :> IBrush)
+              AccentWidth = live ControlMetrics.toastAccentWidth
+              AccentRadius = live (CornerRadius Spacing.Radius.pill)
+              AccentOpacity = live Tokens.opacitySubtle
+              EdgeWidth = thick ControlMetrics.borderWidth
+              Radius = live (CornerRadius Spacing.Radius.lg)
+              Padding = live (Thickness(Spacing.space2xl, Spacing.spaceXl))
+              Shadow = popupShadow
+              FontSize = live Tokens.fontSmall
+              LineHeight = live ReadingRhythm.helperLineHeight
+              ColumnSpacing = live Spacing.spaceXl
+              Spacing = live Spacing.spaceMd
+              Margin = live (Thickness(Spacing.space4xl, 0.0, Spacing.space4xl, Spacing.space6xl))
+              MaxWidth = live ContentMetrics.toastMaxWidth
+              BodyMaxHeight = live LayoutPolicy.toastBodyMaxHeight
+              Fade = reducedTo MotionLedger.toastFade
+              FadeEasing = MotionPolicy.easeOutCubic }
+          Menu =
+            { Text = Tokens.text
+              Muted = Tokens.textMuted
+              Faint = Tokens.textFaint
+              Danger = Tokens.danger
+              Accent = Tokens.accent
+              Check = (fun brush -> Icons.check brush)
+              Chevron = (fun brush -> Icons.chevronDown brush)
+              FontSize = live Tokens.fontSmall
+              HintFontSize = live Tokens.fontMicro
+              IconSlotWidth = live ControlMetrics.menuIconSlotWidth
+              IconHeight = live Tokens.iconGlyph
+              RightSlotMinWidth = live ControlMetrics.menuRightSlotMinWidth
+              HintMargin = live (Thickness(Spacing.space2xl, 0.0, 0.0, 0.0))
+              ColumnSpacing = live Spacing.spaceMd
+              ItemPadding = live (Thickness(Spacing.spaceXl, ControlMetrics.menuItemPaddingY))
+              ItemRadius = live (CornerRadius Spacing.Radius.sm)
+              ItemMinHeight = live ControlMetrics.menuItemMinHeight
+              ItemSpacing = live Spacing.spaceXXs
+              MaxHeight = live LayoutPolicy.menuMaxHeight
+              DividerMargin = live (Thickness(Spacing.spaceMd, Spacing.spaceXs))
+              HeaderMargin = live (Thickness(Spacing.spaceXl, Spacing.spaceMd, Spacing.spaceXl, Spacing.spaceXs))
+              SelectPadding = live (Thickness(Spacing.spaceXl, ControlMetrics.selectButtonPaddingY))
+              SelectRadius = live (CornerRadius Spacing.Radius.lg)
+              SelectEdgeWidth = thick ControlMetrics.borderWidth
+              SelectCaptionMaxWidth = live 260.0 }
+          MenuMinWidth = live 200.0
+          GroupedMenuMinWidth = live 240.0
+          DwellFailureMs = live MotionLedger.toastDwellFailure.TotalMilliseconds
+          DwellWarningMs = live MotionLedger.toastDwellWarning.TotalMilliseconds
+          DwellDefaultMs = live MotionLedger.toastDwellDefault.TotalMilliseconds
+          DismissTick = MotionLedger.toastDismissTick }
 
-    /// 浮层菜单的透明捕获层：点击层外即关闭。
-    let popupCatcher =
-        Border(
-            Background = Brushes.Transparent,
-            IsVisible = false,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch)
-
-    let popupCard =
-        Border(
-            Background = Tokens.surfaceRaised,
-            // 与对话框同一套：hairline 描边 + shadowPopup 抬升。
-            BorderBrush = Tokens.hairline,
-            BorderThickness = Thickness ControlMetrics.borderWidth,
-            CornerRadius = CornerRadius Spacing.Radius.lg,
-            Padding = Thickness(Spacing.spaceXs, Spacing.spaceXs),
-            IsVisible = false,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top)
-
-    let toastStack =
-        StackPanel(
-            Orientation = Orientation.Vertical,
-            Spacing = Spacing.spaceMd,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = Thickness(Spacing.space4xl, 0.0, Spacing.space4xl, Spacing.space6xl))
-
-    let mutable onDialogClosed: unit -> unit = id
-    // 嵌套对话框栈：后打开的对话框只盖住先打开的，关闭时原样恢复
-    // （子内容 + onClosed + 关闭守卫），守卫闭包（如提交 pending 标记）原样保留。
-    let dialogStack = ResizeArray<Control * float * (unit -> unit) * (unit -> bool)>()
-    // 顶层对话框的关闭守卫：提交 pending 期间 Esc / scrim 不得关闭，
-    // 由 HandleEscape 与 scrim 统一检查，程序化的 CloseDialog（提交成功）不受影响。
-    let mutable dialogGuard: unit -> bool = fun () -> true
-    let mutable previousDialogFocus: IInputElement option = None
-    let mutable previousPopupFocus: IInputElement option = None
-    let mutable lastPopupFocus: IInputElement option = None
-    let mutable lastPopupAnchor: Control option = None
-    let mutable dialogPreferredWidth = 0.0
-    let mutable popupPreferredMinWidth = 180.0
-    let mutable popupAnchor: Control option = None
-    let mutable popupAlignRight = false
-    // scrim 淡出在途定时器：关闭对话框不阻塞同步关闭与焦点恢复，只让遮罩淡到 0
-    // 后自行隐藏；再次打开（ShowDialog）会停掉在途淡出。减弱动效时不启用。
-    let mutable scrimFadeOut : DispatcherTimer option = None
-
-    let stopScrimFadeOut () =
-        match scrimFadeOut with
-        | Some t ->
-            t.Stop()
-            scrimFadeOut <- None
-        | None -> ()
-    // 同时可见的提示条上限与去重登记：提示条只配给跨上下文确认与短暂系统状态，
-    // 堆叠盖住内容或重复刷屏就违背了它存在的理由，因此新条挤掉最旧的、同文只留最新一条。
-    // 去重、上限与先后顺序在 ToastQueue；这里按文本记住每条的关闭动作。
-    let toastQueue = ToastQueue()
-    let toastRemovers = Collections.Generic.Dictionary<string, bool -> unit>()
-    /// 可见提示条上的行内动作（按出现顺序）：Ctrl/⌘+Z 触发最新一条「撤销」（决策 232）。
-    let toastActions = ResizeArray<string * string * (unit -> unit)>()
-    /// 决策 311：可见提示条的动作按钮（按出现顺序），供 Tab / F6 到达。
-    let toastButtons = ResizeArray<string * Control>()
-    /// 带焦点的提示条消失时焦点的归宿（AppShell 设为输入框）；否则焦点会掉成 null。
-    let mutable toastFocusHome: unit -> unit = ignore
-
-    let currentFocus () =
-        match TopLevel.GetTopLevel root with
-        | null -> None
-        | top ->
-            match top.FocusManager with
-            | null -> None
-            | manager -> manager.GetFocusedElement() |> Option.ofObj
-
-    /// 可恢复的触发源：可用、有效可见且仍挂在视觉树上。Esc / scrim / catcher 关闭时
-    /// 触发控件可能已被移除（detach 后 IsEffectivelyVisible 仍可能为 true），
-    /// 因此再用 TopLevel 校验是否仍在树上，避免把焦点抢到游离控件上。
-    let isRestorable (control: Control) =
-        control.IsEnabled
-        && control.IsEffectivelyVisible
-        && not (isNull (TopLevel.GetTopLevel control))
-
-    let restoreFocus (previous: IInputElement option) =
-        match previous with
-        | Some (:? Control as control) when isRestorable control ->
-            // 关闭与 Post 之间树可能又变了：真正聚焦前再检查一次。
-            Dispatcher.UIThread.Post(fun () ->
-                if isRestorable control then
-                    control.Focus() |> ignore)
-        | _ -> ()
-
-    let rememberDialogFocus () =
-        // 唯一的对话框焦点记忆：当前焦点仍可恢复就记它；从浮层菜单里打开对话框时，
-        // 菜单项在 ClosePopup 后已脱离视觉树，同步读到的焦点不可恢复，此时回退到
-        // 浮层锚点 / 上次浮层焦点，保证关闭对话框后焦点有处可去。Dialogs 只传业务
-        // onClosed，不再自带第二套记忆。
-        let cur = currentFocus ()
-        let usable =
-            match cur with
-            | Some (:? Control as c) when isRestorable c -> true
-            | _ -> false
-        previousDialogFocus <-
-            if usable then cur
-            else
-                match lastPopupAnchor with
-                | Some a when isRestorable a -> Some (a :> IInputElement)
-                | _ ->
-                    match lastPopupFocus with
-                    | Some (:? Control as c) when isRestorable c -> lastPopupFocus
-                    | _ -> None
-
-    let rememberPopupFocus () =
-        let cur = currentFocus ()
-        previousPopupFocus <- cur
-        if cur.IsSome then lastPopupFocus <- cur
-
-    let restoreDialogFocus () =
-        let previous = previousDialogFocus
-        previousDialogFocus <- None
-        restoreFocus previous
-
-    let restorePopupFocus () =
-        let previous = previousPopupFocus
-        previousPopupFocus <- None
-        restoreFocus previous
+    let desk = Wanxiang2.OverlayDesk.OverlayDesk(root, look ())
+    let layer = desk.Layer
 
     let rec descendants (control: Control) =
         seq {
@@ -192,456 +143,36 @@ type OverlayHost(root: Grid) =
             | _ -> ()
         }
 
-    let focusables (content: Control) =
-        descendants content
-        // 有效可见（IsEffectivelyVisible）而非本地 IsVisible：折叠容器（如配对码区）
-        // 内的子控件本地仍可见，必须跳过，Tab 才不会落到隐藏字段上。
-        |> Seq.filter (fun c -> c.Focusable && c.IsEffectivelyVisible && c.IsEnabled)
-        |> Array.ofSeq
-
-    let focusFirst (content: Control) =
-        focusables content
-        |> Array.tryHead
-        |> Option.iter (fun c -> Dispatcher.UIThread.Post(fun () -> c.Focus() |> ignore))
-
-    let wrapForDialog (content: Control) : Control =
-        match content with
-        | :? ScrollViewer -> content
-        | _ ->
-            ScrollViewer(
-                Content = content,
-                HorizontalScrollBarVisibility = Primitives.ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = Primitives.ScrollBarVisibility.Auto)
-            :> Control
-
-    let trapTab (content: Control) (e: KeyEventArgs) =
-        if e.Key = Key.Tab then
-            let items = focusables content
-            if items.Length > 0 then
-                let focused =
-                    match TopLevel.GetTopLevel root with
-                    | null -> null
-                    | top ->
-                        match top.FocusManager with
-                        | null -> null
-                        | manager -> manager.GetFocusedElement()
-                let current =
-                    items
-                    |> Array.tryFindIndex (fun item -> obj.ReferenceEquals(item, focused))
-                    |> Option.defaultValue -1
-                let backwards = e.KeyModifiers.HasFlag KeyModifiers.Shift
-                let next =
-                    if backwards then
-                        if current <= 0 then items.Length - 1 else current - 1
-                    else if current < 0 || current >= items.Length - 1 then 0
-                    else current + 1
-                e.Handled <- true
-                items[next].Focus(NavigationMethod.Tab) |> ignore
-
-    let fitDialogToViewport () =
-        let width = max 0.0 (root.Bounds.Width - viewportInset * 2.0)
-        let height = max 0.0 (root.Bounds.Height - viewportInset * 2.0)
-        if width > 0.0 then
-            dialogCard.MaxWidth <- width
-            if dialogPreferredWidth > 0.0 then dialogCard.Width <- min dialogPreferredWidth width
-        if height > 0.0 then dialogCard.MaxHeight <- height
-
-    let fitPopupToViewport () =
-        let width = max 0.0 (root.Bounds.Width - viewportInset * 2.0)
-        let height = max 0.0 (root.Bounds.Height - viewportInset * 2.0)
-        if width > 0.0 then
-            popupCard.MaxWidth <- width
-            popupCard.MinWidth <- min popupPreferredMinWidth width
-        if height > 0.0 then popupCard.MaxHeight <- height
-
-    let fitToastsToViewport () =
-        let width = max 0.0 (root.Bounds.Width - viewportInset * 2.0)
-        if width > 0.0 then
-            toastStack.MaxWidth <- min ContentMetrics.toastMaxWidth width
-            for child in toastStack.Children do
-                child.MaxWidth <- toastStack.MaxWidth
-        // 底部已有 space8 外边距：再按视口高度钳住 MaxHeight，
-        // 多条堆叠时顶部仍保留 viewportInset，不顶到视口上缘。
-        let height = max 0.0 (root.Bounds.Height - Spacing.space6xl - viewportInset)
-        if height > 0.0 then
-            toastStack.MaxHeight <- height
-
-    let positionPopup () =
-        match popupAnchor with
-        | Some anchor when popupCard.IsVisible ->
-            try
-                let point = anchor.TranslatePoint(Point(0.0, anchor.Bounds.Height + popupGap), root)
-                if point.HasValue then
-                    let p = point.Value
-                    fitPopupToViewport ()
-                    let width = min popupCard.MaxWidth (max popupCard.Bounds.Width popupCard.MinWidth)
-                    let height = min popupCard.MaxHeight popupCard.Bounds.Height
-                    // p 是锚点下方 gap 处；PopupPlacement 要锚点左上角
-                    let clampedX, clampedY =
-                        PopupPlacement.place
-                            p.X (p.Y - anchor.Bounds.Height - popupGap) anchor.Bounds.Width anchor.Bounds.Height
-                            width height root.Bounds.Width root.Bounds.Height viewportInset popupGap popupAlignRight
-                    popupCard.Margin <- Thickness(clampedX, clampedY, 0.0, 0.0)
-            with _ -> ()
-        | _ -> ()
-
-    do
-        dialogCard.BoxShadow <- Tokens.shadowDialog ()
-        popupCard.BoxShadow <- Tokens.shadowPopup ()
-        Tokens.Changed.Publish.Add(fun _ ->
-            dialogCard.BoxShadow <- Tokens.shadowDialog ()
-            popupCard.BoxShadow <- Tokens.shadowPopup ())
-        for layer in [ scrim :> Control; dialogCard :> Control; popupCatcher :> Control; popupCard :> Control; toastStack :> Control ] do
-            Grid.SetColumnSpan(layer, 8)
-            Grid.SetRowSpan(layer, 8)
-            root.Children.Add layer |> ignore
-        // 底层滚动时浮层锚点会脱节：滚轮不经过 popupCatcher 的点击捕获，
-        // 因此层外滚轮像层外点击一样直接关闭，避免浮层悬在错误位置；
-        // 落在 popupCard 内的滚轮放行给内部 ScrollViewer，长菜单可在浮层内滚动。
-        // 关闭的同时必须消费事件：层外滚轮与层外点击是同一类「取消浮层」手势，
-        // 置 Handled 才不会让同一次滚动脉冲继续穿透到底层消息区/侧栏
-        // （那种先收起菜单、正文又猛地一滚的双重反应，就是漏了这一行）。
-        // 借 kelivo desktop_context_menu 的全屏模态遮罩：命中遮罩即取消即消费。
-        root.PointerWheelChanged.Add(fun e ->
-            if popupCard.IsVisible then
-                let inside =
-                    try
-                        popupCard.Bounds.Contains(e.GetPosition root)
-                    with _ -> false
-                if not inside then
-                    e.Handled <- true
-                    popupCatcher.IsVisible <- false
-                    popupCard.IsVisible <- false
-                    popupCard.Child <- null
-                    popupAnchor <- None
-                    restorePopupFocus ())
-
-    // scrim 只做不透明度补间（与 MessageCard 复制确认同一机制）：淡入淡出都
-    // 不碰几何；Duration 经 MotionPolicy 降级，减弱动效时时间零，等同瞬时切换。
-    do
-        let fade = Avalonia.Animation.DoubleTransition()
-        fade.Property <- Visual.OpacityProperty
-        fade.Duration <- (if MotionPolicy.isReduced () then TimeSpan.Zero else MotionLedger.scrimFade)
-        fade.Easing <- MotionPolicy.easeOutCubic
-        let fadeTransitions = Avalonia.Animation.Transitions()
-        fadeTransitions.Add fade
-        scrim.Transitions <- fadeTransitions
-        scrim.Opacity <- 0.0
-
-    member private _.HideDialog() =
-        dialogCard.IsVisible <- false
-        dialogCard.Child <- null
-        // scrim 对称淡出：卡片与焦点恢复同步完成，遮罩只是淡到 0 后自行隐藏；
-        // 淡出期间不可命中，点击穿回聊天区。减弱动效时立即隐藏。
-        stopScrimFadeOut ()
-        if MotionPolicy.isReduced () then
-            scrim.IsVisible <- false
-            scrim.IsHitTestVisible <- true
-            scrim.Opacity <- 0.0
-        else
-            scrim.IsHitTestVisible <- false
-            scrim.Opacity <- 0.0
-            let fade = DispatcherTimer(Interval = MotionLedger.scrimFade)
-            fade.Tick.Add(fun _ ->
-                fade.Stop()
-                if scrimFadeOut = Some fade then scrimFadeOut <- None
-                scrim.IsVisible <- false)
-            scrimFadeOut <- Some fade
-            fade.Start()
-
     member _.Root = root
+    member _.Desk = desk
 
-    member this.CloseDialog() =
-        let callback = onDialogClosed
-        onDialogClosed <- id
-        if dialogStack.Count > 0 then
-            // 嵌套关闭：恢复被盖住的子内容 + onClosed + 守卫，守卫闭包原样保留；
-            // 焦点记忆不动（仍指向最初的触发源），只把焦点送回恢复后的内容。
-            let child, width, closed, guard = dialogStack[dialogStack.Count - 1]
-            dialogStack.RemoveAt(dialogStack.Count - 1)
-            dialogCard.Child <- child
-            dialogPreferredWidth <- width
-            onDialogClosed <- closed
-            dialogGuard <- guard
-            fitDialogToViewport ()
-            if not (isNull child) then focusFirst child
-            callback ()
-        else
-            this.HideDialog()
-            restoreDialogFocus ()
-            callback ()
+    member _.CloseDialog() = layer.CloseDialog()
 
-    /// 固定页头/页脚的表单自行管理中间滚动区；普通对话框仍默认整块可滚动。
-    member this.ShowDialog(content: Control, width: float, ?onClosed: unit -> unit, ?canDismiss: unit -> bool, ?initialFocus: Control, ?scrollWholeContent: bool) =
-        if dialogCard.IsVisible then
-            // 嵌套打开：保留当前子内容 + onClosed + 守卫，关闭时原样恢复。
-            dialogStack.Add((dialogCard.Child, dialogPreferredWidth, onDialogClosed, dialogGuard))
-        else rememberDialogFocus ()
-        onDialogClosed <- defaultArg onClosed id
-        dialogGuard <- defaultArg canDismiss (fun () -> true)
-        let hosted = if defaultArg scrollWholeContent true then wrapForDialog content else content
-        dialogCard.Child <- hosted
-        dialogPreferredWidth <- width
-        fitDialogToViewport ()
-        if root.Bounds.Width <= 0.0 then dialogCard.Width <- width
-        dialogCard.IsVisible <- true
-        scrim.IsVisible <- true
-        // 停掉在途淡出并恢复命中：0→1 淡入由 scrim 上的 opacity 补间完成；
-        // 减弱动效时 Duration 为零，等同瞬时全显。
-        stopScrimFadeOut ()
-        scrim.IsHitTestVisible <- true
-        scrim.Opacity <- 1.0
-        hosted.KeyDown.Add(fun e -> this.TrapTab(hosted, e))
-        // initialFocus：调用方指定首焦（如「第一个还缺内容的字段」）。
-        // 不给时保持既有行为——聚焦树中第一个可聚焦项。走同一条 Post 队列，
-        // 因此不存在与调用方自己的焦点写入互相覆盖的问题。
-        match initialFocus with
-        | Some target -> Dispatcher.UIThread.Post(fun () -> target.Focus() |> ignore)
-        | None -> focusFirst content
+    member _.ShowDialog(content: Control, width: float, ?onClosed: unit -> unit, ?canDismiss: unit -> bool, ?initialFocus: Control, ?scrollWholeContent: bool) =
+        layer.ShowDialog(content, width, ?onClosed = onClosed, ?canDismiss = canDismiss, ?initialFocus = initialFocus, ?scrollWholeContent = scrollWholeContent)
 
-    member _.IsDialogOpen = dialogCard.IsVisible
+    member _.IsDialogOpen = layer.IsDialogOpen
+    member _.ClosePopup() = layer.ClosePopup()
 
-    member this.ClosePopup() =
-        popupCatcher.IsVisible <- false
-        popupCard.IsVisible <- false
-        popupCard.Child <- null
-        popupAnchor <- None
-        restorePopupFocus ()
+    member _.ShowPopup(anchor: Control, content: Control, alignRight: bool, ?minWidth: float) =
+        layer.ShowPopup(anchor, content, alignRight, ?minWidth = minWidth)
 
-    /// 在 `anchor` 附近打开浮层。`alignRight` 表示浮层右边缘与锚点右边缘对齐。
-    member this.ShowPopup(anchor: Control, content: Control, alignRight: bool, ?minWidth: float) =
-        if not popupCard.IsVisible then rememberPopupFocus ()
-        popupCard.Child <- content
-        popupAnchor <- Some anchor
-        lastPopupAnchor <- Some anchor
-        popupAlignRight <- alignRight
-        popupPreferredMinWidth <- defaultArg minWidth 180.0
-        fitPopupToViewport ()
-        if root.Bounds.Width <= 0.0 then popupCard.MinWidth <- popupPreferredMinWidth
-        popupCatcher.IsVisible <- true
-        popupCard.IsVisible <- true
-        content.KeyDown.Add(fun e -> this.TrapTab(content, e))
-        // 需要等一帧拿到浮层实际尺寸，才能算出不越界的位置
-        Dispatcher.UIThread.Post(fun () ->
-            positionPopup ()
-            focusFirst content
-            // 首帧 Bounds 可能仍是旧尺寸（翻转判断用错高度）：布局完成后再重算一次位置。
-            Dispatcher.UIThread.Post(fun () ->
-                if popupCard.IsVisible then positionPopup ()))
-
-    member _.IsPopupOpen = popupCard.IsVisible
-
-    member _.LastPopupFocus: IInputElement option = lastPopupFocus
-    member _.LastPopupAnchor: Control option = lastPopupAnchor
-
+    member _.IsPopupOpen = layer.IsPopupOpen
+    member _.LastPopupFocus: IInputElement option = layer.LastPopupFocus
+    member _.LastPopupAnchor: Control option = layer.LastPopupAnchor
     member _.Descendants(control: Control) = descendants control
-    member _.Focusables(content: Control) = focusables content
+    member _.Focusables(content: Control) = layer.Focusables content
+    member _.TrapTab(content: Control, e: KeyEventArgs) = layer.TrapTab(content, e)
 
-    /// Tab 键盘包含：把 Tab / Shift+Tab 圈在 content 的可聚焦集合内循环，到头回绕；
-    /// 只拦 Tab，其余键原样透出，集合为空时不做任何事。对话框 / 浮层与 compact 抽屉
-    /// （Sidebar）共用这同一份实现，不再各处维护一份循环逻辑。
-    member _.TrapTab(content: Control, e: KeyEventArgs) = trapTab content e
+    member _.Toast(message: string, tone: ToastTone) = desk.Toast(message, toTone tone)
 
-    /// 提示条：只给跨上下文的成功确认与无更好归宿的短暂系统状态。
-    /// 表单校验走行内错误、可恢复的错误走常驻入口、正文已有表达的不再弹条；
-    /// 同文去重且最多同时保留 toastCap 条，失败默认停留更久以便读完。
-    member this.Toast(message: string, tone: ToastTone) = this.ToastWith(message, tone, None)
-
-    /// 带一个行内动作的提示条（§214：删除后的「撤销」）。动作按钮可聚焦、可读屏；
-    /// 点动作先执行动作再关条。有动作时停留至少 PendingDeletion 宽限期，读完再决定。
     member _.ToastWith(message: string, tone: ToastTone, action: (string * (unit -> unit)) option) =
-        if not (String.IsNullOrWhiteSpace message) then
-            let accentBrush =
-                match tone with
-                | Neutral -> Tokens.textMuted :> IBrush
-                | Success -> Tokens.success :> IBrush
-                | Warning -> Tokens.warning :> IBrush
-                | Info -> Tokens.info :> IBrush
-                | Failure -> Tokens.danger :> IBrush
-            // 语气条只做 2px 的弱提示：不抢正文，用现有不透明度阶梯压暗，无位移、无新 token。
-            let bar = Border(Width = ControlMetrics.toastAccentWidth, CornerRadius = CornerRadius Spacing.Radius.pill, Background = accentBrush, Opacity = Tokens.opacitySubtle)
-            let body =
-                TextBlock(
-                    Text = message,
-                    FontSize = Tokens.fontSmall,
-                    Foreground = Tokens.text,
-                    TextWrapping = TextWrapping.Wrap,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    LineHeight = ReadingRhythm.helperLineHeight,
-                    VerticalAlignment = VerticalAlignment.Center)
-            let bodyScroller =
-                ScrollViewer(
-                    Content = body,
-                    MaxHeight = LayoutPolicy.toastBodyMaxHeight,
-                    HorizontalScrollBarVisibility = Primitives.ScrollBarVisibility.Disabled,
-                    VerticalScrollBarVisibility = Primitives.ScrollBarVisibility.Auto)
-            let row = Grid(ColumnSpacing = Spacing.spaceXl)
-            row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
-            row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Star))
-            Grid.SetColumn(bar, 0)
-            Grid.SetColumn(bodyScroller, 1)
-            row.Children.Add bar
-            row.Children.Add bodyScroller
-            let mutable removeRef: unit -> unit = ignore
-            // 停留时长按语气取 MotionLedger；有动作时至少 8 秒、暂停规则都在 ToastDwell。
-            let dwell =
-                ToastDwell(
-                    (match tone with
-                     | Failure -> MotionLedger.toastDwellFailure.TotalMilliseconds
-                     | Warning -> MotionLedger.toastDwellWarning.TotalMilliseconds
-                     | _ -> MotionLedger.toastDwellDefault.TotalMilliseconds),
-                    action.IsSome)
-            let mutable focusedAction: Control option = None
-            match action with
-            | Some(actionLabel, onAction) ->
-                row.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength.Auto))
-                let actionButton =
-                    Ui.button Ui.Secondary actionLabel (fun () ->
-                        removeRef ()
-                        onAction ())
-                actionButton.Focusable <- true
-                // 决策 311：动作按钮进 Tab 序（不抢焦点，出现时焦点留在原处）；F6 直达最新一条。
-                actionButton.IsTabStop <- true
-                actionButton.Name <- "toast-action"
-                actionButton.VerticalAlignment <- VerticalAlignment.Center
-                AutomationProperties.SetName(actionButton, actionLabel)
-                // 决策 305：读屏把快捷键念出来。
-                if actionLabel = "撤销" then
-                    AutomationProperties.SetAcceleratorKey(actionButton, "Ctrl+Z")
-                    AutomationProperties.SetHelpText(actionButton, "按 Ctrl / ⌘ + Z 直接撤销；按 F6 或 Tab 可移到这里")
-                toastButtons.Add(message, actionButton :> Control)
-                // 键盘用户正停在按钮上：倒计时暂停，读完再决定，不会在 Tab 到达后眨眼消失。
-                actionButton.GotFocus.Add(fun _ -> dwell.ActionFocused())
-                actionButton.LostFocus.Add(fun _ -> dwell.ActionUnfocused())
-                focusedAction <- Some(actionButton :> Control)
-                Grid.SetColumn(actionButton, 2)
-                row.Children.Add actionButton
-            | None -> ()
-            let toast =
-                ActionBorder(
-                    Background = Tokens.surfaceRaised,
-                    // 提示条归入同一浮层家族：hairline 描边 + shadowPopup 抬升。
-                    BorderBrush = Tokens.hairline,
-                    BorderThickness = Thickness ControlMetrics.borderWidth,
-                    CornerRadius = CornerRadius Spacing.Radius.lg,
-                    MaxWidth = ContentMetrics.toastMaxWidth,
-                    Padding = Thickness(Spacing.space2xl, Spacing.spaceXl),
-                    Child = row,
-                    // 瞬态提示条不进 Tab 序：读屏经由下面的 live region 公告，键盘关闭走全局 Escape。
-                    Focusable = false)
-            toast.BoxShadow <- Tokens.shadowPopup ()
-            // toast 进场淡入 / 退场淡出：只补间 Opacity（约 toastFade=300ms），走 MotionPolicy 门控，
-            // 共用统一缓动 easeOutCubic；不做任何位移/尺寸动画。减弱动效时时长为零，等同瞬时。
-            let toastFadeT = Avalonia.Animation.DoubleTransition()
-            toastFadeT.Property <- Visual.OpacityProperty
-            toastFadeT.Duration <- (if MotionPolicy.isReduced () then TimeSpan.Zero else MotionLedger.toastFade)
-            toastFadeT.Easing <- MotionPolicy.easeOutCubic
-            let toastTransitions = Avalonia.Animation.Transitions()
-            toastTransitions.Add toastFadeT
-            toast.Transitions <- toastTransitions
-            toast.Opacity <- 0.0
-            toast.Cursor <- new Cursor(StandardCursorType.Hand)
-            ToolTip.SetTip(toast, "点击关闭")
-            AutomationProperties.SetName(toast, message)
-            AutomationProperties.SetLiveSetting(
-                toast,
-                match tone with
-                | Failure
-                | Warning -> AutomationLiveSetting.Assertive
-                | _ -> AutomationLiveSetting.Polite)
-            let mutable removed = false
-            // 被 ToastQueue 挤出或同文替换时，队列里已经没有它（新的同文条目不能被误删）。
-            let mutable evicted = false
-            let expire = new DispatcherTimer(Interval = MotionLedger.toastDismissTick)
-            let remove () =
-                if not removed then
-                    removed <- true
-                    expire.Stop()
-                    // 去重/计数立即释放：同文再出或后续入条不再受本条约限。
-                    if not evicted then
-                        toastQueue.Remove message
-                        toastRemovers.Remove message |> ignore
-                    toastActions.RemoveAll(fun (text, _, _) -> text = message) |> ignore
-                    toastButtons.RemoveAll(fun (text, _) -> text = message) |> ignore
-                    let hadFocus = focusedAction |> Option.exists (fun b -> b.IsFocused)
-                    // 同步移除节点：本仓库无显示测试制度无法确定性泵动 DispatcherTimer，
-                    // 异步退场没有可重复验收路径（Manager 决策：退场改回同步，仅保留入场淡入）。
-                    // Escape / 点击 / 超时 / 上限挤出四条路径行为一致。
-                    toastStack.Children.Remove toast |> ignore
-                    if hadFocus then toastFocusHome ()
-            // 同文只留最新一条、新条挤掉最旧的：被撤下的由 ToastQueue 给出。
-            for dismissed in toastQueue.Admit message do
-                match toastRemovers.TryGetValue dismissed with
-                | true, dismiss ->
-                    toastRemovers.Remove dismissed |> ignore
-                    dismiss true
-                | _ -> ()
-            removeRef <- remove
-            toastRemovers[message] <- (fun byQueue -> (if byQueue then evicted <- true); remove ())
-            match action with
-            | Some(actionLabel, onAction) ->
-                toastActions.Add(message, actionLabel, fun () -> remove (); onAction ())
-            | None -> ()
-            Ui.onClick toast remove
-            // Escape 唯一归属 HandleEscape（topmost-first）：这里不再自带局部 Esc 处理。
-            // 提示条外框 Focusable=false；暂停计时由 hover 与动作按钮的焦点共同驱动（决策 311）：
-            // 指针离开时若键盘焦点仍在按钮上，继续暂停。
-            toast.PointerEntered.Add(fun _ -> dwell.PointerEntered())
-            toast.PointerExited.Add(fun _ -> dwell.PointerExited(focusedAction |> Option.exists (fun b -> b.IsFocused)))
-            toastStack.Children.Add toast
-            // 触发进场淡入（0→1）；减弱动效时 transition 时长为零，等同瞬时全显。
-            toast.Opacity <- 1.0
-            fitToastsToViewport ()
-            expire.Tick.Add(fun _ ->
-                if dwell.Tick expire.Interval.TotalMilliseconds then remove ())
-            expire.Start()
+        desk.ToastWith(message, toTone tone, action)
 
-    /// Esc / 点击层外的统一关闭入口，由 AppShell 在根视图上转发按键。
-    /// 唯一的 Escape 归属（topmost-first：popup → dialog → toast）：调用方消费返回的
-    /// true，不再落到 AppShell 的 StopGeneration；守卫拦截的关闭同样消费，避免误停生成。
-    /// 触发最新一条仍可见、动作名为 label 的提示条动作；没有则返回 false（决策 232）。
-    member _.TryInvokeToastAction(label: string) : bool =
-        match toastActions |> Seq.filter (fun (_, l, _) -> l = label) |> Seq.tryLast with
-        | Some(_, _, invoke) -> invoke (); true
-        | None -> false
-
-    /// 决策 311：F6 把焦点移到最新一条提示条的动作按钮；没有则返回 false。
-    member _.FocusToastAction() : bool =
-        match toastButtons |> Seq.tryLast with
-        | Some(_, button) when button.IsEffectivelyVisible -> button.Focus(NavigationMethod.Tab) |> ignore; true
-        | _ -> false
-
-    member _.SetToastFocusHome(home: unit -> unit) = toastFocusHome <- home
-
-    member _.ToastActionButtons = toastButtons |> Seq.map snd |> List.ofSeq
-
-    member _.HasToastAction(label: string) : bool =
-        toastActions |> Seq.exists (fun (_, l, _) -> l = label)
-
-    member this.HandleEscape() : bool =
-        if popupCard.IsVisible then
-            this.ClosePopup()
-            true
-        elif dialogCard.IsVisible then
-            if dialogGuard () then this.CloseDialog()
-            // 守卫拦截（提交 pending 中）也不透出：不关闭但已消费。
-            true
-        elif not (List.isEmpty toastQueue.Showing) then
-            match toastRemovers.TryGetValue(List.last toastQueue.Showing) with
-            | true, dismissNewest -> dismissNewest false
-            | _ -> ()
-            true
-        else
-            false
-
-    member this.WireDismiss() =
-        popupCatcher.PointerPressed.Add(fun _ -> this.ClosePopup())
-        // scrim 与 Escape 同守卫：提交 pending 中点 scrim 也不关闭。
-        scrim.PointerPressed.Add(fun _ ->
-            if dialogGuard () then this.CloseDialog())
-        root.PropertyChanged.Add(fun args ->
-            if args.Property = Visual.BoundsProperty then
-                fitDialogToViewport ()
-                fitPopupToViewport ()
-                fitToastsToViewport ()
-                if popupCard.IsVisible then Dispatcher.UIThread.Post positionPopup)
+    member _.TryInvokeToastAction(label: string) : bool = desk.TryInvokeToastAction label
+    member _.FocusToastAction() : bool = desk.FocusToastAction()
+    member _.SetToastFocusHome(home: unit -> unit) = desk.SetToastFocusHome home
+    member _.ToastActionButtons: Control list = desk.ToastActionButtons
+    member _.HasToastAction(label: string) : bool = desk.HasToastAction label
+    member _.HandleEscape() : bool = desk.HandleEscape()
+    member _.WireDismiss() = desk.WireDismiss()

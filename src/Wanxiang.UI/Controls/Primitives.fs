@@ -108,56 +108,15 @@ and internal ToggleBorderAutomationPeer(owner: ToggleBorder) =
 /// 保证同一种语义在任何界面里长得一样、反馈一样。
 module Ui =
 
-    let private validationMessages = ConditionalWeakTable<TextBox, TextBlock>()
-
-    let private validationMessageFor (box: TextBox) =
-        match validationMessages.TryGetValue box with
-        | true, message -> message
-        | _ ->
-            let message =
-                TextBlock(
-                    Text = "",
-                    FontSize = Tokens.fontMicro,
-                    Foreground = Tokens.danger,
-                    TextWrapping = TextWrapping.Wrap,
-                    LineHeight = ReadingRhythm.validationLineHeight,
-                    IsVisible = false,
-                    Margin = Thickness(ControlMetrics.fieldInsetX, Spacing.spaceSm, 0.0, 0.0))
-            validationMessages.Add(box, message)
-            // 一旦用户开始修正输入，旧错误就不应继续“指控”当前内容。
-            // 如果仍不合法，下一次提交会重新给出准确错误。
-            // 「用户开始修正输入」的判据：**文本真的变了**。
-            //
-            // 少了这个判据有个隐蔽失效：`applyValidationFeedback` 在写入校验提示后
-            // 会 `BringIntoView` + `Focus` 第一个错误字段，Avalonia 在焦点切换 /
-            // 布局重排时会**重放**同一个文本并抛 `TextChanged`——事件被误当成
-            // 「用户开始修改」，于是刚写好的提示被自己清掉。用户看到的是
-            // 「提交了，但什么都没说」。
-            //
-            // 判据用文本变更本身（Avalonia 的 `TextChangedEventArgs` 不带 `NewValue`，
-            // 拿不到「旧值」），因此记录上一次的值来比较。
-            let mutable lastText = box.Text
-            box.PropertyChanged.Add(fun args ->
-                if args.Property = TextBox.TextProperty then
-                    let current = box.Text
-                    let changed = current <> lastText
-                    lastText <- current
-                    if changed && message.IsVisible then
-                        message.Text <- ""
-                        message.IsVisible <- false
-                        Avalonia.Automation.AutomationProperties.SetHelpText(box, "")
-                        // 描边复位走 `setInvalid`（值路径 + 校验态附加属性），
-                        // 不在这里直接写 `BorderBrush`——那会与 Interaction 的状态
-                        // 体系抢同一个属性，且漏掉 `.invalid` 同步。
-                        match box.Parent with
-                        | :? Border as shell -> Interaction.setInvalid shell false
-                        | _ -> ())
-            message
-
-    let private isInvalid (box: TextBox) =
-        match validationMessages.TryGetValue box with
-        | true, message -> message.IsVisible
-        | _ -> false
+    /// 字段级校验反馈：Wanxiang2.FieldCheck 唯一实例，读 SharedTheme 的活画笔 / 活值。
+    let private fieldCheck =
+        Wanxiang2.FieldCheck.FieldCheck(
+            { ErrorForeground = Tokens.danger
+              InvalidStroke = Tokens.danger
+              NormalStroke = Tokens.border
+              MessageFontSize = SharedTheme.manager.Metric Wanxiang2.ThemeMetrics.Metric.FontMicro
+              MessageLineHeight = Wanxiang2.Theme.LiveValue ReadingRhythm.validationLineHeight
+              MessageMargin = Wanxiang2.Theme.LiveValue(Thickness(ControlMetrics.fieldInsetX, Spacing.spaceSm, 0.0, 0.0)) })
 
     /// 文字按钮的语义层级。层级决定视觉重量，不由调用方自由涂色。
     type ButtonTone =
@@ -515,7 +474,7 @@ module Ui =
         view.AttachedToVisualTree.Add(fun _ ->
             attached <- true
             motionSubscription |> Option.iter (fun subscription -> subscription.Dispose())
-            motionSubscription <- Some(MotionPolicy.Changed.Publish.Subscribe(fun _ -> refreshMotion ()))
+            motionSubscription <- Some(MotionPolicy.Changed.Subscribe(fun _ -> refreshMotion ()))
             refreshMotion ())
         view.DetachedFromVisualTree.Add(fun _ ->
             attached <- false
@@ -549,7 +508,7 @@ module Ui =
         if not (String.IsNullOrWhiteSpace tip) then
             ToolTip.SetTip(host, tip)
             Avalonia.Automation.AutomationProperties.SetName(host, tip)
-            InputModality.suppressTooltipOnTouch host
+            Wanxiang2.InputSense.InputSense.SuppressTooltipOnTouch host
         host
 
     /// 强调色实心图标按钮（发送等主操作）。
@@ -573,7 +532,7 @@ module Ui =
         if not (String.IsNullOrWhiteSpace tip) then
             ToolTip.SetTip(host, tip)
             Avalonia.Automation.AutomationProperties.SetName(host, tip)
-            InputModality.suppressTooltipOnTouch host
+            Wanxiang2.InputSense.InputSense.SuppressTooltipOnTouch host
         host
 
     /// 禁用态保留足够对比度：过低的不透明度会让实心按钮上的图标彻底消失，
@@ -721,47 +680,15 @@ module Ui =
         shell, box
 
     /// 为任意输入框创建/取得字段级错误行。调用方把它放在对应 field group 内即可。
-    let fieldValidationMessage (box: TextBox) : TextBlock = validationMessageFor box
+    let fieldValidationMessage (box: TextBox) : TextBlock = fieldCheck.MessageFor box
 
-    /// 字段级验证状态：不改 padding / border thickness，因此出现错误时不会横向漂移。
-    let setFieldError (box: TextBox) (message: string) =
-        let validation = validationMessageFor box
-        validation.Text <- message
-        validation.IsVisible <- not (String.IsNullOrWhiteSpace message)
-        match box.Parent with
-        | :? Border as shell ->
-            Interaction.setInvalid shell true
-        | _ -> ()
-        Avalonia.Automation.AutomationProperties.SetHelpText(box, message)
+    let setFieldError (box: TextBox) (message: string) = fieldCheck.SetError(box, message)
 
-    let clearFieldError (box: TextBox) =
-        let validation = validationMessageFor box
-        validation.Text <- ""
-        validation.IsVisible <- false
-        match box.Parent with
-        | :? Border as shell ->
-            Interaction.setInvalid shell false
-        | _ -> ()
-        Avalonia.Automation.AutomationProperties.SetHelpText(box, "")
+    let clearFieldError (box: TextBox) = fieldCheck.Clear box
 
-    /// 把表单级错误摘要（live region）绑到一组输入框上：用户一旦动手修正任一字段，
-    /// 摘要立刻收起并清空。此前摘要只在下次「保存」时才重置，字段行内错误已经
-    /// 一改即清，顶部的 assertive 区域却还在播报旧错误——视觉与读屏都指控着
-    /// 已经合法的表单。借 kelivo model_edit_dialog.dart:483-488 / search_services_pane.dart:988-991
-    /// 「onChanged 即清错」的同一时机，但只收摘要：仍不合法就由下一次提交重新给出。
+    /// 用户一旦动手修正任一字段，表单级摘要立刻收起并清空。
     let bindValidationSummaryReset (summary: TextBlock option) (boxes: TextBox seq) =
-        match summary with
-        | None -> ()
-        | Some region ->
-            for box in boxes do
-                box.GetObservable(TextBox.TextProperty)
-                    .Subscribe(fun _ ->
-                        if region.IsVisible then
-                            region.IsVisible <- false
-                            region.Text <- ""
-                            AutomationProperties.SetName(region, "")
-                        ())
-                    |> ignore
+        Wanxiang2.FieldCheck.FieldCheck.BindSummaryReset(summary, boxes)
 
     /// 带标签的输入行。
     let labeledField (labelText: string) (placeholder: string) : Control * TextBox =
@@ -942,43 +869,17 @@ module Ui =
     /// errors 按字段提交顺序给出，首元素即首个失败字段；summary 可为 None
     /// （无摘要位时多错退化为单错节律）；toast 通道由调用方传入
     ///（各视图固定 Warning 档），本辅助不拥有 OverlayHost。
+    /// 复制确认（Wanxiang2.CopyButton）：按钮在确认期间保持 ✓，非减弱动效时先淡出一档。
+    /// 返回「刚复制」触发器；show 在每次状态推进时被调用。
+    let attachCopyConfirm (button: Control) (show: Wanxiang2.CopyButton.CopyState -> unit) : unit -> unit =
+        let copy =
+            Wanxiang2.CopyButton.CopyButton(
+                button,
+                { FadeOpacity = SharedTheme.manager.Metric Wanxiang2.ThemeMetrics.Metric.OpacityCopyConfirmFade
+                  Hold = Wanxiang2.Theme.LiveValue MotionLedger.copyConfirmationHold
+                  Fade = Wanxiang2.Theme.LiveValue MotionLedger.copyConfirmationFade })
+        copy.StateChanged.Add show
+        fun () -> copy.Copied(MotionPolicy.isReduced ())
+
     let applyValidationFeedback (errors: (TextBox * string) list) (summary: TextBlock option) (toast: string -> unit) : unit =
-        let focusField (box: TextBox) =
-            // 错误行只展开自己所在的组（hint 与 error 互换），边框粗细不变；
-            // 单错时焦点仍送到字段本身，不打断摘要节律。
-            box.BringIntoView()
-            box.Focus(NavigationMethod.Directional) |> ignore
-            Dispatcher.UIThread.Post(fun () ->
-                if box.IsEffectivelyVisible && box.IsEnabled then
-                    box.BringIntoView()
-                    box.Focus(NavigationMethod.Directional) |> ignore)
-        match errors with
-        | [] ->
-            // 错误清零：收起可能残留的摘要（与单错节律一致），不出 toast、不动焦点。
-            summary |> Option.iter (fun region -> region.IsVisible <- false)
-        | first :: _ ->
-            if List.length errors > 1 then
-                match summary with
-                | Some region ->
-                    let summaryText = String.Join("；", errors |> List.map snd)
-                    region.Text <- sprintf "有 %d 处需要修正：%s" (List.length errors) summaryText
-                    region.IsVisible <- true
-                    Avalonia.Automation.AutomationProperties.SetName(region, region.Text)
-                    toast (sprintf "有 %d 处需要修正，请查看表单顶部摘要。" (List.length errors))
-                    // 多错时聚焦摘要：逐字段内联错误保留，焦点只落一处，不逐个跳转。
-                    region.BringIntoView()
-                    region.Focus(NavigationMethod.Directional) |> ignore
-                    Dispatcher.UIThread.Post(fun () ->
-                        if region.IsEffectivelyVisible then
-                            region.BringIntoView()
-                            region.Focus(NavigationMethod.Directional) |> ignore)
-                | None ->
-                    // 没有摘要位时退化为单错节律：只提示并聚焦首个失败字段。
-                    let box, message = first
-                    if not (String.IsNullOrWhiteSpace message) then toast message
-                    focusField box
-            else
-                let box, message = first
-                summary |> Option.iter (fun region -> region.IsVisible <- false)
-                if not (String.IsNullOrWhiteSpace message) then toast message
-                focusField box
+        Wanxiang2.FieldCheck.FieldCheck.Apply(errors, summary) |> Option.iter toast

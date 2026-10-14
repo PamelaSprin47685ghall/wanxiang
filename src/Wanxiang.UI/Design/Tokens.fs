@@ -82,205 +82,115 @@ module Tokens =
     let logoEmpty = 68.0
     let logoAvatar = 26.0
 
-    let mutable private palette = Palette.light
+    let private theme = SharedTheme.manager
+
+    let private toMode (m: ThemeMode) =
+        match m with
+        | Light -> Wanxiang2.ThemePalette.PaletteMode.Light
+        | Dark -> Wanxiang2.ThemePalette.PaletteMode.Dark
+
     let mutable private mode = Light
 
-    let private brushes = System.Collections.Generic.List<SolidColorBrush * (Palette -> Color)>()
+    /// 旧视图与新组件共用 SharedTheme 的同一实例：补间只改这一批画笔。
+    let private track (key: Wanxiang2.ThemePalette.PaletteKey) : SolidColorBrush = theme.Brush key
 
-    let private track (pick: Palette -> Color) : SolidColorBrush =
-        let brush = SolidColorBrush(pick palette)
-        brushes.Add(brush, pick)
-        brush
+
+
 
     // ---- 表面 ----
-    let canvas = track (fun p -> p.canvas)
-    let rail = track (fun p -> p.rail)
-    let surface = track (fun p -> p.surface)
-    let surfaceRaised = track (fun p -> p.surfaceRaised)
+    let canvas = track Wanxiang2.ThemePalette.PaletteKey.Canvas
+    let rail = track Wanxiang2.ThemePalette.PaletteKey.Rail
+    let surface = track Wanxiang2.ThemePalette.PaletteKey.Surface
+    let surfaceRaised = track Wanxiang2.ThemePalette.PaletteKey.SurfaceRaised
     /// rail 与 surface 之间的暖纸中间容器（分组容器、行条）：
     /// 比卡片轻、比侧栏亮，仍是暖纸层，不抢卡片层级
-    let surfaceContainer = track (fun p -> p.surfaceContainer)
+    let surfaceContainer = track Wanxiang2.ThemePalette.PaletteKey.SurfaceContainer
     /// 柔和表面微底色（思考过程、次级容器背景）
-    let surfaceSoft = track (fun p -> Color.FromArgb(0x55uy, p.surface.R, p.surface.G, p.surface.B))
-    let border = track (fun p -> p.border)
-    let borderSoft = track (fun p -> p.borderSoft)
+    let surfaceSoft = track Wanxiang2.ThemePalette.PaletteKey.SurfaceSoft
+    let border = track Wanxiang2.ThemePalette.PaletteKey.Border
+    let borderSoft = track Wanxiang2.ThemePalette.PaletteKey.BorderSoft
     /// 发丝线：最轻的分割/描边，比 borderSoft 再退一档；
     /// hairlineStrong 介于 borderSoft 与 border 之间，两档各自独立
-    let hairline = track (fun p -> p.hairline)
-    let hairlineStrong = track (fun p -> p.hairlineStrong)
-    let line = track (fun p -> p.line)
+    let hairline = track Wanxiang2.ThemePalette.PaletteKey.Hairline
+    let hairlineStrong = track Wanxiang2.ThemePalette.PaletteKey.HairlineStrong
+    let line = track Wanxiang2.ThemePalette.PaletteKey.Line
 
     // ---- 文字 ----
-    let text = track (fun p -> p.text)
-    let textMuted = track (fun p -> p.textMuted)
-    let textFaint = track (fun p -> p.textFaint)
-    let textOnAccent = track (fun p -> p.textOnAccent)
+    let text = track Wanxiang2.ThemePalette.PaletteKey.Text
+    let textMuted = track Wanxiang2.ThemePalette.PaletteKey.TextMuted
+    let textFaint = track Wanxiang2.ThemePalette.PaletteKey.TextFaint
+    let textOnAccent = track Wanxiang2.ThemePalette.PaletteKey.TextOnAccent
 
     // ---- 强调 ----
-    let accent = track (fun p -> p.accent)
-    let accentHover = track (fun p -> p.accentHover)
-    let accentSoft = track (fun p -> p.accentSoft)
-    let accentFaint = track (fun p -> p.accentFaint)
-    let selected = track (fun p -> p.selected)
-    let userBubble = track (fun p -> p.userBubble)
-    let userBubbleText = track (fun p -> p.userBubbleText)
+    let accent = track Wanxiang2.ThemePalette.PaletteKey.Accent
+    let accentHover = track Wanxiang2.ThemePalette.PaletteKey.AccentHover
+    let accentSoft = track Wanxiang2.ThemePalette.PaletteKey.AccentSoft
+    let accentFaint = track Wanxiang2.ThemePalette.PaletteKey.AccentFaint
+    let selected = track Wanxiang2.ThemePalette.PaletteKey.Selected
+    let userBubble = track Wanxiang2.ThemePalette.PaletteKey.UserBubble
+    let userBubbleText = track Wanxiang2.ThemePalette.PaletteKey.UserBubbleText
 
     /// 用户气泡选中底：半透明白只把深底提亮一档。气泡在浅/深两套调色板里都是深底
     /// （对比度测试锁住这一前提），叠加层因此主题无关，不随 Palette 换值。
     /// 移入 Tokens 是为了守住「视觉常量只出自 Tokens」的不变量，而非让它跟随主题。
-    let userBubbleSelection = SolidColorBrush(Color.FromArgb(0x59uy, 255uy, 255uy, 255uy)) :> IBrush
+    let userBubbleSelection = track Wanxiang2.ThemePalette.PaletteKey.UserBubbleSelection :> IBrush
 
     // ---- 状态 ----
-    let success = track (fun p -> p.success)
-    let warning = track (fun p -> p.warning)
-    let danger = track (fun p -> p.danger)
-    let dangerSoft = track (fun p -> p.dangerSoft)
-    let info = track (fun p -> p.info)
-    let infoSoft = track (fun p -> p.infoSoft)
+    let success = track Wanxiang2.ThemePalette.PaletteKey.Success
+    let warning = track Wanxiang2.ThemePalette.PaletteKey.Warning
+    let danger = track Wanxiang2.ThemePalette.PaletteKey.Danger
+    let dangerSoft = track Wanxiang2.ThemePalette.PaletteKey.DangerSoft
+    let info = track Wanxiang2.ThemePalette.PaletteKey.Info
+    let infoSoft = track Wanxiang2.ThemePalette.PaletteKey.InfoSoft
 
     // ---- 代码 ----
-    let codeBg = track (fun p -> p.codeBg)
+    let codeBg = track Wanxiang2.ThemePalette.PaletteKey.CodeBg
     let codeBlockBackground = codeBg
-    let codeHeaderBg = track (fun p -> p.codeHeaderBg)
-    let codeBorder = track (fun p -> p.codeBorder)
-    let codeText = track (fun p -> p.codeText)
-    let codeMuted = track (fun p -> p.codeMuted)
-    let codeKeyword = track (fun p -> p.codeKeyword)
-    let codeString = track (fun p -> p.codeString)
-    let codeComment = track (fun p -> p.codeComment)
-    let codeNumber = track (fun p -> p.codeNumber)
-    let codeType = track (fun p -> p.codeType)
-    let codeFunction = track (fun p -> p.codeFunction)
-    let codeMeta = track (fun p -> p.codeMeta)
-    let codeVariable = track (fun p -> p.codeVariable)
-    let codeOperator = track (fun p -> p.codeOperator)
-    let codeAddition = track (fun p -> p.codeAddition)
-    let codeDeletion = track (fun p -> p.codeDeletion)
+    let codeHeaderBg = track Wanxiang2.ThemePalette.PaletteKey.CodeHeaderBg
+    let codeBorder = track Wanxiang2.ThemePalette.PaletteKey.CodeBorder
+    let codeText = track Wanxiang2.ThemePalette.PaletteKey.CodeText
+    let codeMuted = track Wanxiang2.ThemePalette.PaletteKey.CodeMuted
+    let codeKeyword = track Wanxiang2.ThemePalette.PaletteKey.CodeKeyword
+    let codeString = track Wanxiang2.ThemePalette.PaletteKey.CodeString
+    let codeComment = track Wanxiang2.ThemePalette.PaletteKey.CodeComment
+    let codeNumber = track Wanxiang2.ThemePalette.PaletteKey.CodeNumber
+    let codeType = track Wanxiang2.ThemePalette.PaletteKey.CodeType
+    let codeFunction = track Wanxiang2.ThemePalette.PaletteKey.CodeFunction
+    let codeMeta = track Wanxiang2.ThemePalette.PaletteKey.CodeMeta
+    let codeVariable = track Wanxiang2.ThemePalette.PaletteKey.CodeVariable
+    let codeOperator = track Wanxiang2.ThemePalette.PaletteKey.CodeOperator
+    let codeAddition = track Wanxiang2.ThemePalette.PaletteKey.CodeAddition
+    let codeDeletion = track Wanxiang2.ThemePalette.PaletteKey.CodeDeletion
 
     // ---- 交互层 ----
-    let scrim = track (fun p -> p.scrim)
-    let hover = track (fun p -> p.hover)
-    let pressed = track (fun p -> p.pressed)
+    let scrim = track Wanxiang2.ThemePalette.PaletteKey.Scrim
+    let hover = track Wanxiang2.ThemePalette.PaletteKey.Hover
+    let pressed = track Wanxiang2.ThemePalette.PaletteKey.Pressed
 
-    let inlineCodeBg = track (fun p -> p.inlineCode)
-    let tableStripe = track (fun p -> p.tableStripe)
-    let tableHeader = track (fun p -> p.tableHeader)
+    let inlineCodeBg = track Wanxiang2.ThemePalette.PaletteKey.InlineCode
+    let tableStripe = track Wanxiang2.ThemePalette.PaletteKey.TableStripe
+    let tableHeader = track Wanxiang2.ThemePalette.PaletteKey.TableHeader
 
     /// 主题变化通知：字号/阴影等非画笔量需要重建的地方订阅它。
     let Changed = Event<ThemeMode>()
 
     let current () = mode
-    let colors () = palette
+    let colors () = Palette.ofMode mode
 
     let isDark () = mode = Dark
 
-    // ---- 主题颜色补间 ----
-    // 只补间 Color：不触碰 RenderTransform、尺寸、边距与 BoxShadow，
-    // 因此 MotionLedger.geometryAnimationAllowed 保持 false，不引入任何几何/位移/尺寸动画。
-
-    /// 补间帧节奏：由主题过渡令牌推导（200ms / 12 帧 ≈ 16.7ms）。散落裸毫秒只写在
-    /// MotionLedger，这里不再发出新的裸毫秒。
-    let private colorTransitionFrame =
-        TimeSpan.FromTicks(max 1L (MotionLedger.themeColorTransition.Ticks / 12L))
-
-    /// 补间有效时长：尊重 MotionPolicy 的减弱动效偏好，降级为零（同步到位）。
-    let private colorTransitionDuration () =
-        if MotionPolicy.isReduced () then TimeSpan.Zero else MotionLedger.themeColorTransition
-
-    /// 每支画笔本段补间的起点色、目标色、起始时刻与本段时长归 ThemeTween：补间途中再切换时
-    /// 起点是前一段的逻辑当前色，后来的切换因此接管前一段补间，两段不会叠加。
-    let private tween = ThemeTween<SolidColorBrush>()
-    let private toArgb (c: Color) : Argb = { A = c.A; R = c.R; G = c.G; B = c.B }
-    let private ofArgb (c: Argb) = Color.FromArgb(c.A, c.R, c.G, c.B)
-
-    // ---- 帧调度 ----
-    // 为什么不用 DispatcherTimer 驱动补间：本项目的无显示测试制度是
-    // `SetupWithoutStarting` + `Dispatcher.UIThread.RunJobs()`，不起消息循环。
-    // 实测（Avalonia 12.1.2，headless + Skia）：DispatcherTimer 在此制度下
-    // 每个实例每次 `Start` 至多被服务一个 tick 就再也不响（进程里是否曾挂载过
-    // 视图树还会影响它甚至一次都不响）。补间需要 200ms 内约 12 帧连续推进，
-    // DispatcherTimer 在这里不可依赖；只用真实时钟的计时器逐帧往 dispatcher
-    // 投递 job：生产环境按墙钟平滑逐帧、颜色计算与状态修改全部收敛在 UI 线程，
-    // 无显示测试里这些 job 也能被 `RunJobs` 稳定泵起，补间进度因此可验证。
-    let mutable private frameTimer : System.Threading.Timer option = None
-    /// 补间代次：apply 接管（中途重新计时）时递增；过期帧不负责收尾停帧，
-    /// 免得上一段补间的迟到一帧误停新补间。
-    let mutable private frameGeneration = 0
-
-    let private stopFrames () =
-        match frameTimer with
-        | Some timer ->
-            frameTimer <- None
-            timer.Dispose()
-        | None -> ()
-
-    /// 在 UI 线程上按墙钟推进一帧。t 由 ThemeTween 按本段起点实时计算，
-    /// 因此中途被接管时迟到的帧也只是按新起点画一帧，不会叠加两段补间。
-    let private advanceFrame generation =
-        // 运行中被降级（时长为零）时 ThemeTween 立即给出目标色并收尾，避免除零。
-        let frame = tween.Frame(DateTimeOffset.UtcNow, (colorTransitionDuration ()).TotalMilliseconds)
-        for brush, color in frame.Colors do
-            brush.Color <- ofArgb color
-        if frame.Finished && generation = frameGeneration then stopFrames ()
-
-    let private startFrames () =
-        frameGeneration <- frameGeneration + 1
-        stopFrames ()
-        let generation = frameGeneration
-        // 计时器在线程池上走真实时钟；每帧把推进逻辑 post 到 UI 线程执行，
-        // 补间状态与画笔只在 dispatcher 上被读改写，不跨线程共享可变状态。
-        frameTimer <-
-            Some(
-                new System.Threading.Timer(
-                    (fun _ ->
-                        Dispatcher.UIThread.InvokeAsync(fun () -> advanceFrame generation)
-                        |> ignore),
-                    null,
-                    colorTransitionFrame,
-                    colorTransitionFrame))
-
-    /// 应用主题。已有画笔实例原地改色，因此不必重建视图树。
-    ///
-    /// mode/palette 同步更新、`Changed` 即刻触发：非画笔量（阴影、字号）的
-    /// 重建语义与触发时机完全不变。变的是画笔：`Color` 不再硬切，而是从当前色
-    /// 向新色补间，时长消费 `MotionLedger.themeColorTransition`。
-    ///
-    /// 补间途中再次 apply：起点重取为 brush 的当前色、计时重新起算，后来的切换
-    /// 接管前一段补间。减弱动效或同主题重放则同步到位。
+    /// 主题颜色补间由 SharedTheme.manager 驱动（同代际帧、减弱动效即时到位）。
     let apply (next: ThemeMode) : unit =
-        let sameMode = (mode = next)
-        let duration = colorTransitionDuration ()
         mode <- next
-        palette <- Palette.ofMode next
-        let plan = [ for brush, pick in brushes -> brush, toArgb brush.Color, toArgb (pick palette) ]
-        match tween.Apply(DateTimeOffset.UtcNow, sameMode, duration.TotalMilliseconds, plan) with
-        | ThemeStart.Snap ->
-            stopFrames ()
-            for brush, pick in brushes do
-                brush.Color <- pick palette
-        | ThemeStart.Tween -> startFrames ()
+        theme.Apply(toMode next)
         Changed.Trigger next
 
-    /// 立即把进行中的补间收尾到目标色并停帧（决策 430）。测试用它代替
-    /// 「睡一段时间再泵 dispatcher」：高负载下墙钟帧可能迟到，睡眠不可靠。
-    /// 必须在 UI 线程调用。
-    let completeTransition () : unit =
-        stopFrames ()
-        frameGeneration <- frameGeneration + 1
-        tween.Complete() |> ignore
-        for brush, pick in brushes do
-            brush.Color <- pick palette
+    /// 立即把进行中的补间收尾到目标色并停帧（决策 430）。必须在 UI 线程调用。
+    let completeTransition () : unit = theme.CompleteTransition()
 
-    // ---- 阴影（跟随主题，需在重建时重新读取）----
-    /// 中等抬升：下拉、气泡
-    let shadowPopup () =
-        BoxShadows(
-            BoxShadow(OffsetX = 0.0, OffsetY = 8.0, Blur = 26.0, Spread = -8.0, Color = palette.shadowStrong))
+    let shadowPopup () = theme.ShadowPopup()
 
-    /// 对话框
-    let shadowDialog () =
-        BoxShadows(
-            BoxShadow(OffsetX = 0.0, OffsetY = 18.0, Blur = 48.0, Spread = -12.0, Color = palette.shadowStrong))
+    let shadowDialog () = theme.ShadowDialog()
 
     /// 内嵌字体：browser-wasm 拿不到宿主系统字体，桌面与 PWA 必须用同一份内嵌字形。
     ///

@@ -232,7 +232,7 @@ type MainView() as this =
         // compact 抽屉的焦点归宿：打开进抽屉（搜索框），收起回输入区（D3/D4）。
         if state.compactMode then
             // 触屏上不自动聚焦搜索框：软键盘会弹出遮住对话列表（第 212 节）
-            if opened then (if not (InputModality.prefersTouch ()) then sidebar.FocusSearch())
+            if opened then (if not (SharedTheme.input.PrefersTouch) then sidebar.FocusSearch())
             elif before.compactNavigationOpen then composer.Focus()
 
     member private this.ApplyResponsiveLayout(width: float) =
@@ -245,7 +245,7 @@ type MainView() as this =
             // （进入 compact 且无对话），也先把焦点送进抽屉（搜索框），避免 Tab 漏到背景聊天/输入区。
             // 触发条件与 SetCompactNavigation 同口径：抽屉由「未开」翻到「compact 打开」才聚焦——
             // 关闭态、非 compact、以及开合状态未变的普通缩放都不抢焦点。
-            if NavigationSnapshot.autofocusDrawer before state (InputModality.prefersTouch ()) then
+            if NavigationSnapshot.autofocusDrawer before state (SharedTheme.input.PrefersTouch) then
                 sidebar.FocusSearch()
 
     /// 浏览器 CSS 视口轮询：zoom、DPR、显示器移动都不会可靠触发 Bounds 更新，
@@ -2391,7 +2391,7 @@ type MainView() as this =
 
         let initialNavigation = navigation.State
         shellGrid <- Grid()
-        InputModality.track this
+        SharedTheme.input.Track this
         // 列宽唯一投影器是 MainLayoutController.Apply：这里只建空定义，初值由下方的 Apply 落定。
         shellGrid.ColumnDefinitions.Add(ColumnDefinition(MaxWidth = Tokens.sidebarMaxWidth))
         shellGrid.ColumnDefinitions.Add(ColumnDefinition())

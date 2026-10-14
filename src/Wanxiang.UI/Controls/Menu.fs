@@ -7,50 +7,40 @@ open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
 
-/// 浮层菜单里的一项。
-type MenuEntry = {
-    label: string
-    /// 右侧弱字（快捷键、当前值等）
-    hint: string
-    icon: (IBrush -> Control) option
-    /// 选中态打勾
-    selected: bool
-    danger: bool
-    action: unit -> unit
-}
+/// 浮层菜单里的一项（Wanxiang2.PopupMenu.PopupEntry）。
+type MenuEntry = Wanxiang2.PopupMenu.PopupEntry
 
 module MenuEntry =
 
-    let create (label: string) (action: unit -> unit) : MenuEntry =
-        { label = label; hint = ""; icon = None; selected = false; danger = false; action = action }
+    let create (label: string) (action: unit -> unit) : MenuEntry = Wanxiang2.PopupMenu.PopupEntry.create label action
+    let withIcon (icon: IBrush -> Control) (entry: MenuEntry) = Wanxiang2.PopupMenu.PopupEntry.withIcon icon entry
+    let withHint (hint: string) (entry: MenuEntry) = Wanxiang2.PopupMenu.PopupEntry.withHint hint entry
+    let markSelected (selected: bool) (entry: MenuEntry) = Wanxiang2.PopupMenu.PopupEntry.markSelected selected entry
+    let asDanger (entry: MenuEntry) = Wanxiang2.PopupMenu.PopupEntry.asDanger entry
 
-    let withIcon (icon: IBrush -> Control) (entry: MenuEntry) = { entry with icon = Some icon }
-    let withHint (hint: string) (entry: MenuEntry) = { entry with hint = hint }
-    let markSelected (selected: bool) (entry: MenuEntry) = { entry with selected = selected }
-    let asDanger (entry: MenuEntry) = { entry with danger = true }
-
-/// 浮层菜单与下拉选择器。都渲染在 `OverlayHost` 上，桌面与 PWA 行为一致。
+/// 菜单渲染暂留本地：Wanxiang2.PopupMenu 的条目是普通 Border，读屏拿不到 Invoke（NoneAutomationPeer），
+/// 旧 ActionBorder 条目可被辅助技术直接激活。库补上 Invoke 之前不切换，浮层本身走 OverlayDesk 的 OverlayLayer。
 module Menu =
 
     let private handCursor = new Cursor(StandardCursorType.Hand)
 
     let private renderEntry (overlay: OverlayHost) (entry: MenuEntry) : Control =
-        let foreground: IBrush = if entry.danger then Tokens.danger else Tokens.text
+        let foreground: IBrush = if entry.Danger then Tokens.danger else Tokens.text
         let iconSlot =
             Border(
                 Width = ControlMetrics.menuIconSlotWidth,
                 Height = Tokens.iconGlyph,
                 VerticalAlignment = VerticalAlignment.Center)
-        match entry.icon with
+        match entry.Icon with
         | Some icon ->
-            let glyph = icon (if entry.danger then Tokens.danger else Tokens.textMuted)
+            let glyph = icon (if entry.Danger then Tokens.danger else Tokens.textMuted)
             glyph.HorizontalAlignment <- HorizontalAlignment.Center
             glyph.VerticalAlignment <- VerticalAlignment.Center
             iconSlot.Child <- glyph
         | None -> ()
         let caption =
             TextBlock(
-                Text = entry.label,
+                Text = entry.Label,
                 FontSize = Tokens.fontSmall,
                 Foreground = foreground,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -67,15 +57,15 @@ module Menu =
                 MinWidth = ControlMetrics.menuRightSlotMinWidth,
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Right)
-        if entry.selected then
+        if entry.Selected then
             let mark = Icons.check Tokens.accent
             mark.VerticalAlignment <- VerticalAlignment.Center
             mark.HorizontalAlignment <- HorizontalAlignment.Right
             rightSlot.Child <- mark
-        elif not (String.IsNullOrWhiteSpace entry.hint) then
+        elif not (String.IsNullOrWhiteSpace entry.Hint) then
             let hint =
                 TextBlock(
-                    Text = entry.hint,
+                    Text = entry.Hint,
                     FontSize = Tokens.fontMicro,
                     Foreground = Tokens.textFaint,
                     VerticalAlignment = VerticalAlignment.Center,
@@ -97,9 +87,9 @@ module Menu =
                 Focusable = true,
                 MinHeight = ControlMetrics.menuItemMinHeight,
                 Child = row)
-        Avalonia.Automation.AutomationProperties.SetName(host, entry.label)
+        Avalonia.Automation.AutomationProperties.SetName(host, entry.Label)
         // 长文案被 CharacterEllipsis 截断时补原生 tooltip（悬停即读全文，不新增 type-ahead）。
-        ToolTip.SetTip(host, entry.label)
+        ToolTip.SetTip(host, entry.Label)
         Avalonia.Automation.AutomationProperties.SetControlTypeOverride(
             host,
             Nullable Avalonia.Automation.Peers.AutomationControlType.MenuItem)
@@ -107,13 +97,13 @@ module Menu =
         host.Transitions <- Ui.surfaceTransitions ()
         // 危险项（删除对话等）用 danger 变体（dangerSoft 叠 hover 底），与常规 hover 拉开差距；
         // 键盘激活（Enter/Space）由 Ui.onClick 统一绑定，Tab 焦点环由 ActionBorder 绘制。
-        let hoverVariant = if entry.danger then Interaction.HoverVariant.danger else Interaction.HoverVariant.plain
+        let hoverVariant = if entry.Danger then Interaction.HoverVariant.danger else Interaction.HoverVariant.plain
         Interaction.surface host hoverVariant |> ignore
         Interaction.reportFocusOrigin host
         // 按压反馈由 Interaction 的 `:pressed` 伪类负责（不透明度脉冲，不碰几何）。
         Ui.onClick host (fun () ->
             overlay.ClosePopup()
-            entry.action ())
+            entry.Action ())
         host :> Control
 
     /// 菜单用 Up/Down/Home/End 做 roving focus；几何仍完全交给 Avalonia。

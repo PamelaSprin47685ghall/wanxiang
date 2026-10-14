@@ -33,7 +33,7 @@ module CommandPaletteView =
         let right = StackPanel(Orientation = Orientation.Horizontal, Spacing = Spacing.spaceMd, VerticalAlignment = VerticalAlignment.Center)
         // 触屏没有键盘：不显示键位列，省出标题宽度（读屏 HelpText 仍带键位）。
         match item.shortcut with
-        | Some keys when not (InputModality.prefersTouch ()) ->
+        | Some keys when not (SharedTheme.input.PrefersTouch) ->
             right.Children.Add(
                 TextBlock(Text = CommandPalette.compactKeys keys, FontSize = Tokens.fontMicro, FontFamily = Tokens.monoFontFamily, Foreground = Tokens.textFaint, VerticalAlignment = VerticalAlignment.Center))
         | _ -> ()

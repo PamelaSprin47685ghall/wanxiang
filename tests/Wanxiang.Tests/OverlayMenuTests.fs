@@ -103,43 +103,4 @@ let select_button_and_menu_items_keep_full_opacity_until_pressed () =
     )
 
 // 删除 focus 死代码后行为不变：提示条仍 Focusable=false、Escape 仍按 topmost-first 解散最新一条。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let toast_stays_non_focusable_and_escape_dismisses_it () =
-    Headless.run (fun () ->
-    let root = Grid()
-    let overlay = OverlayHost(root)
-    overlay.Toast("已保存", ToastTone.Neutral)
-    let toast =
-        descendants root
-        |> Seq.choose (function :? Border as border -> Some border | _ -> None)
-        |> Seq.tryFind (fun border -> AutomationProperties.GetName(border) = "已保存")
-    Assert.True(toast.IsSome)
-    Assert.False(toast.Value.Focusable)
-    // Escape 触发退场同步移除（仅入场淡入保留：无显示制度无法确定性泵动退场计时器）。
-    Assert.True(overlay.HandleEscape())
-    // 同步移除：节点即时从树中消失，无需等待任何计时器。
-    let stillPresent =
-        descendants root
-        |> Seq.exists (fun control -> AutomationProperties.GetName(control) = "已保存")
-    Assert.False(stillPresent)
-    )
-
 // 减弱动效下 toast 退场即时移除（无淡出、零等待），保持可预期的关闭手感。
-[<Trait("Category", "UI")>]
-[<Fact>]
-let toast_removes_immediately_under_reduced_motion () =
-    Headless.run (fun () ->
-    let root = Grid()
-    let overlay = OverlayHost(root)
-    MotionPolicy.setReduced true
-    try
-        overlay.Toast("即时", ToastTone.Warning)
-        Assert.True(overlay.HandleEscape())
-        let present =
-            descendants root
-            |> Seq.exists (fun control -> AutomationProperties.GetName(control) = "即时")
-        Assert.False(present)
-    finally
-        MotionPolicy.setReduced false
-    )

@@ -158,17 +158,17 @@ module MessageCard =
         Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
         Avalonia.Automation.AutomationProperties.SetLiveSetting(button, AutomationLiveSetting.Polite)
         let confirmCopy =
-            CopyFeedback.attach button (fun visual ->
+            Ui.attachCopyConfirm button (fun visual ->
                 match visual with
-                | CopyVisual.Default ->
+                | Wanxiang2.CopyButton.CopyState.Default ->
                     Ui.setIcon button Icons.copy Tokens.textMuted
                     Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                     alignIconCentrally button
                     ToolTip.SetTip(button, tipText)
                     Avalonia.Automation.AutomationProperties.SetName(button, accessibleName)
                     Avalonia.Automation.AutomationProperties.SetHelpText(button, accessibleName)
-                | CopyVisual.Confirmed
-                | CopyVisual.Fading ->
+                | Wanxiang2.CopyButton.CopyState.Confirmed
+                | Wanxiang2.CopyButton.CopyState.Fading ->
                     Ui.setIcon button Icons.check Tokens.success
                     Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                     alignIconCentrally button
@@ -176,7 +176,7 @@ module MessageCard =
                     Avalonia.Automation.AutomationProperties.SetName(button, "已复制")
                     Avalonia.Automation.AutomationProperties.SetHelpText(button, "已复制到剪贴板"))
         // 复制一律走注入的 actions.copyText（剪贴板唯一入口；异步化与失败提示由 AppShell 侧负责）。
-        // 保持既有确认形态：图标变 check、保持一段时间后复位（CopyConfirm）。
+        // 保持既有确认形态：图标变 check、保持一段时间后复位（Wanxiang2.CopyButton）。
         let doCopy () =
             let payload = getText ()
             if not (String.IsNullOrEmpty payload) then
@@ -940,17 +940,17 @@ module MessageCard =
             Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
             Avalonia.Automation.AutomationProperties.SetLiveSetting(button, AutomationLiveSetting.Polite)
             let confirmCopy =
-                CopyFeedback.attach button (fun visual ->
+                Ui.attachCopyConfirm button (fun visual ->
                     match visual with
-                    | CopyVisual.Default ->
+                    | Wanxiang2.CopyButton.CopyState.Default ->
                         Ui.setIcon button Icons.copy Tokens.textMuted
                         Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                         alignIconCentrally button
                         ToolTip.SetTip(button, "复制")
                         Avalonia.Automation.AutomationProperties.SetName(button, messageCopyName)
                         Avalonia.Automation.AutomationProperties.SetHelpText(button, "复制消息正文")
-                    | CopyVisual.Confirmed
-                    | CopyVisual.Fading ->
+                    | Wanxiang2.CopyButton.CopyState.Confirmed
+                    | Wanxiang2.CopyButton.CopyState.Fading ->
                         Ui.setIcon button Icons.check Tokens.success
                         Ui.setSquareTarget button LayoutPolicy.inlineActionTarget
                         alignIconCentrally button
@@ -1521,20 +1521,20 @@ module MessageCard =
             let items =
                 entries
                 |> List.map (fun e ->
-                    let item = MenuItem(Header = e.label)
+                    let item = MenuItem(Header = e.Label)
                     // 图标与悬停操作条、侧栏浮层菜单同源同色（Menu.fs 的 iconSlot 画法）：
                     // hover 看得见图、右键菜单是纯文字，两处同一组动作却长得不像一家人。
-                    match e.icon with
+                    match e.Icon with
                     | Some icon ->
-                        let glyph = icon (if e.danger then Tokens.danger else Tokens.textMuted)
+                        let glyph = icon (if e.Danger then Tokens.danger else Tokens.textMuted)
                         item.Icon <- glyph
                     | None -> ()
-                    if e.danger then item.Foreground <- Tokens.danger
+                    if e.Danger then item.Foreground <- Tokens.danger
                     // 决策 220：快捷键以 hint 标在菜单项右侧。右键菜单此前丢了 hint，
                     // 键盘动作在 UI 上无处可发现。
-                    if not (String.IsNullOrWhiteSpace e.hint) then
-                        try item.InputGesture <- KeyGesture.Parse e.hint with _ -> ()
-                    item.Click.Add(fun _ -> e.action ())
+                    if not (String.IsNullOrWhiteSpace e.Hint) then
+                        try item.InputGesture <- KeyGesture.Parse e.Hint with _ -> ()
+                    item.Click.Add(fun _ -> e.Action ())
                     item :> obj)
                 |> ResizeArray<obj>
             menu.ItemsSource <- items :> System.Collections.IEnumerable

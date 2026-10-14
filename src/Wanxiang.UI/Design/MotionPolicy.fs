@@ -7,28 +7,18 @@ open Avalonia.Animation
 /// PWA 壳层 CSS 已响应 prefers-reduced-motion；这里负责应用自身控件。
 module MotionPolicy =
 
-    let mutable private reduced = false
-    let Changed = Event<bool>()
+    let private motion = SharedTheme.manager.Motion
 
-    let isReduced () = reduced
+    /// 减弱动效开关归 Wanxiang2.MotionSwitch（经 SharedTheme 唯一实例）；主题补间读同一开关。
+    let Changed = motion.Changed
 
-    let setReduced value =
-        if reduced <> value then
-            reduced <- value
-            Changed.Trigger value
+    let isReduced () = motion.IsReduced
 
-    let duration milliseconds =
-        if reduced then TimeSpan.Zero else TimeSpan.FromMilliseconds(float milliseconds)
+    let setReduced (value: bool) = motion.SetReduced value
 
-    /// 统一缓动曲线：easeOutCubic（cubic-bezier 0.215, 0.61, 0.355, 1）。
-    /// 经 MotionPolicy 门控的 opacity / BrushTransition 状态补间共用这一条曲线，
-    /// 让全应用状态过渡的起始/收尾手感一致（起步快、收尾稳），对应参照的交互态配方。
-    /// Avalonia 未内置 cubic-bezier 四参构造，按 Easings.Easing 基类落一条同名曲线。
-    type EaseOutCubicEasing() =
-        inherit Avalonia.Animation.Easings.Easing()
-        override _.Ease(t: float) = EaseOutCubic.ease t
+    let duration (milliseconds: float) = motion.Duration milliseconds
 
-    let easeOutCubic = EaseOutCubicEasing()
+    let easeOutCubic = Wanxiang2.Theme.EaseOutCubicEasing()
 
 /// Motion Ledger：精品阶段明确“什么允许动、什么只切状态”。
 /// - busy spinner：唯一持续运动；

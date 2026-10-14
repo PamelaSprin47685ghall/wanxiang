@@ -274,15 +274,15 @@ type MarkdownRenderer(
         ToolTip.SetTip(copyButton, "复制代码")
 
         let confirmCopy =
-            CopyFeedback.attach copyButton (fun visual ->
+            Ui.attachCopyConfirm copyButton (fun visual ->
                 match visual with
-                | CopyVisual.Default ->
+                | Wanxiang2.CopyButton.CopyState.Default ->
                     Ui.setIcon copyButton Icons.copy Tokens.codeMuted
                     ToolTip.SetTip(copyButton, "复制代码")
                     Avalonia.Automation.AutomationProperties.SetName(copyButton, codeCopyName)
                     Avalonia.Automation.AutomationProperties.SetHelpText(copyButton, codeCopyName)
-                | CopyVisual.Confirmed
-                | CopyVisual.Fading ->
+                | Wanxiang2.CopyButton.CopyState.Confirmed
+                | Wanxiang2.CopyButton.CopyState.Fading ->
                     Ui.setIcon copyButton Icons.check Tokens.success
                     ToolTip.SetTip(copyButton, "已复制")
                     Avalonia.Automation.AutomationProperties.SetName(copyButton, "已复制"))

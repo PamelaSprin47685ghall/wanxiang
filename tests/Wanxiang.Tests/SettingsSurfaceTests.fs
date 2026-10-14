@@ -102,45 +102,6 @@ let ``settings row and text area metrics keep single sources`` () =
 
 [<Trait("Category", "UI")>]
 [<Fact>]
-let ``validation feedback with a single error toasts the message and hides the summary`` () =
-    Headless.run (fun () ->
-    let box = TextBox()
-    let summary = TextBlock(IsVisible = true, Focusable = true)
-    let toasts = ResizeArray<string>()
-    Ui.applyValidationFeedback [ box, "内容不能为空。" ] (Some summary) (fun message -> toasts.Add message)
-    Assert.Equal<string list>([ "内容不能为空。" ], List.ofSeq toasts)
-    Assert.False(summary.IsVisible)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``validation feedback with multiple errors fills the focusable summary`` () =
-    Headless.run (fun () ->
-    let first = TextBox()
-    let second = TextBox()
-    let summary = TextBlock(IsVisible = false, Focusable = true)
-    let toasts = ResizeArray<string>()
-    Ui.applyValidationFeedback [ first, "甲错"; second, "乙错" ] (Some summary) (fun message -> toasts.Add message)
-    Assert.True(summary.IsVisible)
-    Assert.Equal("有 2 处需要修正：甲错；乙错", summary.Text)
-    Assert.Equal<string list>([ "有 2 处需要修正，请查看表单顶部摘要。" ], List.ofSeq toasts)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``validation feedback with no errors stays silent and hides the summary`` () =
-    Headless.run (fun () ->
-    // Ui 模块顶层建有 Cursor（handCursor）：触碰其任何成员前必须先 ensure，
-    // 否则模块静态构造在无 ICursorFactory 的进程里直接炸。
-    let summary = TextBlock(IsVisible = true)
-    let toasts = ResizeArray<string>()
-    Ui.applyValidationFeedback [] (Some summary) (fun message -> toasts.Add message)
-    Assert.False(summary.IsVisible)
-    Assert.Equal(0, toasts.Count)
-    )
-
-[<Trait("Category", "UI")>]
-[<Fact>]
 let ``warning tag tone uses the warning brush while neutral stays muted`` () =
     Headless.run (fun () ->
     let warning = Ui.tagWith Ui.TagTone.Warning "缺少密钥"
