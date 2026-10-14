@@ -1262,13 +1262,13 @@ type MainView() as this =
                         do! stream.CopyToAsync buffer |> Async.AwaitTask
                         let bytes = buffer.ToArray()
                         ui.Post(fun () ->
-                            if UploadPlan.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then
+                            if UploadFacts.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then
                                 this.BeginUpload(owner, file.Name, bytes)
-                            else toast UploadPlan.disconnectedText Warning)
+                            else toast UploadFacts.disconnectedText Warning)
                     ui.Post(fun () -> composer.Focus())
                 with ex ->
                     ui.Post(fun () ->
-                        toast (UploadPlan.readFailedText ex.Message) Failure
+                        toast (UploadFacts.readFailedText ex.Message) Failure
                         composer.Focus())
             }
             |> Async.Start
@@ -1290,22 +1290,22 @@ type MainView() as this =
                             do! stream.CopyToAsync buffer |> Async.AwaitTask
                             let bytes = buffer.ToArray()
                             ui.Post(fun () ->
-                                if UploadPlan.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then
+                                if UploadFacts.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then
                                     this.BeginUpload(owner, sf.Name, bytes)
-                                else toast UploadPlan.disconnectedText Warning)
+                                else toast UploadFacts.disconnectedText Warning)
                         | _ ->
                             let path = item.TryGetLocalPath()
                             if not (String.IsNullOrEmpty path) && File.Exists path then
                                 let bytes = File.ReadAllBytes path
                                 let name = Path.GetFileName path
                                 ui.Post(fun () ->
-                                    if UploadPlan.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then
+                                    if UploadFacts.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then
                                         this.BeginUpload(owner, name, bytes)
-                                    else toast UploadPlan.disconnectedText Warning)
+                                    else toast UploadFacts.disconnectedText Warning)
                     ui.Post(fun () -> composer.Focus())
                 with ex ->
                     ui.Post(fun () ->
-                        toast (UploadPlan.dropReadFailedText ex.Message) Failure
+                        toast (UploadFacts.dropReadFailedText ex.Message) Failure
                         composer.Focus())
             }
             |> Async.Start
@@ -1324,8 +1324,8 @@ type MainView() as this =
                         let formats = formatsTask.Result
                         let hasFiles = formats |> Seq.exists (fun f -> f = DataFormat.File)
                         let hasBitmap = formats |> Seq.exists (fun f -> f = DataFormat.Bitmap)
-                        match UploadPlan.pasteSource hasFiles hasBitmap with
-                        | UploadPlan.PasteSource.Files ->
+                        match UploadFacts.pasteSource hasFiles hasBitmap with
+                        | UploadFacts.PasteSource.Files ->
                             async {
                                 try
                                     let! files = clipboard.TryGetFilesAsync() |> Async.AwaitTask
@@ -1333,11 +1333,11 @@ type MainView() as this =
                                         ui.Post(fun () -> this.DropFiles(List.ofArray files))
                                 with ex ->
                                     ui.Post(fun () ->
-                                        toast (UploadPlan.clipboardFilesFailedText ex.Message) Failure
+                                        toast (UploadFacts.clipboardFilesFailedText ex.Message) Failure
                                         composer.Focus())
                             } |> Async.Start
                             true
-                        | UploadPlan.PasteSource.Bitmap ->
+                        | UploadFacts.PasteSource.Bitmap ->
                             let ownerInstance = instanceId
                             let ownerConnection = client.ConnectionGeneration
                             let owner = attachmentDraft ()
@@ -1349,41 +1349,41 @@ type MainView() as this =
                                         let options = PngBitmapEncoderOptions()
                                         bitmap.Save(buffer, options)
                                         let bytes = buffer.ToArray()
-                                        let name = UploadPlan.pasteFileName DateTime.Now
+                                        let name = UploadFacts.pasteFileName DateTime.Now
                                         ui.Post(fun () ->
                                             // 与选文件、拖入同一归属判断：读完位图时已换主机或重连就不上传。
-                                            if UploadPlan.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then
+                                            if UploadFacts.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then
                                                 this.BeginUpload(owner, name, bytes)
-                                            else toast UploadPlan.disconnectedText Warning
+                                            else toast UploadFacts.disconnectedText Warning
                                             composer.Focus())
                                 with ex ->
                                     ui.Post(fun () ->
-                                        toast (UploadPlan.clipboardImageFailedText ex.Message) Failure
+                                        toast (UploadFacts.clipboardImageFailedText ex.Message) Failure
                                         composer.Focus())
                             } |> Async.Start
                             true
-                        | UploadPlan.PasteSource.NotHandled -> false
+                        | UploadFacts.PasteSource.NotHandled -> false
                     else false
             with _ ->
                 false
 
     member private this.BeginUpload(owner: AttachmentDraftController, fileName: string, bytes: byte[]) =
         // 决策 332：超大图片先在后台缩小再走原流程；缩小期间不占界面线程。
-        if UploadPlan.shrinkFirst (ImageShrink.needsShrink fileName bytes) (int64 bytes.Length) then
+        if UploadFacts.shrinkFirst (ImageShrink.needsShrink fileName bytes) (int64 bytes.Length) then
             let ownerInstance = instanceId
             let ownerConnection = client.ConnectionGeneration
-            toast (UploadPlan.shrinkingText fileName) Info
+            toast (UploadFacts.shrinkingText fileName) Info
             async {
                 let! result = ImageShrink.shrinkAsync fileName bytes
                 ui.Post(fun () ->
-                    if not (UploadPlan.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration) then
-                        toast UploadPlan.disconnectedText Warning
+                    if not (UploadFacts.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration) then
+                        toast UploadFacts.disconnectedText Warning
                     else
                         match result with
                         | Error message -> toast message Warning
                         | Ok None -> this.BeginUploadCore(owner, fileName, bytes, None)
                         | Ok(Some shrunk) ->
-                            toast (UploadPlan.shrunkText fileName (ImageShrink.note shrunk)) Info
+                            toast (UploadFacts.shrunkText fileName (ImageShrink.note shrunk)) Info
                             this.BeginUploadCore(owner, shrunk.fileName, shrunk.bytes, Some shrunk))
             }
             |> Async.Start
@@ -1393,7 +1393,7 @@ type MainView() as this =
         match MediaTypes.validate fileName (int64 bytes.Length) with
         | Error message -> toast message Warning
         | Ok() ->
-            let sha = UploadPlan.sha256Hex bytes
+            let sha = UploadFacts.sha256Hex bytes
             let mediaType = MediaTypes.ofFileName fileName
             let attachmentId = Guid.CreateVersion7()
             if MediaTypes.isModelImage mediaType then composer.SetThumbnail(attachmentId, bytes)
@@ -1415,7 +1415,7 @@ type MainView() as this =
                        sha256 = sha
                        mediaType = mediaType
                        fileName = fileName |})
-            for index, dataBase64 in UploadPlan.chunks bytes do
+            for index, dataBase64 in UploadFacts.chunks bytes do
                 send (AttachmentChunk {| attachmentId = attachmentId; index = index; dataBase64 = dataBase64 |})
             send (AttachmentComplete {| attachmentId = attachmentId; sha256 = sha |})
 
@@ -1431,9 +1431,9 @@ type MainView() as this =
                     if not (isNull file) then
                         use! stream = file.OpenWriteAsync() |> Async.AwaitTask
                         do! stream.WriteAsync(bytes, 0, bytes.Length) |> Async.AwaitTask
-                        ui.Post(fun () -> toast (UploadPlan.savedText fileName) Success)
+                        ui.Post(fun () -> toast (UploadFacts.savedText fileName) Success)
                 with ex ->
-                    ui.Post(fun () -> toast (UploadPlan.saveFailedText ex.Message) Failure)
+                    ui.Post(fun () -> toast (UploadFacts.saveFailedText ex.Message) Failure)
             }
             |> Async.Start
 
@@ -1942,13 +1942,13 @@ type MainView() as this =
             // 失败恰报一次 toast（附件条同时内联呈现失败态，两处各报一次、不叠加）（C6）。
             | Some(upload, _, _) ->
                 composer.SetAttachments((attachmentDraft ()).Items)
-                toast (UploadPlan.uploadFailedText upload.fileName) Warning
+                toast (UploadFacts.uploadFailedText upload.fileName) Warning
             | None -> ()
         | AttachmentDownloadBegin d ->
             // 重试同键 Begin 会重置缓冲；新下载开始时也解除一次性的超限提示记忆。
             downloads.Begin(d.sha256, d.fileName)
         | AttachmentDownloadChunk d ->
-            if downloads.AppendBase64(d.sha256, d.dataBase64) then toast UploadPlan.downloadCappedText Warning
+            if downloads.AppendBase64(d.sha256, d.dataBase64) then toast UploadFacts.downloadCappedText Warning
         | AttachmentDownloadComplete d ->
             match downloads.Take(d.sha256) with
             | Some(fileName, bytes) -> this.SaveDownload(fileName, bytes)

@@ -152,10 +152,10 @@ let ``侧栏搜索防抖到期时词未变不重发查询`` () =
 let ``粘贴位图读完时已换主机或重连就不上传`` () =
     // 剪贴板位图分支与选文件、拖入用同一归属判断，避免读完后上传落到新主机。
     let shell = read "src/Wanxiang.UI/AppShell.fs"
-    let start = shell.IndexOf "| UploadPlan.PasteSource.Bitmap ->"
-    let stop = shell.IndexOf("| UploadPlan.PasteSource.NotHandled", start)
+    let start = shell.IndexOf "| UploadFacts.PasteSource.Bitmap ->"
+    let stop = shell.IndexOf("| UploadFacts.PasteSource.NotHandled", start)
     Assert.True(start >= 0 && stop > start)
     let branch = shell.Substring(start, stop - start)
     Assert.Contains("let ownerInstance = instanceId", branch)
     Assert.Contains("let ownerConnection = client.ConnectionGeneration", branch)
-    Assert.Contains("if UploadPlan.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then", branch)
+    Assert.Contains("if UploadFacts.stillOwned authenticated ownerInstance ownerConnection instanceId client.ConnectionGeneration then", branch)
