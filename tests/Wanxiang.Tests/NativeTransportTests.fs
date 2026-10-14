@@ -239,21 +239,6 @@ let ``探活响应没有模型清单时给出可读原因`` () =
          | Ok _ -> false),
         "顶层不是对象时应当报错")
 
-[<Fact>]
-let ``预设表里存在原生传输的选项`` () =
-    // 界面只能从预设里选传输类型；少了原生预设，两个原生传输就是写了没人能用
-    let kinds = ProviderPresets.all |> List.map (fun p -> p.kind) |> List.distinct |> List.sort
-    Assert.Contains("anthropic", kinds)
-    Assert.Contains("gemini", kinds)
-    Assert.Contains("openai", kinds)
-
-[<Fact>]
-let ``每个预设的传输类型都是配置层认得的`` () =
-    for preset in ProviderPresets.all do
-        Assert.True(
-            TomlCodec.supportedProviderKinds.Contains preset.kind,
-            $"预设 {preset.key} 的 kind={preset.kind} 不被配置层接受")
-
 // ---------------------------------------------------------------- 思维链 / 缓存 / 附件
 
 let private reasoningOf (response: ChatResponse) =

@@ -321,30 +321,6 @@ module OnboardingConfigTests =
 
     // ---- 预设重排与合并 ----
 
-    [<Fact>]
-    let ``常用 4 家置顶，原生与兼容端点合并为一个条目`` () =
-        Assert.Equal<string list>([ "openai"; "claude"; "gemini"; "ollama" ], ProviderPresets.featured |> List.map _.key)
-        Assert.Equal(ProviderPresets.all.Length, (ProviderPresets.featured @ ProviderPresets.more).Length)
-        // 不再有独立的“兼容端点”条目
-        Assert.Empty(ProviderPresets.all |> List.filter (fun p -> p.key.EndsWith "-compat" || p.label.Contains "兼容端点（"))
-        Assert.Equal(ProviderPresets.all.Length, ProviderPresets.all |> List.map _.key |> List.distinct |> List.length)
-        // 由 kind 自动决定：Claude / Gemini 默认原生，兼容端点放在 alternate（高级区才可改）
-        let claude = ProviderPresets.tryFind "claude" |> Option.get
-        Assert.Equal("anthropic", claude.kind)
-        Assert.Equal(Some("openai", "https://api.anthropic.com/v1"), claude.alternate)
-        let gemini = ProviderPresets.tryFind "gemini" |> Option.get
-        Assert.Equal("gemini", gemini.kind)
-        Assert.True(gemini.alternate.IsSome)
-        // 已存在的兼容端点配置仍能反查到同一个预设（编辑旧模型服务时不丢预设）
-        Assert.Equal(Some "claude", ProviderPresets.matchByBaseUrl "https://api.anthropic.com/v1/" |> Option.map _.key)
-        Assert.Equal(Some "gemini", ProviderPresets.matchByBaseUrl "https://generativelanguage.googleapis.com/v1beta/openai" |> Option.map _.key)
-        // 每个预设（含 alternate）的 kind 都被配置层接受
-        for p in ProviderPresets.all do
-            Assert.True(TomlCodec.supportedProviderKinds.Contains p.kind)
-            match p.alternate with
-            | Some(k, _) -> Assert.True(TomlCodec.supportedProviderKinds.Contains k)
-            | None -> ()
-
     // ---- 验收 6：卡片与设置页同一保存路径 ----
 
     [<Fact>]

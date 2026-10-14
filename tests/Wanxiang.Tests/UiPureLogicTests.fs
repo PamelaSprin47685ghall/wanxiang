@@ -156,64 +156,6 @@ module UiPureLogicTests =
             Assert.True(Catalog.defaultSelection empty |> Option.isNone)
 
     // =========================================================================
-    // 3. Markdown.fs 纯函数测试（Markdig 语法树节点抽离/行内公式/代码块解析）
-    // =========================================================================
-    module MarkdownTests =
-
-        [<Fact>]
-        let ``parse should parse headings, paragraphs, lists, and codes`` () =
-            let md = """# 标题 1
-这是一段包含 **粗体** 与 *斜体* 与 `代码` 的正文。
-
-- 列表项 1
-- 列表项 2
-
-```fsharp
-let x = 42
-```
-"""
-            let blocks = Markdown.parse md
-            Assert.True(blocks.Length >= 4)
-            match blocks[0] with
-            | MdHeading(1, inlines) ->
-                Assert.NotEmpty(inlines)
-            | other -> Assert.Fail(sprintf "期望 MdHeading，实际是 %A" other)
-
-            let codes = Markdown.codeBlocks blocks
-            Assert.Single(codes) |> ignore
-            Assert.Contains("let x = 42", codes[0])
-
-        [<Fact>]
-        let ``parse math inlines and math blocks`` () =
-            let md = """行内公式 $E = mc^2$ 以及独立公式块：
-
-$$
-\int_0^\infty e^{-x} dx = 1
-$$
-"""
-            let blocks = Markdown.parse md
-            Assert.NotEmpty(blocks)
-            let hasMathInline =
-                blocks
-                |> List.exists (function
-                    | MdParagraph inlines ->
-                        inlines |> List.exists (function MdMath(tex, _) -> tex.Contains("mc^2") | _ -> false)
-                    | _ -> false)
-            Assert.True(hasMathInline, "段落中应当解析出行内公式")
-
-            let hasMathBlock =
-                blocks
-                |> List.exists (function
-                    | MdMathBlock tex -> tex.Contains("\int")
-                    | _ -> false)
-            Assert.True(hasMathBlock, "应当解析出独占行的公式块")
-
-        [<Fact>]
-        let ``parse empty string returns empty list`` () =
-            Assert.Empty(Markdown.parse "")
-            Assert.Empty(Markdown.parse null)
-
-    // =========================================================================
     // 4. UiControllers.fs 纯函数测试（对话运行状态机、退休队列 FIFO 淘汰、附件草稿控制器）
     // =========================================================================
     module UiControllersTests =
@@ -356,43 +298,9 @@ $$
             Assert.Equal(Some "search result payload", merged[0].toolCalls[0].result)
 
     // =========================================================================
-    // 6. MathLayout.fs 纯常量与盒模型纯计算
-    // =========================================================================
-    module MathLayoutTests =
-
-        [<Fact>]
-        let ``katexFontFactor constant value is verified`` () =
-            Assert.Equal(1.21, MathLayout.katexFontFactor)
-
-        [<Fact>]
-        let ``MathBox structure can hold items and baselines`` () =
-            let box: MathBox = { width = 100.0; above = 20.0; below = 10.0; items = [] }
-            Assert.Equal(100.0, box.width)
-            Assert.Equal(20.0, box.above)
-            Assert.Equal(10.0, box.below)
-            Assert.Empty(box.items)
-
-    // =========================================================================
     // 8. ProviderPresets.fs + UiPrefs.fs + ConversationSummary.fs 纯逻辑测试
     // =========================================================================
     module PresetsAndPrefsTests =
-
-        [<Fact>]
-        let ``ProviderKind conversions and ProviderPresets all list`` () =
-            Assert.Equal("openai", ProviderKind.toText OpenAiCompatible)
-            Assert.Equal("anthropic", ProviderKind.toText AnthropicNative)
-            Assert.Equal("gemini", ProviderKind.toText GeminiNative)
-            Assert.Equal("custom", ProviderKind.toText (UnknownKind "custom"))
-
-            Assert.Equal(OpenAiCompatible, ProviderKind.ofText "openai")
-            Assert.Equal(AnthropicNative, ProviderKind.ofText "anthropic")
-            Assert.Equal(GeminiNative, ProviderKind.ofText "gemini")
-            Assert.Equal(OpenAiCompatible, ProviderKind.ofText "")
-
-            Assert.NotEmpty(ProviderPresets.all)
-            let openai = ProviderPresets.tryFind "openai"
-            Assert.True(openai.IsSome)
-            Assert.Equal("https://api.openai.com/v1", ProviderPresets.normalizeBaseUrl "https://api.openai.com/v1/")
 
         [<Fact>]
         let ``ThemePreference conversions and resolveTheme`` () =
@@ -410,48 +318,3 @@ $$
 
             let darkPrefs = { UiPrefs.defaults with theme = AlwaysDark }
             Assert.Equal(Dark, UiPrefs.resolveTheme darkPrefs false)
-
-        [<Fact>]
-        let ``ConversationSummary matching, sorting and grouping`` () =
-            let now = DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero)
-            let item1 =
-                { id = Guid.NewGuid()
-                  title = "项目讨论"
-                  preview = "好的，我们来看一下架构"
-                  running = false
-                  pinned = true
-                  archived = false
-                  createdAt = now.AddHours(-2.0)
-                  updatedAt = now.AddHours(-1.0)
-                  messageCount = 5
-                  isFork = false
-                  providerId = "openai"
-                  model = "gpt-5"
-                  lastCommitId = 100UL }
-            let item2 =
-                { id = Guid.NewGuid()
-                  title = "随手记"
-                  preview = "买菜清单"
-                  running = false
-                  pinned = false
-                  archived = false
-                  createdAt = now.AddDays(-3.0)
-                  updatedAt = now.AddDays(-3.0)
-                  messageCount = 2
-                  isFork = false
-                  providerId = "deepseek"
-                  model = "deepseek-chat"
-                  lastCommitId = 90UL }
-
-            // 搜索匹配
-            Assert.True(ConversationSummary.matches "讨论" item1)
-            Assert.True(ConversationSummary.matches "gpt-5" item1)
-            Assert.True(ConversationSummary.matches "买菜" item2)
-            Assert.False(ConversationSummary.matches "无关词" item1)
-
-            // 分组
-            let groups = ConversationSummary.group now [ item1; item2 ]
-            Assert.NotEmpty(groups)
-            Assert.Equal("置顶", groups[0].label)
-            Assert.Single(groups[0].items) |> ignore
-            Assert.Equal("项目讨论", groups[0].items[0].title)

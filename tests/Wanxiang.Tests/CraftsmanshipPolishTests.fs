@@ -27,44 +27,6 @@ open Wanxiang.Tests.Helpers
 // 1. Unicode Safe Slicing
 // =========================================================================
 
-[<Trait("Category", "UI")>]
-[<Fact>]
-let ``MarkdownRenderer.SafeChunk does not slice surrogate pairs into separate chunks`` () =
-    Headless.run (fun () ->
-    // A long text mixing emojis, surrogate pairs, and ZWJ sequences
-    let emojiText =
-        "👨‍👩‍👧‍👦🇨🇳𠮷野家👍🏽"
-        + "🎉🚀💡🔥✨🎈"
-        + "𠮷𠮷𠮷𠮷𠮷"
-        + "👩‍💻👨‍💻🧑‍🌾"
-        + "❤️🧡💛💚💙💜"
-
-    let chunks = MarkdownRenderer.SafeChunk 5 emojiText
-    Assert.NotEmpty chunks
-    
-    // Total text elements must match original
-    let rejoined = String.Concat chunks
-    Assert.Equal(emojiText, rejoined)
-
-    // Check each chunk boundary for surrogate integrity
-    for chunk in chunks do
-        Assert.NotEmpty chunk
-        // Chunk cannot start with low surrogate
-        Assert.False(Char.IsLowSurrogate chunk[0], sprintf "Chunk starts with lone low surrogate: %s" chunk)
-        // Chunk cannot end with high surrogate
-        Assert.False(Char.IsHighSurrogate chunk[chunk.Length - 1], sprintf "Chunk ends with lone high surrogate: %s" chunk)
-
-        // Internal surrogate integrity
-        for i in 0 .. chunk.Length - 1 do
-            let ch = chunk[i]
-            if Char.IsHighSurrogate ch then
-                Assert.True(i + 1 < chunk.Length, "High surrogate must have following low surrogate in chunk")
-                Assert.True(Char.IsLowSurrogate chunk[i + 1], "High surrogate must be followed by low surrogate")
-            elif Char.IsLowSurrogate ch then
-                Assert.True(i > 0, "Low surrogate must have preceding high surrogate in chunk")
-                Assert.True(Char.IsHighSurrogate chunk[i - 1], "Low surrogate must be preceded by high surrogate")
-    )
-
 // =========================================================================
 // 2. Provider Error Copy & Classification
 // =========================================================================

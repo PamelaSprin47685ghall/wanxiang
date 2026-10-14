@@ -61,15 +61,15 @@ module W3ToolApprovalUiTests =
                 Assert.Equal<bool list>([ approve ], List.ofSeq decisions)
                 let status = byId card "tool-approval-status"
                 Assert.True status.Value.IsVisible
-                Assert.Equal(ToolApprovalCard.sentText approve, textOf status.Value))
+                Assert.Equal(ApprovalCardText.sentText approve, textOf status.Value))
 
     [<Fact>]
     let ``审批卡：说明批准的后果（首次询问 / 每次询问）`` () =
-        Assert.Contains("不会再问", ToolApprovalCard.policyNote "first")
-        Assert.Contains("每次", ToolApprovalCard.policyNote "always")
-        Assert.Contains("已经被批准", ToolApprovalCard.alreadyHandledText "approved")
-        Assert.Contains("已经被拒绝", ToolApprovalCard.alreadyHandledText "denied")
-        Assert.Contains("失效", ToolApprovalCard.alreadyHandledText "expired")
+        Assert.Contains("不会再问", ApprovalCardText.policyNote "first")
+        Assert.Contains("每次", ApprovalCardText.policyNote "always")
+        Assert.Contains("已经被批准", ApprovalCardText.alreadyHandledText "approved")
+        Assert.Contains("已经被拒绝", ApprovalCardText.alreadyHandledText "denied")
+        Assert.Contains("失效", ApprovalCardText.alreadyHandledText "expired")
 
     [<Fact>]
     let ``审批面板：只显示当前对话的卡片，已处理即移除，断线清空`` () =

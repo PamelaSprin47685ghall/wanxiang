@@ -102,86 +102,17 @@ type MarkdownRenderer(
                 // 默认不主动请求远程 Markdown 图片：避免阅读模型回复时向第三方
                 // 泄露网络信息或触发 tracking pixel。把来源域名直接写在正文里，
                 // 让它看起来像明确策略，而不是一张“坏掉的图片”。
-                let label = if String.IsNullOrWhiteSpace alt then "远程图片" else alt
-                let source =
-                    match Uri.TryCreate(url, UriKind.Absolute) with
-                    | true, uri when not (String.IsNullOrWhiteSpace uri.Host) -> uri.Host
-                    | _ -> url
-                let run = Run(sprintf "[图片未加载：%s · %s]" label source)
+                let text, notice = Markdown.imagePlaceholder alt url
+                let run = Run(text)
                 run.Foreground <- Tokens.textFaint
                 block.Inlines.Add run
                 // 占位段的文字只在正文里可见；读屏把整块 TextBlock 当纯文本读时，
                 //  ToolTip 与文字其实一致，但自动化树需要一个明确名称，否则
                 // 跳过整块。名称取「占位说明 + 来源」，与 ToolTip 同文。
-                let notice = sprintf "为保护隐私，默认不加载远程图片。来源：%s" url
                 ToolTip.SetTip(block, notice)
                 Avalonia.Automation.AutomationProperties.SetName(block, notice)
             | MdBreak -> block.Inlines.Add(LineBreak())
         block :> Control
-
-    /// 将长字符串按字素簇（grapheme clusters / text elements）安全切片，
-    /// 避免在 surrogate pair 或复杂 emoji 序列中间拆分造成畸变。
-    static member SafeChunk (chunkSize: int) (str: string) : string list =
-        if String.IsNullOrEmpty str || chunkSize <= 0 then
-            []
-        else
-            let enumerator = StringInfo.GetTextElementEnumerator(str)
-            let chunks = ResizeArray<string>()
-            let current = StringBuilder()
-            let mutable count = 0
-            while enumerator.MoveNext() do
-                current.Append(enumerator.GetTextElement()) |> ignore
-                count <- count + 1
-                if count = chunkSize then
-                    chunks.Add(current.ToString())
-                    current.Clear() |> ignore
-                    count <- 0
-            if current.Length > 0 then
-                chunks.Add(current.ToString())
-            chunks |> Seq.toList
-
-    /// 超长链接分段后，把落在段首的收标点并回上一段尾、把留在段尾的开标点顺到下一段首
-    /// （行首 / 行尾禁则）。WrapPanel 只在分段之间换行，硬切边界若把标点顶到行首行尾，
-    /// 窄屏下就会出现「。」开头的行；只挪边界一字，不断词、不改顺序。
-    static member private RebalanceLinkChunks (chunks: string list) : string list =
-        let closers =
-            set [ '。'; '，'; '、'; '；'; '：'; '！'; '？'; '”'; '’'; '）'; '］'; '｝'; '〉'; '》'; '…'; '—'
-                  '.'; ','; ';'; ':'; '!'; '?'; ')'; ']'; '}' ]
-        let openers =
-            set [ '「'; '『'; '（'; '［'; '｛'; '〈'; '《'; '“'; '‘'; '('; '['; '{' ]
-        let arr = chunks |> List.toArray
-        for i in 1 .. arr.Length - 1 do
-            if arr[i].Length > 1 && closers.Contains arr[i].[0] then
-                arr[i - 1] <- arr[i - 1] + string arr[i].[0]
-                arr[i] <- arr[i].Substring(1)
-        for i in 0 .. arr.Length - 2 do
-            if arr[i].Length > 1 && openers.Contains arr[i].[arr[i].Length - 1] then
-                let last = arr[i].[arr[i].Length - 1]
-                arr[i] <- arr[i].Substring(0, arr[i].Length - 1)
-                arr[i + 1] <- string last + arr[i + 1]
-        arr |> Array.toList |> List.filter (not << String.IsNullOrEmpty)
-    /// 单元格里出现超长无断点 token（URL/hash/长代码）时，Star 列不会被撑宽，
-    /// 内容溢出格子又被 ClipToBounds 一刀切——既看不见也选不中。
-    /// 调用方只在这种格子里套一层横向 scroller，普通表格的树形与几何纹丝不动。
-    static member private HasLongToken(items: MdInline list) : bool =
-        let isBreakChar c =
-            c = ' ' || c = '\t' || c = '\n' || c = '\r' || c = '\u200B'
-        let hasLongRun (s: string) =
-            let mutable run = 0
-            let mutable i = 0
-            let mutable found = false
-            while i < s.Length && not found do
-                if isBreakChar s.[i] then run <- 0
-                else
-                    run <- run + 1
-                    if run > 32 then found <- true
-                i <- i + 1
-            found
-        items
-        |> List.exists (function
-            | MdText(text, _, _, _, _) -> not (String.IsNullOrEmpty text) && hasLongRun text
-            | MdLink(text, _) -> not (String.IsNullOrEmpty text) && hasLongRun text
-            | _ -> false)
 
     /// 链接需要能点。整段文本共用一个 TextBlock 时无法逐字命中，
     /// 因此只在段落里存在链接时，把段落拆成「文本 + 可点链接」的 WrapPanel。
@@ -247,8 +178,8 @@ type MarkdownRenderer(
                     if text.Length <= 40 then
                         addLinkChunk text text url true
                     else
-                        // 分段边界避开行首行尾禁则，见 RebalanceLinkChunks。
-                        let chunks = MarkdownRenderer.RebalanceLinkChunks(MarkdownRenderer.SafeChunk 40 text)
+                        // 分段边界避开行首行尾禁则，见 LinkChunks.rebalance。
+                        let chunks = LinkChunks.rebalance (LinkChunks.safeChunk 40 text)
                         for i in 0 .. chunks.Length - 1 do
                             let chunk = chunks.[i]
                             // 视觉上仍可逐段命中，但一个长链接只占一个 Tab stop，
@@ -291,7 +222,7 @@ type MarkdownRenderer(
                 code, ""
             else
                 // 按字素簇安全截断，避免把 surrogate pair / emoji 拦腰切断。
-                match MarkdownRenderer.SafeChunk highlightBudget code with
+                match LinkChunks.safeChunk highlightBudget code with
                 | head :: _ when head.Length < code.Length -> head, code.Substring(head.Length)
                 | _ -> code.Substring(0, highlightBudget), code.Substring(highlightBudget)
         for token in Highlight.tokenize allowHighlight language highlightHead do
@@ -567,7 +498,7 @@ type MarkdownRenderer(
                     // 超长无断点 token 的格子套一层横向 scroller（keyed on content）；
                     // 普通格子原样直挂，树形与几何都不变。
                     let cellContent: Control =
-                        if columnCount <= 4 && MarkdownRenderer.HasLongToken content then
+                        if columnCount <= 4 && Markdown.hasLongToken content then
                             ScrollViewer(
                                 Content = cell,
                                 HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -803,9 +734,7 @@ type StreamingMarkdown(renderer: MarkdownRenderer) =
         if not (Object.ReferenceEquals(raw, lastRaw) || raw = lastRaw) then
             lastRaw <- raw
             let blocks = Markdown.parse raw |> Array.ofList
-            let mutable common = 0
-            while common < mounted.Count && common < blocks.Length && fst mounted[common] = blocks[common] do
-                common <- common + 1
+            let common = Markdown.commonPrefix (mounted |> Seq.map fst |> List.ofSeq) (List.ofArray blocks)
             // 卸下第一个变化块之后的控件
             let keepControls = mounted |> Seq.take common |> Seq.sumBy (fun (_, cs) -> List.length cs)
             if panel.Children.Count > keepControls then

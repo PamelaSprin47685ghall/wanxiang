@@ -1938,7 +1938,7 @@ type MainView() as this =
         | ToolApprovalResolved d ->
             approvalPanel.Remove d.approvalId
             this.SyncAwaitingApproval()
-            if d.alreadyHandled then toast (ToolApprovalCard.alreadyHandledText d.status) Info
+            if d.alreadyHandled then toast (ApprovalCardText.alreadyHandledText d.status) Info
         | ToolApprovalCapability _ | ToolApprovalDecision _ | ConfigUpdateTools _ -> ()
         | ProviderProbeResult d ->
             pendingProbes.Remove d.requestId |> ignore

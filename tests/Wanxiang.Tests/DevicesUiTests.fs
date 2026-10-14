@@ -433,12 +433,12 @@ module DevicesUiTests =
 
     [<Fact>]
     let ``invite target follows the host address`` () =
-        Assert.Equal(Reachable "http://192.168.1.5:8765/", DevicesModel.inviteTarget "ws://192.168.1.5:8765/ws" [ "1.2.3.4" ])
-        Assert.Equal(Reachable "https://wx.example.com/", DevicesModel.inviteTarget "wss://wx.example.com/ws" [])
-        Assert.Equal(LoopbackOnly [ "http://1.2.3.4:8765/" ], DevicesModel.inviteTarget "ws://127.0.0.1:8765/ws" [ "1.2.3.4" ])
-        Assert.Equal(LoopbackOnly [], DevicesModel.inviteTarget "ws://localhost:8765/ws" [])
-        Assert.Equal(NoAddress, DevicesModel.inviteTarget "" [])
-        Assert.Equal(NoAddress, DevicesModel.inviteTarget "not a url" [])
+        Assert.Equal(InviteTarget.Reachable "http://192.168.1.5:8765/", DevicesModel.inviteTarget "ws://192.168.1.5:8765/ws" [ "1.2.3.4" ])
+        Assert.Equal(InviteTarget.Reachable "https://wx.example.com/", DevicesModel.inviteTarget "wss://wx.example.com/ws" [])
+        Assert.Equal(InviteTarget.LoopbackOnly [ "http://1.2.3.4:8765/" ], DevicesModel.inviteTarget "ws://127.0.0.1:8765/ws" [ "1.2.3.4" ])
+        Assert.Equal(InviteTarget.LoopbackOnly [], DevicesModel.inviteTarget "ws://localhost:8765/ws" [])
+        Assert.Equal(InviteTarget.NoAddress, DevicesModel.inviteTarget "" [])
+        Assert.Equal(InviteTarget.NoAddress, DevicesModel.inviteTarget "not a url" [])
 
     [<Fact>]
     let ``countdown and code grouping formats`` () =

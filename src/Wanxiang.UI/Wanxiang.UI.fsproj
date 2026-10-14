@@ -11,10 +11,8 @@
          MotionLedger.themeColorTransition 与 MotionPolicy.isReduced，
          F# 要求被引用的模块在编译顺序上在前。MotionPolicy 自身无项目内依赖，置顶安全。 -->
     <Compile Include="Design/MotionPolicy.fs" />
-    <Compile Include="Design/Spacing.fs" />
     <Compile Include="Design/Palette.fs" />
     <Compile Include="Design/Tokens.fs" />
-    <Compile Include="Design/LayoutPolicy.fs" />
     <Compile Include="Design/Metrics.fs" />
     <Compile Include="Design/Icons.fs" />
     <Compile Include="Model/StartupTrace.fs" />
@@ -24,21 +22,16 @@
     <Compile Include="Rich/Highlight.fs" />
     <Compile Include="Rich/MathLayout.fs" />
     <Compile Include="Rich/MathVisual.fs" />
-    <Compile Include="Model/Markdown.fs" />
     <Compile Include="Model/MessageModel.fs" />
     <Compile Include="Model/ImageShrink.fs" />
     <Compile Include="Model/ConversationExport.fs" />
-    <Compile Include="Model/ConversationSummary.fs" />
     <Compile Include="Model/ConversationTransfer.fs" />
-    <Compile Include="Model/PendingDeletion.fs" />
     <Compile Include="Model/DesktopLinks.fs" />
     <Compile Include="Model/ErrorRecovery.fs" />
     <Compile Include="Model/Catalog.fs" />
-    <Compile Include="Model/HostHealth.fs" />
     <Compile Include="Model/CommandPalette.fs" />
     <Compile Include="Model/UiControllers.fs" />
     <Compile Include="Model/DraftStore.fs" />
-    <Compile Include="Model/ProviderPresets.fs" />
     <!-- Interaction 必须先于 Primitives：Primitives 的基控件挂 Interaction.surface。 -->
     <Compile Include="Controls/ImeGuard.fs" />
     <Compile Include="Controls/Interaction.fs" />
@@ -118,6 +111,23 @@
     <PackageReference Include="Wanxiang2.MediaTypes" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ReconnectBackoff" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ConnectionIssue" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ProviderPresets" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.LocalDraftControls" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.HostHealth" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PendingDeletion" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ForkLineage" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.RevealTarget" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SearchHit" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ConversationSummary" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ConversationList" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DevicesModel" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ApprovalCardText" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SearchSegments" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DesignRhythm" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SpacingRamp" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.LinkChunks" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MarkdownBlocks" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MathTypeset" Version="0.0.0-local" />
   </ItemGroup>
 
 </Project>

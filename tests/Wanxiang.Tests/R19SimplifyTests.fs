@@ -29,20 +29,6 @@ module R19SimplifyTests =
           lastCommitId = 0UL }
 
     [<Fact>]
-    let ``361 同名对话附时间，不同名不附`` () =
-        let a = summary "新对话" 5.0
-        let b = summary "新对话" 90.0
-        let c = summary "写周报" 1.0
-        let all = [ a; b; c ]
-        Assert.True((ConversationSummary.disambiguator all DateTimeOffset.Now a).IsSome)
-        Assert.True((ConversationSummary.disambiguator all DateTimeOffset.Now b).IsSome)
-        Assert.NotEqual(ConversationSummary.disambiguator all DateTimeOffset.Now a, ConversationSummary.disambiguator all DateTimeOffset.Now b)
-        Assert.Equal(None, ConversationSummary.disambiguator all DateTimeOffset.Now c)
-        let old = { (summary "新对话" 0.0) with updatedAt = DateTimeOffset.Now.AddDays(-3.0) }
-        let stamp = ConversationSummary.disambiguator (old :: all) DateTimeOffset.Now old
-        Assert.Contains("/", stamp.Value)
-
-    [<Fact>]
     let ``366 限流只给「换个模型」并直达切换器`` () =
         Assert.Equal(Some SwitchModel, ErrorRecovery.forKind ProviderRateLimited)
         Assert.Equal("换个模型", ErrorRecovery.label SwitchModel)

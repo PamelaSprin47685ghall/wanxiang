@@ -30,41 +30,6 @@ module ToolApprovalCard =
     /// 按钮行最大宽度：宽屏上不把两个按钮拉成横贯整卡的长条。
     let buttonRowMaxWidth = 360.0
 
-    /// 参数给人看：主机下发的 JSON 可能把中文转义成 \uXXXX（视觉走查 11 号截图），
-    /// 这里解析后用宽松编码重写，中文原样显示；解析失败就原样返回。
-    let displayArguments (json: string) : string =
-        if String.IsNullOrWhiteSpace json then json
-        else
-            try
-                match JsonNode.Parse json with
-                | null -> json
-                | node ->
-                    let options =
-                        System.Text.Json.JsonSerializerOptions(
-                            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping)
-                    node.ToJsonString options
-            with _ -> json
-
-    let argsToggleText (expanded: bool) = if expanded then "收起参数" else "查看参数"
-
-    /// 审批卡上给用户看的策略说明：批准会产生什么后续效果要说清楚。
-    let policyNote (policy: string) : string =
-        match policy with
-        | "first" -> "批准后，这个对话里再用同一个工具不会再问。"
-        | _ -> "每次调用这个工具都会询问。"
-
-    /// 状态文案：用户点了按钮、等主机确认期间。
-    let sentText (approved: bool) = if approved then "已批准，正在继续…" else "已拒绝，正在通知模型…"
-
-    /// 「已处理」说明（晚到的决定，或服务重启后失效的审批）。
-    let alreadyHandledText (status: string) : string =
-        match status with
-        | "approved" -> "这个审批已经被批准。"
-        | "denied" -> "这个审批已经被拒绝。"
-        | "expired" -> "这个审批已超时或已失效。"
-        | "cancelled" -> "这次生成已取消，审批作废。"
-        | _ -> "这个审批已经处理过了。"
-
     /// 渲染一张审批卡。`decide true` = 批准，`decide false` = 拒绝。
     /// 点击后按钮立即置灰并显示「已发送」状态，真正的结果由主机的 resolved 事件移除卡片。
     let build (req: ApprovalRequestView) (decide: bool -> unit) : Control =
@@ -86,7 +51,7 @@ module ToolApprovalCard =
         Avalonia.Automation.AutomationProperties.SetAutomationId(summary, "tool-approval-summary")
         let note =
             TextBlock(
-                Text = policyNote req.policy,
+                Text = ApprovalCardText.policyNote req.policy,
                 FontSize = Tokens.fontCaption,
                 Foreground = Tokens.textMuted,
                 TextWrapping = TextWrapping.Wrap,
@@ -107,7 +72,7 @@ module ToolApprovalCard =
                 decided <- true
                 Ui.setEnabled approveButton false
                 Ui.setEnabled denyButton false
-                status.Text <- sentText approved
+                status.Text <- ApprovalCardText.sentText approved
                 status.IsVisible <- true
                 decide approved
         approveButton <- Ui.button Ui.Primary "批准" (choose true)
@@ -135,7 +100,7 @@ module ToolApprovalCard =
         // 想核对的人点「查看参数」展开全文（触屏没有悬停提示，桌面同样可用）。此前一行预览 + 按钮是同一内容两遍。
         let argsLine =
             TextBlock(
-                Text = (if hasArgs then displayArguments req.argumentsJson else ""),
+                Text = (if hasArgs then ApprovalCardText.displayArguments req.argumentsJson else ""),
                 FontFamily = Tokens.monoFontFamily,
                 FontSize = Tokens.fontMicro,
                 Foreground = Tokens.textFaint,
@@ -147,8 +112,8 @@ module ToolApprovalCard =
         let toggleArgs () =
             argsExpanded <- not argsExpanded
             argsLine.IsVisible <- argsExpanded
-            Ui.setButtonText argsToggle (argsToggleText argsExpanded)
-        argsToggle <- Ui.button Ui.Ghost (argsToggleText false) toggleArgs
+            Ui.setButtonText argsToggle (ApprovalCardText.argsToggleText argsExpanded)
+        argsToggle <- Ui.button Ui.Ghost (ApprovalCardText.argsToggleText false) toggleArgs
         argsToggle.IsVisible <- hasArgs
         argsToggle.HorizontalAlignment <- HorizontalAlignment.Left
         argsToggle.MinHeight <- max argsToggle.MinHeight touchTarget
