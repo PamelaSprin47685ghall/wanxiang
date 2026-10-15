@@ -34,7 +34,7 @@ let rec private controls (root: Control) = seq {
 // Build the real shell's components without AutoConnect or a live user's credentials.
 let private shell () =
     let view = MainView()
-    for method in [ "BuildSidebar"; "BuildChat"; "BuildComposer"; "BuildSettings" ] do
+    for method in [ "BuildSidebar"; "BuildComposer"; "BuildChat"; "BuildSettings" ] do
         invoke view method [||] |> ignore
     view
 
@@ -371,9 +371,9 @@ let ``selecting an unloaded conversation does not display the previous conversat
                generationId = generation
                payload = JsonNode.Parse("""{"role":"assistant","contents":[{"text":"只属于对话 A 的正文"}]}""") })
     invoke view "SelectConversation" [| box (Some b) |] |> ignore
-    let chat = (field view "chat").GetValue view :?> ChatView
+    let chat = (field view "chat").GetValue view :?> Wanxiang2.ChatScreen.ChatScreen
     let visibleText =
-        controls chat |> Seq.choose (function
+        controls chat.Host |> Seq.choose (function
             | :? SelectableTextBlock as text -> Some text.Text
             | :? TextBlock as text -> Some text.Text
             | _ -> None)

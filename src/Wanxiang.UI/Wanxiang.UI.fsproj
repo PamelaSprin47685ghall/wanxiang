@@ -34,7 +34,6 @@
     <Compile Include="Rich/Reading.fs" />
     <Compile Include="Rich/Cards.fs" />
     <Compile Include="CredentialStore.fs" />
-    <Compile Include="Views/ChatView.fs" />
     <Compile Include="Views/Composer.fs" />
     <Compile Include="Rich/DialogsHost.fs" />
     <Compile Include="AppShell.fs" />
@@ -153,6 +152,7 @@
     <PackageReference Include="Wanxiang2.MessageCardView" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.SettingsScreen" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatPane" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ChatScreen" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ComposerDesk" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProtocolDispatch" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ShellCommands" Version="0.0.0-local" />

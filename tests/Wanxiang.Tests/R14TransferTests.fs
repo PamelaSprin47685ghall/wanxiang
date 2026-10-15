@@ -161,19 +161,19 @@ let ``310 更早一页超时：解除加载、撤销挂起跳转、给行内重�
     Headless.run (fun () ->
     let view, _ = openFailingShell ()
     let field name = typeof<MainView>.GetField(name, flags)
-    let chat = field("chat").GetValue(view) :?> ChatView
+    let chat = field("chat").GetValue(view) :?> Wanxiang2.ChatScreen.ChatScreen
     field("pageLoading").SetValue(view, true)
     field("pageRequestedAt").SetValue(view, Some(DateTimeOffset.UtcNow.AddSeconds -11.0))
     field("authenticated").SetValue(view, false)
     typeof<MainView>.GetMethod("CheckOlderPageTimeout", flags).Invoke(view, [| box DateTimeOffset.UtcNow |]) |> ignore
     Assert.False(field("pageLoading").GetValue(view) :?> bool)
-    Assert.True chat.OlderPageFailureVisible
-    Assert.Contains("超时", chat.OlderPageFailureText)
-    Assert.False chat.PendingJumpPrevious
+    Assert.True chat.Pane.Nav.OlderFailureVisible
+    Assert.Contains("超时", chat.Pane.Nav.OlderFailureText)
+    Assert.False chat.Pane.Jumps.PendingPrevious
     // 未连接时点重试：不发请求，换成说明为什么
-    let retry = chat.OlderPageRetryButton
+    let retry = chat.Pane.Nav.RetryButton
     retry.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = retry))
-    Assert.True chat.OlderPageFailureVisible
+    Assert.True chat.Pane.Nav.OlderFailureVisible
     Assert.False(field("pageLoading").GetValue(view) :?> bool)
     )
 
@@ -183,17 +183,17 @@ let ``310 未超时不判失败；断线时在途请求立即判失败`` () =
     Headless.run (fun () ->
     let view, _ = openFailingShell ()
     let field name = typeof<MainView>.GetField(name, flags)
-    let chat = field("chat").GetValue(view) :?> ChatView
+    let chat = field("chat").GetValue(view) :?> Wanxiang2.ChatScreen.ChatScreen
     field("pageLoading").SetValue(view, true)
     field("pageRequestedAt").SetValue(view, Some DateTimeOffset.UtcNow)
     typeof<MainView>.GetMethod("CheckOlderPageTimeout", flags).Invoke(view, [| box (DateTimeOffset.UtcNow.AddSeconds 2.0) |]) |> ignore
     Assert.True(field("pageLoading").GetValue(view) :?> bool)
-    Assert.False chat.OlderPageFailureVisible
+    Assert.False chat.Pane.Nav.OlderFailureVisible
     typeof<MainView>.GetMethod("FailOlderPage", flags).Invoke(view, [| box "连接已断开，更早的消息没有加载。" |]) |> ignore
-    Assert.True chat.OlderPageFailureVisible
-    Assert.Contains("断开", chat.OlderPageFailureText)
+    Assert.True chat.Pane.Nav.OlderFailureVisible
+    Assert.Contains("断开", chat.Pane.Nav.OlderFailureText)
     chat.ResetScrollState()
-    Assert.False(chat.OlderPageFailureVisible, "换对话后失败提示不残留")
+    Assert.False(chat.Pane.Nav.OlderFailureVisible, "换对话后失败提示不残留")
     )
 
 // ---------- 截图（仅在设置 WANXIANG_UX_ARTIFACT_DIR 时落盘） ----------

@@ -28,7 +28,7 @@ let ``export of an unopened conversation has its own progress view without navig
     Headless.run (fun () ->
     let view = MainView()
     let invoke name args = typeof<MainView>.GetMethod(name, flags).Invoke(view, args)
-    for name in [ "BuildSidebar"; "BuildChat"; "BuildComposer"; "BuildSettings" ] do
+    for name in [ "BuildSidebar"; "BuildComposer"; "BuildChat"; "BuildSettings" ] do
         invoke name [||] |> ignore
     typeof<MainView>.GetField("authenticated", flags).SetValue(view, true)
     let selected = Guid.NewGuid()
@@ -287,7 +287,7 @@ let ``reconnecting the same instance keeps export recovery but changing instance
     Headless.run (fun () ->
     let view = MainView()
     let invoke name args = typeof<MainView>.GetMethod(name, flags).Invoke(view, args)
-    for name in [ "BuildSidebar"; "BuildChat"; "BuildComposer"; "BuildSettings" ] do invoke name [||] |> ignore
+    for name in [ "BuildSidebar"; "BuildComposer"; "BuildChat"; "BuildSettings" ] do invoke name [||] |> ignore
     typeof<MainView>.GetField("authenticated", flags).SetValue(view, true)
     typeof<MainView>.GetField("instanceId", flags).SetValue(view, "original")
     let summary: ConversationSummary =

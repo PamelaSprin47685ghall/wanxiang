@@ -214,7 +214,8 @@ let ``r26 截图：预设入口、另存、设置管理`` () =
     Headless.run (fun () ->
     // 1 空态：从预设开始
     let view, w1 = shellWith (hostConfig true) false
-    Assert.Equal(3, (typeof<MainView>.GetField("chat", flags).GetValue(view) :?> ChatView).PresetStarterCount)
+    let screen = typeof<MainView>.GetField("chat", flags).GetValue(view) :?> Wanxiang2.ChatScreen.ChatScreen
+    Assert.Equal(3, screen.Pane.Empty.Host.GetVisualDescendants() |> Seq.filter (function :? Control as c -> c.Name = "preset-chip" | _ -> false) |> Seq.length)
     capture w1 "01-empty-state-preset-chips"
     // 2 侧栏 ▾：用预设新建
     let sidebar = typeof<MainView>.GetField("sidebar", flags).GetValue(view) :?> Wanxiang2.SidebarDesk.SidebarDesk
@@ -254,7 +255,8 @@ let ``r26 截图：预设入口、另存、设置管理`` () =
     let view2, w2 = shellWith (hostConfig false) true
     let sidebar2 = typeof<MainView>.GetField("sidebar", flags).GetValue(view2) :?> Wanxiang2.SidebarDesk.SidebarDesk
     Assert.False(sidebar2.PresetMenuButton.IsVisible)
-    Assert.Equal(0, (typeof<MainView>.GetField("chat", flags).GetValue(view2) :?> ChatView).PresetStarterCount)
+    let screen = typeof<MainView>.GetField("chat", flags).GetValue(view2) :?> Wanxiang2.ChatScreen.ChatScreen
+    Assert.Empty(screen.Pane.Empty.Host.GetVisualDescendants() |> Seq.filter (function :? Control as c -> c.Name = "preset-chip" | _ -> false))
     capture w2 "06-first-run-no-presets"
     w2.Close()
     Tokens.apply ThemeMode.Light

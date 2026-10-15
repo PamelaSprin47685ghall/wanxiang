@@ -19,6 +19,7 @@ open Wanxiang.Client
 open Wanxiang.Core
 open Wanxiang.Interop
 open Wanxiang.Protocol
+open Wanxiang2.ChatScreen
 
 /// 主视图：应用的组装点。
 ///
@@ -156,7 +157,7 @@ type MainView() as this =
 
     // ---- 视图 ----
     let mutable sidebar: Wanxiang2.SidebarDesk.SidebarDesk = Unchecked.defaultof<_>
-    let mutable chat: ChatView = Unchecked.defaultof<ChatView>
+    let mutable chat: ChatScreen = Unchecked.defaultof<ChatScreen>
     let mutable composer: Composer = Unchecked.defaultof<Composer>
     let mutable settings: Wanxiang2.SettingsScreen.SettingsScreen = Unchecked.defaultof<Wanxiang2.SettingsScreen.SettingsScreen>
     /// 聊天主界面上的「连接一个模型」卡片（W1）：首次运行不进设置页。
@@ -308,7 +309,7 @@ type MainView() as this =
                 timer.Stop()
                 if skeletonReveal.Expired convId && activeConvId = Some convId && (activeConversation ()).IsNone then
                     chat.SetTitle("加载中…", false)
-                    chat.ShowSkeletonLoading())
+                    chat.Pane.ShowSkeleton())
             skeletonTimer <- Some timer
             timer.Start()
 
@@ -326,13 +327,6 @@ type MainView() as this =
             draft.attachments.MarkAllUploadingAsFailed() |> ignore
         composer.SetAttachments((attachmentDraft ()).Items)
 
-    /// 审批卡增减后同步消息里工具卡的「等待批准」状态（第 206 节）。
-    member private this.SyncAwaitingApproval() =
-        let ids = approvalPanel.AwaitingCallIds
-        if ids <> chat.AwaitingApproval then
-            chat.SetAwaitingApproval ids
-            this.Render()
-
     member private this.Render() =
         let run = runs.Get activeConvId
         let generating = run.running
@@ -348,9 +342,8 @@ type MainView() as this =
         composer.SetSessionContext(activeConversation () |> Option.map _.config, authenticated, fun () -> this.ShowSessionContext())
         match activeConvId, activeConversation () with
         | None, _ ->
-            chat.SetHeaderModel("", "", false)
             chat.SetConversationChrome false
-            chat.SetBreadcrumb(None, ignore)
+            chat.SetBreadcrumb None
             chat.SetTitle("新对话", false)
             let rePair =
                 match connectionIssue |> Option.bind ConnectionIssue.retry with
@@ -361,13 +354,13 @@ type MainView() as this =
                     (Catalog.isReady catalog) this.Onboarding.IsBusy
             let primary = idle.primary |> Option.map (fun label -> label, fun () -> this.ShowConnectDialog())
             match idle.empty with
-            | IdleEmpty.ConnectionFailed err -> chat.ShowEmpty(ChatEmptyState.ConnectionFailed err, primary)
-            | IdleEmpty.NotConnected -> chat.ShowEmpty(ChatEmptyState.NotConnected, primary)
+            | IdleEmpty.ConnectionFailed err -> chat.Pane.ShowEmpty(ChatEmptyState.ConnectionFailed err, primary)
+            | IdleEmpty.NotConnected -> chat.Pane.ShowEmpty(ChatEmptyState.NotConnected, primary)
             | IdleEmpty.Onboarding ->
                 // 首次运行：卡片就在聊天界面里，不必先进设置页。
-                chat.ShowEmbeddedEmpty this.Onboarding.View
+                chat.Pane.ShowEmbedded this.Onboarding.View
                 this.Onboarding.StartDiscovery()
-            | IdleEmpty.NoConversation -> chat.ShowEmpty(ChatEmptyState.NoConversation, None)
+            | IdleEmpty.NoConversation -> chat.Pane.ShowEmpty(ChatEmptyState.NoConversation, None)
             composer.SetEnabled(idle.composerEnabled, idle.composerReason)
             let chip = Catalog.idleModelChip idle.modelLabel draftModelSelection catalog
             composer.SetModelLabel chip.label
@@ -384,41 +377,38 @@ type MainView() as this =
             let streaming = this.StreamingMessage()
             let summary = activeSummary ()
             chat.SetConversationChrome true
-            chat.SetBreadcrumb(ForkLineage.breadcrumb summaries lineage convId, fun parentId -> this.OpenConversation parentId)
+            chat.SetBreadcrumb(ForkLineage.breadcrumb summaries lineage convId)
             chat.SetTitle((summary |> Option.map (fun s -> s.title) |> Option.defaultValue "对话"), true)
             composer.SetModelLabel(Catalog.describeModel view.config.provider view.config.model catalog)
             composer.SetModelVision(fst (Catalog.visionOf view.config.provider view.config.model catalog), Catalog.describeModel view.config.provider view.config.model catalog)
-            chat.SetHeaderModel(
-                ModelSwitcher.chipText view.config.provider view.config.model catalog,
-                (Catalog.tryProvider view.config.provider catalog |> Option.map _.label |> Option.defaultValue ""),
-                authenticated)
             let surface =
                 ConversationSurface.decide
                     (List.isEmpty messages) streaming.IsSome run.error.IsSome run.partial.IsSome generating
                     (ReplyTail.isUnanswered DateTimeOffset.UtcNow messages) authenticated run.generationId.IsSome
             if surface.showEmpty then
-                chat.HideSkeletonLoading()
-                chat.ShowEmpty(EmptyConversation, None)
+                chat.Pane.HideSkeleton()
+                chat.Pane.ShowEmpty(EmptyConversation, None)
             else
-                chat.HideSkeletonLoading()
-                chat.HideEmpty()
+                chat.Pane.HideSkeleton()
+                chat.Pane.HideEmpty()
                 // 决策 300：「上一轮」越过已加载历史时要知道主机上还有没有更早的页。
-                chat.SetOlderAvailable view.pageHasMore
+                chat.Pane.SetOlderAvailable view.pageHasMore
                 let retry () = this.Regenerate()
                 // 先同步生成状态：渲染时要据此区分工具调用「执行中」与「结果未知」
                 chat.SetGenerating(generating, surface.generatingText)
                 chat.SetPartialReply(run.partial |> Option.map (fun p -> p, fun () -> this.ContinueGeneration(convId, p)))
-                chat.RenderMessages(
-                    messages,
-                    streaming,
-                    (match surface.tailError, run.error with
-                     | TailError.RunError, Some e -> Some(e, retry)
-                     | TailError.Unanswered, _ -> Some(UnansweredReply.error, retry)
-                     | _ -> None),
-                    prefs.fontScale,
-                    prefs.autoCollapseReasoning,
-                    run.usage,
-                    missingAttachments)
+                chat.Render
+                    { Messages = messages
+                      Streaming = streaming
+                      Error =
+                        (match surface.tailError, run.error with
+                         | TailError.RunError, Some e -> Some(e, retry)
+                         | TailError.Unanswered, _ -> Some(UnansweredReply.error, retry)
+                         | _ -> None)
+                      FontSize = prefs.fontScale
+                      AutoCollapseReasoning = prefs.autoCollapseReasoning
+                      Usage = run.usage
+                      MissingAttachments = missingAttachments }
                 this.TryReveal(convId, view, messages)
             composer.SetEnabled(surface.composerEnabled, surface.composerReason)
         composer.SetGenerating generating
@@ -683,7 +673,7 @@ type MainView() as this =
         this.SetCompactNavigation false
         sidebar.SetActive activeConvId
         this.Render()
-        // compact 下收起导航会带走焦点（掉到页顶）：交还给输入区；阅读位置由 ChatView 的锚点语义保留。
+        // compact 下收起导航会带走焦点（掉到页顶）：交还给输入区；阅读位置由 ChatScreen 保留。
         if navBefore.compactMode && navBefore.compactNavigationOpen then composer.Focus()
 
     member private this.MakeConversationCommand(conversationId: Guid) =
@@ -826,7 +816,7 @@ type MainView() as this =
         sidebar.SetPresets(entries, fun anchor items ->
             Menu.show overlay anchor false
                 [ for (name, _, run) in items -> MenuEntry.create name run ])
-        chat.SetPresetStarters(entries)
+        chat.Pane.SetPresets entries
         chat.SetSavePresetAction(
             if HostFeatures.supports hostFeatures HostFeatures.Presets then
                 Some(fun () -> this.SaveConversationAsPreset())
@@ -1433,7 +1423,7 @@ type MainView() as this =
         match shellCommands with
         | Some c -> c
         | None ->
-            let modelAnchor () = if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor()
+            let modelAnchor () = composer.ModelAnchor()
             let c =
                 ShellCommands(
                     { OverlayEscape = fun () -> overlay.HandleEscape()
@@ -1694,7 +1684,7 @@ type MainView() as this =
             if activeConvId = Some d.conversationId then
                 pageLoading <- false
                 pageRequestedAt <- None
-                chat.HideOlderPageFailure()
+                chat.Pane.HideOlderFailure()
                 this.Render()
                 chat.RestoreHistoryPrependAnchorDeferred()
         | SearchResults d ->
@@ -1871,7 +1861,7 @@ type MainView() as this =
                 settings.ShowSection Wanxiang2.SettingsScreen.SettingsPart.Providers
                 this.ShowSettings()
             | OpenConversationSettings -> this.ShowSessionContext()
-            | SwitchModel -> this.ShowModelPicker(if chat.HeaderModelVisible then chat.HeaderModelAnchor else composer.ModelAnchor())
+            | SwitchModel -> this.ShowModelPicker(composer.ModelAnchor())
             | StartNewConversation -> this.CreateConversation() |> ignore
         let messageActions: Wanxiang2.MessageCardView.CardActions =
             { CopyText = copyToClipboard
@@ -1894,16 +1884,16 @@ type MainView() as this =
               DownloadAttachment = fun sha -> send (AttachmentDownloadRequest {| sha256 = sha |})
               // 决策 231：消息里的消息链接在应用内打开，不交给系统浏览器。
               OpenLink = fun url -> match MessageLink.tryParse url with Some link -> this.OpenMessageLink link | None -> openLink url }
-        let chatActions =
-            { renameTitle =
+        let chatActions: ChatScreenActions =
+            { RenameTitle =
                 fun title ->
                     match activeConvId with
                     | Some convId ->
                         sendCommand (
                             RenameConversation {| invocationId = newInvocation (); conversationId = convId; title = title |})
                     | None -> ()
-              openSessionSettings = fun () -> this.ShowSessionContext()
-              forkFromHere =
+              OpenSessionSettings = fun () -> this.ShowSessionContext()
+              ForkFromHere =
                 fun () ->
                     match activeConversation () with
                     | Some view ->
@@ -1916,21 +1906,27 @@ type MainView() as this =
                             |> Option.defaultValue ""
                         this.ForkFrom(None, seed)
                     | None -> toast ForkAnchor.noConversationText Warning
-              stopGeneration = fun () -> this.StopGeneration()
-              requestOlderHistory = fun () -> this.RequestOlderHistory()
-              retryLast = fun () -> this.Regenerate()
-              toggleSidebar = fun () -> this.ToggleSidebar()
-              focusHome = fun () -> composer.Focus()
-              message = messageActions }
-        chat <- ChatView(chatActions, SharedTheme.logo)
-        chat.SiblingProvider <-
-            fun commit prev ->
+              StopGeneration = fun () -> this.StopGeneration()
+              RequestOlderHistory = fun () -> this.RequestOlderHistory()
+              ToggleSidebar = fun () -> this.ToggleSidebar()
+              FocusHome = fun () -> composer.Focus()
+              OpenParent = fun id -> this.OpenConversation id
+              SiblingSelected = fun target -> this.SwitchVersion target
+              ExportConversation = fun () -> activeSummary () |> Option.iter (fun summary -> this.ExportConversation summary)
+              After = fun delay action ->
+                  let timer = DispatcherTimer(Interval = delay)
+                  timer.Tick.Add(fun _ -> timer.Stop(); action ())
+                  timer.Start()
+                  { new IDisposable with member _.Dispose() = timer.Stop() }
+              Card = messageActions }
+        chat <-
+            ChatScreen(ChatScreenLooks.ofTheme SharedTheme.manager SharedTheme.styles,
+                       Cards.instance(), composer.Desk, approvalPanel, overlay.Desk, SharedTheme.logo, chatActions)
+        chat.SetSiblingProvider(fun commit prev ->
                 match activeConvId with
                 | Some convId -> ForkLineage.siblings summaries lineage convId commit prev
-                | None -> None
-        chat.SiblingSelected <- fun target -> this.SwitchVersion target
-        chat.ConfigureMenu(overlay, fun () -> activeSummary () |> Option.iter (fun summary -> this.ExportConversation summary))
-        chat.Build()
+                | None -> None)
+        chat.Host.AttachedToVisualTree.Add(fun _ -> ParityProbe.hit "lifecycle.chatAttached")
 
     /// 搜索命中 / 版本切换后把目标消息带进视口：目标在已加载窗口内就滚过去，
     /// 更早就继续加载更早历史（HistoryPage 回来会再进 Render 重试）；到头仍找不到则放弃，不循环。
@@ -1956,7 +1952,7 @@ type MainView() as this =
         match activeConvId, activeConversation () with
         | Some convId, Some view when view.pageHasMore && not pageLoading ->
             chat.BeginHistoryPrependAnchor()
-            chat.HideOlderPageFailure()
+            chat.Pane.HideOlderFailure()
             pageLoading <- true
             pageRequestedAt <- Some DateTimeOffset.UtcNow
             this.EnsureOlderPageWatchdog()
@@ -1979,7 +1975,7 @@ type MainView() as this =
             this.ShowOlderPageRetry message
 
     member private this.ShowOlderPageRetry(message: string) =
-        chat.ShowOlderPageFailure(message, fun () ->
+        chat.Pane.ShowOlderFailure(message, fun () ->
             if authenticated then this.RequestOlderHistory()
             else this.ShowOlderPageRetry OlderPageLoad.offlineText)
 
@@ -2127,6 +2123,7 @@ type MainView() as this =
         this.ApplyTheme()
 
         this.BuildSidebar()
+        this.BuildComposer()
         this.BuildChat()
         // 决策 251：系统打开的 wanxiang:// 链接（启动参数 / 第二实例转发 / macOS 激活）
         if not (OperatingSystem.IsBrowser()) then
@@ -2135,22 +2132,16 @@ type MainView() as this =
                     match MessageLink.tryParse url with
                     | Some link -> this.OpenMessageLink link
                     | None -> toast "无法识别这个链接。" Warning))
-        this.BuildComposer()
         overlay.SetToastFocusHome(fun () -> composer.Focus())
         sidebar.ConfigureImport(fun () -> this.ImportConversation())
         sidebar.ConfigurePalette(fun () -> this.ShowCommandPalette())
         palette.Run.Add(fun (item, query) -> this.RunPaletteItem(item, query))
-        approvalPanel.AwaitingChanged.Add(fun _ -> this.SyncAwaitingApproval())
         this.BuildSettings()
         settings.ConfigureImport(fun () ->
             this.CloseSettings()
             this.ImportConversation())
         settings.ConfigurePresets((fun p -> this.RenamePreset p), (fun p -> this.DeletePreset p))
         this.BuildOnboarding()
-
-        // 审批卡放进输入框正上方的附属位：与输入框同列同宽、占布局高度，
-        // 不再浮层盖住消息列表最后一条的操作行（视觉走查 11 号截图）。
-        composer.SetAccessory approvalPanel.View
 
         let initialNavigation = this.Navigation
         shellGrid <- Grid()
@@ -2191,7 +2182,7 @@ type MainView() as this =
               PrefersTouch = fun () -> SharedTheme.input.PrefersTouch }
         shellDesk <-
             Wanxiang2.ShellDesk.ShellDesk(
-                SharedTheme.manager, shellGrid, sidebar.View, sidebarSplitter, chat, composer,
+                SharedTheme.manager, shellGrid, sidebar.View, sidebarSplitter, chat.Host, composer,
                 shellHooks, initialNavigation.sidebarCollapsed, (fun () -> prefs.sidebarWidth))
         workspace.Children.Add shellGrid
 
@@ -2250,8 +2241,7 @@ type MainView() as this =
                     if prefs.theme = FollowSystem then
                         ui.Post(fun () -> this.ApplyTheme()))
         this.KeyDown.Add(fun e -> this.HandleShortcut e)
-        chat.SetStarterHandler(fun seed -> composer.SetText seed)
-        chat.SetModelSwitcherHandler(fun anchor -> this.ShowModelPicker anchor)
+        chat.Pane.SetStarterPick(Some(fun seed -> composer.SetText seed))
         this.PropertyChanged.Add(fun args ->
             if args.Property = Visual.BoundsProperty then
                 this.ApplyResponsiveLayout this.Bounds.Width)

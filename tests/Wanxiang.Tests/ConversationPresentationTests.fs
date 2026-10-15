@@ -83,7 +83,7 @@ let componentGeometryConstantsMatchPinnedCallSites () =
 
 [<Fact>]
 let chatViewGeneratingChipTokenized () =
-    let text = source "src/Wanxiang.UI/Views/ChatView.fs"
-    // 骨架、空态、「回到最新」的几何与透明度归 Wanxiang2.ChatPane（ChatPane AGENTS 列为已覆盖）。
-    // 「生成中」chip 收敛到 chip 密度唯一真源（此前是 12/3 的离群值）。
-    Assert.Contains("ControlMetrics.chipPaddingX", text)
+    let text = source "vendor/wanxiang2/compose/ChatScreen/Looks.fs"
+    // 顶栏外观由组合者从同一主题取值，不再扫描已退出的旧视图。
+    Assert.Contains("ChipPadX", text)
+    Assert.Contains("ChipPaddingX", text)

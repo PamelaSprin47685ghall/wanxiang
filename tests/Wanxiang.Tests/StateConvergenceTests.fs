@@ -134,10 +134,6 @@ module StateConvergenceTests =
     /// 那正是目标；变多才失败（说明有人在白名单文件里新写了状态视觉）。
     let private valuePaths : (string * int * string) list =
         [
-            "Wanxiang.UI/Views/ChatView.fs", 4,
-            "标题编辑壳的聚焦 / hover 描边是值路径：描边色随 Tokens 切主题变化，\
-             进补间会与全局令牌脱钩（见 Interaction.setFocusedStroke 的实测记录）"
-
             "Wanxiang.UI/Views/Composer.fs", 2,
             "model chip 的聚焦描边是值路径：ActionBorder 已有外环阴影，这里补的是\
              与 hover 底色正交的**描边色**，表达「键盘焦点在此」而非表面状态"

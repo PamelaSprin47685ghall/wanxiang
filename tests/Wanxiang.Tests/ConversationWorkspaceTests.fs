@@ -48,17 +48,20 @@ let private composer () =
     view.SetModelLabel "模型 / 示例"
     view
 
-let private chat () =
+let private configuredChat overlay export =
     let view = ChatView(
         { renameTitle = ignore; openSessionSettings = ignore; forkFromHere = ignore
           stopGeneration = ignore; requestOlderHistory = ignore; retryLast = ignore
           toggleSidebar = ignore; focusHome = ignore
           message = { CopyText = ignore; Regenerate = ignore; EditAndFork = ignore
-                      DeleteMessage = ignore; DownloadAttachment = ignore; OpenLink = ignore; CopyLink = None; Recover = None } }, SharedTheme.logo)
+                      DeleteMessage = ignore; DownloadAttachment = ignore; OpenLink = ignore; CopyLink = None; Recover = None } }, SharedTheme.logo,
+        ?overlay = overlay, ?exportConversation = export)
     view.Build()
     view.SetConversationChrome true
     view.SetTitle("讨论一个问题", true)
     view
+
+let private chat () = configuredChat None None
 
 let private actions update : Wanxiang2.SettingsScreen.SettingsHooks =
     { UpsertProvider = (fun _ cb -> cb true); DeleteProvider = ignore; ProbeProvider = ignore
@@ -249,9 +252,8 @@ let ``compact conversation menu keeps fork export and reading actions reachable`
     Headless.run (fun () ->
         let root = Grid()
         let overlay = OverlayHost root
-        let view = chat ()
         let mutable exports = 0
-        view.ConfigureMenu(overlay, fun () -> exports <- exports + 1)
+        let view = configuredChat (Some overlay) (Some(fun () -> exports <- exports + 1))
         root.Children.Insert(0, view)
         view.SetCompactMode true
         let window = Window(Width = 375.0, Height = 700.0, Content = root)

@@ -232,22 +232,23 @@ let ``r7-r12 新增控件的文字在浅色与深色主题下都过 AA`` () =
               "textMuted", p.textMuted, "selected", p.selected ]
 
 [<Fact>]
-let ``顶栏模型芯片对读屏是按钮并说明生效时机`` () =
-    let src = read "src/Wanxiang.UI/Views/ChatView.fs"
-    Assert.Contains("SetRole(headerModelChip, AutomationRole.Button)", src)
-    Assert.Contains("SetHelpText(headerModelChip,", src)
+let ``模型选择不再保留隐藏顶栏入口`` () =
+    let src = read "src/Wanxiang.UI/AppShell.fs"
+    Assert.DoesNotContain("HeaderModelAnchor", src)
+    Assert.DoesNotContain("SetHeaderModel", src)
+    Assert.Contains("composer.ModelAnchor()", src)
 
 // r18 一致性（决策 350–354）：同一动作同一个名字，快捷键走 hint 列而不是塞进标签；
 // 附件上传完成不再 toast；顶栏菜单不重复「回到最新」浮钮。
 [<Fact>]
 let ``r18 菜单与入口一致性`` () =
     let sidebar = read "vendor/wanxiang2/compose/SidebarDesk/SidebarDesk.fs"
-    let chat = read "src/Wanxiang.UI/Views/ChatView.fs"
+    let chat = read "vendor/wanxiang2/compose/ChatScreen/ChatScreen.fs"
     let shell = read "src/Wanxiang.UI/AppShell.fs"
     for bad in [ "\"重命名 (F2)\""; "置顶 (P)\""; "\"删除 (Delete)\""; "已归档对话 (%d)" ] do
         Assert.DoesNotContain(bad, sidebar)
     Assert.DoesNotContain("从当前分叉", chat)
     Assert.Contains("\"从此分叉\"", chat)
     Assert.Contains("\"从此分叉\"", sidebar)
-    Assert.DoesNotContain("MenuEntry.create \"回到最新\"", chat)
+    Assert.DoesNotContain("PopupEntry.create \"回到最新\"", chat)
     Assert.DoesNotContain("上传完成\" upload.fileName) Success", shell)

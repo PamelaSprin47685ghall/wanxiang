@@ -62,7 +62,7 @@ module ModelChipUiTests =
             Assert.True(descendants again |> Seq.exists (function :? TextBlock as t -> (string (AutomationProperties.GetName t)).StartsWith "重试倒计时" | _ -> false)))
 
     [<Fact>]
-    let ``chat header model chip is visible with the model and names the provider`` () =
+    let ``model selection belongs to the composer and has no hidden header entry`` () =
         Headless.run (fun () ->
             let actions : ChatActions =
                 { renameTitle = ignore
@@ -83,14 +83,22 @@ module ModelChipUiTests =
             let chat = ChatView(actions, fun _ -> Border() :> Control)
             chat.Build()
             chat.SetConversationChrome true
-            chat.SetHeaderModel("o3", "OpenAI", true)
-            // 决策 350：顶栏不再显示模型芯片（唯一入口在输入框）。
-            Assert.False chat.HeaderModelVisible
-            Assert.Equal("o3", chat.HeaderModelText)
-            Assert.Contains("OpenAI", AutomationProperties.GetName chat.HeaderModelAnchor)
+            // 决策 350：不保留不可见但仍可调用的第二个入口。
+            Assert.DoesNotContain(descendants chat, fun c -> (string (AutomationProperties.GetName c)).Contains "切换本对话使用的模型")
             let mutable opened = false
-            chat.SetModelSwitcherHandler(fun _ -> opened <- true)
-            chat.HeaderModelAnchor.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = chat.HeaderModelAnchor))
+            let composer =
+                Composer({ submit = (fun _ -> true)
+                           stopGeneration = ignore
+                           pickAttachment = ignore
+                           removeAttachment = ignore
+                           openModelPicker = fun _ -> opened <- true
+                           dropFiles = ignore
+                           pasteFromClipboard = fun () -> false })
+            composer.Build()
+            composer.SetEnabled(true, "")
+            composer.SetModelLabel "OpenAI / o3"
+            let anchor = composer.ModelAnchor()
+            Assert.Contains(descendants anchor, fun c -> match c with :? TextBlock as t -> t.Text = "OpenAI / o3" | _ -> false)
+            anchor.RaiseEvent(KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, Source = anchor))
             Assert.True opened
-            chat.SetHeaderModel("", "", false)
-            Assert.False chat.HeaderModelVisible)
+            Assert.Equal("切换本对话使用的模型", AutomationProperties.GetName anchor))

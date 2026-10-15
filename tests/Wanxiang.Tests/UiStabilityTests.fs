@@ -1693,9 +1693,8 @@ let ``chat header and scroller share one horizontal inset tier`` () =
                 descendants chat
                 |> Seq.choose (function :? ScrollViewer as value -> Some value | _ -> None)
                 |> Seq.head
-            // header 是 ChatView.Child（DockPanel）中 Dock.Top 的第一个子项。
-            let header =
-                (chat.Child :?> DockPanel).Children |> Seq.head :?> Border
+            // 从真实组合的公开面取顶栏，不依赖测试夹具套在外面的 Border。
+            let header = chat.Screen.Header.Host
             Assert.Equal(expected, scroller.Padding.Left, 3)
             Assert.Equal(expected, scroller.Padding.Right, 3)
             Assert.Equal(expected, header.Padding.Left, 3)

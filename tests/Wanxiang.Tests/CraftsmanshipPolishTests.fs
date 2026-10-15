@@ -479,7 +479,7 @@ let ``ChatView tracks unread messages when scrolled away from bottom`` () =
         Dispatcher.UIThread.RunJobs()
 
         // Locate the scroll-to-bottom button inside chat
-        let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
+        let layout = Assert.IsAssignableFrom<DockPanel>((chat.Screen.Host :?> Border).Child)
         let scroller = chat.MessageScroller
         let scrollToBottomBtn = chat.LatestButton
         let btnContent = Assert.IsAssignableFrom<StackPanel>(scrollToBottomBtn.Child)
@@ -567,7 +567,7 @@ let ``paging older history does not count as unread messages`` () =
     window.Show()
     try
         Dispatcher.UIThread.RunJobs()
-        let layout = Assert.IsAssignableFrom<DockPanel>(chat.Child)
+        let layout = Assert.IsAssignableFrom<DockPanel>((chat.Screen.Host :?> Border).Child)
         let scroller = chat.MessageScroller
         let scrollToBottomBtn = chat.LatestButton
         let btnContent = Assert.IsAssignableFrom<StackPanel>(scrollToBottomBtn.Child)
