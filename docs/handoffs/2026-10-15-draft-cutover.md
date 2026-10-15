@@ -2,7 +2,7 @@
 
 - 分支：`assist/deletion-cutover`
 - 起始提交：`ac3c969`（本轮工作基线）
-- 最终提交：本轮改动由 DevOps 提交后回填
+- 最终提交：`b1cd9d3`（`b1cd9d396fe58e34d3fa0963d40c4ac7d20964a6`，含本文件、两个源码文件与基线下调；本回填小提交另在其后）
 - 日期：2026-10-15
 
 ## 结论先行
@@ -58,14 +58,18 @@
 - 删除：`damaged or newer draft files are ignored`（应用侧）→ 承接：`vendor/wanxiang2/libs/DraftStore/tests/Tests.fs` 金标准 `golden: codec bytes, save decisions and merges match old code` + `inputs.jsonl` 反例集。
 - 保留（宿主组合级，正当）：`closing and reopening restores...`、`deleting a conversation removes...`、`the draft file carries no tokens or keys...`、`when turned off nothing is written...`、`switching the setting off deletes the file and clear drafts empties everything`——都驱动真实 MainView / 真实文件落点 / 开关，是宿主职责的证据，库测试不覆盖这一层。
 
-## 验证（DevOps 执行）
+## 验证（DevOps 已执行，全部通过）
 
-```
-dotnet build src/Wanxiang.UI/Wanxiang.UI.fsproj
-dotnet test tests/Wanxiang.Tests --filter "FullyQualifiedName~ComposerReliabilityTests"
-```
+- `python3 -B -m unittest discover -s tools/tests -p test_wanxiang2_feed.py -v`：17/17 通过（exit 0）。
+- `tools/wanxiang2-feed.sh`：feed ready，pin `c3a2e74`，316 包（exit 0）。
+- `python3 tools/tag_ui_tests.py --check`：58 文件 / 290 方法一致（exit 0）。
+- 最小相关用例：测试二进制 `-class "*ComposerReliabilityTests*"`，14/14 通过（删除前 15 个，数目吻合；`dotnet test --filter` 语法不适用于本项目 xUnit v3 自托管 runner，实测 exit 1，故改用 `-class`）。
+- `./run-tests.sh -j 4 --large-history`：UI 4 进程 134+95+44+72、非 UI 225（含 LargeHistory），0 失败，exit 0。
+- `dotnet build wanxiang.slnx -c Release`：0 警告 0 错误（exit 0）。
+- `dotnet format wanxiang.slnx --verify-no-changes`：exit 0（仅 workspace 加载常规警告）。
+- `git diff --check`：干净。
 
-预期：编译通过；ComposerReliabilityTests 剩余用例全部通过（删除的测试不再存在）。本轮 Engineer 未运行任何命令——上述为待执行项，结果由 DevOps 回填。
+**配套门禁修改**：首次 `run-tests.sh` 报红——`NonUI 用例数 222 低于基线 223`，即本次有意删除一个测试的预期后果。按脚本提示把 `tests/test-counts.baseline` 的 `NonUI=223` 下调为 `222`（有意删除，同提交说明），下调后重跑全套件 exit 0。此改动随 `b1cd9d3` 一并提交。
 
 ## 未覆盖范围
 
