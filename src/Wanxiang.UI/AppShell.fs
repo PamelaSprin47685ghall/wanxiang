@@ -1942,7 +1942,11 @@ type MainView() as this =
                 | _ -> pendingReveal <- None
         | _ -> ()
 
+    /// 决策 440：主机明确声明功能表却不含 history-paging 时早失败早提示，
+    /// 不再发出注定无回应的请求、空等 olderPageTimeout 后才见失败条。
+    /// hostFeatures = None（未声明功能表的旧主机）照常放行、靠超时兜底——RequireFeature 的既有语义。
     member private this.RequestOlderHistory() =
+        if not (this.RequireFeature HostFeatures.HistoryPaging) then () else
         match activeConvId, activeConversation () with
         | Some convId, Some view when view.pageHasMore && not pageLoading ->
             chat.BeginHistoryPrependAnchor()

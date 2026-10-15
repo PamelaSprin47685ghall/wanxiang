@@ -232,3 +232,47 @@ module AppShellTests =
             let missing: Set<string> = getField view "missingAttachments"
             Assert.True(missing.Contains sha)
         )
+
+    // ==========================================
+    // 7. 历史分页功能门控 (History Paging Feature Gate)
+    // ==========================================
+
+    /// 决策 440 的反例：主机明确声明了功能表却不含 history-paging 时，
+    /// RequestOlderHistory 必须早失败（不置 pageLoading、不记发出时刻），
+    /// 而不是发出注定无回应的请求、空等超时。hostFeatures = None 照常放行。
+    [<Trait("Category", "UI")>]
+    [<Fact>]
+    let ``RequestOlderHistory gated when host declares features without history-paging`` () =
+        Headless.run (fun () ->
+            let view, _ = createShell ()
+            let convId = Guid.NewGuid()
+
+            // 经 ClientState 的公开行为填充一个「还有更早历史」的活动对话。
+            let state: ClientState = getField view "state"
+            state.Handle(
+                ConversationSnapshot
+                    {| conversationId = convId
+                       title = "分页门控"
+                       lastCommitId = 10UL
+                       runtimeState = "idle"
+                       generationId = None
+                       messages = JsonArray()
+                       snapshotEarliestCommitId = 5UL
+                       snapshotHasMore = true
+                       config = SessionConfig.empty |})
+            setField view "activeConvId" (Some convId)
+
+            // 主机声明了功能表但不含 history-paging：点击即被门控挡住。
+            dispatchEvent view (HostCapabilities {| hostVersion = "old-host"; features = [ HostFeatures.Search ] |})
+            invokeMethod<unit> view "RequestOlderHistory" [||]
+
+            Assert.False(getField<bool> view "pageLoading")
+            Assert.True(Option.isNone (getField<DateTimeOffset option> view "pageRequestedAt"))
+
+            // hostFeatures = None（未声明功能表的旧主机）：照常放行，请求进入在途状态。
+            setField view "hostFeatures" None
+            invokeMethod<unit> view "RequestOlderHistory" [||]
+
+            Assert.True(getField<bool> view "pageLoading")
+            Assert.True(Option.isSome (getField<DateTimeOffset option> view "pageRequestedAt"))
+        )
