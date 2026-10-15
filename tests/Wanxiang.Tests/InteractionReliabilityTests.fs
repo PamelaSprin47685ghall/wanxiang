@@ -590,8 +590,8 @@ let ``batch delete reports what it did instead of staying silent`` () =
     let pending = pendingField.GetValue tracker :?> System.Collections.IDictionary
     Assert.Equal(0, pending.Count)
     // 宽限期到：两条删除命令进入挂号
-    let pendingDeletes = (field view "pendingDeletes").GetValue view :?> PendingDeletions
-    invoke view "CommitDelete" [| box pendingDeletes.batches.Head.token |] |> ignore
+    let deletion = (field view "deletion").GetValue view :?> DeletionDesk
+    deletion.Commit deletion.Pending.batches.Head.token
     Assert.Equal(2, pending.Count)
     )
 
@@ -623,6 +623,9 @@ let ``§214 撤销把批量删除的行放回列表且不提交`` () =
     Dispatcher.UIThread.RunJobs()
     let order () = invoke sidebar "GetVisibleOrder" [| |] :?> string list
     Assert.DoesNotContain(a.ToString(), order ())
+    // 新列表快照不能让宽限期里的条目闪回：列表与撤销必须读同一个待删 owner。
+    handle view (ConversationListSnapshot {| items = items; lastCommitId = 1UL |})
+    Assert.DoesNotContain(a.ToString(), order ())
     let undo =
         controls root
         |> Seq.tryFind (fun c -> AutomationProperties.GetName c = "撤销")
@@ -631,8 +634,8 @@ let ``§214 撤销把批量删除的行放回列表且不提交`` () =
         KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
     Dispatcher.UIThread.RunJobs()
     Assert.Contains(a.ToString(), order ())
-    let pendingDeletes = (field view "pendingDeletes").GetValue view :?> PendingDeletions
-    Assert.Empty pendingDeletes.batches
+    let deletion = (field view "deletion").GetValue view :?> DeletionDesk
+    Assert.Empty deletion.Pending.batches
     )
 
 // 重新生成主机语义 = 删掉尾部整段回复链再重来

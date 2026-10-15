@@ -14,17 +14,17 @@ type Pathological(output: ITestOutputHelper) =
 
     let actions: CardActions = Cards.noActions
 
-    let context: CardContext =
-        { FontSize = Tokens.fontReading
-          AutoCollapseReasoning = true
-          Streaming = false
-          IsLastAssistant = false
-          Usage = None
-          MissingAttachments = Set.empty
-          AwaitingApproval = Set.empty
-          BrandAvatar = fun () -> Border() :> Control }
-
     let timeRender (label: string) (text: string) =
+        // 主题和控件的读取也在 Headless.run 内，不能在 xUnit 工作线程构造时初始化。
+        let context: CardContext =
+            { FontSize = Tokens.fontReading
+              AutoCollapseReasoning = true
+              Streaming = false
+              IsLastAssistant = false
+              Usage = None
+              MissingAttachments = Set.empty
+              AwaitingApproval = Set.empty
+              BrandAvatar = fun () -> Border() :> Control }
         let message = { MessageView.empty with role = "assistant"; text = text; commitId = Some 1UL }
         let watch = Stopwatch.StartNew()
         let control = Cards.render message context actions None
@@ -33,6 +33,8 @@ type Pathological(output: ITestOutputHelper) =
         Assert.NotNull control
         watch.Elapsed.TotalMilliseconds
 
+    [<Trait("Category", "UI")>]
+    [<Fact>]
     member _.``报告病态输入的渲染代价``() =
         Headless.run (fun () ->
         timeRender "预热" "hello" |> ignore

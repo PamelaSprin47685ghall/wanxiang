@@ -17,6 +17,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: true
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
@@ -27,6 +29,8 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-
       - name: Install wasm-tools workload
         run: dotnet workload install wasm-tools --skip-manifest-update || dotnet workload install wasm-tools
+      - name: Prepare pinned Wanxiang2 packages
+        run: tools/wanxiang2-feed.sh
       - name: Stress (suite x N under load)
         run: tools/stress.sh -n "${{ github.event.inputs.runs || '3' }}" -j 4 --hog 2 -o "$RUNNER_TEMP/stress"
       - name: Summarize

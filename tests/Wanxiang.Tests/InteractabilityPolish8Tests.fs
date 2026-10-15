@@ -313,21 +313,23 @@ let ``batch delete of the active conversation lands on a surviving neighbor`` ()
               providerId = "p"
               model = "m"
               lastCommitId = 1UL }
-        sidebar.SetConversations [ summary kept; summary doomed; summary doomed2 ]
+        let summaries = [ summary kept; summary doomed; summary doomed2 ]
+        typeof<MainView>.GetField("summaries", flags).SetValue(shell, box summaries)
+        sidebar.SetConversations summaries
         Dispatcher.UIThread.RunJobs()
-        // 邻位判定只读 activeConvId 与侧栏可见顺序，先设当前对话为 doomed。
+        // 走实际组合对象和宿主接线，不保留只供测试反射的 NeighborExcluding 方法。
         activeField.SetValue(shell, box (Some doomed))
-        let m = typeof<MainView>.GetMethod("NeighborExcluding", flags)
-        Assert.True(not (isNull m), "NeighborExcluding 应可反射到")
-        let neighbor = unbox<Guid option>(m.Invoke(shell, [| box [ doomed ] |]))
-        Assert.Equal(Some kept, neighbor)
-        let withOther =
-            unbox<Guid option>(m.Invoke(shell, [| box [ doomed2 ] |]))
-        Assert.True(withOther.IsNone, "批量删除不含当前对话：主视图不搬家")
-        // 整列全删：退回欢迎页（None 由调用方翻译成 SelectConversation None）。
-        let noneLeft =
-            unbox<Guid option>(m.Invoke(shell, [| box [ kept; doomed; doomed2 ] |]))
-        Assert.True(noneLeft.IsNone, "删掉整列时退回欢迎页")
+        let deletion = typeof<MainView>.GetField("deletion", flags).GetValue shell :?> DeletionDesk
+        let active () = unbox<Guid option>(activeField.GetValue shell)
+        deletion.Schedule [ doomed2 ]
+        Assert.Equal(Some doomed, active ())
+        Assert.DoesNotContain(string doomed2, sidebar.GetVisibleOrder())
+        deletion.Schedule [ doomed ]
+        Assert.Equal(Some kept, active ())
+        Assert.Equal<string list>([ string kept ], sidebar.GetVisibleOrder())
+        deletion.Schedule [ kept ]
+        Assert.True((active ()).IsNone, "删掉整列时退回欢迎页")
+        Assert.Empty(sidebar.GetVisibleOrder())
     finally
         window.Close()
     )

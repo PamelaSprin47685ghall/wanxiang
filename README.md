@@ -357,9 +357,16 @@ macOS 上 `Ctrl` 换成 `⌘`。完整列表按 `Ctrl` `/` 查看。
 ## 开发
 
 ```bash
-dotnet build src/Wanxiang.slnx -c Debug
-dotnet test tests/Wanxiang.Tests/Wanxiang.Tests.fsproj -c Debug
+git submodule update --init vendor/wanxiang2
+tools/wanxiang2-feed.sh
+dotnet build wanxiang.slnx -c Release
+./run-tests.sh -j 4
 ```
+
+应用只通过 `vendor/wanxiang2/artifacts/feed` 中的 NuGet 包消费新库，不引用新库源码。
+`vendor/wanxiang2` 的提交由本仓库锁定；仓库根的 `wanxiang2/` 若存在，是独立开发目录，
+不是构建输入。切换抽吸分支或更新 vendor 提交后，重新执行 `tools/wanxiang2-feed.sh`：
+当前包版本仍为 `0.0.0-local`，脚本会重建包并清理本仓库的同版本包缓存，不能直接复用旧包。
 
 ### 测试
 
@@ -370,8 +377,9 @@ export DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH"
 tools/stress.sh -n 3 --hog 4         # 高负载下重复跑全套，输出 flake 报告
 ```
 
-CI（`.github/workflows/ci.yml`）在每个 PR 上跑全部测试、核对各组测试数量不减少、
+CI（`.github/workflows/ci.yml`）在每个 PR 及 `extract-ledger` 的 push 上跑应用门禁、核对各组测试数量不减少、
 冒烟运行打包产物（含 PWA 补丁检查）；`stress.yml` 每晚跑一次压力测试。
+CI、发布和压力任务都先检出锁定的新库并生成包源，再 restore/build；不能用新库自己的 CI 代替应用验收。
 
 ### 发布
 
@@ -382,15 +390,9 @@ CI（`.github/workflows/ci.yml`）在每个 PR 上跑全部测试、核对各组
 
 | 项目 | 职责 |
 |---|---|
-| `Wanxiang.Core` | 领域类型、事件、投影、命令规划、幂等；账本格式内核（`Ledger/`：RFC 7464 分帧、RFC 8785 规范化、恢复） |
-| `Wanxiang.Store` | 提交日志单写者、重放、数据锁 |
-| `Wanxiang.Protocol` | AG-UI 事件编解码（线上格式权威见 `.agents/skills/wanxiang-protocol` 第 55 节） |
-| `Wanxiang.Agui` | AG-UI 语义层：消息映射、宽容读、能力声明、事件出站映射 |
-| `Wanxiang.Config` | TOML 解析与原子重写 |
-| `Wanxiang.Agent` | Provider 调用、消息映射、附件转内容 |
-| `Wanxiang.Server` | 编排、工具与 MCP、附件、连接 |
-| `Wanxiang.Client` | 协议客户端与客户端投影 |
-| `Wanxiang.UI` | 共用界面（设计系统 / 组件 / 视图） |
+| `vendor/wanxiang2/libs` | 独立职责：账本、配置、协议、模型、传输、界面行为等；库之间不相互引用 |
+| `vendor/wanxiang2/compose` | 经交付包组合独立职责，形成 EventStore、ServerApp、WsClient、各界面 Desk 等能力 |
+| `Wanxiang.UI` | 共用界面的宿主接线及仍待抽取的视图；删除与撤销已经由 DeletionDesk 承担 |
 | `Wanxiang.App` | 桌面入口 |
 | `Wanxiang.Pwa` | 浏览器入口（browser-wasm） |
 

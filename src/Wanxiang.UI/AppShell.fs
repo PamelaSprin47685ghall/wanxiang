@@ -64,10 +64,6 @@ type MainView() as this =
     let runs = ConversationRuns()
     let mutable summaries: ConversationSummary list = []
     let mutable paletteRecent: string list = PaletteRecent.loadRecent ()
-    /// §214：宽限期内的待删批次——列表里隐去，过期才提交删除命令。
-    let mutable pendingDeletes = PendingDeletion.empty
-    /// 待删批次的到期由 PendingDeletion 记；这里只有一个计时器，指向最早的到期时刻。
-    let mutable deleteTimer: DispatcherTimer option = None
     /// 「检查主机」的有界等待（旧主机不认识这个事件会直接忽略）。
     let doctorWait = BoundedWait(BoundedWaits.doctorLimit)
     /// W4：分叉谱系（随列表快照更新）、最近一次搜索的 queryId、待滚动到的消息。
@@ -209,6 +205,35 @@ type MainView() as this =
         commandFeedback.TrackWithCompletion(cmd, successMessage, onCommitted, onCompleted)
         sendCommand cmd
     let newInvocation () = Guid.CreateVersion7()
+    /// §214：删除、撤销、批次与到期协作归 DeletionDesk；宿主只接真实界面、计时与发送。
+    let deletion =
+        DeletionDesk(commandFeedback,
+            { Now = fun () -> DateTimeOffset.UtcNow
+              ActiveConversation = fun () -> activeConvId
+              TitleOf = fun id -> summaries |> List.tryFind (fun summary -> summary.id = id) |> Option.map _.title
+              VisibleOrder = fun () -> sidebar.GetVisibleOrder()
+              PendingChanged = fun pending -> sidebar.SetConversations(PendingDeletion.visible summaries pending)
+              FocusAfterDelete = fun id -> sidebar.FocusAfterDelete(string id)
+              Open = fun id ->
+                  this.SelectConversation id
+                  sidebar.SetActive activeConvId
+              Render = fun () -> this.Render()
+              Toast = fun text tone ->
+                  toast text (match tone with
+                              | DeletionTone.Info -> Info
+                              | DeletionTone.Success -> Success
+                              | DeletionTone.Warning -> Warning)
+              ToastUndo = fun label undo -> overlay.ToastWith(label, Info, Some("撤销", undo))
+              After = fun delay action ->
+                  let timer = DispatcherTimer(Interval = delay)
+                  timer.Tick.Add(fun _ ->
+                      timer.Stop()
+                      action ())
+                  timer.Start()
+                  { new IDisposable with member _.Dispose() = timer.Stop() }
+              SendCommand = sendCommand
+              NewInvocation = newInvocation })
+
     let sendConfigWithFeedback (successMessage: string) (eventOf: Guid -> WireEvent) (onCompleted: bool -> unit) =
         let requestId = newInvocation ()
         configFeedback.Track(requestId, successMessage, onCompleted)
@@ -641,80 +666,6 @@ type MainView() as this =
             |> Async.Start
 
     // ---- 对话操作 ----
-
-    /// 批量删除后的主视图归宿（规则见 PendingDeletion.neighborAfter）。InteractabilityPolish8Tests 反射调用它。
-    member private this.NeighborExcluding(removedIds: Guid list) : Guid option =
-        PendingDeletion.neighborAfter activeConvId removedIds (sidebar.GetVisibleOrder())
-
-    /// §214：登记待删 → 隐去行 → 当前对话落邻位 → 带「撤销」的提示条 → 宽限期后提交。
-    member private this.ScheduleDelete(ids: Guid list) =
-        let titled =
-            ids |> List.map (fun id ->
-                id, (summaries |> List.tryFind (fun s -> s.id = id) |> Option.map _.title |> Option.defaultValue "对话"))
-        let neighbor = this.NeighborExcluding ids
-        let deletingCurrent = Option.exists (fun id -> List.contains id ids) activeConvId
-        match ids with
-        | [ single ] -> sidebar.FocusAfterDelete(single.ToString())
-        | _ -> ()
-        let next, batch = PendingDeletion.scheduleAt DateTimeOffset.UtcNow titled pendingDeletes
-        pendingDeletes <- next
-        match batch with
-        | None -> ()
-        | Some batch ->
-            sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
-            if deletingCurrent then
-                this.SelectConversation neighbor
-                sidebar.SetActive activeConvId
-            this.ArmDeleteTimer()
-            overlay.ToastWith(
-                batch.label,
-                Info,
-                Some(
-                    "撤销",
-                    fun () ->
-                        let restored, ids = PendingDeletion.undo batch.token pendingDeletes
-                        pendingDeletes <- restored
-                        this.ArmDeleteTimer()
-                        if not (List.isEmpty ids) then
-                            sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
-                            if deletingCurrent && ids.Length = 1 then this.SelectConversation(Some ids.Head)
-                            this.Render()
-                            toast (PendingDeletion.restoredText ids.Length) Success))
-            this.Render()
-
-    /// 计时器指向最早到期的批次；到期的批次逐个提交，再指向下一个。
-    member private this.ArmDeleteTimer() =
-        deleteTimer |> Option.iter (fun t -> t.Stop())
-        deleteTimer <- None
-        match PendingDeletion.nextDue pendingDeletes with
-        | Some due ->
-            let wait = due - DateTimeOffset.UtcNow
-            let timer = DispatcherTimer(Interval = (if wait > TimeSpan.FromMilliseconds 1.0 then wait else TimeSpan.FromMilliseconds 1.0))
-            timer.Tick.Add(fun _ ->
-                timer.Stop()
-                deleteTimer <- None
-                let next, tokens = PendingDeletion.tick DateTimeOffset.UtcNow pendingDeletes
-                pendingDeletes <- next
-                for token in tokens do this.CommitDelete token
-                this.ArmDeleteTimer())
-            deleteTimer <- Some timer
-            timer.Start()
-        | None -> ()
-
-    /// 宽限期到：真正提交删除。被拒的条目在下一次列表快照里自然回到列表。
-    member private this.CommitDelete(token: Guid) =
-        let next, ids = PendingDeletion.commit token pendingDeletes
-        pendingDeletes <- next
-        for id in ids do
-            let command = DeleteConversation {| invocationId = newInvocation (); conversationId = id |}
-            commandFeedback.TrackWithCompletion(
-                command,
-                None,
-                ignore,
-                (fun ok -> if not ok then toast "有对话没删掉：主机拒绝了这次请求，它已回到列表。" Warning))
-            sendCommand command
-        if not (List.isEmpty ids) then
-            sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
 
     member private this.SelectConversation(id: Guid option) =
         if activeConvId <> id then
@@ -1721,7 +1672,7 @@ type MainView() as this =
             lineage <- ForkLineage.parse d.items
             sidebar.SetLineage lineage
             // SetConversations 即快照到达：侧栏加载中状态随数据一并解除。
-            sidebar.SetConversations(PendingDeletion.visible summaries pendingDeletes)
+            sidebar.SetConversations(PendingDeletion.visible summaries deletion.Pending)
             sidebar.SetActive activeConvId
             this.PruneDeletedConversationDrafts()
             listReceived <- true
@@ -1797,7 +1748,7 @@ type MainView() as this =
                                 {| invocationId = newInvocation (); conversationId = summary.id; title = title |}
                         sendCommandWithCompletion command None ignore onCompleted)
               // §214：删除即撤销——不再弹「无法撤销」确认框；先隐去，提示条给「撤销」。
-              deleteConversation = fun summary -> this.ScheduleDelete [ summary.id ]
+              deleteConversation = fun summary -> deletion.Schedule [ summary.id ]
               setPinned =
                 fun summary pinned ->
                     let command =
@@ -1862,7 +1813,7 @@ type MainView() as this =
                 fun ids ->
                     if not (List.isEmpty ids) then
                         sidebar.ExitSelection()
-                        this.ScheduleDelete ids
+                        deletion.Schedule ids
               duplicateAsFork =
                 fun summary ->
                     this.OpenConversation summary.id

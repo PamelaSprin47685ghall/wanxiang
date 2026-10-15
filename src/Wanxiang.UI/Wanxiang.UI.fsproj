@@ -118,6 +118,7 @@
     <PackageReference Include="Wanxiang2.LocalDraftControls" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.HostHealth" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PendingDeletion" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DeletionDesk" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.CountdownTicker" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ScrollTween" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.BreathPhase" Version="0.0.0-local" />

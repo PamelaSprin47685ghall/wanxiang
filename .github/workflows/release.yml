@@ -27,6 +27,8 @@ jobs:
       WX_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: true
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v6
@@ -42,6 +44,9 @@ jobs:
 
       - name: Install wasm-tools workload (PWA 随包发布)
         run: dotnet workload install wasm-tools --skip-manifest-update || dotnet workload install wasm-tools
+
+      - name: Prepare pinned Wanxiang2 packages
+        run: tools/wanxiang2-feed.sh
 
       - name: Publish self-contained ${{ matrix.rid }}
         run: dotnet publish src/Wanxiang.App/Wanxiang.App.fsproj -c Release -r ${{ matrix.rid }} --self-contained true -o "$RUNNER_TEMP/pub" --verbosity minimal
