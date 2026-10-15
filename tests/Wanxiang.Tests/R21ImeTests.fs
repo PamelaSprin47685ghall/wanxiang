@@ -36,10 +36,9 @@ module R21ImeTests =
                     { submit = (fun _ -> sent <- sent + 1; true); stopGeneration = ignore; pickAttachment = ignore
                       removeAttachment = ignore; openModelPicker = ignore; dropFiles = ignore
                       pasteFromClipboard = (fun () -> false) })
-            composer.Build()
             composer.SetEnabled(true, "")
-            let w = show composer
-            let input = composer.GetVisualDescendants() |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
+            let w = show composer.Host
+            let input = composer.Host.GetVisualDescendants() |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
             input.Text <- "你好"
             input.Focus() |> ignore
             (presenter input).PreeditText <- "ma"

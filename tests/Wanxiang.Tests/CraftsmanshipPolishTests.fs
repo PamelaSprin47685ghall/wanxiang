@@ -233,7 +233,6 @@ let ``Composer handles clipboard paste hook on Ctrl+V`` () =
               true }
 
     let composer = Composer(composerActions)
-    composer.Build()
 
     // Find the inner TextBox in Composer
     let rec findTextBox (c: Control) : TextBox option =
@@ -243,7 +242,7 @@ let ``Composer handles clipboard paste hook on Ctrl+V`` () =
         | :? Decorator as d when not (isNull d.Child) -> findTextBox d.Child
         | _ -> None
 
-    let input = findTextBox composer |> Option.defaultWith (fun () -> failwith "TextBox not found in Composer")
+    let input = findTextBox composer.Host |> Option.defaultWith (fun () -> failwith "TextBox not found in Composer")
 
     // Simulate Ctrl+V on TextBox
     let keyArgs = KeyEventArgs(
@@ -271,7 +270,6 @@ let ``Composer handles dropFiles hook when files are dropped`` () =
           pasteFromClipboard = fun () -> false }
 
     let composer = Composer(composerActions)
-    composer.Build()
 
     // Create a mock IStorageItem
     let mockFile =
@@ -319,7 +317,6 @@ let ``Composer drag over and drag leave updates visual affordance and resets cle
           pasteFromClipboard = fun () -> false }
 
     let composer = Composer(composerActions)
-    composer.Build()
     composer.SetEnabled(true, "")
 
     let rec findTextBox (c: Control) : TextBox option =
@@ -329,7 +326,7 @@ let ``Composer drag over and drag leave updates visual affordance and resets cle
         | :? Decorator as d when not (isNull d.Child) -> findTextBox d.Child
         | _ -> None
 
-    let input = findTextBox composer |> Option.defaultWith (fun () -> failwith "TextBox not found")
+    let input = findTextBox composer.Host |> Option.defaultWith (fun () -> failwith "TextBox not found")
     Assert.Equal("输入消息…", input.PlaceholderText)
 
     let mockFile =
@@ -378,7 +375,7 @@ let ``Composer drag over and drag leave updates visual affordance and resets cle
         | :? Panel as p -> p.Children |> Seq.collect texts |> List.ofSeq
         | :? Decorator as d when not (isNull d.Child) -> texts d.Child
         | _ -> []
-    Assert.Contains("连接已断开，请检查网络", texts composer)
+    Assert.Contains("连接已断开，请检查网络", texts composer.Host)
     )
 
 [<Trait("Category", "UI")>]
@@ -696,7 +693,6 @@ let ``Composer prompt history records submissions and recalls with Up/Down`` () 
           pasteFromClipboard = fun () -> false }
 
     let composer = Composer(composerActions)
-    composer.Build()
     composer.SetEnabled(true, "")
 
     let rec findInput (c: Control) : TextBox option =
@@ -706,7 +702,7 @@ let ``Composer prompt history records submissions and recalls with Up/Down`` () 
         | :? Decorator as d when not (isNull d.Child) -> findInput d.Child
         | _ -> None
 
-    let input = findInput composer |> Option.defaultWith (fun () -> failwith "Input TextBox not found in Composer")
+    let input = findInput composer.Host |> Option.defaultWith (fun () -> failwith "Input TextBox not found in Composer")
 
     let sendKey (key: Key) (modifiers: KeyModifiers) =
         let args = KeyEventArgs(
@@ -983,14 +979,13 @@ let ``Composer restores focus to input when removing last attachment and support
           dropFiles = ignore
           pasteFromClipboard = fun () -> false }
     let composer = Composer(actions)
-    composer.Build()
-    let window = Window(Width = 800.0, Height = 600.0, Content = composer)
+    let window = Window(Width = 800.0, Height = 600.0, Content = composer.Host)
     window.Show()
     try
         composer.SetEnabled(true, "")
         Dispatcher.UIThread.RunJobs()
         let input =
-            descendants composer
+            descendants composer.Host
             |> Seq.pick (function :? TextBox as tb -> Some tb | _ -> None)
         
         // When isGenerating, Escape stops generation
@@ -1002,7 +997,7 @@ let ``Composer restores focus to input when removing last attachment and support
 
         // Check Send button tooltip when generating
         let sendBtn =
-            descendants composer
+            descendants composer.Host
             |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "停止生成")
         let tip = ToolTip.GetTip(sendBtn) :?> string
         Assert.Contains("停止生成 (Escape)", tip)
@@ -1260,13 +1255,12 @@ let ``Composer keeps drop and keyboard instructions on their actual controls`` (
           pasteFromClipboard = fun () -> false }
 
     let composer = Composer(composerActions)
-    composer.Build()
 
     let attach =
-        descendants composer
+        descendants composer.Host
         |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = "添加附件")
     let input =
-        descendants composer
+        descendants composer.Host
         |> Seq.pick (function :? TextBox as field when field.AcceptsReturn -> Some field | _ -> None)
     Assert.Contains("拖入", Avalonia.Automation.AutomationProperties.GetHelpText(attach))
     Assert.Contains("Enter 发送", Avalonia.Automation.AutomationProperties.GetHelpText(input))
@@ -1335,17 +1329,16 @@ let ``compact composer keeps model chip and send button on one row at phone widt
           dropFiles = ignore
           pasteFromClipboard = fun () -> false }
     let composer = Composer(actions)
-    composer.Build()
     composer.SetEnabled(true, "")
     composer.SetModelLabel "mock · mock-gpt"
-    let window = Window(Width = 390.0, Height = 400.0, Content = composer)
+    let window = Window(Width = 390.0, Height = 400.0, Content = composer.Host)
     window.Show()
     try
         composer.SetCompactMode true
         Avalonia.Threading.Dispatcher.UIThread.RunJobs()
         window.UpdateLayout()
         let named name =
-            descendants composer
+            descendants composer.Host
             |> Seq.find (fun c -> Avalonia.Automation.AutomationProperties.GetName(c) = name)
         let send = named "添加附件"
         let rowOf (c: Control) = Grid.GetRow(c.Parent :?> Control)

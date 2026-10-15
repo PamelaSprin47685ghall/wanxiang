@@ -24,14 +24,11 @@ type ComposerActions = {
 }
 
 /// 消息输入区：输入框、附件托盘、模型芯片与发送门控全部交给 Wanxiang2.ComposerDesk；
-/// 待发送面板与根留白也在库里；宿主这里只留发送历史召回（PromptHistory）、IME 守护与上下文摘要文案，
-/// 将来由 ChatScreen / Workspace 组合者接走。
+/// 待发送面板与根留白也在库里；宿主这里只留发送历史召回（PromptHistory）、IME 守护、图像解码与上下文摘要。
+/// 适配器不是控件：Host 就是 Desk.Host，由外层 Workspace 唯一挂载，不另包一层 Border。
 type Composer(actions: ComposerActions) =
-    inherit Border()
-
     let history = PromptHistory()
     let mutable openSessionSettings: unit -> unit = ignore
-    let mutable compactMode = false
     let mutable visionSupport = VisionUnknown
     let mutable visionModelLabel = ""
     let mutable attachments: PendingAttachment list = []
@@ -84,8 +81,11 @@ type Composer(actions: ComposerActions) =
     do
         desk.SetImeProbe(fun box -> Wanxiang2.ImeShield.ImeShield.isComposing box)
         desk.SetKeyHook keyHook
+        desk.SetEnterSends true
+        desk.SetCompactMode false
 
     member _.Desk = desk
+    member _.Host = desk.Host
 
     /// 与发送键同一路径（旧 Composer.Submit）：门控通过才交给宿主，宿主接管才清空；宿主异常照常抛出。
     member _.Submit() = desk.Submit()
@@ -149,9 +149,7 @@ type Composer(actions: ComposerActions) =
     member _.SetEnterSends(value: bool) = desk.SetEnterSends value
 
     /// 窄屏收紧与按宽取档的根留白归 ComposerDesk（旧 ApplyComposerPadding）。
-    member this.SetCompactMode(value: bool) =
-        compactMode <- value
-        desk.SetCompactMode value
+    member _.SetCompactMode(value: bool) = desk.SetCompactMode value
 
     member _.Focus() = desk.Focus()
 
@@ -159,9 +157,3 @@ type Composer(actions: ComposerActions) =
     member _.SetText(text: string) =
         desk.SetText text
         history.Reset()
-
-    member this.Build() =
-        this.Background <- Brushes.Transparent
-        this.Child <- desk.Host
-        this.SetEnterSends true
-        this.SetCompactMode false

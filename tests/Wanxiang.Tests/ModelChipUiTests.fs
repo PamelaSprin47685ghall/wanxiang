@@ -94,7 +94,6 @@ module ModelChipUiTests =
                            openModelPicker = fun _ -> opened <- true
                            dropFiles = ignore
                            pasteFromClipboard = fun () -> false })
-            composer.Build()
             composer.SetEnabled(true, "")
             composer.SetModelLabel "OpenAI / o3"
             let anchor = composer.ModelAnchor()

@@ -229,8 +229,7 @@ let private pixelAt (window: Window) (x: int) (y: int) =
 let ``shrunk attachment shows a badge whose name is the before-after note`` () =
     Headless.run (fun () ->
     let composer = Composer(actions)
-    composer.Build()
-    let window = show composer 720.0 320.0
+    let window = show composer.Host 720.0 320.0
     try
         composer.SetEnabled(true, "")
         let id = Guid.NewGuid()
@@ -239,9 +238,9 @@ let ``shrunk attachment shows a badge whose name is the before-after note`` () =
         composer.SetAttachments
             [ { attachmentId = id; sha256 = "s"; size = 2_200_000L; mediaType = "image/jpeg"; fileName = "IMG_0042.jpg"; ready = true; failed = false } ]
         Dispatcher.UIThread.RunJobs()
-        let badge = descendantsOf composer |> Seq.find (fun c -> AutomationProperties.GetAutomationId c = "attachment-shrink-note")
+        let badge = descendantsOf composer.Host |> Seq.find (fun c -> AutomationProperties.GetAutomationId c = "attachment-shrink-note")
         Assert.Equal(note, AutomationProperties.GetName badge)
-        Assert.True(descendantsOf composer |> Seq.exists (fun c ->
+        Assert.True(descendantsOf composer.Host |> Seq.exists (fun c ->
             let n = AutomationProperties.GetName c
             not (isNull n) && n.Contains note && n.StartsWith "附件："))
         composer.SetAttachments []
@@ -258,16 +257,15 @@ let ``focused composer input keeps the dark surface instead of a white plate`` (
     Tokens.apply ThemeMode.Dark
     try
         let composer = Composer(actions)
-        composer.Build()
         let host = Grid(Background = Tokens.canvas)
-        host.Children.Add(Border(Padding = Thickness 16.0, VerticalAlignment = Layout.VerticalAlignment.Bottom, Child = composer))
+        host.Children.Add(Border(Padding = Thickness 16.0, VerticalAlignment = Layout.VerticalAlignment.Bottom, Child = composer.Host))
         let window = show host 720.0 240.0
         try
             composer.SetEnabled(true, "")
             composer.SetText "深色输入框"
             composer.Focus()
             Dispatcher.UIThread.RunJobs()
-            let input = descendantsOf composer |> Seq.find (fun c -> c :? TextBox) :?> TextBox
+            let input = descendantsOf composer.Host |> Seq.find (fun c -> c :? TextBox) :?> TextBox
             Assert.True input.IsFocused
             let p = input.TranslatePoint(Point(input.Bounds.Width - 30.0, input.Bounds.Height / 2.0), window).Value
             let px = pixelAt window (int p.X) (int p.Y)
@@ -295,9 +293,8 @@ let ``r16 截图：自动缩小提示、深色输入框聚焦、看图能力设�
     let composerScene (theme: ThemeMode) (width: float) (shot: string) =
         Tokens.apply theme
         let composer = Composer(actions)
-        composer.Build()
         let host = Grid(Background = Tokens.canvas)
-        host.Children.Add(Border(Padding = Thickness 16.0, VerticalAlignment = Layout.VerticalAlignment.Bottom, Child = composer))
+        host.Children.Add(Border(Padding = Thickness 16.0, VerticalAlignment = Layout.VerticalAlignment.Bottom, Child = composer.Host))
         let window = show host width 260.0
         try
             composer.SetEnabled(true, "")

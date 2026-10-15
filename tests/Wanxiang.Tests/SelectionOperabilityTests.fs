@@ -213,7 +213,6 @@ let ``composer sends only on the mode's declared key`` () =
           dropFiles = ignore
           pasteFromClipboard = fun () -> false }
     let composer = Composer(composerActions)
-    composer.Build()
     composer.SetEnabled(true, "")
     let rec findInput (c: Control) : TextBox option =
         match c with
@@ -221,7 +220,7 @@ let ``composer sends only on the mode's declared key`` () =
         | :? Panel as p -> p.Children |> Seq.tryPick findInput
         | :? Decorator as d when not (isNull d.Child) -> findInput d.Child
         | _ -> None
-    let input = findInput composer |> Option.defaultWith (fun () -> failwith "input missing")
+    let input = findInput composer.Host |> Option.defaultWith (fun () -> failwith "input missing")
     let sendKey (mods: KeyModifiers) =
         composer.SetText "payload"
         let args = KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = mods)

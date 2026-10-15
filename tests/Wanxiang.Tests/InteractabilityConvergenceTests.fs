@@ -201,7 +201,6 @@ module InteractabilityConvergenceTests =
               dropFiles = ignore
               pasteFromClipboard = fun () -> false }
         let composer = Composer(composerActions)
-        composer.Build()
         composer.SetEnabled(true, "")
         composer.SetText "草稿内容"
         let rec findInput (c: Control) : TextBox option =
@@ -211,17 +210,17 @@ module InteractabilityConvergenceTests =
             | :? Decorator as d when not (isNull d.Child) -> findInput d.Child
             | _ -> None
         let input =
-            findInput composer |> Option.defaultWith (fun () -> failwith "input missing")
+            findInput composer.Host |> Option.defaultWith (fun () -> failwith "input missing")
         // 语态要先落地：按钮的自动化名「停止生成」由 refreshSendState 写入。
         composer.SetGenerating true
         composer.SetCanStop true
         Dispatcher.UIThread.RunJobs()
         Dispatcher.UIThread.RunJobs()
-        let window = Window(Width = 420.0, Height = 260.0, Content = composer)
+        let window = Window(Width = 420.0, Height = 260.0, Content = composer.Host)
         window.Show()
         Dispatcher.UIThread.RunJobs()
         let names =
-            composer.GetVisualDescendants()
+            composer.Host.GetVisualDescendants()
             |> Seq.choose (function :? Button as b -> Some(AutomationProperties.GetName b, b) | _ -> None)
             |> List.ofSeq
         // Ui.button/iconButton 造的是 Border（本项目自己的按钮基座），不是 Avalonia Button：
@@ -233,7 +232,7 @@ module InteractabilityConvergenceTests =
             | :? Decorator as d when not (isNull d.Child) -> findSend d.Child
             | _ -> None
         let sendButton =
-            findSend composer |> Option.defaultWith (fun () -> failwith "发送键缺失")
+            findSend composer.Host |> Option.defaultWith (fun () -> failwith "发送键缺失")
         try
             Assert.True(sendButton.IsEnabled, sprintf "生成中发送键应切到停止语态：%A" names)
             sendButton.Focus() |> ignore

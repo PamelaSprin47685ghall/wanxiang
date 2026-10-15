@@ -153,6 +153,7 @@
     <PackageReference Include="Wanxiang2.SettingsScreen" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatPane" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ChatScreen" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.Workspace" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ComposerDesk" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProtocolDispatch" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ShellCommands" Version="0.0.0-local" />

@@ -47,15 +47,14 @@ let ``image on text-only model blocks send with a clear notice`` () =
     Headless.run (fun () ->
     let mutable submitted = 0
     let composer = Composer(actions (fun () -> submitted <- submitted + 1))
-    composer.Build()
-    let window = show composer 720.0 320.0
+    let window = show composer.Host 720.0 320.0
     try
         composer.SetEnabled(true, "")
         composer.SetModelVision(VisionNo, "DeepSeek · deepseek-chat")
         composer.SetText "看看这张图"
         composer.SetAttachments [ image (Guid.NewGuid()) true ]
         Dispatcher.UIThread.RunJobs()
-        let send = byAutomationName composer "发送"
+        let send = byAutomationName composer.Host "发送"
         Assert.False send.IsEnabled
         Assert.Contains("不能识别图片", composer.VisionNoticeText)
         Assert.Contains("deepseek-chat", composer.VisionNoticeText)
@@ -83,8 +82,7 @@ let ``image on text-only model blocks send with a clear notice`` () =
 let ``image attachment renders a thumbnail with remove button`` () =
     Headless.run (fun () ->
     let composer = Composer(actions ignore)
-    composer.Build()
-    let window = show composer 720.0 320.0
+    let window = show composer.Host 720.0 320.0
     try
         composer.SetEnabled(true, "")
         let id = Guid.NewGuid()
@@ -92,9 +90,9 @@ let ``image attachment renders a thumbnail with remove button`` () =
         composer.SetAttachments [ image id true ]
         Dispatcher.UIThread.RunJobs()
         Assert.True(composer.HasThumbnail id)
-        let thumb = byAutomationName composer "图片预览 shot.png"
+        let thumb = byAutomationName composer.Host "图片预览 shot.png"
         Assert.True thumb.IsVisible
-        Assert.NotNull(byAutomationName composer "移除附件 shot.png")
+        Assert.NotNull(byAutomationName composer.Host "移除附件 shot.png")
         // 移除后缩略图释放。
         composer.SetAttachments []
         Assert.False(composer.HasThumbnail id)
@@ -145,9 +143,8 @@ let ``r15 截图：图片缩略图、只吃文字的模型拦下、深色、手�
     let scene (theme: ThemeMode) (width: float) (vision: VisionSupport) (label: string) (shot: string) =
         Tokens.apply theme
         let composer = Composer(actions ignore)
-        composer.Build()
         let host = Grid(Background = Tokens.canvas)
-        host.Children.Add(Border(Padding = Thickness 16.0, VerticalAlignment = Layout.VerticalAlignment.Bottom, Child = composer))
+        host.Children.Add(Border(Padding = Thickness 16.0, VerticalAlignment = Layout.VerticalAlignment.Bottom, Child = composer.Host))
         let window = show host width 300.0
         try
             composer.SetEnabled(true, "")

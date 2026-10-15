@@ -10,6 +10,7 @@
     <Compile Include="Headless.fs" />
     <Compile Include="ChatFixture.fs" />
     <Compile Include="ChatScreenCutoverTests.fs" />
+    <Compile Include="WorkspaceCutoverTests.fs" />
     <Compile Include="UiThreadOwnershipTests.fs" />
     <Compile Include="HeadlessTests.fs" />
     <Compile Include="Helpers.fs" />

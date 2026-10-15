@@ -98,15 +98,14 @@ let ``嵌套 ScrollViewer 与草稿/待发送滚动视口具备右侧安全留�
           dropFiles = ignore
           pasteFromClipboard = fun () -> false }
     let composer = Composer(composerActions)
-    composer.Build()
 
     let attachmentScroller =
-        findControls composer
+        findControls composer.Host
         |> Seq.pick (function :? ScrollViewer as s when s.MaxHeight = LayoutPolicy.attachmentDraftMaxHeight -> Some s | _ -> None)
     Assert.Equal(LayoutPolicy.nestedScrollGutter, attachmentScroller.Margin.Right)
 
     let pendingScroller =
-        findControls composer
+        findControls composer.Host
         |> Seq.pick (function :? ScrollViewer as s when s.MaxHeight = LayoutPolicy.pendingMessagesMaxHeight -> Some s | _ -> None)
     Assert.Equal(LayoutPolicy.nestedScrollGutter, pendingScroller.Margin.Right)
     )

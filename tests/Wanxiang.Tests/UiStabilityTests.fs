@@ -277,8 +277,7 @@ let ``composer blocks send while any attachment is uploading`` () =
           dropFiles = ignore
           pasteFromClipboard = fun () -> false }
     let composer = Composer(actions)
-    composer.Build()
-    let window = show composer 720.0 260.0
+    let window = show composer.Host 720.0 260.0
     try
         composer.SetEnabled(true, "")
         composer.SetText "hello"
@@ -292,7 +291,7 @@ let ``composer blocks send while any attachment is uploading`` () =
                 failed = false } ]
         Dispatcher.UIThread.RunJobs()
 
-        let send = byAutomationName composer "发送" :?> Border
+        let send = byAutomationName composer.Host "发送" :?> Border
         Assert.False send.IsEnabled
         let provider =
             ControlAutomationPeer.CreatePeerForElement send
@@ -330,12 +329,11 @@ let ``composer send stop state keeps automation name in sync`` () =
           dropFiles = ignore
           pasteFromClipboard = fun () -> false }
     let composer = Composer(actions)
-    composer.Build()
-    let window = show composer 620.0 220.0
+    let window = show composer.Host 620.0 220.0
     try
         composer.SetEnabled(true, "")
         composer.SetText "hello"
-        let send = byAutomationName composer "发送"
+        let send = byAutomationName composer.Host "发送"
         composer.SetGenerating true
         Dispatcher.UIThread.RunJobs()
         Assert.Equal("停止生成", AutomationProperties.GetName(send))
@@ -359,7 +357,6 @@ let ``composer attachment slots stay stable across uploading ready and thirty it
           dropFiles = ignore
           pasteFromClipboard = fun () -> false }
     let composer = Composer(actions)
-    composer.Build()
     composer.SetEnabled(true, "")
     let id = Guid.NewGuid()
     let pending =
@@ -370,20 +367,20 @@ let ``composer attachment slots stay stable across uploading ready and thirty it
           fileName = "a-very-long-attachment-name-that-needs-ellipsis.txt"
           ready = false
           failed = false }
-    let window = show composer 720.0 360.0
+    let window = show composer.Host 720.0 360.0
     try
         composer.SetAttachments [ pending ]
         Dispatcher.UIThread.RunJobs()
-        let removePending = byAutomationName composer "移除"
-        let pendingPoint = removePending.TranslatePoint(Point(0.0, 0.0), composer).Value
-        let heightPending = composer.Bounds.Height
+        let removePending = byAutomationName composer.Host "移除"
+        let pendingPoint = removePending.TranslatePoint(Point(0.0, 0.0), composer.Host).Value
+        let heightPending = composer.Host.Bounds.Height
 
         composer.SetAttachments [ { pending with ready = true; size = 15L * 1024L * 1024L } ]
         Dispatcher.UIThread.RunJobs()
-        let removeReady = byAutomationName composer "移除"
-        let readyPoint = removeReady.TranslatePoint(Point(0.0, 0.0), composer).Value
+        let removeReady = byAutomationName composer.Host "移除"
+        let readyPoint = removeReady.TranslatePoint(Point(0.0, 0.0), composer.Host).Value
         Assert.True(abs (pendingPoint.X - readyPoint.X) < 0.5, sprintf "remove x %.1f -> %.1f" pendingPoint.X readyPoint.X)
-        Assert.True(abs (heightPending - composer.Bounds.Height) < 0.5)
+        Assert.True(abs (heightPending - composer.Host.Bounds.Height) < 0.5)
 
         let many =
             [ for index in 1 .. 30 ->
@@ -396,7 +393,7 @@ let ``composer attachment slots stay stable across uploading ready and thirty it
         composer.SetAttachments many
         Dispatcher.UIThread.RunJobs()
         let attachmentScroller =
-            descendants composer
+            descendants composer.Host
             |> Seq.choose (function :? ScrollViewer as s when s.MaxHeight <= LayoutPolicy.attachmentDraftMaxHeight + 0.5 -> Some s | _ -> None)
             |> Seq.head
         Assert.True(attachmentScroller.Extent.Height > attachmentScroller.Viewport.Height)
@@ -1028,7 +1025,6 @@ let ``accelerated craft soak covers the long-session action ledger without visua
               openModelPicker = ignore
               dropFiles = ignore
               pasteFromClipboard = fun () -> false })
-    composer.Build()
     composer.SetEnabled(true, "")
     let chat =
         ChatView(
@@ -1050,8 +1046,8 @@ let ``accelerated craft soak covers the long-session action ledger without visua
             fun _ -> Border(Width = 26.0, Height = 26.0) :> Control)
     chat.Build()
     let main = DockPanel()
-    DockPanel.SetDock(composer, Dock.Bottom)
-    main.Children.Add composer
+    DockPanel.SetDock(composer.Host, Dock.Bottom)
+    main.Children.Add composer.Host
     main.Children.Add chat
     let layout = Grid()
     layout.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength 300.0))
@@ -1085,7 +1081,7 @@ let ``accelerated craft soak covers the long-session action ledger without visua
         Thread.Sleep 190
         Dispatcher.UIThread.RunJobs()
 
-        let send = byAutomationName composer "发送"
+        let send = byAutomationName composer.Host "发送"
         let sendInvoke = ControlAutomationPeer.CreatePeerForElement send |> Assert.IsAssignableFrom<IInvokeProvider>
         for index in 1 .. 30 do
             composer.SetText(sprintf "message %d" index)
@@ -1290,13 +1286,12 @@ let ``desktop 125 and 150 percent scale equivalent viewports keep primary action
         chat.SetGenerating(true, "正在生成一段很长很长的状态说明")
         chat.SetTitle(String.replicate 12 "这是一个非常长的对话标题-ABCDEFGHIJK-", true)
         let composer = Composer(composerActions)
-        composer.Build()
         composer.SetEnabled(true, "")
         composer.SetCompactMode(width < LayoutPolicy.compactBreakpoint)
         composer.SetText "测试缩放下的输入区"
         let root = DockPanel()
-        DockPanel.SetDock(composer, Dock.Bottom)
-        root.Children.Add composer
+        DockPanel.SetDock(composer.Host, Dock.Bottom)
+        root.Children.Add composer.Host
         root.Children.Add chat
         let window = show root width height
         try
@@ -1785,8 +1780,7 @@ let ``composer inset adapts to width outside compact and stays tight inside comp
           pasteFromClipboard = fun () -> false }
     for width, expected in [ (800.0, Spacing.space6xl); (1280.0, Spacing.space10xl) ] do
         let composer = Composer(actions)
-        composer.Build()
-        let window = show composer width 220.0
+        let window = show composer.Host width 220.0
         try
             Dispatcher.UIThread.RunJobs()
             // 非 compact：水平留白随宽度取档。

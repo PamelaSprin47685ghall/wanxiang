@@ -38,8 +38,8 @@ let ``approval changes redraw the existing screen frame through the actual compo
         let conversation = Guid.NewGuid()
         let approval = Guid.NewGuid()
         let root = DockPanel()
-        DockPanel.SetDock(composer, Dock.Bottom)
-        root.Children.Add composer
+        DockPanel.SetDock(composer.Host, Dock.Bottom)
+        root.Children.Add composer.Host
         root.Children.Add screen.Host
         let window = Window(Width = 900.0, Height = 700.0, Content = root)
         window.Show()
@@ -72,7 +72,7 @@ let ``approval changes redraw the existing screen frame through the actual compo
                        policy = "ask"; expiresInSeconds = 300 |}))
             // 不调用 MainView.Render 或 Screen.Render，必须由实际 AwaitingChanged 接线更新。
             Assert.Contains(texts (), fun text -> text.Contains "等待批准")
-            Assert.Contains(composer.GetVisualDescendants(), fun child -> obj.ReferenceEquals(child, approvals.View))
+            Assert.Contains(composer.Host.GetVisualDescendants(), fun child -> obj.ReferenceEquals(child, approvals.View))
             approvals.Disconnected()
             Assert.DoesNotContain(texts (), fun text -> text.Contains "等待批准")
         finally

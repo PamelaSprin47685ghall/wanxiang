@@ -34,7 +34,7 @@ let rec private controls (root: Control) = seq {
 // Build the real shell's components without AutoConnect or a live user's credentials.
 let private shell () =
     let view = MainView()
-    for method in [ "BuildSidebar"; "BuildComposer"; "BuildChat"; "BuildSettings" ] do
+    for method in [ "BuildSidebar"; "BuildComposer"; "BuildChat"; "BuildSettings"; "BuildWorkspace" ] do
         invoke view method [||] |> ignore
     view
 
@@ -59,7 +59,7 @@ let private finish id generation =
     GenerationFinished {| conversationId = id; generationId = generation; status = "completed"; error = None; usage = None |}
 let private stopVisible view =
     let composer = (field view "composer").GetValue view :?> Composer
-    controls composer |> Seq.exists (fun c -> AutomationProperties.GetName c = "停止生成")
+    controls composer.Host |> Seq.exists (fun c -> AutomationProperties.GetName c = "停止生成")
 
 [<Trait("Category", "UI")>]
 [<Fact>]
@@ -70,11 +70,10 @@ let ``composer retains input when dispatch does not take ownership`` () =
             { submit = fun _ -> failwith "dispatch failed"
               stopGeneration = ignore; pickAttachment = ignore; removeAttachment = ignore; openModelPicker = ignore
               dropFiles = ignore; pasteFromClipboard = fun () -> false }
-    composer.Build()
     composer.SetEnabled(true, "")
     composer.SetText "这段文字不能丢"
     try invoke composer "Submit" [||] |> ignore with :? TargetInvocationException -> ()
-    let text = controls composer |> Seq.pick (function :? TextBox as t -> Some t.Text | _ -> None)
+    let text = controls composer.Host |> Seq.pick (function :? TextBox as t -> Some t.Text | _ -> None)
     Assert.Equal("这段文字不能丢", text)
     )
 
@@ -130,13 +129,12 @@ let ``a declined submission leaves the composer editable and intact`` () =
               openModelPicker = ignore
               dropFiles = ignore
               pasteFromClipboard = fun () -> false }
-    composer.Build()
     composer.SetEnabled(true, "")
     composer.SetText "仍然是草稿"
     invoke composer "Submit" [||] |> ignore
     Assert.Equal("仍然是草稿", composer.Text)
     composer.SetEnabled(false, "连接断开")
-    let input = controls composer |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
+    let input = controls composer.Host |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
     Assert.True input.IsEnabled
     )
 
@@ -155,7 +153,6 @@ let ``generation accepts a queued message without turning send into cancel`` () 
               openModelPicker = ignore
               dropFiles = ignore
               pasteFromClipboard = fun () -> false }
-    composer.Build()
     composer.SetEnabled(true, "")
     composer.SetGenerating true
     composer.SetText "补充一句"
@@ -339,13 +336,12 @@ let ``failed first messages remain reachable after switching away`` () =
             { submit = fun _ -> false
               stopGeneration = ignore; pickAttachment = ignore; removeAttachment = ignore; openModelPicker = ignore
               dropFiles = ignore; pasteFromClipboard = fun () -> false }
-    composer.Build()
     composer.SetPendingMessages(outbox.ForInstance "server", Some(Guid.NewGuid()), true, ignore, fun target -> opened <- Some target)
-    let window = Window(Content = composer, Width = 420.0, Height = 500.0)
+    let window = Window(Content = composer.Host, Width = 420.0, Height = 500.0)
     window.Show()
     try
         Dispatcher.UIThread.RunJobs()
-        let button = controls composer |> Seq.find (fun c ->
+        let button = controls composer.Host |> Seq.find (fun c ->
             let name = AutomationProperties.GetName c
             not (String.IsNullOrEmpty name) && name.StartsWith("查看另一个对话"))
         let action = ControlAutomationPeer.CreatePeerForElement button |> Assert.IsAssignableFrom<IInvokeProvider>
@@ -391,22 +387,21 @@ let ``generation ending hands keyboard focus back to the composer`` () =
             { submit = fun _ -> true
               stopGeneration = ignore; pickAttachment = ignore; removeAttachment = ignore; openModelPicker = ignore
               dropFiles = ignore; pasteFromClipboard = fun () -> false }
-    composer.Build()
-    let window = Window(Content = composer, Width = 600.0, Height = 400.0)
+    let window = Window(Content = composer.Host, Width = 600.0, Height = 400.0)
     window.Show()
     try
         Dispatcher.UIThread.RunJobs()
         composer.SetEnabled(true, "")
         composer.SetGenerating true
         Dispatcher.UIThread.RunJobs()
-        let sendButton = controls composer |> Seq.find (fun c -> AutomationProperties.GetName c = "停止生成")
+        let sendButton = controls composer.Host |> Seq.find (fun c -> AutomationProperties.GetName c = "停止生成")
         Assert.True(sendButton.Focusable, "前置条件：生成态停止键可获得焦点")
         sendButton.Focus() |> ignore
         Dispatcher.UIThread.RunJobs()
         Assert.True(sendButton.IsFocused, "前置条件：焦点在停止键上")
         composer.SetGenerating false
         Dispatcher.UIThread.RunJobs()
-        let input = controls composer |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
+        let input = controls composer.Host |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
         Assert.True(input.IsFocused,
             "生成结束后焦点必须回家到输入框：停止键/排队键是两个常驻占位槽，失去生成态时"
             + "被复位成 Focusable=false（布局占位不变、只断键盘与命中），而 Avalonia 不会替"
@@ -444,11 +439,10 @@ let ``the sole primary stop returns keyboard focus to input when a run finishes`
         { submit = (fun _ -> true); stopGeneration = ignore; pickAttachment = ignore
           removeAttachment = ignore; openModelPicker = ignore; dropFiles = ignore
           pasteFromClipboard = (fun () -> false) })
-    composer.Build()
     composer.SetEnabled(true, "")
     let host = DockPanel()
-    DockPanel.SetDock(composer, Dock.Bottom)
-    host.Children.Add composer
+    DockPanel.SetDock(composer.Host, Dock.Bottom)
+    host.Children.Add composer.Host
     host.Children.Add chat
     let window = Window(Content = host, Width = 900.0, Height = 700.0)
     window.Show()
@@ -467,7 +461,7 @@ let ``the sole primary stop returns keyboard focus to input when a run finishes`
         window.GetLayoutManager().ExecuteLayoutPass()
         Dispatcher.UIThread.RunJobs()
         let stop =
-            controls composer |> Seq.find (fun c -> AutomationProperties.GetName c = "停止生成")
+            controls composer.Host |> Seq.find (fun c -> AutomationProperties.GetName c = "停止生成")
         Assert.True(stop.Focusable, "前置条件：输入区停止键可获得焦点")
         let ok = stop.Focus()
         Dispatcher.UIThread.RunJobs()
@@ -477,7 +471,7 @@ let ``the sole primary stop returns keyboard focus to input when a run finishes`
         Dispatcher.UIThread.RunJobs()
         Assert.False(stop.Focusable, "没有待发送内容时发送键不可聚焦")
         // 不允许焦点留在停止结束后已经失去操作资格的按钮上。
-        let input = controls composer |> Seq.pick (function :? TextBox as b when b.AcceptsReturn -> Some b | _ -> None)
+        let input = controls composer.Host |> Seq.pick (function :? TextBox as b when b.AcceptsReturn -> Some b | _ -> None)
         Assert.True(input.IsFocused, "停止完成后键盘输入必须由文本框承接")
         // 同时覆盖自然完成时的回焦，而不只覆盖用户主动停止。
     finally
@@ -530,7 +524,7 @@ let ``forking from a message hands keyboard focus back to the composer`` () =
         Dispatcher.UIThread.RunJobs()
         let composer = (field view "composer").GetValue view :?> Composer
         let input =
-            composer.GetVisualDescendants()
+            composer.Host.GetVisualDescendants()
             |> Seq.pick (function :? TextBox as t -> Some t | _ -> None)
         Assert.True(input.IsFocused,
             "分叉确认后焦点必须回家到输入框——编辑弹窗关闭时其焦点宿主随之消失，"
@@ -580,7 +574,7 @@ let ``batch delete reports what it did instead of staying silent`` () =
     Assert.False(overlay.IsDialogOpen, "删除即撤销：不应再有确认框")
     let texts () =
         controls root
-        |> Seq.choose (function :? TextBlock as tb -> Some tb.Text | _ -> None)
+        |> Seq.choose (function :? TextBlock as tb -> Option.ofObj tb.Text | _ -> None)
         |> List.ofSeq
     Assert.True(texts () |> List.exists (fun s -> s.Contains "已删除 2 个对话"), sprintf "批量删除必须给一条汇总反馈，实际 %A" (texts ()))
     Assert.True(controls root |> Seq.exists (fun c -> AutomationProperties.GetName c = "撤销"), "提示条应带「撤销」")
@@ -663,10 +657,10 @@ let ``regenerate asks before discarding the last reply`` () =
     Dispatcher.UIThread.RunJobs()
     // 确认框接管：直接输入区交出焦点、命令未发（焦点没回 composer）。
     Assert.True(overlay.IsDialogOpen, "重新生成前必须先确认")
-    Assert.False(composer.IsFocused, "未确认不得驱动命令路径（composer.Focus 不执行）")
+    Assert.False(composer.Input.IsFocused, "未确认不得驱动命令路径（composer.Focus 不执行）")
     let texts =
         controls overlay.Root
-        |> Seq.choose (function :? TextBlock as tb -> Some tb.Text | _ -> None)
+        |> Seq.choose (function :? TextBlock as tb -> Option.ofObj tb.Text | _ -> None)
         |> List.ofSeq
     Assert.True(texts |> List.exists (fun s -> s.Contains "无法撤销"), "确认框须说明不可恢复")
     // 确认按钮在场：危险语气的确认动作（Dialogs.confirm 的 Danger 档）。
@@ -684,7 +678,7 @@ let ``regenerate asks before discarding the last reply`` () =
         KeyEventArgs(RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter, KeyModifiers = KeyModifiers.None))
     Dispatcher.UIThread.RunJobs()
     Assert.False(overlay.IsDialogOpen, "取消后确认框应关闭")
-    Assert.False(composer.IsFocused, "取消不得发出命令")
+    Assert.False(composer.Input.IsFocused, "取消不得发出命令")
     )
 
 [<Trait("Category", "UI")>]

@@ -388,11 +388,10 @@ let ``composer accepts text without introducing extra send modes`` () =
           dropFiles = ignore
           pasteFromClipboard = fun () -> false }
     let comp = Composer(actions)
-    comp.Build()
     comp.SetEnabled(true, "")
     comp.SetText("万象架构：事件溯源与对等连接")
     // Verification that composer accepts text and calculates state without crashing
-    Assert.True(comp.IsVisible)
+    Assert.True(comp.Host.IsVisible)
     )
 
 [<Trait("Category", "UI")>]

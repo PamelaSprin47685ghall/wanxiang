@@ -74,7 +74,6 @@ module PwaToolApprovalUiTests =
                       openModelPicker = ignore
                       dropFiles = ignore
                       pasteFromClipboard = fun () -> false })
-            composer.Build()
             composer.SetAccessory panel
             // 附属位在输入框外层列里，排在输入框之前：同一个 MaxWidth = 阅读宽度
             match (panel.Parent :?> Control).Parent with

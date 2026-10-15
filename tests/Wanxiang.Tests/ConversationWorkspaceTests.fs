@@ -42,7 +42,6 @@ let private composer () =
     let view = Composer({ submit = (fun _ -> true); stopGeneration = ignore; pickAttachment = ignore
                           removeAttachment = ignore; openModelPicker = ignore; dropFiles = ignore
                           pasteFromClipboard = fun () -> false })
-    view.Build()
     view.SetEnabled(true, "")
     view.SetEnterSends true
     view.SetModelLabel "模型 / 示例"
@@ -95,7 +94,7 @@ let ``a normal conversation start is an unboxed prompt followed by the sole comp
     Headless.run (fun () ->
         let chat = chat ()
         let composer = composer ()
-        let surface = Wanxiang2.ShellLayout.WorkspaceStack(chat, composer, Wanxiang2.ShellDesk.ShellLook.layoutOf SharedTheme.manager)
+        let surface = Wanxiang2.ShellLayout.WorkspaceStack(chat, composer.Host, Wanxiang2.ShellDesk.ShellLook.layoutOf SharedTheme.manager)
         let window = Window(Width = 900.0, Height = 780.0, Content = surface)
         window.Show()
         try
@@ -108,7 +107,7 @@ let ``a normal conversation start is an unboxed prompt followed by the sole comp
             Assert.Equal(Tokens.fontDisplay, headline.FontSize)
             // 起步文案直接位于空态容器，不再被一张带描边的卡片包围。
             Assert.IsType<StackPanel>(headline.Parent.Parent) |> ignore
-            Assert.Single(descendants surface |> Seq.filter (fun c -> obj.ReferenceEquals(c, composer))) |> ignore
+            Assert.Single(descendants surface |> Seq.filter (fun c -> obj.ReferenceEquals(c, composer.Host))) |> ignore
         finally window.Close())
 
 [<Trait("Category", "UI"); Fact>]
@@ -117,16 +116,16 @@ let ``composer shows custom context only when useful and reserves no idle queue 
         let view = composer ()
         view.SetText "保留的草稿"
         view.SetSessionContext(Some SessionConfig.empty, true, ignore)
-        let window = Window(Width = 800.0, Height = 220.0, Content = view)
+        let window = Window(Width = 800.0, Height = 220.0, Content = view.Host)
         window.Show()
         try
             Dispatcher.UIThread.RunJobs()
-            let context = named view "对话上下文"
-            let queue = named view "排队发送"
-            let send = named view "发送"
+            let context = named view.Host "对话上下文"
+            let queue = named view.Host "排队发送"
+            let send = named view.Host "发送"
             Assert.False(context.IsVisible)
             Assert.False(queue.IsVisible)
-            let idleRightEdge = send.TranslatePoint(Point(send.Bounds.Width, 0.0), view).Value.X
+            let idleRightEdge = send.TranslatePoint(Point(send.Bounds.Width, 0.0), view.Host).Value.X
             // 决策 364：只开了工具不算特殊设置，底栏不显示「工具 N 项」。
             view.SetSessionContext(Some { SessionConfig.empty with tools = [ "example-tool" ] }, true, ignore)
             Assert.False(context.IsVisible)
@@ -140,9 +139,9 @@ let ``composer shows custom context only when useful and reserves no idle queue 
             view.SetGenerating true
             Dispatcher.UIThread.RunJobs()
             Assert.True(queue.IsVisible)
-            let stop = named view "停止生成"
+            let stop = named view.Host "停止生成"
             Assert.Same(send, stop)
-            let activeRightEdge = stop.TranslatePoint(Point(stop.Bounds.Width, 0.0), view).Value.X
+            let activeRightEdge = stop.TranslatePoint(Point(stop.Bounds.Width, 0.0), view.Host).Value.X
             Assert.InRange(abs(activeRightEdge - idleRightEdge), 0.0, 0.5)
             view.SetGenerating false
             view.SetSessionContext(Some SessionConfig.empty, true, ignore)
@@ -195,7 +194,7 @@ let ``conversation first desktop composition keeps history secondary to the curr
         chat.SetTitle("新对话", false)
         chat.ShowEmpty(NoConversation, None)
         let composer = composer ()
-        let surface = Wanxiang2.ShellLayout.WorkspaceStack(chat, composer, Wanxiang2.ShellDesk.ShellLook.layoutOf SharedTheme.manager)
+        let surface = Wanxiang2.ShellLayout.WorkspaceStack(chat, composer.Host, Wanxiang2.ShellDesk.ShellLook.layoutOf SharedTheme.manager)
         Grid.SetColumn(sidebar.View, 0)
         Grid.SetColumn(surface, 2)
         root.Children.Add sidebar.View
@@ -207,7 +206,7 @@ let ``conversation first desktop composition keeps history secondary to the curr
             surface.SetStarting true
             Dispatcher.UIThread.RunJobs()
             Assert.True((named sidebar.View "新建对话（Ctrl / ⌘ + N）").IsEffectivelyVisible)
-            Assert.True((named composer "切换本对话使用的模型").IsEffectivelyVisible)
+            Assert.True((named composer.Host "切换本对话使用的模型").IsEffectivelyVisible)
             capture window "full-conversation-desktop" lightTheme
         finally
             Tokens.apply initialTheme
@@ -225,7 +224,7 @@ let ``request context and execution actions stay within the composer`` (width: f
         let compact = width < LayoutPolicy.compactBreakpoint
         view.SetCompactMode compact
         view.SetModelLabel(String.replicate 12 "模型名称")
-        let window = Window(Width = width, Height = 620.0, Content = view)
+        let window = Window(Width = width, Height = 620.0, Content = view.Host)
         applyTheme window lightTheme
         window.Show()
         try
@@ -234,10 +233,10 @@ let ``request context and execution actions stay within the composer`` (width: f
             view.SetCanStop true
             Dispatcher.UIThread.RunJobs()
             for name in [ (if compact then "添加附件" else "对话上下文"); "停止生成"; "排队发送"; "添加附件" ] do
-                let control = named view name
-                let point = control.TranslatePoint(Point(), view).Value
+                let control = named view.Host name
+                let point = control.TranslatePoint(Point(), view.Host).Value
                 Assert.True(point.X >= 0.0, name)
-                Assert.True(point.X + control.Bounds.Width <= view.Bounds.Width + 1.0, name)
+                Assert.True(point.X + control.Bounds.Width <= view.Host.Bounds.Width + 1.0, name)
                 Assert.True(control.IsEffectivelyVisible, name)
             if width = 375.0 then capture window "composer-compact" lightTheme
             view.SetEnabled(false, "连接已断开，内容仍在当前窗口。")

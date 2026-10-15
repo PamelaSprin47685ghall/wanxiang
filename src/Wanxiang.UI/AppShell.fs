@@ -20,6 +20,7 @@ open Wanxiang.Core
 open Wanxiang.Interop
 open Wanxiang.Protocol
 open Wanxiang2.ChatScreen
+open Wanxiang2.Workspace
 
 /// 主视图：应用的组装点。
 ///
@@ -107,10 +108,6 @@ type MainView() as this =
     let mutable skeletonTimer: DispatcherTimer option = None
     /// 骨架屏延时器为哪个对话武装归 DeferredReveal：Render 会被后台事件反复触发，不得重启它，一对话只武装一次（D1）。
     let skeletonReveal = DeferredReveal<Guid>(MotionLedger.conversationSkeletonDelay)
-    /// 浏览器宿主的 CSS 像素视口宽（`wxViewportWidth` 轮询写入）。
-    /// Browser 后端高 DPR 下 `Bounds.Width` 会被 DPR 除一次，不可做断点依据；
-    /// 有覆盖值时响应式布局只认它，桌面/测试走 Bounds 原路径。
-    let hostViewportWidth = ChangeWatch<float>()
     /// 浏览器 CSS 视口轮询计时器：仅在 Browser 环境启动，卸载时停止。
     let mutable viewportTimer: DispatcherTimer option = None
     /// 上次看到的浏览器“恢复”计数（online / 回到前台，第 213 节）。
@@ -162,11 +159,8 @@ type MainView() as this =
     let mutable settings: Wanxiang2.SettingsScreen.SettingsScreen = Unchecked.defaultof<Wanxiang2.SettingsScreen.SettingsScreen>
     /// 聊天主界面上的「连接一个模型」卡片（W1）：首次运行不进设置页。
     let mutable onboarding: Wanxiang2.SettingsScreen.OnboardingDesk = Unchecked.defaultof<Wanxiang2.SettingsScreen.OnboardingDesk>
-    let mutable sidebarSplitter: GridSplitter = Unchecked.defaultof<GridSplitter>
-    let mutable shellDesk: Wanxiang2.ShellDesk.ShellDesk = Unchecked.defaultof<Wanxiang2.ShellDesk.ShellDesk>
-    let workspace = Grid()
+    let mutable workspace: Workspace = Unchecked.defaultof<Workspace>
     let settingsHost = Grid(IsVisible = false)
-    let mutable shellGrid: Grid = Unchecked.defaultof<Grid>
 
     let send (ev: WireEvent) = client.SendAsync ev |> ignore
 
@@ -252,18 +246,14 @@ type MainView() as this =
     let messagesOf (view: ConversationView) =
         view.messages |> Seq.cast<JsonNode> |> Seq.map MessageView.ofSnapshotItem |> List.ofSeq
 
-    /// 导航状态归 ShellDesk 的 NavigationController；外壳建好之前按偏好给初值。
+    /// 导航状态归 Workspace；外壳建好之前按偏好给初值。
     member private this.Navigation : NavigationSnapshot =
-        if isNull (box shellDesk) then NavigationController(prefs.sidebarCollapsed, LayoutPolicy.compactBreakpoint).State
-        else shellDesk.State
+        if isNull (box workspace) then NavigationController(prefs.sidebarCollapsed, LayoutPolicy.compactBreakpoint).State
+        else workspace.State
 
     /// compact 抽屉开合；焦点归宿（打开进搜索框、收起回输入区，触屏不自动聚焦）在 ShellDesk。
     member private this.SetCompactNavigation(opened: bool) =
-        if not (isNull (box shellDesk)) then shellDesk.SetCompactNavigation opened |> ignore
-
-    member private this.ApplyResponsiveLayout(width: float) =
-        let effective = hostViewportWidth.Last |> Option.defaultValue width
-        if effective > 0.0 && not (isNull (box shellDesk)) then shellDesk.ApplyViewport effective |> ignore
+        if not (isNull (box workspace)) then workspace.SetCompactNavigation opened |> ignore
 
 
     /// 浏览器 CSS 视口轮询：zoom、DPR、显示器移动都不会可靠触发 Bounds 更新，
@@ -275,8 +265,7 @@ type MainView() as this =
                 ParityProbe.hit "timer.viewport"
                 try
                     let css = BrowserPage.ViewportWidth()
-                    if css > 0.0 && hostViewportWidth.Observe css then
-                        this.ApplyResponsiveLayout css
+                    workspace.ObserveViewport css
                 with _ -> ()
                 try
                     let epoch = BrowserPage.ResumeEpoch()
@@ -338,7 +327,7 @@ type MainView() as this =
                  | None, _ -> ActiveConversation.None
                  | Some _, Some view -> ActiveConversation.Loaded view.messages.Count
                  | Some _, None -> ActiveConversation.Loading)
-        if not (isNull (box shellDesk)) then shellDesk.SetStarting startReady
+        if not (isNull (box workspace)) then workspace.SetStarting startReady
         composer.SetSessionContext(activeConversation () |> Option.map _.config, authenticated, fun () -> this.ShowSessionContext())
         match activeConvId, activeConversation () with
         | None, _ ->
@@ -1049,7 +1038,7 @@ type MainView() as this =
     /// 设置关闭回到设置入口触发点：触发控件仍在树上就还给它，否则落到输入区，绝不掉到页顶。
     member private this.RestoreSettingsFocus() =
         let fallback () =
-            if workspace.IsVisible then composer.Focus()
+            if workspace.Host.IsVisible then composer.Focus()
         match settingsReturnFocus with
         | Some control ->
             settingsReturnFocus <- None
@@ -1086,7 +1075,7 @@ type MainView() as this =
     member private this.ShowSettings() =
         settingsReturnFocus <- this.CurrentFocusControl()
         settingsHost.IsVisible <- true
-        workspace.IsVisible <- false
+        workspace.Host.IsVisible <- false
         // 打开即有焦点归宿：分区导航按钮。刚翻可见性时控件还没过布局，
         // 直接 Focus 会落空，所以延一帧到 Render 之后。
         ui.Post(
@@ -1097,7 +1086,7 @@ type MainView() as this =
     member private this.CloseSettings() =
         enteredSettingsForFirstProvider <- false
         settingsHost.IsVisible <- false
-        workspace.IsVisible <- true
+        workspace.Host.IsVisible <- true
         this.RestoreSettingsFocus()
 
     member private this.ShowModelPicker(anchor: Control) =
@@ -1400,7 +1389,7 @@ type MainView() as this =
     member private this.CycleTheme() = this.Commands.CycleTheme()
 
     member private this.FocusSidebarSearch(query: string option) =
-        let state = shellDesk.EnsureSearchVisible()
+        let state = workspace.EnsureSearchVisible()
         if not state.compactMode && prefs.sidebarCollapsed <> state.sidebarCollapsed then
             prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
             UiPrefsFile.save prefs
@@ -1502,7 +1491,7 @@ type MainView() as this =
 
     member this.ToggleSidebar() =
         // 焦点归宿（compact 打开进抽屉、收起回输入区；桌面折叠焦点在侧栏时回输入区）在 ShellDesk。
-        let state = shellDesk.ToggleSidebar()
+        let state = workspace.ToggleSidebar()
         if not state.compactMode then
             prefs <- { prefs with sidebarCollapsed = state.sidebarCollapsed }
             UiPrefsFile.save prefs
@@ -2005,7 +1994,6 @@ type MainView() as this =
               dropFiles = fun files -> this.DropFiles files
               pasteFromClipboard = fun () -> this.HandleClipboardPaste () }
         composer <- Composer(actions)
-        composer.Build()
         composer.SetEnterSends prefs.enterSends
 
     member private this.BuildSettings() =
@@ -2118,6 +2106,24 @@ type MainView() as this =
               OpenAdvanced = fun () -> this.ShowAddProvider() }
         onboarding <- Wanxiang2.SettingsScreen.OnboardingDesk(SharedTheme.manager, overlay.Desk, actions)
 
+    /// 参与者已各自成立后，工作区负责布局与响应式；宿主只接偏好、输入来源和设置页。
+    member private this.BuildWorkspace() =
+        SharedTheme.input.Track this
+        workspace <-
+            Workspace(SharedTheme.manager, root, sidebar, chat, composer.Desk,
+                      { PrefersTouch = fun () -> SharedTheme.input.PrefersTouch
+                        SidebarWidth = fun () -> prefs.sidebarWidth
+                        InitialSidebarCollapsed = prefs.sidebarCollapsed })
+        Interaction.reportFocusOrigin workspace.Splitter
+        workspace.SidebarResized.Add(fun width ->
+            prefs <- { prefs with sidebarWidth = width }
+            UiPrefsFile.save prefs)
+        settingsHost.Children.Add settings.View
+        root.Children.Insert(1, settingsHost)
+        this.Content <- root
+        this.Background <- Tokens.canvas
+        overlay.WireDismiss()
+
     member this.Build() =
         this.FontFamily <- Tokens.fontFamily
         this.ApplyTheme()
@@ -2143,56 +2149,7 @@ type MainView() as this =
         settings.ConfigurePresets((fun p -> this.RenamePreset p), (fun p -> this.DeletePreset p))
         this.BuildOnboarding()
 
-        let initialNavigation = this.Navigation
-        shellGrid <- Grid()
-        SharedTheme.input.Track this
-        // 列定义、列宽投影、抽屉遮罩与起步居中都归 ShellDesk（下方构造时落定初值）。
-        sidebarSplitter <-
-            GridSplitter(
-                Background = Brushes.Transparent,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch,
-                ResizeDirection = GridResizeDirection.Columns,
-                ResizeBehavior = GridResizeBehavior.PreviousAndNext,
-                KeyboardIncrement = 8.0,
-                DragIncrement = 1.0,
-                Focusable = true,
-                Cursor = new Cursor(StandardCursorType.SizeWestEast),
-                IsVisible = not initialNavigation.sidebarCollapsed)
-        Avalonia.Automation.AutomationProperties.SetName(sidebarSplitter, "调整侧边栏宽度")
-        // splitter 悬停/聚焦底色交给 Interaction 的原生伪类
-        // （`:pointerover` / `:focus-visible`），拖动行为不变。
-        Interaction.surface sidebarSplitter Interaction.HoverVariant.plain |> ignore
-        Interaction.reportFocusOrigin sidebarSplitter
-        sidebarSplitter.DragCompleted.Add(fun _ ->
-            match shellDesk.NoteSidebarDragged() with
-            | Some width ->
-                prefs <- { prefs with sidebarWidth = width }
-                UiPrefsFile.save prefs
-            | None -> ())
-        let shellHooks : Wanxiang2.ShellDesk.ShellHooks =
-            { SetCompactMode =
-                fun compact ->
-                    composer.SetCompactMode compact
-                    sidebar.SetCompactMode compact
-                    chat.SetCompactMode compact
-              SetStartMode = fun centered -> chat.SetStartMode centered
-              FocusComposer = fun () -> composer.Focus()
-              FocusSidebarSearch = fun () -> sidebar.FocusSearch()
-              PrefersTouch = fun () -> SharedTheme.input.PrefersTouch }
-        shellDesk <-
-            Wanxiang2.ShellDesk.ShellDesk(
-                SharedTheme.manager, shellGrid, sidebar.View, sidebarSplitter, chat.Host, composer,
-                shellHooks, initialNavigation.sidebarCollapsed, (fun () -> prefs.sidebarWidth))
-        workspace.Children.Add shellGrid
-
-        settingsHost.Children.Add settings.View
-
-        root.Children.Insert(0, workspace)
-        root.Children.Insert(1, settingsHost)
-        this.Content <- root
-        this.Background <- Tokens.canvas
-        overlay.WireDismiss()
+        this.BuildWorkspace()
 
         client.ConnectionEventReceived.Add(fun (epoch, ev) ->
             ui.Post(fun () ->
@@ -2242,12 +2199,8 @@ type MainView() as this =
                         ui.Post(fun () -> this.ApplyTheme()))
         this.KeyDown.Add(fun e -> this.HandleShortcut e)
         chat.Pane.SetStarterPick(Some(fun seed -> composer.SetText seed))
-        this.PropertyChanged.Add(fun args ->
-            if args.Property = Visual.BoundsProperty then
-                this.ApplyResponsiveLayout this.Bounds.Width)
-
         this.Render()
-        this.ApplyResponsiveLayout this.Bounds.Width
+        workspace.ApplyResponsiveLayout()
         this.WatchHostViewport()
         let deliveryTimer = DispatcherTimer(Interval = MotionLedger.outboxDeliveryCheckTick)
         deliveryTimer.Tick.Add(fun _ ->
