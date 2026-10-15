@@ -309,6 +309,20 @@ root = Path(__file__).resolve().parents[5]
         self.assertEqual((self.vendor / "revision.txt").read_text(), "local work")
         self.assertFalse(self.feed.exists())
 
+    def test_update_does_not_adopt_binary_packages_from_remote(self):
+        remote = self.upstream()
+        publisher = self.root.parent / "publisher"
+        self.git(self.root.parent, "clone", str(remote), str(publisher))
+        (publisher / "small.TGZ").write_bytes(b"x")
+        self.commit(publisher)
+        self.git(publisher, "push", "origin", "main")
+        before = self.git(self.vendor, "rev-parse", "HEAD")
+        result = self.prepare("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("origin/main contains tracked binary packages", result.stderr)
+        self.assertEqual(before, self.git(self.vendor, "rev-parse", "HEAD"))
+        self.assertFalse((self.vendor / "small.TGZ").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

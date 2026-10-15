@@ -10,6 +10,23 @@ description: 万象（wanxiang）SSOT 总纲：项目硬约束、全局术语、
 
 # SSOT — 万象（wanxiang）单一事实来源
 
+## 2026-10-15 源码依赖与本机状态决议
+
+本节是用户最新决议，覆盖历史材料中相冲突的目录约定，完整合同见
+`docs/contracts/source-and-local-state.md`。
+
+- 根目录 `wanxiang2/` 是正式 submodule，开发更新追踪远端 `main`，宿主记录确切 gitlink。
+  更新只允许快进，不能覆盖工程师未发布的提交；运行或构建不自动切版本。
+- 本项目仍经 NuGet 包消费新库，不复制 wanxiangshu 的 npm/Fable 构建方案。
+  `.tgz`、`.nupkg`、`.snupkg` 只可作为临时或忽略目录中的产物，任何大小均不得加入 Git。
+- 工程运行状态默认统一在主工作树 `.Herdchestra/`，linked worktree 共用同一份本机状态。
+  旧 `.git/wanxiang*` 不读、不迁入。应用不得把 Git 作为数据持久化或跨机同步的机制。
+  Git 的正常源码管理和只读拓扑查询不在禁用范围内。
+- 保留明确指定的独立配置/数据位置，但在任何读取前拒绝 `.git` 及指向它的链接；不删旧 XDG
+  用户数据。PWA 本地存储及既有 C/S 网络访问不受本次 Git 状态退役影响。
+- 清理只针对已确认的应用专属目录、配置和状态 refs；不删除源码分支、tags、objects、
+  submodule 元数据或其他工具的 hooks，不改写历史。被工具要求二次确认的清理不得绕过。
+
 > 本组 skill（`wanxiang` 及其余 `wanxiang-*` 主题 skill，由原 AGENTS.md 按主题拆分重组而来）是「万象」项目的**单一事实来源（Single Source of Truth）**。
 > 内容整理自 2026-08-01 的项目决策讨论（132 轮问答），完整保留全部决策、用户回答、第一性原理、自动判断规则与 200 项自动问答，不丢失任何信息。
 

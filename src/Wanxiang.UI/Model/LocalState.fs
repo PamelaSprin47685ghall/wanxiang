@@ -54,17 +54,17 @@ module LocalState =
             start.RedirectStandardError <- true
             for arg in [ "-C"; workspace; "worktree"; "list"; "--porcelain"; "-z" ] do
                 start.ArgumentList.Add arg
-            use process = new Process(StartInfo = start)
-            if not (process.Start()) then invalidOp "Cannot start Git topology query"
-            let output = process.StandardOutput.ReadToEndAsync()
-            let errors = process.StandardError.ReadToEndAsync()
-            if not (process.WaitForExit 10000) then
-                process.Kill()
-                process.WaitForExit()
+            use command = new Process(StartInfo = start)
+            if not (command.Start()) then invalidOp "Cannot start Git topology query"
+            let output = command.StandardOutput.ReadToEndAsync()
+            let errors = command.StandardError.ReadToEndAsync()
+            if not (command.WaitForExit 10000) then
+                command.Kill()
+                command.WaitForExit()
                 invalidOp "Git topology query did not complete"
             let text = output.GetAwaiter().GetResult()
             errors.GetAwaiter().GetResult() |> ignore
-            if process.ExitCode <> 0 then withoutGit ()
+            if command.ExitCode <> 0 then withoutGit ()
             else
                 let first = text.Split '\u0000' |> Array.takeWhile (fun field -> field <> "")
                 if Array.contains "bare" first then invalidArg "workspace" "Runtime state requires a working tree"
@@ -94,6 +94,8 @@ module LocalState =
             stream.Write(bytes, 0, bytes.Length)
             stream.Flush true
         with :? IOException when File.Exists ignorePath ->
+            if not (isNull (FileInfo(ignorePath).LinkTarget)) then
+                invalidOp ".Herdchestra/.gitignore must not be a link"
             if (File.ReadAllText ignorePath).Trim() <> "*" then
                 invalidOp ".Herdchestra/.gitignore must exclude all runtime data"
         root

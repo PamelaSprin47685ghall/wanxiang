@@ -357,29 +357,45 @@ macOS 上 `Ctrl` 换成 `⌘`。完整列表按 `Ctrl` `/` 查看。
 ## 开发
 
 ```bash
-git submodule update --init vendor/wanxiang2
+git submodule update --init -- wanxiang2
 tools/wanxiang2-feed.sh
 dotnet build wanxiang.slnx -c Release
 ./run-tests.sh -j 4
 ```
 
-应用只通过 `vendor/wanxiang2/artifacts/feed` 中的 NuGet 包消费新库，不引用新库源码。
-`vendor/wanxiang2` 的提交由本仓库锁定；仓库根的 `wanxiang2/` 若存在，是独立开发目录，
-不是构建输入。切换抽吸分支或更新 vendor 提交后，重新执行 `tools/wanxiang2-feed.sh`：
+应用只通过 `wanxiang2/artifacts/feed` 中的 NuGet 包消费新库，不引用新库源码。
+根目录 `wanxiang2/` 是正式 submodule，跟踪远端 `main`；宿主提交记录确切 gitlink。
+`vendor/wanxiang2` 已退役，不再作为候选路径。切换抽吸分支或更新子模块提交后，重新执行 `tools/wanxiang2-feed.sh`：
 当前包版本仍为 `0.0.0-local`，不能凭文件存在或版本号判断包是新的。脚本核对 Git 索引中的
-vendor pin、干净的 vendor 源码、完整包集与逐包 SHA-256；都符合完成回执时才复用。
+submodule pin、干净源码、完整包集与逐包 SHA-256；都符合完成回执时才复用。
 缺少回执、缺包、字节变化或 pin 更新时，仍调用现有的 `x pack` 完整产包，再清理本仓库的
 同版本包缓存与 restore 产物。失败不留下成功回执，也不继续运行旧测试。
 
 `tools/wanxiang2-feed.sh --check` 只核验，不构建或初始化；`--rebuild` 强制重建。
-更新 vendor 时先提交新库，再用 `git add vendor/wanxiang2` 明确本次消费的 pin；
-脚本不会替使用者移动分支、丢弃改动或把未提交源码说成某个提交。工具需要 Bash、Git 和 Python 3.11+。
+`--source-check` 只检查 Git 源码关系和二进制禁入，不要求已有包。
+`--update` 是唯一主动取远端最新 `main` 的入口，只允许 fast-forward，不编译、不暂存。
+有本地未发布提交、分叉或未提交改动时拒绝覆盖。先把新库提交发布到远端，再更新并用
+`git add wanxiang2` 记录本次消费的 pin；否则干净 clone 可能取不到私有提交。
+普通构建和运行不会联网更换源码。工具需要 Bash、Git 和 Python 3.11+。
+两仓索引都禁止 `.tgz`、`.nupkg`、`.snupkg`，不因文件小而例外；本地 feed 只在忽略目录中生成。
 本仓使用 `.nuget/packages`；重定向该目录或用 `NUGET_PACKAGES` 指向其他缓存会被拒绝，
 而不是擅自清理用户的全局目录。
 回执是本机包交付记录，不是签名、供应链认证或所有构建环境的证明。
 
 `start.sh` 也先经过同一包源检查，再构建应用；产包或构建失败时不启动旧程序。
 `WANXIANG_SKIP_BUILD=1` 仅复用由该入口构建且仍匹配当前包源的应用，不能绕过换 pin 后的重建。
+
+### 本机运行状态
+
+桌面与主机默认使用主工作树的 `.Herdchestra/`：`config.toml`、`client.toml`、`ui.json`、
+`drafts.json` 与 `data/` 均在其中。linked worktree 使用同一主工作树状态；独立仓库、
+submodule 和非 Git 工作目录各自隔离。应用只查询 Git 的 worktree 拓扑，不把业务数据写进
+Git objects、refs、hooks、config 或 info/exclude，不读取或迁入旧 `.git/wanxiang*` 数据。
+
+`./start.sh` 不再强制使用旧 XDG 默认目录。显式的 `--config`、`--data`、`--bundle` 与
+`WANXIANG_HOME` 仍可指定独立的本机位置，但不得在 `.git` 内，也不能通过符号链接绕入。
+不自动扫描、搬迁或删除已有的用户级配置与聊天数据。PWA 仍使用浏览器存储；远程 C/S 访问
+不等于 Git 数据同步，本次不改其协议。规则和静态验收入口见 `docs/contracts/source-and-local-state.md`。
 
 ### 测试
 
@@ -409,8 +425,8 @@ CI、发布和压力任务都先检出锁定的新库并生成包源，再 resto
 
 | 项目 | 职责 |
 |---|---|
-| `vendor/wanxiang2/libs` | 独立职责：账本、配置、协议、模型、传输、界面行为等；库之间不相互引用 |
-| `vendor/wanxiang2/compose` | 经交付包组合独立职责，形成 EventStore、ServerApp、WsClient、各界面 Desk 等能力 |
+| `wanxiang2/libs` | 独立职责：账本、配置、协议、模型、传输、界面行为等；库之间不相互引用 |
+| `wanxiang2/compose` | 经交付包组合独立职责，形成 EventStore、ServerApp、WsClient、各界面 Desk 等能力 |
 | `Wanxiang.UI` | 共用界面的宿主接线及仍待抽取的视图；删除与撤销已经由 DeletionDesk 承担 |
 | `Wanxiang.App` | 桌面入口 |
 | `Wanxiang.Pwa` | 浏览器入口（browser-wasm） |

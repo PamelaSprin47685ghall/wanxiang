@@ -14,6 +14,7 @@
     <Compile Include="UiThreadOwnershipTests.fs" />
     <Compile Include="HeadlessTests.fs" />
     <Compile Include="Helpers.fs" />
+    <Compile Include="LocalStateTests.fs" />
     <Compile Include="MessageMapTests.fs" />
     <Compile Include="ProjectionInvariantsTests.fs" />
     <Compile Include="CoordinatorTests.fs" />

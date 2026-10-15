@@ -47,9 +47,9 @@ class PinnedSource:
 
     def revision(self) -> str:
         reject_tracked_packages(self.root)
-        reject_tracked_packages(self.vendor)
         if self.vendor.is_symlink():
             raise FeedError("wanxiang2 must be a real submodule directory, not a link")
+        reject_tracked_packages(self.vendor)
         for key, expected in [("path", "wanxiang2"), ("branch", "main")]:
             actual = self.git(self.root, "config", "-f", ".gitmodules", "--get", f"submodule.wanxiang2.{key}")
             if actual != expected:
@@ -75,6 +75,9 @@ class PinnedSource:
             raise FeedError("wanxiang2 origin differs from .gitmodules; review the remote before updating")
         self.git(self.vendor, "fetch", "origin", "+refs/heads/main:refs/remotes/origin/main")
         target = self.git(self.vendor, "rev-parse", "refs/remotes/origin/main")
+        files = self.git(self.vendor, "ls-tree", "-r", "-z", "--name-only", target).split("\0")
+        if any(Path(name).suffix.lower() in {".tgz", ".nupkg", ".snupkg"} for name in files):
+            raise FeedError("origin/main contains tracked binary packages; refusing to adopt that commit")
         ancestor = subprocess.run(["git", "-C", str(self.vendor), "merge-base", "--is-ancestor", before, target])
         if ancestor.returncode != 0:
             raise FeedError("local wanxiang2 commits are not contained in origin/main; preserve/publish them before updating")
@@ -202,7 +205,6 @@ def main() -> int:
     readonly = args.check or args.fingerprint or args.source_check
     try:
         with feed_lock(source.root, readonly):
-            consumer_cache(source.root)
             if not readonly:
                 source.initialize()
             revision = source.revision()
@@ -213,6 +215,7 @@ def main() -> int:
                 revision = source.update()
                 print(f"wanxiang2: {revision}; review and git add wanxiang2, then prepare the feed")
                 return 0
+            consumer_cache(source.root)
             if not args.rebuild:
                 try:
                     fingerprint = receipt.check(revision)
