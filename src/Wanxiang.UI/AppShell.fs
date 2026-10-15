@@ -2208,7 +2208,7 @@ type MainView() as this =
             let now = DateTimeOffset.UtcNow
             // 决策 443：旧主机静默丢弃它不认识的请求——到点就让界面退出等待并说明原因。
             let commandsExpired = this.ExpireHostRequests now
-            if outbox.Expire(now, TimeSpan.FromSeconds 30.0) || commandsExpired then this.Render())
+            if outbox.Expire(now, MotionLedger.outboxConfirmTimeout) || commandsExpired then this.Render())
         // 本地草稿自动保存：内容没变不写盘，所以高频 tick 的代价只是一次快照比较。
         let draftTimer = DispatcherTimer(Interval = TimeSpan.FromMilliseconds 800.0)
         draftTimer.Tick.Add(fun _ ->

@@ -55,6 +55,9 @@ module MotionLedger =
     let toastDwellDefault = TimeSpan.FromMilliseconds 4000.0
     /// outbox 投递过期检查 tick：配合投递超时逐格清扫未 ACK 投递。
     let outboxDeliveryCheckTick = TimeSpan.FromMilliseconds 1000.0
+    /// outbox 消息投递类命令的确认超时（30 秒）：库侧 Outbox 注释明说该超时归发件箱自己，
+    /// 但时长只活在宿主调用点——在此具名，单一出处。与 hostRequestTimeout（12s，配置/命令）语义不同，分记。
+    let outboxConfirmTimeout = TimeSpan.FromSeconds 30.0
     /// 导出过期检查 tick：配合导出有效期逐格清扫；与 outbox 同为 1000ms 但语义不同，分记。
     let exportExpiryCheckTick = TimeSpan.FromMilliseconds 1000.0
     /// 决策 310：更早一页历史的等待上限。过了就判失败、给行内重试，绝不无限挂起。
