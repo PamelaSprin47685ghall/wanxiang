@@ -50,6 +50,22 @@ let private pump (ms: int) =
         Threading.Thread.Sleep 10
     Dispatcher.UIThread.RunJobs()
 
+/// 因果等待：Extent（虚拟化补测量）与 Offset（平滑滚动动画）连续三轮泵送都不再变化才算布局落定。
+/// 决策 461 的墙钟上限保留为防挂死的安全网，不再参与成败判定：旧写法拿固定 pump 时长赌
+/// 「跳转切挂载窗口引起的补测量 + 动画」先于断言结束，负载不同判据就分叉（ui-group 高并发下
+/// Extent 事后增长 548px 时 offset 被推到底，误报回归）。稳定性判定交给观察对象本身。
+let private awaitSettled (scroller: ScrollViewer) =
+    let deadline = DateTime.UtcNow.AddSeconds 5.0
+    let mutable lastOffset = scroller.Offset.Y
+    let mutable lastExtent = scroller.Extent.Height
+    let mutable stable = 0
+    while stable < 3 && DateTime.UtcNow < deadline do
+        pump 50
+        let o = scroller.Offset.Y
+        let e = scroller.Extent.Height
+        if o = lastOffset && e = lastExtent then stable <- stable + 1
+        else (lastOffset <- o; lastExtent <- e; stable <- 0)
+
 let private longHistory () =
     [ for i in 1 .. 30 do
         let commit = uint64 (i * 2)
@@ -132,6 +148,7 @@ let ``定位后的下一次重绘不把视口拉回底部`` () =
             chat.RenderMessages(history, None, None, 14.0, false, None, Set.empty)
             pump 300
             let scroller = descendantsOf chat |> Seq.choose (function :? ScrollViewer as s -> Some s | _ -> None) |> Seq.maxBy (fun s -> s.Extent.Height)
+            awaitSettled scroller
             scroller.Offset <- Vector(0.0, scroller.Extent.Height)
             pump 100
             let bottom = scroller.Offset.Y
@@ -139,11 +156,12 @@ let ``定位后的下一次重绘不把视口拉回底部`` () =
             // 与 AppShell.Render 同序：HideEmpty → RenderMessages
             chat.HideEmpty()
             chat.RenderMessages(history, None, None, 14.0, false, None, Set.empty)
-            // 决策 461：等条件成立（动画结束且布局稳定），上限 5 秒；不按固定墙钟判定。
+            // 决策 461 修订：先因果等待跳转生效（视口离开底部区），再等 Offset 与 Extent 双双落定，
+            // 最后按同一判据断言。墙钟 5 秒只作防挂死安全网；旧写法在跳转生效后仅再 pump 固定 200ms
+            // 就判定，高并发分组下延迟的补测量/后续写入会落进断言窗口，判据随调度分叉。
             let deadline = DateTime.UtcNow.AddSeconds 5.0
-            pump 400
             while scroller.Offset.Y >= bottom - 300.0 && DateTime.UtcNow < deadline do pump 50
-            pump 200
+            awaitSettled scroller
             Assert.True(chat.RevealPinned, "reveal stays pinned across a re-render")
             Assert.True(scroller.Offset.Y < bottom - 300.0, sprintf "viewport stays at the hit: bottom=%f now=%f" bottom scroller.Offset.Y)
             // 换对话（AppShell 显式复位）后钉住解除
