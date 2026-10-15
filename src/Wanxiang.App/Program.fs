@@ -18,16 +18,32 @@ module Program =
     [<EntryPoint; STAThread>]
     let main argv =
         try
-            let cli = Cli.parse argv
+            let parsed = Cli.parse argv
+            let cli =
+                if parsed.help then parsed
+                else
+                    { parsed with
+                        config = parsed.config |> Option.map Wanxiang.UI.LocalState.requireOutsideGit
+                        data = parsed.data |> Option.map Wanxiang.UI.LocalState.requireOutsideGit
+                        bundle = parsed.bundle |> Option.map Wanxiang.UI.LocalState.requireOutsideGit }
             if cli.help then
                 eprintfn "%s" Cli.usage
                 exit 0
             // 路径与开关（决策 60：命令行 > TOML > 程序默认）由 LaunchPlan 推导
-            let plan = LaunchPlan.ofOptions cli (Cli.defaultHome ())
-            let configPath = plan.configPath
-            let dataDir = plan.dataDir
+            let home = Wanxiang.UI.LocalState.configHome ()
+            let requestedConfig, requestedData = Cli.paths cli home
+            let configPath = Wanxiang.UI.LocalState.requireOutsideGit requestedConfig
+            let dataDir = Wanxiang.UI.LocalState.requireOutsideGit requestedData
+            // LaunchPlan 会读 TOML；派生的默认文件也必须先通过路径检查。
+            let plan = LaunchPlan.ofOptions { cli with config = Some configPath; data = Some dataDir } home
             let switches = plan.switches
             let isDoctorOnly = RunModes.isDoctorOnly switches
+            if not isDoctorOnly || switches.fix then
+                let workspace = Directory.GetCurrentDirectory()
+                if home = Wanxiang.UI.LocalState.rootFor workspace then
+                    Wanxiang.UI.LocalState.initialize workspace |> ignore
+            // 偏好与客户端令牌跟随本次配置，不暗读旧的用户级目录。
+            Environment.SetEnvironmentVariable("WANXIANG_HOME", Path.GetDirectoryName configPath)
 
             // 决策 251：桌面已在运行时（系统打开链接 = 再启动一次），把链接交给它后退出，
             // 不去抢数据锁、也不弹第二个窗口。

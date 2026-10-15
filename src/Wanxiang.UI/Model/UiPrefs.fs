@@ -17,11 +17,7 @@ module UiPrefsFile =
     let defaults = UiPrefs.defaults limits
 
     let filePath () =
-        let home =
-            match Environment.GetEnvironmentVariable "WANXIANG_HOME" with
-            | s when not (String.IsNullOrWhiteSpace s) -> s
-            | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".config", "wanxiang")
-        Path.Combine(home, "ui.json")
+        Path.Combine(LocalState.configHome (), "ui.json")
 
     let private readText () =
         try LocalText.read (filePath ()) with _ -> None

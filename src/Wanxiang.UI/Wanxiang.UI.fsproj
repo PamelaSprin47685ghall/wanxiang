@@ -18,6 +18,7 @@
     <Compile Include="Design/Icons.fs" />
     <Compile Include="Model/StartupTrace.fs" />
     <Compile Include="Model/ParityProbe.fs" />
+    <Compile Include="Model/LocalState.fs" />
     <Compile Include="Model/UiPrefs.fs" />
     <Compile Include="Rich/RichBackend.fs" />
     <Compile Include="Model/ImageShrink.fs" />

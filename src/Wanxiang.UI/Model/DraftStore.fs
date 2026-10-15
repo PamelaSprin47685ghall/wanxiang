@@ -34,11 +34,7 @@ type FileDraftBackend(path: string) =
             Task.CompletedTask
 
     static member DefaultPath() =
-        let home =
-            match Environment.GetEnvironmentVariable "WANXIANG_HOME" with
-            | s when not (String.IsNullOrWhiteSpace s) -> s
-            | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, ".config", "wanxiang")
-        Path.Combine(home, "drafts.json")
+        Path.Combine(LocalState.configHome (), "drafts.json")
 
 /// 进程内存：测试替身，也是「宿主没有任何持久存储」时的退路（此时草稿仍按进程内存工作，与旧行为一致）。
 type MemoryDraftBackend() =
