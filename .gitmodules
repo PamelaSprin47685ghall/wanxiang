@@ -1,3 +1,4 @@
-[submodule "vendor/wanxiang2"]
-	path = vendor/wanxiang2
-	url = https://github.com/PamelaSprin47685ghall/wanxiang2
+[submodule "wanxiang2"]
+	path = wanxiang2
+	url = git@github.com:PamelaSprin47685ghall/wanxiang2.git
+	branch = main
