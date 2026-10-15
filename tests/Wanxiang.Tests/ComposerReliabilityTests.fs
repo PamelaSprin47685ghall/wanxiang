@@ -230,14 +230,9 @@ module ComposerReliabilityTests =
 
     // ---------- 编解码与 PWA：IndexedDB 夹具（页面被回收后重开） ----------
 
-    [<Fact>]
-    let ``damaged or newer draft files are ignored instead of blocking startup`` () =
-        Assert.True(DraftSnapshot.isEmpty (DraftCodec.tryParse "not json"))
-        Assert.True(DraftSnapshot.isEmpty (DraftCodec.tryParse "[]"))
-        Assert.True(DraftSnapshot.isEmpty (DraftCodec.tryParse """{"version":99,"drafts":[{"instanceId":"x","text":"future"}]}"""))
-        // 未知字段与坏条目被跳过，好条目保留。
-        let mixed = """{"version":1,"extra":true,"drafts":[{"instanceId":"h","text":"ok","unknown":1},{"text":"no instance"},5]}"""
-        Assert.Equal("ok", (Assert.Single (DraftCodec.tryParse mixed).drafts).text)
+    // 「damaged or newer draft files are ignored」已删除：DraftCodec.tryParse 的宽容读取
+    // （非 JSON、非对象、更高版本、未知字段、坏条目跳过、好条目保留）由 wanxiang2 DraftStore
+    // 库金标准 tests/golden/inputs.jsonl（garbage / [] / version 2 / future:1 / 坏条目）逐例承接。
 
     // ---------- 事件日志字节不变；配置被拒绝；检查主机（真实主机） ----------
 

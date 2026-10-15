@@ -69,7 +69,8 @@ type BrowserDraftBackend() =
             task { try do! BrowserDrafts.Delete() with _ -> () } :> Task
 
 /// 草稿落点外壳：把「是否启用」的唯一判断收在这里，关闭时不读。
-/// 去重闸门与会话状态在 Wanxiang2.DraftSession，这里只执行它给出的写 / 删。
+/// 会话状态在 Wanxiang2.DraftSession；去重闸门是 Wanxiang2.DraftStore 的 DraftStore 对象
+/// （由 DraftSession 组合）。这里只执行 Flush 返回的 DraftWrite（写 / 删 / 不动）。
 type LocalDraftStore(backend: IDraftBackend, isEnabled: unit -> bool) =
 
     /// 平台默认落点：桌面文件 / PWA IndexedDB。开关由调用方（外壳持有的偏好）决定。
