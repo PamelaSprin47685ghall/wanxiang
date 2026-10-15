@@ -35,11 +35,14 @@ AppShell.fs:2211 的 `outbox.Expire(now, TimeSpan.FromSeconds 30.0)` 是宿主�
 - vendor/wanxiang2 AGENTS.md 迁移表 10.3 行「未开始」过期：vendor 是 pin，更新需在独立 checkout 中进行，本轮不动。
 - 同表 UI 壳层多行「未开始」同样过期（与草稿/连接/分页三轮同模式）。
 
-## 验证命令与预期
+## 验证（DevOps 已于源码提交 99b68a6 上执行，全部通过）
 
-- `dotnet build src/Wanxiang.UI/Wanxiang.UI.fsproj`：预期编译通过（纯常量替换，无签名变化）。
-- 既有测试套件（若覆盖 MotionLedger/发件箱路径）：预期全部通过，无行为差异。
-- 本轮未运行任何构建/测试/git（工程师无执行权限，归 DevOps）。
+- `git status` / `git diff --check`：工作树干净（仅预期中的 `wanxiang2/` 工程师独立未跟踪 checkout，未动），无未提交改动，exit 0。
+- `dotnet build wanxiang.slnx -c Release`：0 错误，exit 0。
+- `dotnet format wanxiang.slnx --verify-no-changes`：exit 0（仅 workspace 加载常规警告，基线噪音）。
+- 针对性测试（测试二进制 `-class` 多选）：`InteractionReliabilityTests`（含 `outbox.Expire(now, 30s)` 语义断言）+ `ComposerReliabilityTests`（outbox 集成级）+ `UiStabilityTests`（含 `MotionLedger` 常量断言）+ `AppShellTests`，合计 90/90 通过，exit 0。基线数字未动（本轮无新增测试）。
+
+以上验证针对源码提交 `99b68a6`（本回填提交另在其后）。构建成功同时佐证 fsproj 包引用在当前 feed 下解析正常。
 
 ## 四轮总览：本轮系列收口
 
