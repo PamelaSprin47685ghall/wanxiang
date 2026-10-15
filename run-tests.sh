@@ -28,8 +28,6 @@
 #   ./run-tests.sh --no-build   # 跳过构建
 #   ./run-tests.sh --large-history  # 额外跑 LargeHistory 分级（默认排除；§24 定期分级）
 set -uo pipefail
-# wanxiang2 只经交付包消费：本地包源缺失时先产出（见 tools/wanxiang2-feed.sh）
-[[ -f "$(dirname "$0")/vendor/wanxiang2/artifacts/feed/Wanxiang2.LedgerStore.0.0.0-local.nupkg" ]] || "$(dirname "$0")/tools/wanxiang2-feed.sh"
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 PROJ="$ROOT/tests/Wanxiang.Tests/Wanxiang.Tests.fsproj"
@@ -51,9 +49,20 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# 一份旧 LedgerStore 包不能证明整套库已完成。准备失败立即停，不能运行旧二进制。
+"$ROOT/tools/wanxiang2-feed.sh" || exit 1
+FEED=$("$ROOT/tools/wanxiang2-feed.sh" --fingerprint) || exit 1
+BUILD_RECEIPT="$OUT/wanxiang2-feed.sha256"
 if [ "$BUILD" = "1" ] || [ ! -x "$BIN" ]; then
+  rm -f "$BUILD_RECEIPT"
   echo "构建…" >&2
   dotnet build "$PROJ" -c Debug --verbosity quiet || exit 1
+  AFTER_BUILD=$("$ROOT/tools/wanxiang2-feed.sh" --fingerprint) || exit 1
+  [ "$FEED" = "$AFTER_BUILD" ] || { echo "包源在构建期间变化，请重新验收" >&2; exit 1; }
+  printf '%s\n' "$FEED" > "$BUILD_RECEIPT" || exit 1
+elif [ "$(cat "$BUILD_RECEIPT" 2>/dev/null)" != "$FEED" ]; then
+  echo "--no-build 的二进制没有当前包源的构建回执；请不带 --no-build 重新运行" >&2
+  exit 1
 fi
 [ -x "$BIN" ] || { echo "找不到 $BIN" >&2; exit 1; }
 cd "$OUT" || exit 1
@@ -175,4 +184,10 @@ if [ "$MODE" != "ui" ]; then
   fi
 fi
 
+# 运行期间换 pin 或包，也不能把结果归给另一套依赖。
+AFTER_TEST=$("$ROOT/tools/wanxiang2-feed.sh" --fingerprint) || FAILED=1
+if [ "$FEED" != "$AFTER_TEST" ]; then
+  echo "::error::包源在测试期间变化，本次结果不能作为当前版本验收" >&2
+  FAILED=1
+fi
 exit $FAILED

@@ -40,6 +40,9 @@ jobs:
       - name: Prepare pinned Wanxiang2 packages
         run: tools/wanxiang2-feed.sh
 
+      - name: Package handoff failure tests
+        run: python3 -B -m unittest discover -s tools/tests -p test_wanxiang2_feed.py -v
+
       - name: Restore
         run: dotnet restore wanxiang.slnx
 
@@ -136,7 +139,7 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           files=$(git diff --name-only "$base"...HEAD)
           echo "$files"
-          if echo "$files" | grep -qE '^(vendor/wanxiang2$|tools/wanxiang2-feed\.sh$|src/Wanxiang\.(Store|Core|Protocol|Server)/|src/Wanxiang\.UI/(Views/(ChatView|MessageCard|Sidebar)\.fs|Rich/|Model/|AppShell\.fs)|tests/Wanxiang\.Tests/(PerformanceBaseline|Library|PerceivedPerf|WindowedNavigation)Tests\.fs|run-tests\.sh|\.github/workflows/)'; then
+          if echo "$files" | grep -qE '^(vendor/wanxiang2$|tools/wanxiang2[-_]feed\.(sh|py)$|tools/tests/test_wanxiang2_feed\.py$|src/Wanxiang\.(Store|Core|Protocol|Server)/|src/Wanxiang\.UI/(Views/(ChatView|MessageCard|Sidebar)\.fs|Rich/|Model/|AppShell\.fs)|tests/Wanxiang\.Tests/(PerformanceBaseline|Library|PerceivedPerf|WindowedNavigation)Tests\.fs|run-tests\.sh|\.github/workflows/)'; then
             echo "touched=true" >> "$GITHUB_OUTPUT"
           else
             echo "touched=false" >> "$GITHUB_OUTPUT"

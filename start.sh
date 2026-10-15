@@ -5,7 +5,7 @@
 #   ./start.sh <config.toml> <data>  # 指定位置
 #
 # 环境变量：
-#   WANXIANG_SKIP_BUILD=1   跳过构建，直接跑现有产物
+#   WANXIANG_SKIP_BUILD=1   跳过构建，只运行仍匹配当前包源的已有产物
 #   WANXIANG_ARGS="..."     追加参数，例如 --client=false
 set -euo pipefail
 
@@ -27,8 +27,13 @@ export WANXIANG_HOME="${WANXIANG_HOME:-$(dirname "$CONFIG")}"
 export DISPLAY="${DISPLAY:-:0.0}"
 
 BIN="$ROOT/src/Wanxiang.App/bin/Debug/net10.0/wanxiang"
+BUILD_RECEIPT="$(dirname "$BIN")/wanxiang2-feed.sha256"
+
+"$ROOT/tools/wanxiang2-feed.sh"
+FEED=$("$ROOT/tools/wanxiang2-feed.sh" --fingerprint)
 
 if [ "${WANXIANG_SKIP_BUILD:-0}" != "1" ]; then
+  rm -f "$BUILD_RECEIPT"
   echo "building…" >&2
   if ! dotnet build "$ROOT/src/Wanxiang.slnx" -c Debug --verbosity minimal; then
     echo >&2
@@ -37,6 +42,15 @@ if [ "${WANXIANG_SKIP_BUILD:-0}" != "1" ]; then
     echo "  · 缺 ASP.NET Core 运行时   → curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0" >&2
     exit 1
   fi
+  AFTER_BUILD=$("$ROOT/tools/wanxiang2-feed.sh" --fingerprint)
+  if [ "$FEED" != "$AFTER_BUILD" ]; then
+    echo "包源在构建期间变化，请重新运行。" >&2
+    exit 1
+  fi
+  printf '%s\n' "$FEED" > "$BUILD_RECEIPT"
+elif [ "$(cat "$BUILD_RECEIPT" 2>/dev/null)" != "$FEED" ]; then
+  echo "现有应用没有当前包源的构建回执，请不设置 WANXIANG_SKIP_BUILD 重新运行。" >&2
+  exit 1
 fi
 
 if [ ! -x "$BIN" ]; then

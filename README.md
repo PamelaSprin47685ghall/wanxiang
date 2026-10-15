@@ -366,7 +366,20 @@ dotnet build wanxiang.slnx -c Release
 应用只通过 `vendor/wanxiang2/artifacts/feed` 中的 NuGet 包消费新库，不引用新库源码。
 `vendor/wanxiang2` 的提交由本仓库锁定；仓库根的 `wanxiang2/` 若存在，是独立开发目录，
 不是构建输入。切换抽吸分支或更新 vendor 提交后，重新执行 `tools/wanxiang2-feed.sh`：
-当前包版本仍为 `0.0.0-local`，脚本会重建包并清理本仓库的同版本包缓存，不能直接复用旧包。
+当前包版本仍为 `0.0.0-local`，不能凭文件存在或版本号判断包是新的。脚本核对 Git 索引中的
+vendor pin、干净的 vendor 源码、完整包集与逐包 SHA-256；都符合完成回执时才复用。
+缺少回执、缺包、字节变化或 pin 更新时，仍调用现有的 `x pack` 完整产包，再清理本仓库的
+同版本包缓存与 restore 产物。失败不留下成功回执，也不继续运行旧测试。
+
+`tools/wanxiang2-feed.sh --check` 只核验，不构建或初始化；`--rebuild` 强制重建。
+更新 vendor 时先提交新库，再用 `git add vendor/wanxiang2` 明确本次消费的 pin；
+脚本不会替使用者移动分支、丢弃改动或把未提交源码说成某个提交。工具需要 Bash、Git 和 Python 3.11+。
+本仓使用 `.nuget/packages`；重定向该目录或用 `NUGET_PACKAGES` 指向其他缓存会被拒绝，
+而不是擅自清理用户的全局目录。
+回执是本机包交付记录，不是签名、供应链认证或所有构建环境的证明。
+
+`start.sh` 也先经过同一包源检查，再构建应用；产包或构建失败时不启动旧程序。
+`WANXIANG_SKIP_BUILD=1` 仅复用由该入口构建且仍匹配当前包源的应用，不能绕过换 pin 后的重建。
 
 ### 测试
 
@@ -375,7 +388,13 @@ export DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH"
 ./run-tests.sh -j 4                  # 界面分片 + 非界面全套
 ./run-tests.sh -j 4 --large-history  # 另跑大历史档（10^5 提交冷启动等）
 tools/stress.sh -n 3 --hog 4         # 高负载下重复跑全套，输出 flake 报告
+python3 -B -m unittest discover -s tools/tests -p test_wanxiang2_feed.py -v  # 包交付入口的故障回归
 ```
+
+`run-tests.sh` 每次先核验包源，构建成功后把包清单指纹写到测试输出目录。
+`--no-build` 只接受由该入口构建、且仍对应当前包源的二进制；缺回执或依赖变更时，
+请不带 `--no-build` 重跑。测试期间切换 pin 或更改包源也会使本轮验收失败。
+这不检查 `--no-build` 所跳过的应用源码变更；修改应用源码后仍应正常构建。
 
 CI（`.github/workflows/ci.yml`）在每个 PR 及 `extract-ledger` 的 push 上跑应用门禁、核对各组测试数量不减少、
 冒烟运行打包产物（含 PWA 补丁检查）；`stress.yml` 每晚跑一次压力测试。
