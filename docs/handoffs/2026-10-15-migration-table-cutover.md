@@ -24,14 +24,21 @@
 ## 运行登记（DevOps 执行）
 
 - wanxiang2 开发仓库 `assist/migration-table-cutover` 分支提交：`7a13032f202c78bbca0ed411c98a567038f0e29a`（`Cutover migration table: record wired state as audited`，AGENTS.md 52 插/50 删；含 Manager 裁定 1 的 120 行 `84017ef→8f39e84` 更正，与 174 行同源；裁定 2 复核：222 行现行措辞已是「已接线、映射经 compose/AguiWire」，无自相矛盾，未改动；裁定 3 按指示忽略）。该分支 main 未动，`8f39e84` 更正以本节登记为准。
-- [TODO] 旧仓库登记提交 hash（本 handoff 与 AGENTS.md 更正的落地提交）。
-- [TODO] 门禁运行结果：Release 构建、`./run-tests.sh -j4 --large-history`、`dotnet format --verify-no-changes`、`git diff --check`、`tools/wanxiang2-feed.sh --check`、`vendor/wanxiang2` pin 复核。
+- 旧仓库登记提交：`1bed72eacf818c283b7910fbc8edf1cc54639777`（`Record migration table cutover handoff skeleton`，本文件首次落地）；门禁结果回填为紧随的下一个提交，其 hash 见 `git log -1 assist/deletion-cutover`。
+- 门禁运行结果（归属登记提交后的最终工作树；本轮唯一代码变更为下述测试时序修复）：
+  1. `dotnet build wanxiang.slnx -c Release`：退出码 0，0 错误、11 条既有测试文件警告（与修复前同一组，未通过禁用警告消除）。
+  2. `./run-tests.sh -j 4 --large-history`：退出码 0；清点 UI=346、NonUI=222、LargeHistory=3；UI 各进程合计 346 全过 0 skip，非 UI 225（0 失败、1 既有 skip，即 10⁶ 手动基准）。
+  3. `dotnet format wanxiang.slnx --verify-no-changes`：退出码 0；工作区加载警告仍在，不声称无警告。
+  4. `git diff --check`：干净。
+  5. `tools/wanxiang2-feed.sh --check`：全量测试前后各一次均通过（c3a2e74、316 包，前后一致）。
+  6. `git submodule status vendor/wanxiang2`：pin 仍 `c3a2e74abafd0daf98db28b6b8ede750f331e53c`，vendor 工作树零 diff；AGENTS.md 更正只落在开发仓库 `assist/migration-table-cutover@7a13032`，未触碰 vendor。
+- 运行中暴露并修复的普通缺陷（如实记录，非静默重跑凑绿）：`VisualPassV4Tests.定位后的下一次重绘不把视口拉回底部` 在 12 分组高并发调度下复现一次时序分叉失败（`viewport stays at the hit: bottom=4776 now=5324`；首次渲染未落定时即采 `bottom` 基准，随后 548px 滞后补测量经贴底跟随把视口推到新底部），同一二进制同分组另一轮通过（8.1s/11.4s）。根因在测试等待机制而非产品回归。修复限于测试文件 `tests/Wanxiang.Tests/VisualPassV4Tests.fs`：新增 `awaitSettled`（Offset 与 Extent 连续三轮泵送不变才判定落定），采集 `bottom` 基准前与最终断言前各等一次；决策 461 的 5 秒墙钟仅作防挂死安全网；断言阈值与语义未放宽。修复后失败调度形态（`-j4`）两轮与标准调度（`-j 4`）一轮全量均绿。
 
 ## 用户待决（属职权边界，本道路不动）
 
-- [TODO] wanxiang2 开发仓库 `assist/migration-table-cutover` 分支合入其 `main`。
-- [TODO] 旧仓库 `vendor/wanxiang2` pin 前进到合入后的 wanxiang2 `main`。
-- [TODO] 旧仓库 `assist/deletion-cutover` 合入旧仓库 `main`（`main` 只由用户批准合并，分叉需显式裁决）。
+- 待用户裁决（非 DevOps 职权，保持未执行，本行不表示任何完成）：wanxiang2 开发仓库 `assist/migration-table-cutover` 分支合入其 `main`。
+- 待用户裁决（非 DevOps 职权，保持未执行）：旧仓库 `vendor/wanxiang2` pin 前进到合入后的 wanxiang2 `main`。
+- 待用户裁决（非 DevOps 职权，保持未执行）：旧仓库 `assist/deletion-cutover` 合入旧仓库 `main`（`main` 只由用户批准合并，分叉需显式裁决）。
 
 ## 复验与本机证据
 
