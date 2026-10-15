@@ -569,13 +569,10 @@ type MainView() as this =
         connectionError <- Some(ConnectIssueText.describe issue)
         failConnectStatus issue
 
-    member private this.Connect() =
-        // 新的连接让挂起的重连作废（票据随之失效）。
-        let attempt = reconnect.Connect()
+    /// 断线收尾公共序列：主动 Connect 前的重置与 ConnectionClosed 的被动收尾共享。
+    /// 入口各自的语义（健康状态、审批面板、设备通知、UI 呈现、重连调度）留在调用方。
+    member private this.TearDownConnection() =
         authenticated <- false
-        connectionError <- None
-        settings.Health.Disconnected()
-        connectionIssue <- None
         runs.Disconnect()
         exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
         this.FailOlderPage "连接已断开，更早的消息没有加载。重新连接后点「重试」。"
@@ -585,6 +582,14 @@ type MainView() as this =
         this.FailUploadingAttachments()
         // 断连后底层下载流已死，不会有 Complete 事件；缓冲必须整体丢弃（R1）。
         downloads.Clear()
+
+    member private this.Connect() =
+        // 新的连接让挂起的重连作废（票据随之失效）。
+        let attempt = reconnect.Connect()
+        connectionError <- None
+        settings.Health.Disconnected()
+        connectionIssue <- None
+        this.TearDownConnection()
         this.Render()
         let url = lastUrl
         let token = lastToken
@@ -2158,19 +2163,10 @@ type MainView() as this =
         client.ConnectionClosed.Add(fun (epoch, error) ->
             ui.Post(fun () ->
                 if epoch = client.ConnectionGeneration then
-                    authenticated <- false
                     approvalPanel.Disconnected()
                     chat.SetAwaitingApproval Set.empty
-                    runs.Disconnect()
-                    exportDialog |> Option.iter (fun dialog -> dialog.Disconnect())
-                    this.FailOlderPage "连接已断开，更早的消息没有加载。重新连接后点「重试」。"
-                    outbox.Disconnect instanceId
-                    commandFeedback.RejectAll()
-                    configFeedback.RejectAll()
-                    this.FailUploadingAttachments()
+                    this.TearDownConnection()
                     settings.Devices.NotifyDisconnected()
-                    // 与主动断开同路径：连接死了，在途下载缓冲一并丢弃（R1）。
-                    downloads.Clear()
                     let detail = match error with Some e -> e.Message | None -> ""
                     sidebar.SetConnection(false, "连接已断开")
                     if not (String.IsNullOrWhiteSpace detail) then toast (sprintf "连接已断开：%s" detail) Warning
