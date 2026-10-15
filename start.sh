@@ -17,13 +17,18 @@ if [ -x "$HOME/.dotnet/dotnet" ]; then
   export PATH="$HOME/.dotnet:$PATH"
 fi
 
-DEFAULT_HOME="${XDG_CONFIG_HOME:-$HOME/.config}/wanxiang"
-CONFIG="${1:-$DEFAULT_HOME/config.toml}"
-DATA="${2:-${XDG_DATA_HOME:-$HOME/.local/share}/wanxiang/data}"
-
-# WANXIANG_HOME 决定本机偏好（ui.json）与客户端令牌（client.toml）的位置，
-# 让它跟随配置文件所在目录，多套配置之间不会互相串。
-export WANXIANG_HOME="${WANXIANG_HOME:-$(dirname "$CONFIG")}"
+# 默认目录由实际宿主的 LocalState 决定。显式相对路径先按调用目录展开，
+# 然后从工程根启动；脚本不复制 Git 拓扑算法，也不提前创建运行数据。
+LAUNCH_ARGS=()
+if [ -n "${1:-}" ]; then
+  LAUNCH_ARGS+=(--config "$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1")")
+fi
+if [ -n "${2:-}" ]; then
+  LAUNCH_ARGS+=(--data "$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$2")")
+fi
+if [ -n "${WANXIANG_HOME:-}" ]; then
+  export WANXIANG_HOME="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$WANXIANG_HOME")"
+fi
 export DISPLAY="${DISPLAY:-:0.0}"
 
 BIN="$ROOT/src/Wanxiang.App/bin/Debug/net10.0/wanxiang"
@@ -59,12 +64,9 @@ if [ ! -x "$BIN" ]; then
   exit 1
 fi
 
-mkdir -p "$(dirname "$CONFIG")" "$DATA"
-
 echo "启动万象" >&2
-echo "  配置：$CONFIG" >&2
-echo "  数据：$DATA" >&2
-echo "  偏好：$WANXIANG_HOME" >&2
+echo "  默认状态：主工作树/.Herdchestra（显式目录由宿主校验）" >&2
 
+cd "$ROOT"
 # shellcheck disable=SC2086
-exec "$BIN" --config "$CONFIG" --data "$DATA" --server --client --pwa ${WANXIANG_ARGS:-}
+exec "$BIN" "${LAUNCH_ARGS[@]}" --server --client --pwa ${WANXIANG_ARGS:-}
