@@ -17,7 +17,7 @@ class FeedTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="wanxiang-feed-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "checkout with spaces"
-        self.vendor = self.root / "vendor/wanxiang2"
+        self.vendor = self.root / "wanxiang2"
         self.feed = self.vendor / "artifacts/feed"
         self.binary = self.root / "tests/Wanxiang.Tests/bin/Debug/net10.0/Wanxiang.Tests"
         self.root.mkdir()
@@ -27,14 +27,15 @@ class FeedTests(unittest.TestCase):
                 target = self.root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
-        self.write(".gitignore", ".scratch/\n.nuget/\ntests/**/bin/\ntests/**/obj/\nsrc/**/bin/\nsrc/**/obj/\ncommands/\nran\nbuilt\nlaunched\n")
+        self.write(".gitignore", ".scratch/\n.nuget/\n.Herdchestra/\ntests/**/bin/\ntests/**/obj/\nsrc/**/bin/\nsrc/**/obj/\ncommands/\nran\nbuilt\nlaunched\n")
+        self.write(".gitmodules", '[submodule "wanxiang2"]\n\tpath = wanxiang2\n\turl = ../upstream\n\tbranch = main\n')
         self.write("tests/test-counts.baseline", "UI=0\nNonUI=1\nLargeHistory=0\n")
         self.write("tests/Wanxiang.Tests/Test.fs", "[<Fact>]\nlet probe () = ()\n")
-        self.write("vendor/wanxiang2/.gitignore", "artifacts/\n")
+        self.write("wanxiang2/.gitignore", "artifacts/\n")
         for name in ["LedgerStore", "Client"]:
-            self.write(f"vendor/wanxiang2/libs/{name}/{name}.fsproj", "<Project/>\n")
-        self.write("vendor/wanxiang2/revision.txt", "first")
-        self.write("vendor/wanxiang2/x", """#!/usr/bin/env python3
+            self.write(f"wanxiang2/libs/{name}/{name}.fsproj", "<Project/>\n")
+        self.write("wanxiang2/revision.txt", "first")
+        self.write("wanxiang2/x", """#!/usr/bin/env python3
 import os
 from pathlib import Path
 import sys
@@ -64,7 +65,7 @@ if '-list' in sys.argv:
     print(json.dumps([{'Class': 'Fixture', 'Method': 'probe', 'Traits': {}}]))
 else:
     if os.environ.get('TEST_CHANGE_SOURCE'):
-        (root / 'vendor/wanxiang2/revision.txt').write_text('changed during tests')
+        (root / 'wanxiang2/revision.txt').write_text('changed during tests')
     print('Fixture Total: 1, Errors: 0, Failed: 0, Skipped: 0, Not Run: 0')
 """, executable=True)
         self.write("commands/dotnet", """#!/usr/bin/env python3
@@ -82,7 +83,7 @@ root = Path(__file__).resolve().parents[5]
 """, executable=True)
         self.env = dict(os.environ, HOME=str(Path(self.temp.name) / "home"),
                         PATH=str(self.root / "commands") + os.pathsep + os.environ["PATH"])
-        self.git(self.vendor, "init", "-q")
+        self.git(self.vendor, "init", "-q", "-b", "main")
         self.commit(self.vendor)
         self.git(self.root, "init", "-q")
         self.commit(self.root)
@@ -151,13 +152,13 @@ root = Path(__file__).resolve().parents[5]
         self.assertEqual((self.root / ".nuget/packages/third.party/keep").read_text(), "keep")
 
     def test_dirty_or_unpinned_source_is_not_built(self):
-        self.write("vendor/wanxiang2/revision.txt", "second")
+        self.write("wanxiang2/revision.txt", "second")
         self.assertNotEqual(self.prepare().returncode, 0)
         self.assertFalse(self.feed.exists())
         self.commit(self.vendor)
         self.assertNotEqual(self.prepare().returncode, 0)
         self.assertFalse(self.feed.exists())
-        self.git(self.root, "add", "vendor/wanxiang2")
+        self.git(self.root, "add", "wanxiang2")
         self.ok(self.prepare())
 
     def test_source_change_during_pack_does_not_leave_a_receipt(self):
@@ -209,9 +210,9 @@ root = Path(__file__).resolve().parents[5]
     def test_pin_change_refuses_old_binary_even_after_successful_pack(self):
         self.ok(self.run_script("run-tests.sh", "--no-ui"))
         (self.root / "ran").unlink()
-        self.write("vendor/wanxiang2/revision.txt", "second")
+        self.write("wanxiang2/revision.txt", "second")
         self.commit(self.vendor)
-        self.git(self.root, "add", "vendor/wanxiang2")
+        self.git(self.root, "add", "wanxiang2")
         result = self.run_script("run-tests.sh", "--no-build", "--no-ui")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / "ran").exists())
@@ -247,11 +248,66 @@ root = Path(__file__).resolve().parents[5]
         self.ok(self.run_script("start.sh", *args, WANXIANG_SKIP_BUILD="0"))
         self.ok(self.run_script("start.sh", *args, WANXIANG_SKIP_BUILD="1"))
         (self.root / "launched").unlink()
-        self.write("vendor/wanxiang2/revision.txt", "second")
+        self.write("wanxiang2/revision.txt", "second")
         self.commit(self.vendor)
-        self.git(self.root, "add", "vendor/wanxiang2")
+        self.git(self.root, "add", "wanxiang2")
         self.assertNotEqual(self.run_script("start.sh", *args, WANXIANG_SKIP_BUILD="1").returncode, 0)
         self.assertFalse((self.root / "launched").exists())
+
+    def test_source_check_needs_no_packages_and_rejects_old_location(self):
+        self.ok(self.prepare("--source-check"))
+        self.assertFalse(self.feed.exists())
+        self.git(self.root, "config", "-f", ".gitmodules", "submodule.wanxiang2.path", "vendor/wanxiang2")
+        self.assertNotEqual(self.prepare("--source-check").returncode, 0)
+
+    def test_tracked_binary_packages_are_rejected_in_both_repositories(self):
+        for directory in [self.root, self.vendor]:
+            for name in ["small.tgz", "small.TGZ", "small.nupkg", "small.snupkg"]:
+                with self.subTest(directory=directory, name=name):
+                    package = directory / name
+                    package.write_bytes(b"x")
+                    self.git(directory, "add", name)
+                    result = self.prepare("--source-check")
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("binary packages must not enter Git", result.stderr)
+                    self.git(directory, "rm", "-f", "--", name)
+
+    def upstream(self):
+        remote = self.root.parent / "upstream"
+        self.git(self.root.parent, "clone", "--bare", str(self.vendor), str(remote))
+        self.git(self.vendor, "remote", "add", "origin", str(remote))
+        self.git(self.root, "config", "-f", ".gitmodules", "submodule.wanxiang2.url", str(remote))
+        self.commit(self.root)
+        return remote
+
+    def test_update_fast_forwards_without_building_or_staging(self):
+        remote = self.upstream()
+        publisher = self.root.parent / "publisher"
+        self.git(self.root.parent, "clone", str(remote), str(publisher))
+        (publisher / "revision.txt").write_text("remote successor")
+        self.commit(publisher)
+        self.git(publisher, "push", "origin", "main")
+        pin = self.git(self.root, "ls-files", "--stage", "--", "wanxiang2")
+        self.ok(self.prepare("--update"))
+        self.assertEqual(self.git(self.vendor, "rev-parse", "HEAD"), self.git(publisher, "rev-parse", "HEAD"))
+        self.assertEqual(pin, self.git(self.root, "ls-files", "--stage", "--", "wanxiang2"))
+        self.assertFalse(self.feed.exists())
+        self.assertNotEqual(self.prepare("--source-check").returncode, 0)
+        self.git(self.root, "add", "wanxiang2")
+        self.ok(self.prepare("--source-check"))
+
+    def test_update_preserves_unpublished_commits(self):
+        self.upstream()
+        self.write("wanxiang2/revision.txt", "local work")
+        self.commit(self.vendor)
+        self.git(self.root, "add", "wanxiang2")
+        before = self.git(self.vendor, "rev-parse", "HEAD")
+        result = self.prepare("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("local wanxiang2 commits", result.stderr)
+        self.assertEqual(before, self.git(self.vendor, "rev-parse", "HEAD"))
+        self.assertEqual((self.vendor / "revision.txt").read_text(), "local work")
+        self.assertFalse(self.feed.exists())
 
 
 if __name__ == "__main__":

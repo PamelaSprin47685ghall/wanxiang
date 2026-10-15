@@ -29,6 +29,9 @@ coverage.*
 *.coveragexml
 *.nupkg
 *.snupkg
+*.[tT][gG][zZ]
+*.[nN][uU][pP][kK][gG]
+*.[sS][nN][uU][pP][kK][gG]
 
 # IDE and editor state
 /.vs/
@@ -65,6 +68,7 @@ config.local.toml
 *.keystore
 
 # Runtime data (may contain user content)
+.Herdchestra/
 /data/
 /logs/
 /attachments/

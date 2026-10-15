@@ -1,4 +1,4 @@
-"""核对锁定源码和本地包的完成回执；构建仍由 vendor 的 x pack 负责。"""
+"""核对 submodule 源码和本地包的完成回执；构建仍由 wanxiang2 的 x pack 负责。"""
 
 import argparse
 from contextlib import contextmanager
@@ -17,6 +17,15 @@ class FeedError(RuntimeError):
     pass
 
 
+def reject_tracked_packages(root: Path) -> None:
+    result = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], check=True,
+                            capture_output=True, text=True)
+    forbidden = [name for name in result.stdout.split("\0")
+                 if Path(name).suffix.lower() in {".tgz", ".nupkg", ".snupkg"}]
+    if forbidden:
+        raise FeedError(f"binary packages must not enter Git: {forbidden}")
+
+
 def digest(path: Path) -> str:
     with path.open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
@@ -25,7 +34,7 @@ def digest(path: Path) -> str:
 class PinnedSource:
     def __init__(self, root: Path):
         self.root = root
-        self.vendor = root / "vendor/wanxiang2"
+        self.vendor = root / "wanxiang2"
 
     @staticmethod
     def git(root: Path, *args: str) -> str:
@@ -34,22 +43,47 @@ class PinnedSource:
 
     def initialize(self) -> None:
         if not (self.vendor / ".git").exists():
-            subprocess.run(["git", "-C", str(self.root), "submodule", "update", "--init", "--", "vendor/wanxiang2"], check=True)
+            subprocess.run(["git", "-C", str(self.root), "submodule", "update", "--init", "--", "wanxiang2"], check=True)
 
     def revision(self) -> str:
-        entries = self.git(self.root, "ls-files", "--stage", "--", "vendor/wanxiang2").splitlines()
+        reject_tracked_packages(self.root)
+        reject_tracked_packages(self.vendor)
+        if self.vendor.is_symlink():
+            raise FeedError("wanxiang2 must be a real submodule directory, not a link")
+        for key, expected in [("path", "wanxiang2"), ("branch", "main")]:
+            actual = self.git(self.root, "config", "-f", ".gitmodules", "--get", f"submodule.wanxiang2.{key}")
+            if actual != expected:
+                raise FeedError(f"submodule.wanxiang2.{key} must be {expected}")
+        entries = self.git(self.root, "ls-files", "--stage", "--", "wanxiang2").splitlines()
         if len(entries) != 1:
-            raise FeedError("vendor/wanxiang2 must have one staged gitlink")
+            raise FeedError("wanxiang2 must have one staged gitlink")
         entry = entries[0].split(maxsplit=3)
         if len(entry) != 4 or entry[0] != "160000" or entry[2] != "0":
-            raise FeedError("vendor/wanxiang2 has no resolved gitlink")
+            raise FeedError("wanxiang2 has no resolved gitlink")
         if Path(self.git(self.vendor, "rev-parse", "--show-toplevel")).resolve() != self.vendor.resolve():
-            raise FeedError("vendor/wanxiang2 is not initialized")
+            raise FeedError("wanxiang2 is not initialized")
         if self.git(self.vendor, "rev-parse", "HEAD") != entry[1]:
             raise FeedError("vendor checkout differs from the staged pin; stage the intended gitlink first")
         if self.git(self.vendor, "status", "--porcelain", "--untracked-files=normal"):
             raise FeedError("vendor source has uncommitted changes; do not certify it as the pinned commit")
         return entry[1]
+
+    def update(self) -> str:
+        before = self.revision()
+        declared_url = self.git(self.root, "config", "-f", ".gitmodules", "--get", "submodule.wanxiang2.url")
+        if self.git(self.vendor, "remote", "get-url", "origin") != declared_url:
+            raise FeedError("wanxiang2 origin differs from .gitmodules; review the remote before updating")
+        self.git(self.vendor, "fetch", "origin", "+refs/heads/main:refs/remotes/origin/main")
+        target = self.git(self.vendor, "rev-parse", "refs/remotes/origin/main")
+        ancestor = subprocess.run(["git", "-C", str(self.vendor), "merge-base", "--is-ancestor", before, target])
+        if ancestor.returncode != 0:
+            raise FeedError("local wanxiang2 commits are not contained in origin/main; preserve/publish them before updating")
+        # 网络等待期间可能有人继续编辑；不拿开工时的检查当现在的事实。
+        if self.revision() != before:
+            raise FeedError("wanxiang2 changed during fetch; no checkout was updated")
+        if before != target:
+            self.git(self.vendor, "merge", "--ff-only", target)
+        return target
 
     def packages(self) -> set[str]:
         names: set[str] = set()
@@ -160,16 +194,25 @@ def main() -> int:
     mode.add_argument("--check", action="store_true", help="check only; never initialize or build")
     mode.add_argument("--fingerprint", action="store_true", help="check and print the receipt digest")
     mode.add_argument("--rebuild", action="store_true", help="force the existing x pack path")
+    mode.add_argument("--source-check", action="store_true", help="check submodule and Git package policy without building")
+    mode.add_argument("--update", action="store_true", help="explicitly fast-forward to origin/main; do not build or stage")
     args = parser.parse_args()
     source = PinnedSource(Path(__file__).resolve().parents[1])
     receipt = FeedReceipt(source)
-    readonly = args.check or args.fingerprint
+    readonly = args.check or args.fingerprint or args.source_check
     try:
         with feed_lock(source.root, readonly):
             consumer_cache(source.root)
             if not readonly:
                 source.initialize()
             revision = source.revision()
+            if args.source_check:
+                print(f"source ready: {revision}; no tracked binary packages")
+                return 0
+            if args.update:
+                revision = source.update()
+                print(f"wanxiang2: {revision}; review and git add wanxiang2, then prepare the feed")
+                return 0
             if not args.rebuild:
                 try:
                     fingerprint = receipt.check(revision)
