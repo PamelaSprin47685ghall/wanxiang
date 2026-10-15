@@ -15,7 +15,7 @@ on:
 
 jobs:
   pr-gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -25,6 +25,9 @@ jobs:
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
+
+      - name: Check source submodule and reject committed packages
+        run: tools/wanxiang2-feed.sh --source-check
 
       # 不用 setup-dotnet 的 cache（它要求 packages.lock.json）；按项目文件哈希缓存 NuGet 包。
       - name: Cache NuGet packages
@@ -92,7 +95,7 @@ jobs:
   main-gate:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: pr-gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -127,7 +130,7 @@ jobs:
   # 不会被静默跳过。路径判断用 git diff，不引第三方 action。
   history-changes:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       touched: ${{ steps.diff.outputs.touched }}
     steps:
@@ -139,7 +142,7 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           files=$(git diff --name-only "$base"...HEAD)
           echo "$files"
-          if echo "$files" | grep -qE '^(vendor/wanxiang2$|tools/wanxiang2[-_]feed\.(sh|py)$|tools/tests/test_wanxiang2_feed\.py$|src/Wanxiang\.(Store|Core|Protocol|Server)/|src/Wanxiang\.UI/(Views/(ChatView|MessageCard|Sidebar)\.fs|Rich/|Model/|AppShell\.fs)|tests/Wanxiang\.Tests/(PerformanceBaseline|Library|PerceivedPerf|WindowedNavigation)Tests\.fs|run-tests\.sh|\.github/workflows/)'; then
+          if echo "$files" | grep -qE '^(wanxiang2$|\.gitmodules$|NuGet\.config$|tools/wanxiang2[-_]feed\.(sh|py)$|tools/tests/test_wanxiang2_feed\.py$|src/Wanxiang\.(Store|Core|Protocol|Server)/|src/Wanxiang\.UI/(Views/(ChatView|MessageCard|Sidebar)\.fs|Rich/|Model/|AppShell\.fs)|tests/Wanxiang\.Tests/(PerformanceBaseline|Library|PerceivedPerf|WindowedNavigation)Tests\.fs|run-tests\.sh|\.github/workflows/)'; then
             echo "touched=true" >> "$GITHUB_OUTPUT"
           else
             echo "touched=false" >> "$GITHUB_OUTPUT"
@@ -152,7 +155,7 @@ jobs:
       (github.event_name == 'schedule' ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
        (github.event_name == 'pull_request' && needs.history-changes.outputs.touched == 'true'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
