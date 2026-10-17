@@ -1,6 +1,0 @@
-<Project>
-  <PropertyGroup>
-    <!-- 与锁定的 Wanxiang2 交付包对齐；不能由各台机器的 SDK 默认值决定并触发包降级。 -->
-    <FSharpCoreImplicitPackageVersion>10.1.401</FSharpCoreImplicitPackageVersion>
-  </PropertyGroup>
-</Project>

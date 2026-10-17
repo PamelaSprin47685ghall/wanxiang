@@ -1,33 +1,10 @@
-# 万象 · 退役状态（2026-10-17）
+# 状态：已退役（终态）
 
-本文原为旧仓库（wanxiang）的收敛状态说明（2026-10-13 版）。项目本体已迁移至
-`wanxiang2/` 子模块并完成扶正：原收敛目标已在 wanxiang2 落地，本文据此改为
-退役状态表述。
+**本仓库已完成物理退役（2026-10-17）。wanxiang2 是唯一产品本体。**
 
-## 1. 收敛目标在 wanxiang2 的落地
+- 旧 `src/` 宿主壳、`tests/`、`tools/`、`.github/workflows/` CI、品牌页（site/）、打包资产（packaging/）、截图资产（shots/ 与 13 个 shots-r\* 目录）、本地参考克隆（kelivo/）已全部删除；`bfdda85` 基线保证可回滚。
+- 产品文档（contracts / security / ux / adr）与历史档案（11 篇 handoffs、品牌页、packaging 的 URL scheme 平台知识）已迁入 `wanxiang2/docs/`（wanxiang2 提交 `1a25b35`，删除即永久丢失的记录均已保全）。
+- 子模块挂载已解除（`git rm --cached wanxiang2`，`.gitmodules` 已删除）；`wanxiang2/` 目录保留为独立仓库的本地副本，不再被本仓库跟踪。
+- wanxiang2 构建链已完全独立：自有 `NuGet.config` 指向其 `artifacts/feed`，restore 不再依赖本仓库的任何文件；终验（清缓存后 restore + 双入口 build + `./x check`）凭据见当次运维记录。
 
-- **唯一入口**：桌面 `wanxiang2/app/Desktop/`、PWA `wanxiang2/app/Pwa/`，两工程已纳入
-  `wanxiang2/wanxiang2.slnx`；旧仓库 `src/` 宿主壳退役中（已净化为过渡入口薄壳，待物理删除）。
-- **独立启动**：`wanxiang2/run-desktop.sh`（产包 → 构建 → 启动桌面）、`wanxiang2/run-pwa.sh`
-  （产包 → 构建 PWA → 本机静态托管，默认端口 8000）；脚本明示不依赖宿主仓库的 start.sh 与包源脚本。
-- **独立构建/测试**：`wanxiang2/x`（`test` 逐库、`check` 架构合规、`pack` 交付包、`compose`
-  干净消费测组合者、`all` 依次全部）；slnx 实测含 254 个库目录，每库带自有 tests 工程；
-  自有 CI `wanxiang2/.github/workflows/ci.yml`。
-- **自包含发布闭环**：`wanxiang2/publish.sh`——四 RID（linux-x64 / win-x64 / osx-arm64 / osx-x64）
-  自包含 publish → tar.gz/zip + SHA-256 → `--draft` 挂 GitHub 草稿 Release，并校验发布目录内嵌的
-  PWA bundle；Avalonia 浏览器补丁工具链（`tools/patch_avalonia_js.py` + 校验脚本）已在 wanxiang2。
-- **运行验证**：双入口 0 错误编译、publish 全通过（EXIT=0）、`x check` 全绿、571 项基线通过，
-  来自 DevOps 执行记录（2026-10-17）；571 项基线的分支记录另见 `wanxiang2/AGENTS.md` 迁移状态注。
-
-## 2. 原收敛期内容的处置
-
-2026-10-13 版的功能清单、已知局限、发版步骤与测试说明不再在旧仓库维护，避免双真源；
-现行功能与质量以 wanxiang2 为准（见 `wanxiang2/AGENTS.md` 与 `README.md` 文首声明），
-原文可在本仓库 git 历史中查阅。
-
-## 3. 遗留与待处置（未完成）
-
-- 宿主壳 `src/`（三工程薄壳、`wanxiang.slnx`、`src/Directory.Build.props`）尚未物理删除。
-- 根目录 `start.sh`、`run-tests.sh`、`tests/`、`tools/`、`packaging/` 的处置尚未逐项执行
-  （kelivo/、site/、shots*/、docs/ 其余文档的「保留 / 归档 / 删除」判定亦未完成）。
-- 退役完成的判定以 `PLAN.md` §1.2 为准；本次执行进展与出处见其 §6。
+本文件是本仓库的终态声明，不再更新。

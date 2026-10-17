@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="../tests/Wanxiang.Tests/Wanxiang.Tests.fsproj" />
-  <Project Path="Wanxiang.App/Wanxiang.App.fsproj" />
-  <Project Path="Wanxiang.Pwa/Wanxiang.Pwa.fsproj" />
-</Solution>

@@ -1,14 +1,11 @@
-# Local reference repositories (not part of the clean-room implementation)
-/Avalonia/
-/agent-framework/
-/kelivo/
+# 本仓库已退役（见 docs/STATUS.md）。唯一保留的产品目录是 wanxiang2/ 独立仓库，不跟踪其内容。
+/wanxiang2/
 
-# Local .NET and NuGet state
-/.dotnet-home/
-/.nuget/
-
-# Scratch and temporary files
+# 会话与临时状态（.agents/ 为已跟踪内容、.scratch/ 属已登记的后续处置项，见 PLAN.md，均不在本轮处置表）
 /.scratch/
+/.Herdchestra/
+/.nuget/
+/.omo/
 /tmp/
 /temp/
 *.tmp
@@ -16,79 +13,9 @@
 *.swp
 *~
 
-# .NET build, test, package, and publish output
-**/bin/
-**/obj/
-**/TestResults/
-**/BenchmarkDotNet.Artifacts/
-/artifacts/
-/publish/
-/coverage/
-coverage.*
-*.coverage
-*.coveragexml
-*.nupkg
-*.snupkg
-*.[tT][gG][zZ]
-*.[nN][uU][pP][kK][gG]
-*.[sS][nN][uU][pP][kK][gG]
-
-# IDE and editor state
+# IDE 与 OS 杂项
 /.vs/
 /.idea/
 /.vscode/
-*.suo
-*.user
-*.userosscache
-*.userprefs
-*.sln.docstates
-*.DotSettings.user
-_ReSharper*/
-
-# Local configuration and secrets
-.env
-.env.*
-!.env.example
-*.local
-*.local.*
-/secrets/
-*.secrets.*
-appsettings.Local.json
-appsettings.*.local.json
-wanxiang.toml
-wanxiang.local.toml
-config.local.toml
-
-# Keys and certificates
-*.pem
-*.key
-*.pfx
-*.p12
-*.jks
-*.keystore
-
-# Runtime data (may contain user content)
-.Herdchestra/
-/data/
-/logs/
-/attachments/
-/snapshots/
-
-# Agent session state (not project source)
-/.omo/
-
-# Python bytecode
-__pycache__/
-*.pyc
-
-# Node.js
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# OS metadata
 .DS_Store
 Thumbs.db
-Desktop.ini
