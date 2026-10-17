@@ -1,5 +1,14 @@
 # 万象
 
+> **项目本体已迁移至 `wanxiang2/` 子模块（2026-10-17）：本旧仓库不再是产品本体，退役进行中。**
+> 万象——把「对话」当成账本来管的 AI 聊天客户端——唯一入口现在是 `wanxiang2/`：
+> 启动、构建、测试、发布全部经它自己的入口——`wanxiang2/run-desktop.sh`（桌面）、
+> `wanxiang2/run-pwa.sh`（PWA）、`wanxiang2/publish.sh`（自包含发布）、`wanxiang2/x`（库与组合者的
+> 测试/检查/产包），自有 CI（`wanxiang2/.github/workflows/ci.yml`、`release-publish.yml`）。
+> 本仓库宿主壳 `src/` 已净化为过渡入口薄壳（职责全部经 wanxiang2 本地包消费）；
+> 宿主壳物理删除与历史资产逐项处置是遗留项，见 `PLAN.md` §1.2、§4.1 与 §6「退役执行进展」。
+> 以下产品描述适用于 wanxiang2 中的现行实现，在本仓库保留作历史与导航参考。
+
 一个把「对话」当成账本来管的 AI 聊天客户端。
 
 每个实例既是主机也是客户端：主机跑模型、存对话、管密钥；客户端只是它的一个视图。
@@ -13,6 +22,15 @@
 ---
 
 ## 快速开始
+
+现行入口在 `wanxiang2/` 内运行（见文首声明）：
+
+```bash
+./run-desktop.sh    # 产包 → 构建 → 启动桌面（主机 + 界面）
+./run-pwa.sh        # 产包 → 构建 PWA → 本机静态托管（默认端口 8000）
+```
+
+以下为旧仓库入口期的原始记录（入口已退役过渡，宿主壳删除与资产处置见 `PLAN.md` §6）：
 
 ```bash
 ./start.sh
@@ -235,12 +253,12 @@ defaultModel = "gemini-2.5-flash"
 
 ### 协议与落盘已切换到标准承载（2026-09-29）
 
-| 层 | 承载 | 实现 |
+| 层 | 承载 | 实现（wanxiang2 现行位置；旧宿主路径已随工程退出） |
 |---|---|---|
-| 线上（WebSocket `/ws`） | **AG-UI 1.0** 事件（标准面 + `wanxiang.dev/*` CUSTOM 面） | `src/Wanxiang.Protocol/WireAgui.fs` |
-| 落盘（`events/*.jsonseq`） | **RFC 7464** JSON Text Sequence（`RS`+JSON+`LF`），`commitId`/`bootId` 字符串承载 | `src/Wanxiang.Core/Ledger/` + `src/Wanxiang.Store/JsonSeqWriter.fs` |
-| 幂等哈希 | **RFC 8785** JCS | `src/Wanxiang.Core/Ledger/Jcs.fs`（手写 `CanonicalJson` 已删） |
-| 消息模型 | AG-UI 消息对象为落盘权威，MAF `ChatMessage` 为运行时 | `src/Wanxiang.Agent/MessageMap.fs` |
+| 线上（WebSocket `/ws`） | **AG-UI 1.0** 事件（标准面 + `wanxiang.dev/*` CUSTOM 面） | `compose/AguiWire` + `libs/Wire` |
+| 落盘（`events/*.jsonseq`） | **RFC 7464** JSON Text Sequence（`RS`+JSON+`LF`），`commitId`/`bootId` 字符串承载 | `libs/JsonSeq` + `libs/Ledger`（经 `compose/LedgerStore` 组合） |
+| 幂等哈希 | **RFC 8785** JCS | 第三方 `Jcs.Net` + `libs/Canonical`（手写 `CanonicalJson` 已删） |
+| 消息模型 | AG-UI 消息对象为落盘权威，MAF `ChatMessage` 为运行时 | `libs/AguiMessageMap` |
 
 56 个 `WireEvent` 语义变体**保留**（语义层不换，承载层换）；
 `protocol.hello` / `protocol.upgrade-required` 已删除（版本改 in-band）；
@@ -356,6 +374,10 @@ macOS 上 `Ctrl` 换成 `⌘`。完整列表按 `Ctrl` `/` 查看。
 
 ## 开发
 
+现行开发入口在 `wanxiang2/` 内运行：`./x test <lib>` 逐库构建与测试、`./x check` 架构合规检查、
+`./x pack` 打交付包、`./x compose` 清缓存后从 `artifacts/feed` 干净消费测组合者、`./x all` 依次执行全部；
+CI 见 `wanxiang2/.github/workflows/ci.yml`。以下为旧仓库过渡期构建链的原始记录（宿主壳与这条链本身待处置）：
+
 ```bash
 git submodule update --init -- wanxiang2
 tools/wanxiang2-feed.sh
@@ -418,8 +440,12 @@ CI、发布和压力任务都先检出锁定的新库并生成包源，再 resto
 
 ### 发布
 
-推 `v*` 标签会触发 `.github/workflows/release.yml`：构建 Linux / Windows / macOS（Intel、Apple 芯片）
-四个自包含包（无需安装 .NET），挂到一个**草稿** Release，不会自动发布。步骤见 `docs/STATUS.md`。
+现行发布线在 `wanxiang2/`：`./publish.sh [--draft] <rid|--all> [version]`——四个 RID
+（linux-x64 / win-x64 / osx-arm64 / osx-x64）自包含发布、打包 tar.gz/zip + SHA-256，
+`--draft` 把产物挂到 GitHub **草稿** Release；CI 侧见 `wanxiang2/.github/workflows/release-publish.yml`。
+
+以下为旧仓库发布线记录：推 `v*` 标签会触发 `.github/workflows/release.yml`：构建 Linux / Windows / macOS（Intel、Apple 芯片）
+四个自包含包（无需安装 .NET），挂到一个**草稿** Release，不会自动发布。`docs/STATUS.md` 已改为退役状态声明（原发版步骤见其 git 历史）。
 
 ### 项目结构
 
@@ -427,9 +453,11 @@ CI、发布和压力任务都先检出锁定的新库并生成包源，再 resto
 |---|---|
 | `wanxiang2/libs` | 独立职责：账本、配置、协议、模型、传输、界面行为等；库之间不相互引用 |
 | `wanxiang2/compose` | 经交付包组合独立职责，形成 EventStore、ServerApp、WsClient、各界面 Desk 等能力 |
-| `Wanxiang.UI` | 共用界面的宿主接线及仍待抽取的视图；删除与撤销已经由 DeletionDesk 承担 |
-| `Wanxiang.App` | 桌面入口 |
-| `Wanxiang.Pwa` | 浏览器入口（browser-wasm） |
+| `wanxiang2/app/Desktop` | **现行桌面入口**（已纳入 `wanxiang2.slnx`） |
+| `wanxiang2/app/Pwa` | **现行浏览器入口**（browser-wasm，已纳入 `wanxiang2.slnx`） |
+| `Wanxiang.UI` | （退役中·过渡遗留）宿主 UI 壳已净化：仅剩 `Model/` 少量 IO 壳与 `Controls/KeyShortcut.fs`，实现全部经约 180 个 `Wanxiang2.*` 本地包消费；待物理删除 |
+| `Wanxiang.App` | （退役中·过渡遗留）旧桌面入口薄壳，待物理删除 |
+| `Wanxiang.Pwa` | （退役中·过渡遗留）旧浏览器入口薄壳（browser-wasm），待物理删除 |
 
 ### 开发期工具
 
@@ -468,7 +496,7 @@ wanxiang2 `libs/ThemeFonts/Assets/Fonts/LICENSE-Sarasa.txt`）的子集，
 wanxiang2 `libs/ThemeFonts/Assets/Fonts/LICENSE-KaTeX.txt`）。
 
 代码着色用 [highlight.js](https://highlightjs.org)（BSD-3-Clause，见
-`src/Wanxiang.UI/Assets/Js/LICENSE-highlight.js.txt`），公式排版用
+wanxiang2 `libs/RichScripts/js/LICENSE-highlight.js.txt`），公式排版用
 [KaTeX](https://katex.org)；桌面端在进程内执行它们所依赖的
 JS 解释器是 [Jint](https://github.com/sebastienros/jint)（BSD-2-Clause）。
 

@@ -108,24 +108,24 @@ module Headless =
     ///     view.Build())
     /// ```
 
-    /// 模块级 Avalonia 对象（`Tokens` 的主题画笔）在 Avalonia 12 里构造时就绑定
+    /// 模块级 Avalonia 对象（`SharedTheme.manager` 的主题画笔）在 Avalonia 12 里构造时就绑定
     /// `Dispatcher.CurrentDispatcher`（构造它的线程），之后**永不换绑**。若首个碰到
-    /// `Tokens` 的是 xunit 工作线程上的纯逻辑断言（如 `Tokens.iconGlyph`），整套画笔就
-    /// 归那个线程所有，此后每个 UI 测试收尾的 `Tokens.apply` 都抛 VerifyAccess——
+    /// `SharedTheme.manager` 的是 xunit 工作线程上的纯逻辑断言（如取某个 Metric 值），整套画笔就
+    /// 归那个线程所有，此后每个 UI 测试收尾的 `Apply` 都抛 VerifyAccess——
     /// 一个测试的顺序毒化整个分组（决策 420–422）。
     ///
-    /// 因此：会话一建立就先在 UI 线程上触发 `Tokens` 的静态初始化（由程序集夹具
+    /// 因此：会话一建立就先在 UI 线程上触发 `SharedTheme.manager` 的静态初始化（由程序集夹具
     /// `UiThreadWarmup` 在任何测试之前调用，`run` 首次调用时兜底再做一次）。
     let private warmed =
         lazy
             (session.Value.Dispatch(
-                // 必须真的「用」到画笔：`Tokens.canvas |> ignore` 会被 F# 优化器整句消掉，
+                // 必须真的「用」到画笔：`Brush |> ignore` 会被 F# 优化器整句消掉，
                 // 静态初始化根本不发生，夹具形同虚设（决策 421 的根因）。CheckAccess 是方法调用，消不掉。
                 Action(fun () ->
-                    if not (Wanxiang.UI.Tokens.canvas.CheckAccess()) then
+                    if not (SharedTheme.manager.Brush(Wanxiang2.ThemePalette.PaletteKey.Canvas).CheckAccess()) then
                         failwithf
-                            "预热时 Tokens 画笔已归线程 %d 所有，不是 headless UI 线程 %d（决策 421）"
-                            Wanxiang.UI.Tokens.canvas.Dispatcher.Thread.ManagedThreadId
+                            "预热时主题画笔已归线程 %d 所有，不是 headless UI 线程 %d（决策 421）"
+                            (SharedTheme.manager.Brush(Wanxiang2.ThemePalette.PaletteKey.Canvas).Dispatcher.Thread.ManagedThreadId)
                             Environment.CurrentManagedThreadId),
                 CancellationToken.None
             ).GetAwaiter().GetResult())
@@ -134,7 +134,7 @@ module Headless =
     let warmUp () = warmed.Force()
 
     /// 画笔所有权自检：不属于会话线程时给出**指名根因**的失败，而不是 117 个看似无关的 VerifyAccess。
-    let internal tokensOwnedByUiThread () = Wanxiang.UI.Tokens.canvas.CheckAccess()
+    let internal tokensOwnedByUiThread () = SharedTheme.manager.Brush(Wanxiang2.ThemePalette.PaletteKey.Canvas).CheckAccess()
 
     let run (body: unit -> unit) : unit =
         warmUp ()
@@ -142,24 +142,24 @@ module Headless =
             Action(fun () ->
                 if not (tokensOwnedByUiThread ()) then
                     failwithf
-                        "Tokens 主题画笔归线程 %d 所有，不是 headless UI 线程 %d：有代码在 UI 线程之外首次触发了 Tokens 的静态初始化（决策 421）"
-                        Wanxiang.UI.Tokens.canvas.Dispatcher.Thread.ManagedThreadId
+                        "主题画笔归线程 %d 所有，不是 headless UI 线程 %d：有代码在 UI 线程之外首次触发了 SharedTheme 的静态初始化（决策 421）"
+                        (SharedTheme.manager.Brush(Wanxiang2.ThemePalette.PaletteKey.Canvas).Dispatcher.Thread.ManagedThreadId)
                         Environment.CurrentManagedThreadId
                 try
                     body ()
                 finally
                     // 全局可变状态兑底：测试体里改过的减弱动效偏好一律归零，
                     // 避免泄漏给后续在 UI 线程上串行执行的其它测试。
-                    // （Tokens/MotionPolicy/RichBackend 都是模块级可变全局，
+                    // （SharedTheme 的 manager / Motion 都是模块级可变全局，
                     // 并行化后这类泄漏从「偶发」变成「必现交叉污染」。）
-                    Wanxiang.UI.MotionPolicy.setReduced false
-                    Wanxiang.UI.Tokens.apply (Wanxiang.UI.Tokens.current ())),
+                    SharedTheme.manager.Motion.SetReduced false
+                    SharedTheme.manager.Apply(SharedTheme.manager.Mode)),
             CancellationToken.None
         ).GetAwaiter().GetResult()
 
 
 
-/// 程序集夹具：xunit v3 在任何测试运行之前构造它，保证 `Tokens` 等模块级 UI 对象
+/// 程序集夹具：xunit v3 在任何测试运行之前构造它，保证 `SharedTheme.manager` 等模块级 UI 对象
 /// 在 headless UI 线程上初始化，不论随机化后的测试顺序如何（决策 420）。
 type UiThreadWarmup() =
     do Headless.warmUp ()

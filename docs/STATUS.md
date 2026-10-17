@@ -1,66 +1,33 @@
-# 万象 · 收敛状态（2026-10-13）
+# 万象 · 退役状态（2026-10-17）
 
-项目进入收敛期：**不再引入新功能**，只修缺陷、打磨与补文档。本文是功能清单、已知局限和发版步骤的最终说明。
+本文原为旧仓库（wanxiang）的收敛状态说明（2026-10-13 版）。项目本体已迁移至
+`wanxiang2/` 子模块并完成扶正：原收敛目标已在 wanxiang2 落地，本文据此改为
+退役状态表述。
 
-## 1. 功能清单
+## 1. 收敛目标在 wanxiang2 的落地
 
-**连接与设备**
-- 一个实例同时是主机和客户端；桌面端（Linux / Windows / macOS）为完整节点，PWA 由主机托管。
-- 配对码接入（6 位、5 分钟有效、失败限流）；桌面端可生成配对邀请与二维码；设备列表与吊销。
-- 连接时校验 Origin / Host，阻止 DNS 重绑定与跨站连接；本机打开 PWA 也不免配对（`docs/security/loopback-pwa-pairing.md`）。
-- 主机能力声明：连到旧版主机时隐藏不支持的入口，并提示「主机版本较旧」。
-- 断网自动重连、网络恢复立即重连。
+- **唯一入口**：桌面 `wanxiang2/app/Desktop/`、PWA `wanxiang2/app/Pwa/`，两工程已纳入
+  `wanxiang2/wanxiang2.slnx`；旧仓库 `src/` 宿主壳退役中（已净化为过渡入口薄壳，待物理删除）。
+- **独立启动**：`wanxiang2/run-desktop.sh`（产包 → 构建 → 启动桌面）、`wanxiang2/run-pwa.sh`
+  （产包 → 构建 PWA → 本机静态托管，默认端口 8000）；脚本明示不依赖宿主仓库的 start.sh 与包源脚本。
+- **独立构建/测试**：`wanxiang2/x`（`test` 逐库、`check` 架构合规、`pack` 交付包、`compose`
+  干净消费测组合者、`all` 依次全部）；slnx 实测含 254 个库目录，每库带自有 tests 工程；
+  自有 CI `wanxiang2/.github/workflows/ci.yml`。
+- **自包含发布闭环**：`wanxiang2/publish.sh`——四 RID（linux-x64 / win-x64 / osx-arm64 / osx-x64）
+  自包含 publish → tar.gz/zip + SHA-256 → `--draft` 挂 GitHub 草稿 Release，并校验发布目录内嵌的
+  PWA bundle；Avalonia 浏览器补丁工具链（`tools/patch_avalonia_js.py` + 校验脚本）已在 wanxiang2。
+- **运行验证**：双入口 0 错误编译、publish 全通过（EXIT=0）、`x check` 全绿、571 项基线通过，
+  来自 DevOps 执行记录（2026-10-17）；571 项基线的分支记录另见 `wanxiang2/AGENTS.md` 迁移状态注。
 
-**对话**
-- 流式回复；停止、重新生成、失败重试；中途失败的半截回复由主机保存，可「继续生成」（刷新、换设备、主机重启后仍可用；真正断点续写仅 Anthropic）。
-- 编辑并分叉、版本切换、分叉面包屑与编号；「从此分叉」。
-- 长对话窗口化加载、「上一轮 / 下一轮」跳转、加载失败可重试。
-- 消息链接 `wanxiang://`（Linux / Windows 已注册）、点开即定位并高亮。
-- 附件：图片（缩略图、超大图自动缩小、HEIC 提示）、文本文件；按模型能力拦截不支持的类型（能力可在设置中手动指定，主机持久化）。
-- 工具与 MCP：审批卡片（策略、5 分钟超时、等待批准状态），PWA 同样支持审批。
-- 错误卡片：三段式说明 + 就地恢复操作（密钥失效、限流倒计时、额度、上下文过长）。
-- 本地草稿（可关闭、可清空）；发送确认、排队发送、不重复提交。
+## 2. 原收敛期内容的处置
 
-**对话库与导航**
-- 置顶、归档、多选批量操作；删除 8 秒内可撤销（含 Ctrl / ⌘ + Z）。
-- 侧栏全文搜索（Ctrl / ⌘ + Shift + F）、命令面板（Ctrl / ⌘ + K，拼音首字母、最近使用）。
-- 导出 Markdown / JSON（去除密钥，JSON 保留分叉与版本）；导入先预览、不触发生成。
-- 对话预设（模型、系统指令、参数、工具）；无预设时首次界面不变。
+2026-10-13 版的功能清单、已知局限、发版步骤与测试说明不再在旧仓库维护，避免双真源；
+现行功能与质量以 wanxiang2 为准（见 `wanxiang2/AGENTS.md` 与 `README.md` 文首声明），
+原文可在本仓库 git 历史中查阅。
 
-**模型服务**
-- 预设服务（OpenAI 兼容、Anthropic、Gemini、本机 Ollama 自动识别）；自定义兼容地址；全局默认模型；输入框内模型标签与快速切换。
+## 3. 遗留与待处置（未完成）
 
-**体验与质量**
-- 浅色 / 深色主题；对比度、读屏名称、键盘可达（F6 / Tab 到提示条）由 `A11yRegressionTests` 守护。
-- 中文输入法：所有输入框在组字期间回车不提交；PWA 直接上屏文字（联想、语音、粘贴）不丢失。
-- 手机 PWA：高 DPI 修正、安全区、键盘弹出不挡输入框、精简输入栏。
-- 主机配置被外部修改时以用户版本为准；`doctor` 自检（命令行与设置内「检查主机」）。
-
-## 2. 已知局限
-
-- **未在真机上验证**：iPhone / Android 上的键盘、刘海安全区、PWA 安装；全部手机结论来自模拟器（Chromium 设备模拟）。
-- **输入法**：仅在 headless Chromium 中用合成组字事件验证，未用真实拼音 / 五笔 / 语音输入法实测。PWA 直接上屏修复是对 Avalonia 上游缺陷的补丁，上游修复后应删除。
-- **真实模型服务**：自动化测试只跑 mock（`tools/mock_openai.py`）；各家真实接口的错误格式、限流头、视觉能力探测未逐一实测。
-- **继续生成**：只有 Anthropic 是真正断点续写，其他服务是另起一段接续。
-- **深链接**：macOS 只有配置模板，未注册 `wanxiang://`。
-- **macOS 包未签名、未公证**，首次打开需在「系统设置 → 隐私与安全」中放行；Windows 包也未签名。
-- **屏幕阅读器**：只有自动化的名称 / 帮助文本检查，未用 NVDA / VoiceOver / Orca 实测。
-- **输入框静止态描边**对比度低于 3:1（聚焦态达标），见 `docs/ux/a11y-audit.md` §2；改动视觉，收敛期不做。
-- **10^6 提交冷启动基准**仍是手动测试（唯一的 `Skip`，见 `docs/contracts/resource-budgets.md` §21.6），待第二版 compaction 后再评估。
-- 未发布过任何正式版本；尚未有 tag / Release。
-
-## 3. 如何发版
-
-1. 确认 `main` 上 CI（`wanxiang-ci`）为绿；本地可再跑 `./run-tests.sh -j 4 --large-history`。
-2. 可选：手动触发 `wanxiang-release`（Actions → wanxiang-release → Run workflow，填 `v0.0.0-test`），只产出 artifact，不建 Release，用来预检四个平台的包。
-3. 打标签并推送：
-   ```bash
-   git tag -a v0.1.0 -m "万象 v0.1.0" && git push origin v0.1.0
-   ```
-4. 工作流构建 `linux-x64`、`win-x64`、`osx-x64`、`osx-arm64` 自包含包（Linux 包会先跑发布产物冒烟），并创建 / 更新一个**草稿** Release。已发布的 Release 不会被覆盖。
-5. 在 GitHub Releases 页面检查附件与说明（注明 macOS / Windows 未签名），手动点「Publish」。
-
-## 4. 测试与稳定性
-
-- `./run-tests.sh -j 4`（界面分片 + 非界面），`--large-history` 加跑大历史档；CI 核对各组测试数量不减少。
-- `tools/stress.sh -n 3 --hog <线程>` 高负载重复全套；`stress.yml` 每晚运行并输出 flake 报告（不阻塞合并）。
+- 宿主壳 `src/`（三工程薄壳、`wanxiang.slnx`、`src/Directory.Build.props`）尚未物理删除。
+- 根目录 `start.sh`、`run-tests.sh`、`tests/`、`tools/`、`packaging/` 的处置尚未逐项执行
+  （kelivo/、site/、shots*/、docs/ 其余文档的「保留 / 归档 / 删除」判定亦未完成）。
+- 退役完成的判定以 `PLAN.md` §1.2 为准；本次执行进展与出处见其 §6。

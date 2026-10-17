@@ -35,8 +35,8 @@ type IconCenteringTests() =
     /// 反射枚举 Icons 模块的语义图标工厂（IBrush -> Control）。
     /// 加新图标不必登记——自动纳入验证面；反射面塌缩（一个都找不到）会被计数断言拦下。
     let factories () : (string * (IBrush -> Control)) list =
-        // F# 模块名不能进 typeof<>：借同命名空间的 ThemeMode 锚到程序集，再按名取模块类。
-        let moduleType = typeof<ThemeMode>.Assembly.GetType("Wanxiang.UI.Icons", throwOnError = true)
+        // F# 模块名不能进 typeof<>：借 Wanxiang.UI 命名空间下的类型（EntryShells 的 Composer）锚到程序集，再按名取模块类。
+        let moduleType = typeof<Wanxiang.UI.Composer>.Assembly.GetType("Wanxiang.UI.Icons", throwOnError = true)
         let flags = BindingFlags.Public ||| BindingFlags.Static
         // 模块级 let 绑定的函数值编译成静态属性；语法函数编译成静态方法。两条都扫。
         let fromProperties =
@@ -186,7 +186,7 @@ type IconCenteringTests() =
         // 「用官方数据 + 自家解析器」同样是山寨，因此连 `Geometry.Parse` 都不许出现。
         // 只看代码行：注释里提到这些名字是**说明禁令**，不是违规。
         let source =
-            File.ReadAllLines(Path.Combine(repoRoot (), "src/Wanxiang.UI/Design/Icons.fs"))
+            File.ReadAllLines(Path.Combine(repoRoot (), "wanxiang2/compose/EntryShells/Icons.fs"))
             |> Array.filter (fun line ->
                 let t = line.Trim()
                 not (t.StartsWith "//") && not (t.StartsWith "*") && not (t.StartsWith "///"))

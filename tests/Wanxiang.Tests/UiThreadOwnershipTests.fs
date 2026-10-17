@@ -16,8 +16,8 @@ type UiThreadOwnershipTests() =
 
     [<Fact>]
     member _.``touching tokens off the ui thread first cannot poison later ui tests`` () =
-        let t = Thread(fun () -> Wanxiang.UI.Tokens.canvas |> ignore)
+        let t = Thread(fun () -> Wanxiang.UI.SharedTheme.manager.Brush(Wanxiang2.ThemePalette.PaletteKey.Canvas) |> ignore)
         t.Start()
         t.Join()
-        Headless.run (fun () -> Wanxiang.UI.Tokens.apply (Wanxiang.UI.Tokens.current ()))
+        Headless.run (fun () -> Wanxiang.UI.SharedTheme.manager.Apply(Wanxiang.UI.SharedTheme.manager.Mode))
         Headless.run (fun () -> Assert.True(Headless.tokensOwnedByUiThread ()))

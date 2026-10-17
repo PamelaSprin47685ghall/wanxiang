@@ -40,7 +40,7 @@ type Cost(output: ITestOutputHelper) =
           OpenLink = ignore; CopyLink = None; Recover = None }
 
     let context: Wanxiang2.MessageCardView.CardContext =
-        { FontSize = Tokens.fontReading
+        { FontSize = SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.FontReading).Value
           AutoCollapseReasoning = true
           Streaming = false
           IsLastAssistant = false

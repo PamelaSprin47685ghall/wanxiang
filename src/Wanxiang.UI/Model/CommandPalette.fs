@@ -11,13 +11,14 @@ module PaletteRecent =
     let loadRecent () : string list =
         try
             let path = recentFile ()
-            match LocalText.read path with
-            | Some text -> PaletteRecent.decode text
-            | None -> []
+            if IO.File.Exists path then PaletteRecent.decode (IO.File.ReadAllText path) else []
         with _ -> []
 
     let saveRecent (recent: string list) =
         try
             let path = recentFile ()
-            LocalText.write path (PaletteRecent.encode recent) |> ignore
+            IO.Directory.CreateDirectory(IO.Path.GetDirectoryName path) |> ignore
+            let tmp = path + ".tmp"
+            IO.File.WriteAllText(tmp, PaletteRecent.encode recent)
+            IO.File.Move(tmp, path, true)
         with _ -> ()

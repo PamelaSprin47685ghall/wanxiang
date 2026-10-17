@@ -139,11 +139,11 @@ let private samplePhoto () =
 [<Fact>]
 let ``r15 截图：图片缩略图、只吃文字的模型拦下、深色、手机宽度`` () =
     Headless.run (fun () ->
-    MotionPolicy.setReduced true
-    let scene (theme: ThemeMode) (width: float) (vision: VisionSupport) (label: string) (shot: string) =
-        Tokens.apply theme
+    SharedTheme.manager.Motion.SetReduced true
+    let scene (theme: Wanxiang2.ThemePalette.PaletteMode) (width: float) (vision: VisionSupport) (label: string) (shot: string) =
+        SharedTheme.manager.Apply theme
         let composer = Composer(actions ignore)
-        let host = Grid(Background = Tokens.canvas)
+        let host = Grid(Background = SharedTheme.manager.Brush(Wanxiang2.ThemePalette.PaletteKey.Canvas))
         host.Children.Add(Border(Padding = Thickness 16.0, VerticalAlignment = Layout.VerticalAlignment.Bottom, Child = composer.Host))
         let window = show host width 300.0
         try
@@ -160,9 +160,9 @@ let ``r15 截图：图片缩略图、只吃文字的模型拦下、深色、手�
             capture window shot
         finally
             window.Close()
-    scene ThemeMode.Light 760.0 VisionYes "OpenAI · gpt-4o" "01-thumbnails-vision-model"
-    scene ThemeMode.Light 760.0 VisionNo "DeepSeek · deepseek-chat" "02-text-only-model-blocks-image"
-    scene ThemeMode.Dark 760.0 VisionNo "Ollama · llama3.1:8b" "03-blocked-dark"
-    scene ThemeMode.Light 390.0 VisionYes "Ollama · llava:13b" "04-mobile-thumbnails"
-    Tokens.apply ThemeMode.Light
+    scene Wanxiang2.ThemePalette.PaletteMode.Light 760.0 VisionYes "OpenAI · gpt-4o" "01-thumbnails-vision-model"
+    scene Wanxiang2.ThemePalette.PaletteMode.Light 760.0 VisionNo "DeepSeek · deepseek-chat" "02-text-only-model-blocks-image"
+    scene Wanxiang2.ThemePalette.PaletteMode.Dark 760.0 VisionNo "Ollama · llama3.1:8b" "03-blocked-dark"
+    scene Wanxiang2.ThemePalette.PaletteMode.Light 390.0 VisionYes "Ollama · llava:13b" "04-mobile-thumbnails"
+    SharedTheme.manager.Apply(Wanxiang2.ThemePalette.PaletteMode.Light)
     )

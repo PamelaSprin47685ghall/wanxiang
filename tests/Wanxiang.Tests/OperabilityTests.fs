@@ -47,7 +47,7 @@ module OperabilityTests =
               Recover = None }
 
     let private makeContext (isLastAssistant: bool) (streaming: bool) : Wanxiang2.MessageCardView.CardContext =
-        { FontSize = Tokens.fontReading
+        { FontSize = SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.FontReading).Value
           AutoCollapseReasoning = true
           Streaming = streaming
           IsLastAssistant = isLastAssistant

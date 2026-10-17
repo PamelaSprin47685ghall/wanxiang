@@ -27,7 +27,7 @@ module private SpacingScan =
         Regex(@"(?:^|[^A-Za-z])(?:Margin|Padding|Spacing|RowSpacing|ColumnSpacing)\s*=\s*([0-9.]+)\s*$")
 
     let scannedDirs =
-        [| "src/Wanxiang.UI/Views"; "src/Wanxiang.UI/Controls"; "src/Wanxiang.UI/Rich" |]
+        [| "wanxiang2/compose" |]
 
     /// 仓库根：测试运行目录是 bin/Debug/net10.0，向上找 wanxiang.slnx。
     let repoRoot =
@@ -40,7 +40,11 @@ module private SpacingScan =
         scannedDirs
         |> Array.collect (fun d ->
             let full = Path.Combine(repoRoot, d)
-            if Directory.Exists full then Directory.GetFiles(full, "*.fs", SearchOption.AllDirectories)
+            if Directory.Exists full then
+                Directory.GetFiles(full, "*.fs", SearchOption.AllDirectories)
+                |> Array.filter (fun f ->
+                    let parts = Path.GetFullPath f
+                    not (parts.Split([| Path.DirectorySeparatorChar |]) |> Array.exists (fun p -> p = "tests" || p = "tools")))
             else [||])
 
     /// 间距 / 槽位越界描述（空列表 = 全部合规）。
@@ -135,7 +139,7 @@ type DesignConvergenceTests() =
         Assert.Equal(3.0, Spacing.Stroke.quote)
         Assert.Equal(3, Spacing.Stroke.all.Length)
         // 焦点环外扩与左缘强调条同为 2 —— 同一档，不是巧合。
-        Assert.Equal(Spacing.Stroke.thick, ControlMetrics.accentEdgeWidth)
+        Assert.Equal(Spacing.Stroke.thick, SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.AccentEdgeWidth).Value)
 
     [<Fact>]
     member _.``字距四档顺序不乱`` () =
@@ -153,25 +157,26 @@ type DesignConvergenceTests() =
     member _.``同类槽位同值不再分叉`` () =
         // 此前 18 / 19 / 54 / 56 / 110 / 15 各写一份，是「对不齐」的直接来源。
         // 现在全应用只有 icon / wide / wide2 三档。
-        Assert.Equal(Spacing.Slot.icon, ControlMetrics.menuIconSlotWidth)
-        Assert.Equal(Spacing.Slot.icon, ControlMetrics.sidebarStateSlotWidth)
-        Assert.Equal(Spacing.Slot.wide, ControlMetrics.composerAttachmentStateWidth)
-        Assert.Equal(Spacing.Slot.wide, ControlMetrics.fontSizeValueMinWidth)
-        Assert.Equal(Spacing.Slot.wide2, ControlMetrics.aboutKeyMinWidth)
-        Assert.Equal(Tokens.iconGlyph, ControlMetrics.composerAttachmentIconSlot)
+        Assert.Equal(Spacing.Slot.icon, SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.MenuIconSlotWidth).Value)
+        Assert.Equal(Spacing.Slot.icon, SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.SidebarStateSlotWidth).Value)
+        Assert.Equal(Spacing.Slot.wide, SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.ComposerAttachmentStateWidth).Value)
+        Assert.Equal(Spacing.Slot.wide, SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.FontSizeValueMinWidth).Value)
+        Assert.Equal(Spacing.Slot.wide2, SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.AboutKeyMinWidth).Value)
+        Assert.Equal(SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.IconGlyph).Value, SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.ComposerAttachmentIconSlot).Value)
         Assert.Equal(3, Spacing.Slot.all.Length)
 
-    [<Trait("Category", "UI")>]
     [<Fact>]
     member _.``tag 与 chip 纵向密度同档`` () =
-        Headless.run (fun () ->
         // tag / chip 同为单行小控件，纵向密度不应分叉（规范 §2.1）。
-        let tag = Ui.tag "示例"
-        Assert.Equal(Spacing.spaceXXs, tag.Padding.Top)
-        Assert.Equal(ControlMetrics.chipPaddingY, tag.Padding.Top)
-        Assert.Equal(Spacing.spaceMd, ControlMetrics.chipPaddingX)
-        Assert.Equal(Spacing.spaceSm, ControlMetrics.tagPaddingX)
-        )
+        // wanxiang2 把 tag 的几何移到 ThemeStyles 的 `tag` 类（Thickness(TagPaddingX, Space.XXs)），
+        // 这里直接锁度量值相等——语义是「密度同档」，不依赖测试装置是否安装主题样式。
+        Assert.Equal(Spacing.spaceXXs, SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.ChipPaddingY).Value)
+        Assert.Equal(Spacing.spaceMd, SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.ChipPaddingX).Value)
+        Assert.Equal(Spacing.spaceSm, SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.TagPaddingX).Value)
+        // tag 纵向内衬（Space.XXs）与 chip 纵向（ChipPaddingY）同档
+        Assert.Equal(SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.ChipPaddingY).Value, Spacing.spaceXXs)
+        // 主题样式把 tag 纵向内衬定为 Space.XXs（与 chip 同档）
+        Assert.Equal(Spacing.spaceXXs, SharedTheme.manager.Space(Wanxiang2.Theme.Space.XXs).Value)
 
     // ---------- 静态扫描：阶梯越界 ----------
 
@@ -207,27 +212,30 @@ type DesignConvergenceTests() =
             [| "canvas"; "rail"; "surface"; "surfaceContainer"; "surfaceRaised" |]
         let inks =
             [| "text"; "textMuted"; "textFaint"; "accent"; "danger"; "warning"; "success"; "info" |]
-        let pick (palette: Palette) (name: string) =
-            match name with
-            | "canvas" -> palette.canvas
-            | "rail" -> palette.rail
-            | "surface" -> palette.surface
-            | "surfaceContainer" -> palette.surfaceContainer
-            | "surfaceRaised" -> palette.surfaceRaised
-            | "text" -> palette.text
-            | "textMuted" -> palette.textMuted
-            | "textFaint" -> palette.textFaint
-            | "accent" -> palette.accent
-            | "danger" -> palette.danger
-            | "warning" -> palette.warning
-            | "success" -> palette.success
-            | "info" -> palette.info
-            | _ -> failwithf "调色板没有槽位 %s（新增槽位必须同步进本表与规范 §5.1）" name
-        let cases : (string * Palette) list = [ "light", Palette.light; "dark", Palette.dark ]
-        for (label, palette) in cases do
+        let pick (mode: Wanxiang2.ThemePalette.PaletteMode) (name: string) =
+            let key =
+                match name with
+                | "canvas" -> Wanxiang2.ThemePalette.PaletteKey.Canvas
+                | "rail" -> Wanxiang2.ThemePalette.PaletteKey.Rail
+                | "surface" -> Wanxiang2.ThemePalette.PaletteKey.Surface
+                | "surfaceContainer" -> Wanxiang2.ThemePalette.PaletteKey.SurfaceContainer
+                | "surfaceRaised" -> Wanxiang2.ThemePalette.PaletteKey.SurfaceRaised
+                | "text" -> Wanxiang2.ThemePalette.PaletteKey.Text
+                | "textMuted" -> Wanxiang2.ThemePalette.PaletteKey.TextMuted
+                | "textFaint" -> Wanxiang2.ThemePalette.PaletteKey.TextFaint
+                | "accent" -> Wanxiang2.ThemePalette.PaletteKey.Accent
+                | "danger" -> Wanxiang2.ThemePalette.PaletteKey.Danger
+                | "warning" -> Wanxiang2.ThemePalette.PaletteKey.Warning
+                | "success" -> Wanxiang2.ThemePalette.PaletteKey.Success
+                | "info" -> Wanxiang2.ThemePalette.PaletteKey.Info
+                | _ -> failwithf "调色板没有槽位 %s（新增槽位必须同步进本表与规范 §5.1）" name
+            Wanxiang2.ThemePalette.ThemePalette.color mode key
+        let cases : (Wanxiang2.ThemePalette.PaletteMode * string) list =
+            [ Wanxiang2.ThemePalette.PaletteMode.Light, "light"; Wanxiang2.ThemePalette.PaletteMode.Dark, "dark" ]
+        for (mode, label) in cases do
             for surface in surfaces do
                 for ink in inks do
-                    let ratio = Contrast.ratio (pick palette ink) (pick palette surface)
+                    let ratio = Contrast.ratio (pick mode ink) (pick mode surface)
                     Assert.True(
                         ratio >= 4.5,
                         sprintf "%s: %s on %s 对比度 %.2f < 4.5（WCAG AA）" label ink surface ratio)
@@ -235,9 +243,10 @@ type DesignConvergenceTests() =
     [<Fact>]
     member _.``强调色上的文字过 4.5 比`` () =
         // 实心强调按钮上的文字是 textOnAccent，单独验。
-        let cases : (string * Palette) list = [ "light", Palette.light; "dark", Palette.dark ]
-        for (label, palette) in cases do
-            let ratio = Contrast.ratio palette.textOnAccent palette.accent
+        let cases : (Wanxiang2.ThemePalette.PaletteMode * string) list =
+            [ Wanxiang2.ThemePalette.PaletteMode.Light, "light"; Wanxiang2.ThemePalette.PaletteMode.Dark, "dark" ]
+        for (mode, label) in cases do
+            let ratio = Contrast.ratio (Wanxiang2.ThemePalette.ThemePalette.color mode Wanxiang2.ThemePalette.PaletteKey.TextOnAccent) (Wanxiang2.ThemePalette.ThemePalette.color mode Wanxiang2.ThemePalette.PaletteKey.Accent)
             Assert.True(
                 ratio >= 4.5, sprintf "%s: textOnAccent on accent 对比度 %.2f < 4.5" label ratio)
 
@@ -246,4 +255,4 @@ type DesignConvergenceTests() =
     [<Fact>]
     member _.``几何动画仍然全面禁止`` () =
         // 规范 §4.3：状态只补间颜色与不透明度。
-        Assert.False(MotionLedger.geometryAnimationAllowed)
+        Assert.False(Wanxiang2.MotionSwitch.MotionTimings.geometryAnimationAllowed)

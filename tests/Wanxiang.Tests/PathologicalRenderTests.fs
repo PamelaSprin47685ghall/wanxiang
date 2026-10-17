@@ -17,7 +17,7 @@ type Pathological(output: ITestOutputHelper) =
     let timeRender (label: string) (text: string) =
         // 主题和控件的读取也在 Headless.run 内，不能在 xUnit 工作线程构造时初始化。
         let context: CardContext =
-            { FontSize = Tokens.fontReading
+            { FontSize = SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.FontReading).Value
               AutoCollapseReasoning = true
               Streaming = false
               IsLastAssistant = false

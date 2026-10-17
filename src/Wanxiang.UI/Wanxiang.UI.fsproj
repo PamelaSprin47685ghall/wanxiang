@@ -7,39 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- MotionPolicy 必须先于 Tokens 编译：Tokens 的主题颜色补间消费
-         MotionLedger.themeColorTransition 与 MotionPolicy.isReduced，
-         F# 要求被引用的模块在编译顺序上在前。MotionPolicy 自身无项目内依赖，置顶安全。 -->
-    <Compile Include="Design/SharedTheme.fs" />
-    <Compile Include="Design/MotionPolicy.fs" />
-    <Compile Include="Design/Palette.fs" />
-    <Compile Include="Design/Tokens.fs" />
-    <Compile Include="Design/Metrics.fs" />
-    <Compile Include="Design/Icons.fs" />
     <Compile Include="Model/StartupTrace.fs" />
-    <Compile Include="Model/ParityProbe.fs" />
-    <Compile Include="Model/LocalState.fs" />
-    <Compile Include="Model/UiPrefs.fs" />
-    <Compile Include="Rich/RichBackend.fs" />
-    <Compile Include="Model/ImageShrink.fs" />
-    <Compile Include="Model/DesktopLinks.fs" />
     <Compile Include="Model/CommandPalette.fs" />
     <Compile Include="Model/DraftStore.fs" />
     <Compile Include="Model/UnansweredReply.fs" />
-    <!-- Interaction 必须先于 Primitives：Primitives 的基控件挂 Interaction.surface。 -->
     <Compile Include="Controls/KeyShortcut.fs" />
-    <Compile Include="Controls/Interaction.fs" />
-    <Compile Include="Controls/Primitives.fs" />
-    <Compile Include="Controls/OverlayHost.fs" />
-    <Compile Include="Controls/Menu.fs" />
-    <Compile Include="Rich/Reading.fs" />
-    <Compile Include="Rich/Cards.fs" />
-    <Compile Include="CredentialStore.fs" />
-    <Compile Include="Views/Composer.fs" />
-    <Compile Include="Rich/DialogsHost.fs" />
-    <Compile Include="AppShell.fs" />
-    <Compile Include="Views/MainWindow.fs" />
-    <Compile Include="App.fs" />
   </ItemGroup>
 
   <!-- 内嵌字体（正文、等宽、KaTeX）归 Wanxiang2.ThemeFonts（avares://ThemeFonts）；这里只留品牌图。 -->
@@ -200,9 +172,20 @@
     <PackageReference Include="Wanxiang2.ImageFit" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ProbeCounter" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.StartupTrace" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.LocalHostGate" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ClientConnections" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ConversationExport" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ImageShrink" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ImageShrinkIo" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.AppShell" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.EntryShells" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.UiPrefsFile" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.LocalState" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ExternalLinks" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.UrlSchemeRegistrationIo" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SingleInstance" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.CredentialStore" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.RichBackend" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ConversationTransfer" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.ErrorRecovery" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.UrlSchemeRegistration" Version="0.0.0-local" />

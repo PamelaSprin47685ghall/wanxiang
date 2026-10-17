@@ -72,27 +72,29 @@ module StateScan =
     /// 只扫**消费侧**（Views / Controls / Rich）。`Design/` 是令牌定义处——
     /// 字号 / 行高 / 字重的裸值在那里是**定义**，不是违规。
     let consumerFiles () =
-        let root = Path.Combine(repoRoot (), "src", "Wanxiang.UI")
+        let root = Path.Combine(repoRoot (), "wanxiang2", "compose")
         let found = Directory.GetFiles(root, "*.fs", SearchOption.AllDirectories)
         found
         |> Array.filter (fun f ->
-            let name = Path.GetFileName f
-            name <> "Interaction.fs" && not (name.EndsWith(".g.fs")))
-        |> Array.filter (fun f ->
             let parts = Path.GetFullPath f
-            parts.Split([| Path.DirectorySeparatorChar |]) |> Array.contains "Design" |> not)
+            not (parts.Split([| Path.DirectorySeparatorChar |]) |> Array.exists (fun p -> p = "tests" || p = "tools"))
+            && not ((Path.GetFileName f).EndsWith(".g.fs")))
         |> Array.sort
 
     let sourceFiles () =
-        let root = Path.Combine(repoRoot (), "src", "Wanxiang.UI")
+        let root = Path.Combine(repoRoot (), "wanxiang2", "compose")
         let found = Directory.GetFiles(root, "*.fs", SearchOption.AllDirectories)
-        found |> Array.filter (fun f -> Path.GetFileName f <> "Interaction.fs") |> Array.sort
+        found
+        |> Array.filter (fun f ->
+            let parts = Path.GetFullPath f
+            not (parts.Split([| Path.DirectorySeparatorChar |]) |> Array.exists (fun p -> p = "tests" || p = "tools")))
+        |> Array.sort
 
-    /// 相对 `src/` 的路径（`Wanxiang.UI/Views/...`），与白名单同一坐标。
+    /// 相对 `wanxiang2/` 的路径（`compose/...`），与白名单同一坐标。
     let relativeOf (file: string) =
         let full = Path.GetFullPath file
         let parts = full.Split([| Path.DirectorySeparatorChar |])
-        let index = parts |> Array.tryFindIndex (fun p -> p = "src")
+        let index = parts |> Array.tryFindIndex (fun p -> p = "wanxiang2")
         match index with
         | Some i when i + 1 < parts.Length ->
             String.Join("/", parts[(i + 1) ..])
@@ -126,7 +128,7 @@ module StateConvergenceTests =
     ///   的表达，不是裸值；此时 `LineHeight = lh` 里的 `lh` 是局部绑定。
     let private typeScaleValue = Regex(@"FontSize\s*=\s*([0-9.]+)")
     let private weightValue = Regex(@"FontWeight\s*=\s*FontWeight\.([A-Za-z]+)")
-    let private lineHeightValue = Regex(@"LineHeight\s*=\s*([0-9.]+)\s*$")
+    let private lineHeightValue = Regex(@"(?<![A-Za-z])LineHeight\s*=\s*([0-9.]+)\s*$")
 
     /// 豁免清单：`源文件相对路径 -> (视觉副本处数上限, 理由)`。
     ///
@@ -134,14 +136,9 @@ module StateConvergenceTests =
     /// 那正是目标；变多才失败（说明有人在白名单文件里新写了状态视觉）。
     let private valuePaths : (string * int * string) list =
         [
-            "Wanxiang.UI/Views/Composer.fs", 2,
-            "model chip 的聚焦描边是值路径：ActionBorder 已有外环阴影，这里补的是\
-             与 hover 底色正交的**描边色**，表达「键盘焦点在此」而非表面状态"
-
-            "Wanxiang.UI/Rich/Cards.fs", 2,
-            "附件行内联文字的 hover 变色改的是 `Run.Foreground`——Markdown 内联渲染\
-             的产物，不是控件表面；伪类无法按内联片段选择"
-
+            // wanxiang2 组合者（compose/）的事件体不直接改视觉属性：状态反馈走 ThemeStyles 的
+            // 原生伪类（hover / focus / pressed / disabled）。白名单为空——新增任何
+            // 「事件体内改视觉」的代码都应先质疑是否能用伪类表达。
         ]
 
     [<Fact>]

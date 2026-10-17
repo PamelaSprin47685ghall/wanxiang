@@ -35,7 +35,7 @@ module R19SimplifyTests =
         Assert.NotEqual<string>(Wanxiang2.SettingsScreen.SettingsPart.label Wanxiang2.SettingsScreen.SettingsPart.Generation, Wanxiang2.SettingsScreen.SettingsPart.label Wanxiang2.SettingsScreen.SettingsPart.Appearance)
 
     let private ctx (isLastAssistant: bool) : Wanxiang2.MessageCardView.CardContext =
-        { FontSize = Tokens.fontReading
+        { FontSize = SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.FontReading).Value
           AutoCollapseReasoning = true
           Streaming = false
           IsLastAssistant = isLastAssistant
@@ -77,7 +77,7 @@ module R19SimplifyTests =
             let rows = cards |> List.map actionRow
             Assert.Equal(0.0, rows.[0].Opacity, 3)
             Assert.Equal(0.0, rows.[1].Opacity, 3)
-            Assert.Equal(Tokens.opacitySubtle, rows.[2].Opacity, 3)
+            Assert.Equal(SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.OpacitySubtle).Value, rows.[2].Opacity, 3)
             // 隐去不等于移除：按钮仍在、可聚焦、可命中（键盘与读屏照常抵达）。
             for r in rows do
                 Assert.True(r.IsVisible)

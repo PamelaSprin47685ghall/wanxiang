@@ -32,8 +32,46 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Wanxiang.UI\Wanxiang.UI.fsproj" />
+    <!-- 宿主特有符号（StartupTrace / IDraftBackend / PaletteRecent / UnansweredReply）由 Wanxiang.UI 提供；LocalHostGate 改由 Wanxiang2.LocalHostGate 包承接（GAP4），经 Wanxiang.UI 传递引用 -->
     <PackageReference Include="Wanxiang2.RichBrowser" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.BrowserImage" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ImageShrink" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ImageShrinkIo" Version="0.0.0-local" />
+    <!-- wanxiang2 入口壳 / 编排核心 / 本地 IO / 富文本接口 -->
+    <PackageReference Include="Wanxiang2.AppShell" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.EntryShells" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.RichBackend" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.LocalState" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ExternalLinks" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.CredentialStore" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.UiPrefsFile" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.UrlSchemeRegistrationIo" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.WsClient" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.Wire" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.Theme" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ThemePalette" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ThemeMetrics" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MotionSwitch" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.IconSet" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.UiPrefs" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DraftStore" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ComposerDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ChatScreen" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.Workspace" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SidebarDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SettingsScreen" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.OverlayDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ApprovalDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PaletteDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ModelSwitchDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MessageCardView" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.CodeTint" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MarkdownView" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BrowserPage" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BrowserCredentials" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BrowserDrafts" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BrowserLocalStore" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.BrowserProbe" Version="0.0.0-local" />
   </ItemGroup>
 
   <!-- AMD/ANGLE Chrome：Avalonia 默认 failIfMajorPerformanceCaveat=true 会得到“能创建但不呈现 Skia 帧”的 WebGL 上下文，表现为启动画面后白屏。

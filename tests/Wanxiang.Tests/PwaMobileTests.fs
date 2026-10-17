@@ -63,7 +63,7 @@ let ``avalonia.js 补丁只在 devicePixelContentBoxSize 与 CSS×DPR 一致时�
 
 [<Fact>]
 let ``画布容器按定位收进安全区并跟随可视视口，不再用对 absolute canvas 无效的 padding`` () =
-    let css = read "src/Wanxiang.Pwa/wwwroot/app.css"
+    let css = read "wanxiang2/app/Pwa/wwwroot/app.css"
     let i = css.IndexOf("/* 刘海与手势条")
     Assert.True(i >= 0)
     let block = css.Substring(i, css.IndexOf("#out canvas { touch-action", i) - i)
@@ -75,15 +75,15 @@ let ``画布容器按定位收进安全区并跟随可视视口，不再用对 a
 
 [<Fact>]
 let ``main.js 跟随 visualViewport 并把恢复信号交给 F# 侧`` () =
-    let js = read "src/Wanxiang.Pwa/wwwroot/main.js"
+    let js = read "wanxiang2/app/Pwa/wwwroot/main.js"
     Assert.Contains("visualViewport.addEventListener(\"resize\", syncVisualViewport)", js)
     Assert.Contains("--wx-vvh", js)
     Assert.Contains("export function wxResumeEpoch()", js)
     Assert.Contains("wxResumeEpoch,", js)
     Assert.Contains("visibilitychange", js)
-    let interop = read "vendor/wanxiang2/libs/BrowserPage/BrowserPage.cs"
+    let interop = read "wanxiang2/libs/BrowserPage/BrowserPage.cs"
     Assert.Contains("[JSImport(\"wxResumeEpoch\", \"wanxiang\")]", interop)
-    let shell = read "src/Wanxiang.UI/AppShell.fs"
+    let shell = read "wanxiang2/compose/AppShell/AppShell.fs"
     Assert.Contains("this.ResumeReconnectNow()", shell)
 
 let private runPatchArgs (args: string list) =
@@ -138,11 +138,14 @@ let ``决策 400：avalonia.js 补丁按内容版本化，旧版本从原始文�
 
 [<Fact>]
 let ``决策 401/404：PWA 补丁挂在 AppBundle 生成之后，App 发布带上已补丁的 PWA`` () =
+    // 补丁 target 在宿主 src/Wanxiang.Pwa（PatchAvaloniaJsWebGl/AfterPublish + CopyPwaToApp）；
+    // wanxiang2/app/Pwa 独立入口尚未迁补丁（其 fsproj 有 TODO(构建缺口) 注释）。
     let pwa = read "src/Wanxiang.Pwa/Wanxiang.Pwa.fsproj"
     Assert.Contains("AfterTargets=\"_WasmGenerateAppBundle\"", pwa)
-    Assert.Contains("PatchAvaloniaJsAfterPublish", pwa)
+    Assert.Contains("PatchAvaloniaJsWebGl", pwa)
     Assert.Contains("GeneratePathProperty=\"true\"", pwa)
     Assert.DoesNotContain("Condition=\"Exists('$(OutputPath)AppBundle/_framework/avalonia.js')\"", pwa)
+    Assert.Contains("PatchAvaloniaJsAfterPublish", pwa)
     let app = read "src/Wanxiang.App/Wanxiang.App.fsproj"
     Assert.Contains("PublishPwaBundle", app)
     Assert.Contains("verify_avalonia_patch.py", app)

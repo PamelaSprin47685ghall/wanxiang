@@ -8,7 +8,14 @@ open System.Runtime.InteropServices
 open System.Threading
 open System.Threading.Tasks
 open Avalonia
+open Avalonia.Controls
 open Avalonia.Controls.ApplicationLifetimes
+open Avalonia.Input.Platform
+open Avalonia.Threading
+open Wanxiang.Core
+open Wanxiang.Protocol
+open Wanxiang.Client
+open Wanxiang.UI
 
 module Program =
 
@@ -205,6 +212,353 @@ module Program =
                     let rich, backend = RichJintAdapter.create ()
                     Wanxiang.UI.RichBackend.install backend
                     Task.Run(fun () -> rich.Warmup()) |> ignore
+
+                    // ---- 批次 2 接线：ShellComposer + EntryShells（参照 PWA 入口的完整接线）----
+                    // 真实 WebSocket 客户端（WsClient 经 AppShell 包传递引用；命名空间 Wanxiang.Client）。
+                    let client = Wanxiang.Client.WsClient()
+                    let mutable shell: ShellComposer = Unchecked.defaultof<_>
+                    let mutable overlay: Wanxiang2.OverlayDesk.OverlayDesk = Unchecked.defaultof<_>
+                    let mutable rootGrid: Grid = null
+                    // TODO(接线缺口)：ShellComposer.Connect() 不把 lastUrl 传给 ports.Connect()，
+                    // 入口壳暂以 CredentialStore.defaultServerUrl()（本机 loopback）兜底；
+                    // 待 AppShell 组合者把 URL 传入 Connect 端口后改为使用传入值。
+                    let mutable lastUrl = Wanxiang.UI.CredentialStore.defaultServerUrl()
+                    // 计时器归入口壳：DispatcherTimer 包装成 ShellPorts.After / Every。
+                    let after (delay: TimeSpan) (action: unit -> unit) : IDisposable =
+                        let timer = DispatcherTimer()
+                        timer.Interval <- delay
+                        timer.Tag <- box (fun _ -> action ())
+                        timer.Tick.Add(fun _ -> action ())
+                        timer.Start()
+                        { new IDisposable with member _.Dispose() = timer.Stop() }
+                    let every (interval: TimeSpan) (action: unit -> unit) : IDisposable =
+                        let timer = DispatcherTimer()
+                        timer.Interval <- interval
+                        timer.Tick.Add(fun _ -> action ())
+                        timer.Start()
+                        { new IDisposable with member _.Dispose() = timer.Stop() }
+
+                    // ---- 桌面 IO 端口（ShellPorts 的 IO 面；浏览器端口给空实现）----
+                    // 剪贴板写：Avalonia 的剪贴板在 TopLevel.Clipboard（Application 没有 Clipboard）。
+                    // 桌面端经 Application.Current 的 IClassicDesktopStyleApplicationLifetime.MainWindow
+                    // （Window 是 TopLevel 子类）获取；失败静默（与宿主 AppShell 的 topLevel() 同路径）。
+                    let copyToClipboard (text: string) =
+                        try
+                            match Avalonia.Application.Current with
+                            | null -> ()
+                            | app ->
+                                match app.ApplicationLifetime with
+                                | :? IClassicDesktopStyleApplicationLifetime as lifetime when not (isNull lifetime.MainWindow) ->
+                                    match lifetime.MainWindow.Clipboard with
+                                    | null -> ()
+                                    | clip -> clip.SetTextAsync(text) |> ignore
+                                | _ -> ()
+                        with _ -> ()
+                    // 系统浏览器打开链接：wanxiang:// 投收件箱（MainView 订阅），http(s) 用系统浏览器
+                    let openLink (url: string) =
+                        if url.StartsWith("wanxiang://", StringComparison.OrdinalIgnoreCase) then
+                            Wanxiang.UI.ExternalLinks.post url
+                        else
+                            try
+                                let psi = Diagnostics.ProcessStartInfo(url)
+                                psi.UseShellExecute <- true
+                                Diagnostics.Process.Start psi |> ignore
+                            with _ -> ()
+                    // TODO(桌面 IO)：文件保存对话框 / 文件选择对话框 / 拖入 / 粘贴 / 草稿落盘暂为空实现，
+                    // 待桌面 IO 壳（StorageProvider / 文件对话框）接入后补全。
+                    let saveDownload (_name: string) (_bytes: byte[]) = ()
+                    let pickFiles () = ()
+                    let dropFiles (_items: obj list) = ()
+                    let pasteFromClipboard () : bool = false
+                    let applyDraftWrite (_write: DraftWrite) = ()
+                    // 系统深色偏好：桌面可经 Application.RequestedThemeVariant 判断，暂固定浅色（与 PWA 一致）
+                    let systemPrefersDark () : bool = false
+                    // 浏览器端口：桌面不用，空实现（与 AppShell「浏览器端口 PWA 才用」注释一致）
+                    let browserViewportWidth () : float = 0.0
+                    let browserResumeEpoch () : int = 0
+                    let browserPageUrl () : string = ""
+                    let browserConversationSucceeded () = ()
+                    let browserAddHidden (_: unit -> unit) = ()
+
+                    // 连接 / 认证发送（真实 WsClient；须在 buildViews 之前定义，ApprovalDesk 构造引用 send）
+                    let connectAsync () : Async<int> =
+                        async {
+                            try
+                                let! epoch = client.ConnectWithGenerationAsync(Uri lastUrl, CancellationToken.None) |> Async.AwaitTask
+                                return epoch
+                            with _ ->
+                                return -1
+                        }
+                    let sendAuth (epoch: int) (ev: WireEvent) =
+                        client.TrySendAtGenerationAsync(epoch, ev) |> ignore
+                    let send (ev: WireEvent) = client.TrySendAsync ev |> ignore
+                    let sendCommand (cmd: ClientCommand) = client.TrySendCommandAsync cmd |> ignore
+
+                    // ---- 视图组装（ShellViews）：参照 PWA 入口的 9 Desk 构造，桌面端共用同一批主题活实例 ----
+                    let overlayLook () : Wanxiang2.OverlayDesk.OverlayDeskLook =
+                        let theme = SharedTheme.manager
+                        let brush k = theme.Brush k :> Avalonia.Media.IBrush
+                        let metric m = theme.Metric m :> IObservable<float>
+                        let space s = theme.Space s :> IObservable<float>
+                        { Layer =
+                            { Scrim = brush Wanxiang2.ThemePalette.PaletteKey.Scrim
+                              Surface = brush Wanxiang2.ThemePalette.PaletteKey.Surface
+                              Edge = brush Wanxiang2.ThemePalette.PaletteKey.Border
+                              EdgeWidth = Wanxiang2.Theme.Live.map Thickness (metric Wanxiang2.ThemeMetrics.Metric.BorderWidth)
+                              DialogRadius = Wanxiang2.Theme.Live.map CornerRadius (space Wanxiang2.Theme.Space.RadiusLg)
+                              PopupRadius = Wanxiang2.Theme.Live.map CornerRadius (space Wanxiang2.Theme.Space.RadiusMd)
+                              DialogPadding = Wanxiang2.Theme.Live.map (fun v -> Thickness(v)) (space Wanxiang2.Theme.Space.Xl)
+                              PopupPadding = Wanxiang2.Theme.Live.map (fun v -> Thickness(v)) (space Wanxiang2.Theme.Space.Xs)
+                              DialogShadow = Wanxiang2.Theme.LiveValue(Avalonia.Media.BoxShadows()) :> IObservable<_>
+                              PopupShadow = Wanxiang2.Theme.LiveValue(Avalonia.Media.BoxShadows()) :> IObservable<_>
+                              ViewportInset = Wanxiang2.Theme.LiveValue 12.0 :> IObservable<_>
+                              PopupGap = Wanxiang2.Theme.LiveValue 4.0 :> IObservable<_>
+                              PopupMinWidth = Wanxiang2.Theme.LiveValue 180.0 :> IObservable<_>
+                              ScrimFade = Wanxiang2.Theme.LiveValue TimeSpan.Zero :> IObservable<_>
+                              ScrimEasing = Avalonia.Animation.Easings.CubicEaseOut() }
+                          Toasts =
+                            { Surface = brush Wanxiang2.ThemePalette.PaletteKey.SurfaceRaised
+                              Edge = brush Wanxiang2.ThemePalette.PaletteKey.Border
+                              Text = brush Wanxiang2.ThemePalette.PaletteKey.Text
+                              Accent = fun _ -> brush Wanxiang2.ThemePalette.PaletteKey.Accent
+                              AccentWidth = Wanxiang2.Theme.LiveValue 2.0 :> IObservable<_>
+                              AccentRadius = Wanxiang2.Theme.LiveValue(CornerRadius 999.0) :> IObservable<_>
+                              AccentOpacity = Wanxiang2.Theme.LiveValue 0.6 :> IObservable<_>
+                              EdgeWidth = Wanxiang2.Theme.Live.map Thickness (metric Wanxiang2.ThemeMetrics.Metric.BorderWidth)
+                              Radius = Wanxiang2.Theme.LiveValue(CornerRadius 8.0) :> IObservable<_>
+                              Padding = Wanxiang2.Theme.LiveValue(Thickness(16.0, 12.0)) :> IObservable<_>
+                              Shadow = Wanxiang2.Theme.LiveValue(Avalonia.Media.BoxShadows()) :> IObservable<_>
+                              FontSize = metric Wanxiang2.ThemeMetrics.Metric.FontBody
+                              LineHeight = Wanxiang2.Theme.LiveValue 18.0 :> IObservable<_>
+                              ColumnSpacing = Wanxiang2.Theme.LiveValue 12.0 :> IObservable<_>
+                              Spacing = Wanxiang2.Theme.LiveValue 8.0 :> IObservable<_>
+                              Margin = Wanxiang2.Theme.LiveValue(Thickness(24.0, 0.0, 24.0, 32.0)) :> IObservable<_>
+                              MaxWidth = Wanxiang2.Theme.LiveValue 480.0 :> IObservable<_>
+                              BodyMaxHeight = Wanxiang2.Theme.LiveValue 160.0 :> IObservable<_>
+                              Fade = Wanxiang2.Theme.LiveValue TimeSpan.Zero :> IObservable<_>
+                              FadeEasing = Avalonia.Animation.Easings.CubicEaseOut() }
+                          Menu =
+                            { Text = brush Wanxiang2.ThemePalette.PaletteKey.Text
+                              Muted = brush Wanxiang2.ThemePalette.PaletteKey.TextMuted
+                              Faint = brush Wanxiang2.ThemePalette.PaletteKey.TextFaint
+                              Danger = brush Wanxiang2.ThemePalette.PaletteKey.Danger
+                              Accent = brush Wanxiang2.ThemePalette.PaletteKey.Accent
+                              Check = fun b -> Wanxiang2.IconSet.IconSet.image Wanxiang2.IconSet.Glyph.Check b (metric Wanxiang2.ThemeMetrics.Metric.IconGlyph)
+                              Chevron = fun b -> Wanxiang2.IconSet.IconSet.image Wanxiang2.IconSet.Glyph.ChevronRight b (metric Wanxiang2.ThemeMetrics.Metric.IconGlyph)
+                              FontSize = metric Wanxiang2.ThemeMetrics.Metric.FontBody
+                              HintFontSize = metric Wanxiang2.ThemeMetrics.Metric.FontCaption
+                              IconSlotWidth = Wanxiang2.Theme.LiveValue 16.0 :> IObservable<_>
+                              IconHeight = Wanxiang2.Theme.LiveValue 16.0 :> IObservable<_>
+                              RightSlotMinWidth = Wanxiang2.Theme.LiveValue 16.0 :> IObservable<_>
+                              HintMargin = Wanxiang2.Theme.LiveValue(Thickness(12.0, 0.0, 0.0, 0.0)) :> IObservable<_>
+                              ColumnSpacing = Wanxiang2.Theme.LiveValue 6.0 :> IObservable<_>
+                              ItemPadding = Wanxiang2.Theme.LiveValue(Thickness(8.0, 4.0)) :> IObservable<_>
+                              ItemRadius = Wanxiang2.Theme.LiveValue(CornerRadius 4.0) :> IObservable<_>
+                              ItemMinHeight = Wanxiang2.Theme.LiveValue 32.0 :> IObservable<_>
+                              ItemSpacing = Wanxiang2.Theme.LiveValue 2.0 :> IObservable<_>
+                              MaxHeight = Wanxiang2.Theme.LiveValue 200.0 :> IObservable<_>
+                              DividerMargin = Wanxiang2.Theme.LiveValue(Thickness(6.0, 2.0)) :> IObservable<_>
+                              HeaderMargin = Wanxiang2.Theme.LiveValue(Thickness(8.0, 6.0, 8.0, 2.0)) :> IObservable<_>
+                              SelectPadding = Wanxiang2.Theme.LiveValue(Thickness(8.0, 4.0)) :> IObservable<_>
+                              SelectRadius = Wanxiang2.Theme.LiveValue(CornerRadius 8.0) :> IObservable<_>
+                              SelectEdgeWidth = Wanxiang2.Theme.LiveValue(Thickness 1.0) :> IObservable<_>
+                              SelectCaptionMaxWidth = Wanxiang2.Theme.LiveValue 260.0 :> IObservable<_> }
+                          MenuMinWidth = Wanxiang2.Theme.LiveValue 200.0 :> IObservable<_>
+                          GroupedMenuMinWidth = Wanxiang2.Theme.LiveValue 240.0 :> IObservable<_>
+                          DwellFailureMs = Wanxiang2.Theme.LiveValue 9000.0 :> IObservable<_>
+                          DwellWarningMs = Wanxiang2.Theme.LiveValue 6500.0 :> IObservable<_>
+                          DwellDefaultMs = Wanxiang2.Theme.LiveValue 4000.0 :> IObservable<_>
+                          DismissTick = TimeSpan.FromMilliseconds 100.0 }
+
+                    let buildViews () : ShellViews =
+                        let theme = SharedTheme.manager
+                        let styles = SharedTheme.styles
+                        let root = Grid()
+                        rootGrid <- root
+                        let ov = Wanxiang2.OverlayDesk.OverlayDesk(root, overlayLook ())
+                        overlay <- ov
+                        let brandLogo = SharedTheme.logo
+
+                        let composer = Wanxiang2.ComposerDesk.ComposerDesk(Wanxiang2.ComposerDesk.ComposerLooks.ofTheme theme styles,
+                            { Submit = fun _ -> false
+                              StopGeneration = fun () -> shell.Commands.HandleShortcut Wanxiang.UI.ShortcutAction.Escape |> ignore
+                              PickAttachment = fun () -> pickFiles ()
+                              RemoveAttachment = fun _ -> ()
+                              OpenModelPicker = fun _ -> ()
+                              DropFiles = fun _ -> ()
+                              PasteFromClipboard = pasteFromClipboard
+                              OpenSessionSettings = fun () -> () })
+
+                        let approval = Wanxiang2.ApprovalDesk.ApprovalDesk(theme, ov, send)
+
+                        let tintHost: Wanxiang2.CodeTint.CodeTintHost =
+                            { HighlightHtml = fun (code, lang) ->
+                                  match Wanxiang.UI.RichBackend.current () with
+                                  | Some backend -> backend.HighlightHtml(code, lang)
+                                  | None -> None
+                              Background = fun work -> work ()
+                              After = fun ms action -> after (TimeSpan.FromMilliseconds(float ms)) action |> ignore
+                              Synchronous = true }
+                        let tint = Wanxiang2.CodeTint.CodeTint(tintHost)
+                        let cards = Wanxiang2.MessageCardView.MessageCards(Wanxiang2.MessageCardView.CardLooks.ofTheme theme styles,
+                            { Tint = tint
+                              MathHtml = fun (tex, display) ->
+                                  match Wanxiang.UI.RichBackend.current () with
+                                  | Some backend -> backend.MathHtml(tex, display)
+                                  | None -> None
+                              Wrap = Wanxiang2.MarkdownView.CodeWrapMemory(false)
+                              Clock = Wanxiang2.MessageCardView.CaretClock()
+                              Touch = Wanxiang2.MessageCardView.CardTouch()
+                              Now = fun () -> DateTimeOffset.UtcNow })
+
+                        let chat = Wanxiang2.ChatScreen.ChatScreen(Wanxiang2.ChatScreen.ChatScreenLooks.ofTheme theme styles,
+                            cards, composer, approval, ov, brandLogo,
+                            { Card = { CopyText = copyToClipboard
+                                       Regenerate = fun () -> ()
+                                       EditAndFork = fun _ -> ()
+                                       DeleteMessage = fun _ -> ()
+                                       DownloadAttachment = fun _ -> ()
+                                       OpenLink = openLink
+                                       CopyLink = None
+                                       Recover = None }
+                              RenameTitle = fun _ -> ()
+                              ToggleSidebar = fun () -> shell.Commands.HandleShortcut Wanxiang.UI.ShortcutAction.ToggleSidebar |> ignore
+                              OpenSessionSettings = fun () -> ()
+                              ForkFromHere = fun () -> ()
+                              ExportConversation = fun () -> ()
+                              StopGeneration = fun () -> shell.Commands.HandleShortcut Wanxiang.UI.ShortcutAction.Escape |> ignore
+                              RequestOlderHistory = fun () -> ()
+                              FocusHome = fun () -> composer.Focus()
+                              OpenParent = fun _ -> ()
+                              SiblingSelected = fun _ -> ()
+                              After = after })
+
+                        let sidebar = Wanxiang2.SidebarDesk.SidebarDesk(theme, ov,
+                            { newConversation = fun () -> shell.Commands.HandleShortcut Wanxiang.UI.ShortcutAction.NewConversation |> ignore
+                              openConversation = fun _id -> shell.Commands.HandleShortcut(Wanxiang.UI.ShortcutAction.OpenConversationAt 0) |> ignore
+                              renameConversation = fun _ -> ()
+                              deleteConversation = fun _ -> ()
+                              setPinned = fun _ _ -> ()
+                              setArchived = fun _ _ -> ()
+                              selectionAllPinned = fun _ -> false
+                              setPinnedMany = fun _ _ -> ()
+                              setArchivedMany = fun _ _ -> ()
+                              deleteMany = fun _ -> ()
+                              duplicateAsFork = fun _ -> ()
+                              exportConversation = fun _ -> ()
+                              openSettings = fun () -> shell.Commands.HandleShortcut Wanxiang.UI.ShortcutAction.OpenSettings |> ignore
+                              reconnect = fun () -> shell.ResumeReconnectNow()
+                              toggleArchivedVisibility = fun () -> ()
+                              closeNavigation = fun () -> () },
+                            brandLogo)
+
+                        let settingsHooks: Wanxiang2.SettingsScreen.SettingsHooks =
+                            { UpsertProvider = fun _ _ -> ()
+                              DeleteProvider = ignore
+                              ProbeProvider = fun _ -> ()
+                              UpsertMcp = fun _ _ -> ()
+                              DeleteMcp = ignore
+                              UpdateGeneration = fun _ _ -> ()
+                              SavePrefs = Wanxiang.UI.UiPrefsFile.save }
+                        let settings = Wanxiang2.SettingsScreen.SettingsScreen(theme, ov, settingsHooks, Wanxiang.UI.UiPrefsFile.load ())
+
+                        let onboardingHooks: Wanxiang2.SettingsScreen.OnboardingHooks =
+                            { UpsertProvider = fun _ _ -> ()
+                              DiscardProvider = ignore
+                              ProbeProvider = fun _ -> ()
+                              TakenIds = fun () -> []
+                              DiscoverLocal = fun () -> System.Threading.Tasks.Task.FromResult(None)
+                              OpenAdvanced = fun () -> () }
+                        let onboarding = Wanxiang2.SettingsScreen.OnboardingDesk(theme, ov, onboardingHooks)
+
+                        let workspace = Wanxiang2.Workspace.Workspace(theme, root, sidebar, chat, composer,
+                            { PrefersTouch = fun () -> SharedTheme.input.PrefersTouch
+                              SidebarWidth = fun () -> Wanxiang.UI.UiPrefsFile.limits.sidebarWidth
+                              InitialSidebarCollapsed = false })
+
+                        let palette = Wanxiang2.PaletteDesk.PaletteDesk(theme, ov, fun () -> SharedTheme.input.PrefersTouch)
+                        let modelSwitch = Wanxiang2.ModelSwitchDesk.ModelSwitchDesk(theme, ov)
+
+                        { Sidebar = sidebar
+                          Chat = chat
+                          Composer = composer
+                          Settings = settings
+                          Onboarding = onboarding
+                          Workspace = workspace
+                          Approval = approval
+                          Palette = palette
+                          ModelSwitch = modelSwitch
+                          SettingsHostVisible = fun visible -> settings.View.IsVisible <- visible
+                          WorkspaceHostVisible = fun visible -> workspace.Host.IsVisible <- visible
+                          SettingsFocusInitial = fun () -> settings.FocusInitial()
+                          SettingsShowSection = fun section ->
+                              section |> Option.iter (fun s -> Wanxiang2.SettingsScreen.SettingsPart.ofKey s |> Option.iter settings.ShowSection) }
+
+                    /// 根视图工厂（App.Root）：MainView 由 ShellComposer 驱动，这里给根 Grid。
+                    let rootFactory () : Control =
+                        if isNull rootGrid then buildViews () |> ignore
+                        rootGrid :> Control
+
+                    // 提示条（OverlayDesk）
+                    let toast (text: string) (tone: ShellToastTone) =
+                        match tone with
+                        | ShellToastTone.Info -> overlay.Toast(text, Wanxiang2.ToastStrip.ToastTone.Info)
+                        | ShellToastTone.Success -> overlay.Toast(text, Wanxiang2.ToastStrip.ToastTone.Success)
+                        | ShellToastTone.Warning -> overlay.Toast(text, Wanxiang2.ToastStrip.ToastTone.Warning)
+                        | ShellToastTone.Failure -> overlay.Toast(text, Wanxiang2.ToastStrip.ToastTone.Failure)
+                    let toastUndo (text: string) (undo: unit -> unit) =
+                        overlay.ToastWith(text, Wanxiang2.ToastStrip.ToastTone.Info, Some("撤销", undo))
+
+                    let ports: ShellPorts =
+                        { Connect = connectAsync
+                          SendAuth = sendAuth
+                          Send = send
+                          SendCommand = sendCommand
+                          After = after
+                          Every = every
+                          Toast = toast
+                          ToastUndo = toastUndo
+                          CopyToClipboard = copyToClipboard
+                          OpenLink = openLink
+                          SaveDownload = saveDownload
+                          PickFiles = pickFiles
+                          DropFiles = dropFiles
+                          PasteFromClipboard = pasteFromClipboard
+                          ApplyDraftWrite = applyDraftWrite
+                          PrefsLoad = Wanxiang.UI.UiPrefsFile.load
+                          PrefsSave = Wanxiang.UI.UiPrefsFile.save
+                          TryLoadClientToml = Wanxiang.UI.CredentialStore.tryLoadClientToml
+                          TryLoadBrowserConnection =
+                            fun () ->
+                                // 端口要求 Async；CredentialStore 返回 Task，用 AwaitTask 转换。
+                                Wanxiang.UI.CredentialStore.tryLoadBrowserConnectionAsync ()
+                                |> Async.AwaitTask
+                          SaveBrowserConnection = fun _ _ _ _ -> ()
+                          BrowserViewportWidth = browserViewportWidth
+                          BrowserResumeEpoch = browserResumeEpoch
+                          BrowserPageUrl = browserPageUrl
+                          BrowserConversationSucceeded = browserConversationSucceeded
+                          BrowserAddHidden = browserAddHidden
+                          SystemPrefersDark = systemPrefersDark
+                          BuildViews = buildViews }
+                    shell <- ShellComposer(ports)
+                    // App 静态端口（EntryShells）：Root 创建根视图、Build 调 ShellComposer.Build 并接事件、
+                    // 关窗落草稿、偏好读写。
+                    Wanxiang.UI.App.Root <- Some rootFactory
+                    Wanxiang.UI.App.Build <- Some(fun _view ->
+                        shell.Build() |> ignore
+                        client.EventReceived.Add(fun ev -> Avalonia.Threading.Dispatcher.UIThread.Post(fun () -> shell.ApplyHostEvent ev))
+                        shell.AutoConnect())
+                    Wanxiang.UI.App.FlushDrafts <- Some(fun () -> shell.FlushDrafts())
+                    Wanxiang.UI.App.LoadPrefs <- Some Wanxiang.UI.UiPrefsFile.load
+                    Wanxiang.UI.App.SavePrefs <- Some Wanxiang.UI.UiPrefsFile.save
+                    // 宿主 StartupTrace：采样模式首帧打点 + requestExit（决策 290）。
+                    Wanxiang.UI.App.MarkFirstFrame <-
+                        Some(fun () ->
+                            Wanxiang.UI.StartupTrace.mark "firstFrame" |> ignore
+                            Wanxiang.UI.StartupTrace.requestExit ())
+                    // MainWindow 由 EntryShells 的 App.OnFrameworkInitializationCompleted 在
+                    // IClassicDesktopStyleApplicationLifetime 分支构造（Root/Build/LoadPrefs/SavePrefs 齐备时）。
                     AppBuilder
                         .Configure<Wanxiang.UI.App>()
                         .UsePlatformDetect()

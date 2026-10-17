@@ -50,7 +50,7 @@ let ``嵌套 ScrollViewer 与草稿/待发送滚动视口具备右侧安全留�
     Headless.run (fun () ->
     // 1. MessageCard detailViewport 拥有 LayoutPolicy.nestedScrollGutter 右边距
     let ctx: Wanxiang2.MessageCardView.CardContext =
-        { FontSize = Tokens.fontReading
+        { FontSize = SharedTheme.manager.Metric(Wanxiang2.ThemeMetrics.Metric.FontReading).Value
           AutoCollapseReasoning = false
           Streaming = false
           IsLastAssistant = true

@@ -41,7 +41,7 @@ module HeadlessTests =
     [<Fact>]
     let ``Tokens are owned by the ui thread even when a worker thread touches them first`` () =
         // 工作线程上的纯逻辑读取（xunit 线程，不在 Headless.run 内）
-        Assert.False(obj.ReferenceEquals(Wanxiang.UI.Tokens.canvas, null))
+        Assert.False(obj.ReferenceEquals(Wanxiang.UI.SharedTheme.manager.Brush(Wanxiang2.ThemePalette.PaletteKey.Canvas), null))
         let mutable owned = false
-        Headless.run (fun () -> owned <- Wanxiang.UI.Tokens.canvas.CheckAccess())
-        Assert.True(owned, "Tokens 画笔必须归 headless UI 线程所有（决策 421）")
+        Headless.run (fun () -> owned <- Wanxiang.UI.SharedTheme.manager.Brush(Wanxiang2.ThemePalette.PaletteKey.Canvas).CheckAccess())
+        Assert.True(owned, "主题画笔必须归 headless UI 线程所有（决策 421）")

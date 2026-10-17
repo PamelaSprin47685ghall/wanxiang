@@ -8,12 +8,10 @@
   <ItemGroup>
     <Compile Include="UiThreadGuard.fs" />
     <Compile Include="Headless.fs" />
-    <Compile Include="ChatFixture.fs" />
-    <Compile Include="ChatScreenCutoverTests.fs" />
-    <Compile Include="WorkspaceCutoverTests.fs" />
     <Compile Include="UiThreadOwnershipTests.fs" />
     <Compile Include="HeadlessTests.fs" />
     <Compile Include="Helpers.fs" />
+    <Compile Include="CardFixture.fs" />
     <Compile Include="LocalStateTests.fs" />
     <Compile Include="MessageMapTests.fs" />
     <Compile Include="ProjectionInvariantsTests.fs" />
@@ -22,74 +20,32 @@
     <Compile Include="SoakTests.fs" />
     <Compile Include="PerformanceBaselineTests.fs" />
     <Compile Include="OnboardingConfigTests.fs" />
-    <Compile Include="OnboardingUiTests.fs" />
     <Compile Include="PolishTests.fs" />
     <Compile Include="NativeTransportTests.fs" />
     <Compile Include="AgentCoverageTests.fs" />
     <Compile Include="ScrollLayoutTests.fs" />
     <Compile Include="OperabilityTests.fs" />
-    <Compile Include="ExchangeNavTests.fs" />
-    <Compile Include="EndpointScrollTests.fs" />
-    <Compile Include="CloseWindowTests.fs" />
-    <Compile Include="ConversationJourneyTests.fs" />
     <Compile Include="RenderCostTests.fs" />
-    <Compile Include="IncrementalRenderTests.fs" />
     <Compile Include="PathologicalRenderTests.fs" />
-    <Compile Include="AsyncHighlightTests.fs" />
-    <Compile Include="FocusRingTests.fs" />
-    <Compile Include="SelectionOperabilityTests.fs" />
-    <Compile Include="DeliveryPolishingTests.fs" />
-    <Compile Include="UiStabilityTests.fs" />
-    <Compile Include="InteractionReliabilityTests.fs" />
-    <Compile Include="ConversationExportTests.fs" />
-    <Compile Include="CraftsmanshipPolishTests.fs" />
     <Compile Include="IconCenteringTests.fs" />
-    <Compile Include="PresentationRefreshTests.fs" />
     <Compile Include="DesignConvergenceTests.fs" />
     <Compile Include="StateConvergenceTests.fs" />
-    <Compile Include="SearchHighlightTests.fs" />
-    <Compile Include="SettingsSurfaceTests.fs" />
-    <Compile Include="ConversationWorkspaceTests.fs" />
     <Compile Include="ConversationPresentationTests.fs" />
-    <Compile Include="OverlayMenuTests.fs" />
-    <Compile Include="KeyConvergenceTests.fs" />
-    <Compile Include="InteractabilityConvergenceTests.fs" />
-    <Compile Include="InteractabilityPolishTests.fs" />
-    <Compile Include="InteractabilityPolish8Tests.fs" />
-    <Compile Include="DismissFocusTests.fs" />
-    <Compile Include="AppShellTests.fs" />
-    <Compile Include="SettingsViewTests.fs" />
     <Compile Include="DialogsTests.fs" />
     <Compile Include="W3ToolApprovalUiTests.fs" />
-    <Compile Include="PwaToolApprovalTests.fs" />
     <Compile Include="ToolCallStatusTests.fs" />
     <Compile Include="UiPureLogicTests.fs" />
     <Compile Include="A11yRegressionTests.fs" />
-    <Compile Include="ComposerReliabilityTests.fs" />
-    <Compile Include="LibraryTests.fs" />
-    <Compile Include="LibraryUndoTests.fs" />
     <Compile Include="ContinueLinkUndoTests.fs" />
-    <Compile Include="R14TransferTests.fs" />
     <Compile Include="R19SimplifyTests.fs" />
-    <Compile Include="R20PaletteTests.fs" />
     <Compile Include="R21ImeTests.fs" />
     <Compile Include="PartialPersistAndUrlSchemeTests.fs" />
     <Compile Include="VisualPassR3Tests.fs" />
     <Compile Include="PwaMobileTests.fs" />
-    <Compile Include="VisualPassV4Tests.fs" />
-    <Compile Include="JourneyR9Tests.fs" />
     <Compile Include="WsOriginTests.fs" />
-    <Compile Include="DevicesUiTests.fs" />
     <Compile Include="ModelChipRateLimitTests.fs" />
-    <Compile Include="ModelChipUiTests.fs" />
-    <Compile Include="PerceivedPerfTests.fs" />
-    <Compile Include="WindowedNavigationTests.fs" />
     <Compile Include="AttachmentVisionTests.fs" />
-    <Compile Include="R16ImageVisionTests.fs" />
     <Compile Include="R17CapabilityTests.fs" />
-    <Compile Include="R26PresetsTests.fs" />
-    <Compile Include="R27HostCapabilitiesTests.fs" />
-    <Compile Include="R28PwaParityTests.fs" />
   </ItemGroup>
 
   <!-- 真 KaTeX 生成的 HTML 夹具：公式排版测试不必带一个 JS 引擎 -->
@@ -135,5 +91,29 @@
   <ItemGroup>
     <PackageReference Include="Wanxiang2.ConfigStore" Version="0.0.0-local" />
     <PackageReference Include="Wanxiang2.PairingDesk" Version="0.0.0-local" />
+  </ItemGroup>
+
+  <!-- 阶段 3：测试基建改造。宿主旧符号（Tokens/MotionPolicy/ControlMetrics/Ui 等）已迁入 wanxiang2，
+       测试工程显式引用对应包（与 src/Wanxiang.UI 的消费面一致，Version 格式沿用 0.0.0-local）。 -->
+  <ItemGroup>
+    <PackageReference Include="Wanxiang2.Theme" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ThemePalette" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ThemeMetrics" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MotionSwitch" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.SpacingRamp" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DesignRhythm" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.EntryShells" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ImageShrinkIo" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.ReadingLook" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.MarkdownView" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.CodeTint" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.RichBackend" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.UiPrimitives" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.FieldCheck" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.PopupMenu" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.OverlayDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.DialogsDesk" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.AppShell" Version="0.0.0-local" />
+    <PackageReference Include="Wanxiang2.UiPrefsFile" Version="0.0.0-local" />
   </ItemGroup>
 </Project>

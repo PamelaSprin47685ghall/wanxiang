@@ -53,7 +53,7 @@ let ``品牌标有图时不垫白底`` () =
 
 [<Fact>]
 let ``启动画面标志不画方块阴影`` () =
-    let css = read "src/Wanxiang.Pwa/wwwroot/app.css"
+    let css = read "wanxiang2/app/Pwa/wwwroot/app.css"
     let start = css.IndexOf(".splash-logo {")
     let block = css.Substring(start, css.IndexOf("}", start) - start)
     Assert.DoesNotContain("box-shadow", block)
@@ -61,15 +61,15 @@ let ``启动画面标志不画方块阴影`` () =
 
 [<Fact>]
 let ``PWA 安装引导推迟到首次成功对话后，且在顶部不压输入框`` () =
-    let js = read "src/Wanxiang.Pwa/wwwroot/main.js"
+    let js = read "wanxiang2/app/Pwa/wwwroot/main.js"
     Assert.Contains("export function wxConversationSucceeded", js)
     Assert.Contains("if (!hadConversation()) { onConversationSucceeded = reveal; return; }", js)
     Assert.DoesNotContain("bar.hidden = false;\n    });", js)
-    let css = read "src/Wanxiang.Pwa/wwwroot/app.css"
+    let css = read "wanxiang2/app/Pwa/wwwroot/app.css"
     Assert.Contains(".shell-install { top:", css)
     // 收敛走查：手机上浮条曾盖住顶栏。停靠高度变量必须定义在 :root（#out 读得到），且画布让位不限桌面。
     Assert.Contains(":root { --wx-install-h:", css)
     let dock = css.IndexOf "body:has(#shell-install:not([hidden])) #out"
     let desktopOnly = css.IndexOf "@media (min-width: 900px) and (not (pointer: coarse))"
     Assert.True(dock >= 0 && dock < desktopOnly, "画布让位规则应对手机同样生效")
-    Assert.Contains("BrowserPage.ConversationSucceeded", read "src/Wanxiang.UI/AppShell.fs")
+    Assert.Contains("BrowserConversationSucceeded", read "wanxiang2/compose/AppShell/AppShell.fs")
